@@ -856,6 +856,8 @@ pub struct VerifyOptions {
     pub grid: f64,
     /// Slack on depth comparisons (mm).
     pub depth_tolerance: f64,
+    /// Regions smaller than this are grid noise, not metal (mm²).
+    pub min_area: f64,
 }
 
 impl Default for VerifyOptions {
@@ -869,6 +871,7 @@ impl Default for VerifyOptions {
             arc_tolerance: 0.005,
             grid: 0.05,
             depth_tolerance: 0.01,
+            min_area: 0.01,
         }
     }
 }
@@ -958,6 +961,12 @@ pub struct MaterialLeftReport {
     pub max_standoff: f64,
     /// Area of wall band the cutter could reach at all (mm²).
     pub reachable_band_area: f64,
+    /// Walls no full-depth pass came within a tool diameter of. Not a
+    /// violation — the job may not be meant to cut them — but the caller
+    /// should say so out loud.
+    pub untouched_walls: usize,
+    /// Walls the part has that a cutter this size could follow at all.
+    pub walls: usize,
 }
 
 /// Depth against the stock.
@@ -1309,6 +1318,7 @@ pub fn parse_gcode(text: &str, opts: &VerifyOptions) -> Result<Vec<Move>, Verify
 
         let mut target = [None, None, None];
         let mut ij = [None, None];
+        let mut saw_r = false;
         for (letter, value) in &words {
             match letter {
                 'N' | 'S' | 'T' | 'P' | 'F' => {
@@ -1321,6 +1331,9 @@ pub fn parse_gcode(text: &str, opts: &VerifyOptions) -> Result<Vec<Move>, Verify
                 'Z' => target[2] = Some(*value * scale),
                 'I' => ij[0] = Some(*value * scale),
                 'J' => ij[1] = Some(*value * scale),
+                // Carried so an R-form arc gets the arc's own message rather
+                // than "unknown word".
+                'R' => saw_r = true,
                 'M' => {
                     let m = *value;
                     if !matches!(m as i32, 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 30)
@@ -1365,6 +1378,12 @@ pub fn parse_gcode(text: &str, opts: &VerifyOptions) -> Result<Vec<Move>, Verify
             }
         }
 
+        if saw_r && !matches!(motion, Some(2) | Some(3)) {
+            return Err(VerifyError::Gcode {
+                line,
+                what: "word 'R' is not understood".into(),
+            });
+        }
         if target.iter().all(Option::is_none) {
             continue;
         }
@@ -1505,7 +1524,7 @@ pub fn verify_moves(
     let tabs = check_tabs(moves, spec, opts);
     let envelope = check_envelope(moves, spec, opts);
     let plunges = check_plunges(moves, spec, opts);
-    let material_left = check_material_left(moves, spec, &part, opts)?;
+    let material_left = check_material_left(moves, spec, opts)?;
     let loose = check_loose(moves, spec, opts)?;
 
     let pass = !gouge.blocks()
@@ -1545,14 +1564,18 @@ fn check_gouge(moves: &[Move], part: &Poly, r: f64, opts: &VerifyOptions) -> Che
         if m.rapid || m.min_z() >= 0.0 {
             continue;
         }
-        let d = part.distance_to_segment(m.a(), m.b());
-        let into = r - d;
+        // Clearance is signed: a tool centre that is itself inside the part is
+        // a whole radius worse than one that just grazes the wall, and saying
+        // so is what tells "the offset was a hair too small" from "the cut ran
+        // on the wrong side of the line" (friction item 32, where the worst
+        // reading is one full tool diameter).
+        let (clear, at) = segment_clearance(part, m.a(), m.b(), opts);
+        let into = r - clear;
         if into > opts.tolerance {
-            let mid = [(m.from[0] + m.to[0]) / 2.0, (m.from[1] + m.to[1]) / 2.0];
             rep.hit(
                 Violation {
                     index: m.index,
-                    xy: mid,
+                    xy: at,
                     z: m.min_z(),
                     value: into,
                     what: format!("cutter {into:.4} mm inside the part"),
@@ -1562,6 +1585,39 @@ fn check_gouge(moves: &[Move], part: &Poly, r: f64, opts: &VerifyOptions) -> Che
         }
     }
     rep
+}
+
+/// Least signed clearance between the segment `a`–`b` and the part, and where
+/// it is: positive outside the part, negative for a centre that is inside it.
+fn segment_clearance(
+    part: &Poly,
+    a: [f64; 2],
+    b: [f64; 2],
+    opts: &VerifyOptions,
+) -> (f64, [f64; 2]) {
+    let len = (b[0] - a[0]).hypot(b[1] - a[1]);
+    let step = opts.tolerance.clamp(0.05, 0.5);
+    let n = ((len / step).ceil() as usize).max(1);
+    let mut worst = (f64::INFINITY, a);
+    let mut inside = false;
+    for k in 0..=n {
+        let t = k as f64 / n as f64;
+        let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        let sd = -part.signed_distance(p);
+        inside |= sd < 0.0;
+        if sd < worst.0 {
+            worst = (sd, p);
+        }
+    }
+    if !inside {
+        // Between the samples the segment may still clip a corner; the exact
+        // segment distance catches that.
+        let d = part.distance_to_segment(a, b);
+        if d < worst.0 {
+            worst = (d, [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]);
+        }
+    }
+    worst
 }
 
 /// 3. Rapids that travel in XY too low over the stock, or dive into it.
@@ -2099,17 +2155,23 @@ fn swept_segments(moves: &[Move], z_at_most: f64, tol: f64) -> Vec<([f64; 2], [f
 
 /// 2. Wall band the full-depth passes never reached, ignoring what the cutter
 ///    could never have reached anyway.
+///
+/// Only walls the job *worked on* are graded. A wall no full-depth pass came
+/// within a tool diameter of was not attempted — the blank may already be the
+/// right size there, or the part may be staying in the sheet — and that is a
+/// decision about scope, not a defect. The count of them is reported so the
+/// caller can say "this job machines 3 of your 5 walls" without the oracle
+/// having to guess which answer was meant.
 fn check_material_left(
     moves: &[Move],
     spec: &JobSpec,
-    part: &Poly,
     opts: &VerifyOptions,
 ) -> Result<MaterialLeftReport, VerifyError> {
     let r = spec.tool_diameter / 2.0;
     let d = spec.tool_diameter;
     let floor = spec.floor_z();
     let segs = swept_segments(moves, floor, opts.depth_tolerance);
-    let swept = Poly::from_segments(segs);
+    let swept = Poly::from_segments(segs.clone());
     let mut rep = CheckReport::new(
         "material_left",
         Severity::Error,
@@ -2118,14 +2180,31 @@ fn check_material_left(
     let mut total = 0.0;
     let mut worst_standoff: f64 = 0.0;
     let mut band_area = 0.0;
+    let mut untouched = 0usize;
+    let mut walls = 0usize;
 
+    let s = spec.stock();
+    let stock = Poly::new(vec![vec![
+        [s[0], s[1]],
+        [s[2], s[1]],
+        [s[2], s[3]],
+        [s[0], s[3]],
+    ]])?;
     let oo = OffsetOptions::default();
-    // Each opening: waste is inside it, the tool centre lives in its erosion.
+    let attempted = |lp: &Poly| segs.iter().any(|(a, b)| lp.distance_to_segment(*a, *b) < d);
+
+    // Each opening: the waste is inside it and the tool centre lives in its
+    // erosion. An opening narrower than the cutter is not a wall to follow.
     for hole in &spec.part.holes {
         let hp = Poly::new(vec![hole.clone()])?;
         let b = hp.bbox();
         if (b[2] - b[0]).min(b[3] - b[1]) <= d {
-            continue; // smaller than the cutter: nothing to follow
+            continue;
+        }
+        walls += 1;
+        if !attempted(&hp) {
+            untouched += 1;
+            continue;
         }
         let e = Poly::new(offset_loop(hole, -r, &oo))?;
         let bbox = [
@@ -2134,13 +2213,18 @@ fn check_material_left(
             b[2] + opts.grid,
             b[3] + opts.grid,
         ];
-        let phi = |p: [f64; 2]| {
+        let band = |p: [f64; 2]| {
             let dh = hp.signed_distance(p);
             let de = -e.signed_distance(p); // distance outside the centre region
-            let ds = swept.distance(p);
-            (dh.min(d - dh).min(r - de).min(ds - r), dh)
+            (dh.min(d - dh).min(r - de), dh)
         };
-        for region in march(bbox, opts.grid, phi) {
+        for region in march(bbox, opts.grid, |p| {
+            let (b, aux) = band(p);
+            (b.min(swept.distance(p) - r), aux)
+        }) {
+            if region.area < opts.min_area {
+                continue;
+            }
             total += region.area;
             worst_standoff = worst_standoff.max(region.peak_aux);
             rep.hit(
@@ -2150,73 +2234,82 @@ fn check_material_left(
                     z: floor,
                     value: region.area,
                     what: format!(
-                        "{:.3} mm² of wall left standing, up to {:.3} mm proud",
+                        "{:.3} mm\u{b2} of wall left standing, up to {:.3} mm proud",
                         region.area, region.peak_aux
                     ),
                 },
                 opts.max_examples,
             );
         }
-        band_area += march(bbox, opts.grid, |p: [f64; 2]| {
-            let dh = hp.signed_distance(p);
-            let de = -e.signed_distance(p);
-            (dh.min(d - dh).min(r - de), dh)
-        })
-        .iter()
-        .map(|c| c.area)
-        .sum::<f64>();
+        band_area += march(bbox, opts.grid, band)
+            .iter()
+            .map(|c| c.area)
+            .sum::<f64>();
     }
 
-    // Outside the part: the tool centre lives outside the grown outline.
+    // Outside the part: the tool centre lives outside the grown outline, and
+    // only where there is stock to remove in the first place.
     {
         let op = Poly::new(vec![spec.part.outer.clone()])?;
-        let grown = Poly::new(offset_loop(&spec.part.outer, r, &oo))?;
-        let b = op.bbox();
-        let bbox = [
-            b[0] - d - opts.grid,
-            b[1] - d - opts.grid,
-            b[2] + d + opts.grid,
-            b[3] + d + opts.grid,
-        ];
-        let phi = |p: [f64; 2]| {
-            let dp = -op.signed_distance(p); // positive outside the part
-            let dg = grown.signed_distance(p); // positive inside the grown outline
-            let ds = swept.distance(p);
-            (dp.min(d - dp).min(r - dg).min(ds - r), dp)
-        };
-        for region in march(bbox, opts.grid, phi) {
-            total += region.area;
-            worst_standoff = worst_standoff.max(region.peak_aux);
-            rep.hit(
-                Violation {
-                    index: 0,
-                    xy: region.centroid,
-                    z: floor,
-                    value: region.area,
-                    what: format!(
-                        "{:.3} mm² of stock left on the outside wall, up to {:.3} mm proud",
-                        region.area, region.peak_aux
-                    ),
-                },
-                opts.max_examples,
-            );
+        walls += 1;
+        if attempted(&op) {
+            let grown = Poly::new(offset_loop(&spec.part.outer, r, &oo))?;
+            let b = op.bbox();
+            let bbox = [
+                b[0] - d - opts.grid,
+                b[1] - d - opts.grid,
+                b[2] + d + opts.grid,
+                b[3] + d + opts.grid,
+            ];
+            let band = |p: [f64; 2]| {
+                let dp = -op.signed_distance(p); // positive outside the part
+                let dg = grown.signed_distance(p); // positive inside the grown outline
+                (dp.min(d - dp).min(r - dg).min(stock.signed_distance(p)), dp)
+            };
+            for region in march(bbox, opts.grid, |p| {
+                let (b, aux) = band(p);
+                (b.min(swept.distance(p) - r), aux)
+            }) {
+                if region.area < opts.min_area {
+                    continue;
+                }
+                total += region.area;
+                worst_standoff = worst_standoff.max(region.peak_aux);
+                rep.hit(
+                    Violation {
+                        index: 0,
+                        xy: region.centroid,
+                        z: floor,
+                        value: region.area,
+                        what: format!(
+                            "{:.3} mm\u{b2} of stock left on the outside wall, up to {:.3} mm proud",
+                            region.area, region.peak_aux
+                        ),
+                    },
+                    opts.max_examples,
+                );
+            }
+            band_area += march(bbox, opts.grid, band)
+                .iter()
+                .map(|c| c.area)
+                .sum::<f64>();
+        } else {
+            untouched += 1;
         }
-        band_area += march(bbox, opts.grid, |p: [f64; 2]| {
-            let dp = -op.signed_distance(p);
-            let dg = grown.signed_distance(p);
-            (dp.min(d - dp).min(r - dg), dp)
-        })
-        .iter()
-        .map(|c| c.area)
-        .sum::<f64>();
     }
 
-    let _ = part;
+    rep.note = format!(
+        "{} of {walls} walls machined; wall left standing is measured against what the cutter \
+         could reach, so corners it cannot enter are fit's answer, not a violation",
+        walls - untouched
+    );
     Ok(MaterialLeftReport {
         check: rep,
         unswept_area: total,
         max_standoff: worst_standoff,
         reachable_band_area: band_area,
+        untouched_walls: untouched,
+        walls,
     })
 }
 
@@ -2263,20 +2356,15 @@ fn check_loose(
         let ds = stock.signed_distance(p);
         (ds.min(swept.distance(p) - r), 0.0)
     };
+    // `march` returns regions largest first. What the clamps hold is the
+    // frame — the largest piece of stock left — and everything else the job
+    // has cut free. Clamps themselves are not modelled, so a job that cuts the
+    // frame in half reports the smaller half as loose, which is the safe way
+    // round to be wrong.
     let regions = march(bbox, opts.grid, phi);
-    // What the clamps hold is the frame: the largest region that reaches the
-    // edge of the stock. Clamps themselves are not modelled.
-    let held = regions
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| {
-            c.centroid[0] < s[0] + opts.grid || c.centroid[0] > s[2] - opts.grid || c.area > 0.0
-        })
-        .max_by(|a, b| a.1.area.total_cmp(&b.1.area))
-        .map(|(i, _)| i);
     let mut pieces = Vec::new();
-    for (i, c) in regions.iter().enumerate() {
-        if Some(i) == held {
+    for c in regions.iter().skip(1) {
+        if c.area < opts.min_area {
             continue;
         }
         pieces.push(FreedPiece {
@@ -2307,14 +2395,735 @@ fn check_loose(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fit::fixture::stator_in_stock_frame;
+    use crate::operation::{Contour, Point2D};
+    use crate::{CamSettings, Contour2D, Tool};
+
+    fn contour_of(points: &[[f64; 2]]) -> Contour {
+        let mut c = Contour::new(Point2D::new(points[0][0], points[0][1]));
+        for p in points.iter().skip(1).chain(std::iter::once(&points[0])) {
+            c.line_to(Point2D::new(p[0], p[1]));
+        }
+        c
+    }
+
+    fn mill(d: f64) -> Tool {
+        Tool::FlatEndMill {
+            diameter: d,
+            flute_length: 25.0,
+            flutes: 2,
+        }
+    }
+
+    /// A plate with a rectangular window in it.
+    fn windowed_plate() -> (PartRegion, Vec<[f64; 2]>) {
+        let window = vec![[10.0, 10.0], [50.0, 10.0], [50.0, 30.0], [10.0, 30.0]];
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
+            vec![window.clone()],
+        )
+        .unwrap();
+        (part, window)
+    }
+
+    // ---- 1. gouge ------------------------------------------------------
+
+    /// The kernel's inside contour stays inside the window; the same operation
+    /// with the offset the other way — which is exactly what shipped until
+    /// friction item 32 — drives the cutter a full diameter into the part.
+    #[test]
+    fn gouge_tells_an_inside_cut_from_the_one_that_ran_outward() {
+        let (part, window) = windowed_plate();
+        let tool = mill(6.0);
+        let settings = CamSettings {
+            stepdown: 2.0,
+            ..CamSettings::default()
+        };
+        let spec = JobSpec::new(part, 6.0, 6.0);
+        let opts = VerifyOptions::default();
+
+        let right = Contour2D::inside(contour_of(&window), 6.0)
+            .generate(&tool, &settings)
+            .unwrap();
+        let rep = verify_toolpath(&right, &spec, &opts).unwrap();
+        assert!(
+            rep.gouge.pass,
+            "worst {:.4} mm at {:?}",
+            rep.gouge.worst,
+            rep.gouge.examples.first()
+        );
+
+        // The old behaviour: `inside()` was byte-identical to `outside()`.
+        let wrong = Contour2D::outside(contour_of(&window), 6.0)
+            .generate(&tool, &settings)
+            .unwrap();
+        let rep = verify_toolpath(&wrong, &spec, &opts).unwrap();
+        assert!(!rep.gouge.pass);
+        assert!(!rep.pass, "the job must not be runnable");
+        assert!(
+            (rep.gouge.worst - 6.0).abs() < 0.05,
+            "worst gouge {:.4} mm; the cutter is one diameter into the part",
+            rep.gouge.worst
+        );
+        assert!(!rep.gouge.examples.is_empty());
+    }
+
+    /// The tolerance exists because a polylined offset legitimately wanders by
+    /// a hundredth of a millimetre. It must not swallow a real gouge.
+    #[test]
+    fn gouge_tolerance_covers_polyline_slop_and_nothing_more() {
+        let (part, _) = windowed_plate();
+        let spec = JobSpec::new(part, 6.0, 6.0);
+        let opts = VerifyOptions::default();
+        // A path 3 mm inside the window wall is exactly flush; nudge it in.
+        for (inset, want_pass) in [(0.015, true), (0.1, false)] {
+            let path = vec![
+                [13.0 - inset, 13.0 - inset],
+                [47.0 + inset, 13.0 - inset],
+                [47.0 + inset, 27.0 + inset],
+                [13.0 - inset, 27.0 + inset],
+            ];
+            let mut tp = Toolpath::new();
+            tp.push(ToolpathSegment::rapid(path[0][0], path[0][1], 5.0));
+            tp.push(ToolpathSegment::linear(path[0][0], path[0][1], -6.0, 100.0));
+            for p in path.iter().skip(1).chain(std::iter::once(&path[0])) {
+                tp.push(ToolpathSegment::linear(p[0], p[1], -6.0, 400.0));
+            }
+            let rep = verify_toolpath(&tp, &spec, &opts).unwrap();
+            assert_eq!(
+                rep.gouge.pass, want_pass,
+                "inset {inset}: worst {:.4}",
+                rep.gouge.worst
+            );
+        }
+    }
+
+    // ---- 5. tabs -------------------------------------------------------
+
+    /// Build one contour pass at `z`, lifting to `top` over `tabs` stretches
+    /// of `run` mm measured along the tool centre path.
+    fn pass_with_tabs(tp: &mut Toolpath, rect: [f64; 4], z: f64, lifts: &[(f64, f64)], top: f64) {
+        let corners = [
+            [rect[0], rect[1]],
+            [rect[2], rect[1]],
+            [rect[2], rect[3]],
+            [rect[0], rect[3]],
+        ];
+        tp.push(ToolpathSegment::rapid(corners[0][0], corners[0][1], 5.0));
+        tp.push(ToolpathSegment::linear(
+            corners[0][0],
+            corners[0][1],
+            z,
+            100.0,
+        ));
+        // Walk the bottom edge, lifting where asked; then the rest of the loop.
+        for (at, run) in lifts {
+            tp.push(ToolpathSegment::linear(*at, rect[1], z, 400.0));
+            tp.push(ToolpathSegment::linear(*at, rect[1], top, 400.0));
+            tp.push(ToolpathSegment::linear(at + run, rect[1], top, 400.0));
+            tp.push(ToolpathSegment::linear(at + run, rect[1], z, 400.0));
+        }
+        for c in corners.iter().skip(1).chain(std::iter::once(&corners[0])) {
+            tp.push(ToolpathSegment::linear(c[0], c[1], z, 400.0));
+        }
+        tp.push(ToolpathSegment::rapid(corners[0][0], corners[0][1], 5.0));
+    }
+
+    /// Friction item 33, first half: tabs honoured on the final pass only. At
+    /// 0.5 mm stepdown the pass before it cuts the tab away, and the audit has
+    /// to say so pass by pass.
+    #[test]
+    fn tabs_only_on_the_final_pass_are_no_tabs_at_all() {
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [50.0, 0.0], [50.0, 40.0], [0.0, 40.0]],
+            vec![],
+        )
+        .unwrap();
+        let rect = [-3.175, -3.175, 53.175, 43.175];
+        let lifts = [(10.0, 4.0 + 3.175), (35.0, 4.0 + 3.175)];
+        let spec = JobSpec::new(part, 3.0, 3.175);
+        let opts = VerifyOptions::default();
+
+        // Every pass below the tab top steps over it: clean.
+        let mut good = Toolpath::new();
+        for k in 1..=6 {
+            let z = -0.5 * k as f64;
+            let lifts: &[(f64, f64)] = if z < -2.0 + 1e-9 { &lifts } else { &[] };
+            pass_with_tabs(&mut good, rect, z, lifts, -2.0);
+        }
+        let rep = verify_toolpath(&good, &spec, &opts).unwrap();
+        assert_eq!(rep.tabs.tab_count, 2);
+        assert_eq!(rep.tabs.passes_below_tabs, 2, "the passes at -2.5 and -3.0");
+        assert!(rep.tabs.check.pass, "{:?}", rep.tabs.check.examples);
+        for o in &rep.tabs.observations {
+            assert!(
+                (o.metal_width - 4.0).abs() < 1e-6,
+                "metal {:.4} mm, asked for 4",
+                o.metal_width
+            );
+            assert!((o.height - 1.0).abs() < 1e-6, "height {:.4}", o.height);
+            assert!(o.straight);
+        }
+
+        // Tabs on the last pass only: the pass at -2.5 cut straight through.
+        let mut late = Toolpath::new();
+        for k in 1..=6 {
+            let z = -0.5 * k as f64;
+            let lifts: &[(f64, f64)] = if k == 6 { &lifts } else { &[] };
+            pass_with_tabs(&mut late, rect, z, lifts, -2.0);
+        }
+        let rep = verify_toolpath(&late, &spec, &opts).unwrap();
+        assert!(!rep.tabs.check.pass);
+        assert!(!rep.pass);
+        assert_eq!(
+            rep.tabs.check.violation_count, 2,
+            "one per tab: {:?}",
+            rep.tabs.check.examples
+        );
+        assert!(rep.tabs.check.examples[0]
+            .what
+            .contains("cuts straight through"));
+
+        // And what the job claims is checked against what it cuts.
+        let declared = JobSpec {
+            declared_tabs: vec![
+                DeclaredTab {
+                    width: 4.0,
+                    height: 1.0
+                };
+                3
+            ],
+            ..JobSpec::new(spec.part.clone(), 3.0, 3.175)
+        };
+        let rep = verify_toolpath(&good, &declared, &opts).unwrap();
+        assert!(!rep.tabs.check.pass);
+        assert!(
+            rep.tabs
+                .check
+                .examples
+                .iter()
+                .any(|v| v.what.contains("3 tabs were declared but 2 are cut")),
+            "{:?}",
+            rep.tabs.check.examples
+        );
+    }
+
+    /// Friction item 33, second half: a "4 mm" tab whose lifted run is 4 mm
+    /// leaves 4 - 3.175 = 0.825 mm of metal, because the cutter takes a radius
+    /// out of each end.
+    #[test]
+    fn a_tab_measured_along_the_tool_path_leaves_a_sliver() {
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [50.0, 0.0], [50.0, 40.0], [0.0, 40.0]],
+            vec![],
+        )
+        .unwrap();
+        let rect = [-3.175, -3.175, 53.175, 43.175];
+        let spec = JobSpec::new(part, 3.0, 3.175);
+        let mut tp = Toolpath::new();
+        for k in 1..=6 {
+            let z = -0.5 * k as f64;
+            let lifts: &[(f64, f64)] = if z < -2.0 + 1e-9 { &[(10.0, 4.0)] } else { &[] };
+            pass_with_tabs(&mut tp, rect, z, lifts, -2.0);
+        }
+        let rep = verify_toolpath(&tp, &spec, &VerifyOptions::default()).unwrap();
+        assert_eq!(rep.tabs.tab_count, 1);
+        for o in &rep.tabs.observations {
+            assert!(
+                (o.metal_width - 0.825).abs() < 1e-6,
+                "metal {:.4} mm, not the 4 mm the job asked for",
+                o.metal_width
+            );
+        }
+        assert!(!rep.tabs.check.pass);
+        assert!(
+            rep.tabs.check.examples[0].what.contains("mm of metal"),
+            "{}",
+            rep.tabs.check.examples[0].what
+        );
+    }
+
+    // ---- 3. rapids, 4. depth, 8. plunges --------------------------------
+
+    /// A G0 that travels in XY below the safe height is a cutter dragged
+    /// through whatever is in the way.
+    #[test]
+    fn a_rapid_that_travels_low_over_the_stock_is_flagged() {
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [50.0, 0.0], [50.0, 40.0], [0.0, 40.0]],
+            vec![],
+        )
+        .unwrap();
+        let spec = JobSpec::new(part, 6.0, 3.0);
+        let opts = VerifyOptions::default();
+
+        let mut safe = Toolpath::new();
+        safe.push(ToolpathSegment::rapid(5.0, 5.0, 5.0));
+        safe.push(ToolpathSegment::linear(5.0, 5.0, -6.0, 100.0));
+        safe.push(ToolpathSegment::linear(6.0, 5.0, -6.0, 400.0));
+        safe.push(ToolpathSegment::rapid(6.0, 5.0, 5.0));
+        safe.push(ToolpathSegment::rapid(40.0, 30.0, 5.0));
+        assert!(verify_toolpath(&safe, &spec, &opts).unwrap().rapids.pass);
+
+        let mut low = safe.clone();
+        low.push(ToolpathSegment::rapid(40.0, 30.0, 0.2));
+        low.push(ToolpathSegment::rapid(10.0, 10.0, 0.2));
+        let rep = verify_toolpath(&low, &spec, &opts).unwrap();
+        assert!(!rep.rapids.pass);
+        assert_eq!(rep.rapids.violation_count, 1);
+        assert!((rep.rapids.worst - 0.3).abs() < 1e-9, "{:?}", rep.rapids);
+
+        // And a rapid that dives into the stock instead of feeding.
+        let mut dive = safe.clone();
+        dive.push(ToolpathSegment::rapid(40.0, 30.0, -2.0));
+        let rep = verify_toolpath(&dive, &spec, &opts).unwrap();
+        assert!(!rep.rapids.pass);
+        assert!(rep.rapids.examples[0].what.contains("below the stock top"));
+    }
+
+    /// Friction item 40 and 50: 10 mm of cut in 6 mm of stock is a cut into
+    /// whatever the stock is sitting on. It is only allowed when the job says
+    /// what that is.
+    #[test]
+    fn cutting_past_the_stock_needs_a_declared_bed() {
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [50.0, 0.0], [50.0, 40.0], [0.0, 40.0]],
+            vec![],
+        )
+        .unwrap();
+        let mut tp = Toolpath::new();
+        tp.push(ToolpathSegment::rapid(5.0, 5.0, 5.0));
+        tp.push(ToolpathSegment::linear(5.0, 5.0, -10.0, 100.0));
+        tp.push(ToolpathSegment::linear(45.0, 5.0, -10.0, 400.0));
+        tp.push(ToolpathSegment::rapid(45.0, 5.0, 5.0));
+        let opts = VerifyOptions::default();
+
+        let bare = JobSpec::new(part.clone(), 6.0, 3.0);
+        let rep = verify_toolpath(&tp, &bare, &opts).unwrap();
+        assert!(!rep.depth.check.pass);
+        assert!((rep.depth.deepest_z + 10.0).abs() < 1e-9);
+        assert!((rep.depth.remaining_under_part + 4.0).abs() < 1e-9);
+        assert!(
+            rep.depth.check.examples[0]
+                .what
+                .contains("no spoilboard declared"),
+            "{:?}",
+            rep.depth.check.examples[0].what
+        );
+
+        // Declared 4 mm break-through into a spoilboard: the same moves pass.
+        let declared = JobSpec {
+            bottom_allowance: -4.0,
+            spoilboard: true,
+            ..JobSpec::new(part.clone(), 6.0, 3.0)
+        };
+        let rep = verify_toolpath(&tp, &declared, &opts).unwrap();
+        assert!((rep.depth.floor_z + 10.0).abs() < 1e-9);
+        assert!(rep.depth.check.pass, "{:?}", rep.depth.check.examples);
+
+        // A 0.15 mm onion skin the job never leaves: it cut too deep.
+        let skin = JobSpec {
+            bottom_allowance: 0.15,
+            ..JobSpec::new(part, 6.0, 3.0)
+        };
+        assert!(!verify_toolpath(&tp, &skin, &opts).unwrap().depth.check.pass);
+    }
+
+    /// A feature that stops above the floor is a hole that is not a hole.
+    #[test]
+    fn a_feature_that_stops_short_of_the_floor_is_flagged() {
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [50.0, 0.0], [50.0, 40.0], [0.0, 40.0]],
+            vec![],
+        )
+        .unwrap();
+        let spec = JobSpec::new(part, 6.0, 3.0);
+        let mut tp = Toolpath::new();
+        for (x, depth) in [(5.0, 6.0), (30.0, 4.0)] {
+            tp.push(ToolpathSegment::rapid(x, 5.0, 5.0));
+            tp.push(ToolpathSegment::linear(x, 5.0, -depth, 100.0));
+            tp.push(ToolpathSegment::linear(x + 10.0, 5.0, -depth, 400.0));
+            tp.push(ToolpathSegment::rapid(x + 10.0, 5.0, 5.0));
+        }
+        let rep = verify_toolpath(&tp, &spec, &VerifyOptions::default()).unwrap();
+        assert_eq!(rep.depth.features, 2);
+        assert!(!rep.depth.check.pass);
+        assert!((rep.depth.check.worst - 2.0).abs() < 1e-9);
+        assert!(rep.depth.check.examples[0]
+            .what
+            .contains("short of the floor"));
+    }
+
+    /// A tool that cannot cut at its centre cannot make its own hole.
+    #[test]
+    fn a_non_centre_cutting_tool_may_not_plunge() {
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [50.0, 0.0], [50.0, 40.0], [0.0, 40.0]],
+            vec![],
+        )
+        .unwrap();
+        let mut tp = Toolpath::new();
+        tp.push(ToolpathSegment::rapid(25.0, 20.0, 5.0));
+        tp.push(ToolpathSegment::linear(25.0, 20.0, -3.0, 600.0));
+        tp.push(ToolpathSegment::linear(30.0, 20.0, -3.0, 400.0));
+        tp.push(ToolpathSegment::rapid(30.0, 20.0, 5.0));
+
+        let opts = VerifyOptions::default();
+        let centre = JobSpec::new(part.clone(), 6.0, 3.0);
+        let rep = verify_toolpath(&tp, &centre, &opts).unwrap();
+        assert!(!rep.plunges.pass, "F600 is above the 500 mm/min limit");
+        assert_eq!(
+            rep.plunges.severity,
+            Severity::Warning,
+            "a fast plunge is worth saying; it does not block a centre-cutting tool"
+        );
+
+        let insert = JobSpec {
+            centre_cutting: false,
+            ..JobSpec::new(part, 6.0, 3.0)
+        };
+        let rep = verify_toolpath(&tp, &insert, &opts).unwrap();
+        assert!(!rep.plunges.pass);
+        assert_eq!(rep.plunges.severity, Severity::Error);
+        assert!(
+            !rep.pass,
+            "an insert tool boring its own hole blocks the job"
+        );
+    }
+
+    // ---- 6. envelope ----------------------------------------------------
+
+    /// Friction item 41: for the stator with a Ø2 cutter the sweep runs
+    /// -2.00 to 65.15 mm in both X and Y, which is the blank the job needs and
+    /// where work zero sits on it.
+    #[test]
+    fn stator_sweep_and_the_blank_it_needs() {
+        let loops = stator_in_stock_frame();
+        let part = PartRegion::new(loops[0].clone(), loops[1..].to_vec()).unwrap();
+        let tool = mill(2.0);
+        let settings = CamSettings {
+            stepdown: 3.0,
+            ..CamSettings::default()
+        };
+        let tp = Contour2D::outside(contour_of(&loops[0]), 6.0)
+            .generate(&tool, &settings)
+            .unwrap();
+        let spec = JobSpec {
+            work_offset: Some([10.0, 10.0, -50.0]),
+            travel: Some(TravelLimits {
+                min: [0.0, 0.0, -60.0],
+                max: [400.0, 400.0, 0.0],
+            }),
+            ..JobSpec::new(part, 6.0, 2.0)
+        };
+        let rep = verify_toolpath(&tp, &spec, &VerifyOptions::default()).unwrap();
+        let (lo, hi) = (rep.envelope.work_min, rep.envelope.work_max);
+        for k in 0..2 {
+            assert!(
+                (lo[k] + 2.0).abs() < 0.02 && (hi[k] - 65.15).abs() < 0.02,
+                "axis {k}: {:.3}..{:.3}, expected -2.00..65.15",
+                lo[k],
+                hi[k]
+            );
+        }
+        for m in rep.envelope.stock_margin {
+            assert!((m - 2.0).abs() < 0.02, "margin {m:.3}");
+        }
+        assert!(rep.envelope.check.pass);
+        assert_eq!(rep.envelope.machine_min.unwrap()[2], -56.0);
+
+        // The same job on a machine that cannot reach it.
+        let small = JobSpec {
+            travel: Some(TravelLimits {
+                min: [0.0, 0.0, -60.0],
+                max: [70.0, 70.0, 0.0],
+            }),
+            ..spec
+        };
+        let rep = verify_toolpath(&tp, &small, &VerifyOptions::default()).unwrap();
+        assert!(!rep.envelope.check.pass);
+        assert!(
+            (rep.envelope.check.worst - 5.15).abs() < 0.02,
+            "{:?}",
+            rep.envelope.check
+        );
+    }
+
+    // ---- 7. loose pieces -------------------------------------------------
+
+    /// Friction item 39: the bore-and-slots contour with a Ø2 cutter frees the
+    /// centre slug *and* twelve wedges, because at each 3.87 mm slot mouth the
+    /// two passes overlap and sever the tip. A 0.15 mm skin holds all of it.
+    #[test]
+    fn stator_frees_a_slug_and_twelve_wedges_unless_a_skin_holds_them() {
+        let loops = stator_in_stock_frame();
+        let part = PartRegion::new(loops[0].clone(), vec![loops[1].clone()]).unwrap();
+        let tool = mill(2.0);
+        let opts = VerifyOptions {
+            grid: 0.03,
+            ..VerifyOptions::default()
+        };
+
+        let through = Contour2D::inside(contour_of(&loops[1]), 6.0)
+            .generate(
+                &tool,
+                &CamSettings {
+                    stepdown: 3.0,
+                    ..CamSettings::default()
+                },
+            )
+            .unwrap();
+        let spec = JobSpec::new(part.clone(), 6.0, 2.0);
+        let rep = verify_toolpath(&through, &spec, &opts).unwrap();
+        assert!(!rep.loose.skin_holds);
+        assert_eq!(
+            rep.loose.pieces.len(),
+            13,
+            "the slug and twelve wedges: {:?}",
+            rep.loose.pieces.iter().map(|p| p.area).collect::<Vec<_>>()
+        );
+        let mut areas: Vec<f64> = rep.loose.pieces.iter().map(|p| p.area).collect();
+        areas.sort_by(f64::total_cmp);
+        assert!(
+            (areas[12] - 721.5).abs() < 8.0,
+            "slug {:.2} mm², shapely measures 721.5",
+            areas[12]
+        );
+        for a in &areas[..12] {
+            assert!(
+                (a - 5.671).abs() < 0.2,
+                "wedge {a:.3} mm², shapely measures 5.671"
+            );
+        }
+        assert!(!rep.loose.check.pass);
+
+        // 0.15 mm of skin left under the part: nothing comes free.
+        let skinned = Contour2D::inside(contour_of(&loops[1]), 5.85)
+            .generate(
+                &tool,
+                &CamSettings {
+                    stepdown: 3.0,
+                    ..CamSettings::default()
+                },
+            )
+            .unwrap();
+        let spec = JobSpec {
+            bottom_allowance: 0.15,
+            ..JobSpec::new(part, 6.0, 2.0)
+        };
+        let rep = verify_toolpath(&skinned, &spec, &opts).unwrap();
+        assert!(rep.loose.skin_holds);
+        assert!(rep.loose.pieces.is_empty());
+        assert!(rep.loose.check.pass);
+    }
+
+    // ---- 2. material left -------------------------------------------------
+
+    /// A pass that stops short of the wall leaves a band of metal, and the
+    /// oracle measures it. What the cutter could never have reached — the
+    /// corners of the window — is not counted: that is `fit`'s answer.
+    #[test]
+    fn material_left_measures_the_band_a_short_pass_leaves() {
+        let (part, window) = windowed_plate();
+        let tool = mill(6.0);
+        let settings = CamSettings {
+            stepdown: 6.0,
+            ..CamSettings::default()
+        };
+        let opts = VerifyOptions::default();
+        let spec = JobSpec {
+            // The blank is the part: only the window is machined here.
+            stock_bbox: Some([0.0, 0.0, 60.0, 40.0]),
+            ..JobSpec::new(part, 6.0, 6.0)
+        };
+
+        let full = Contour2D::inside(contour_of(&window), 6.0)
+            .generate(&tool, &settings)
+            .unwrap();
+        let rep = verify_toolpath(&full, &spec, &opts).unwrap();
+        assert!(
+            rep.material_left.unswept_area < 0.5,
+            "left {:.3} mm² after a full-depth wall pass",
+            rep.material_left.unswept_area
+        );
+
+        // The same loop 1 mm shy of the wall all round.
+        let shy: Vec<[f64; 2]> = vec![[14.0, 14.0], [46.0, 14.0], [46.0, 26.0], [14.0, 26.0]];
+        let mut tp = Toolpath::new();
+        tp.push(ToolpathSegment::rapid(shy[0][0], shy[0][1], 5.0));
+        tp.push(ToolpathSegment::linear(shy[0][0], shy[0][1], -6.0, 100.0));
+        for p in shy.iter().skip(1).chain(std::iter::once(&shy[0])) {
+            tp.push(ToolpathSegment::linear(p[0], p[1], -6.0, 400.0));
+        }
+        let rep = verify_toolpath(&tp, &spec, &opts).unwrap();
+        assert!(!rep.material_left.check.pass);
+        // A 1 mm band around a 40 x 20 window, less the corners the cutter
+        // could not have reached anyway.
+        assert!(
+            (rep.material_left.unswept_area - 116.0).abs() < 6.0,
+            "left {:.3} mm², a 1 mm band round the window is ~116",
+            rep.material_left.unswept_area
+        );
+        // Worst is not the 1 mm along the straight walls but the corner, where
+        // the round cutter stops 4 - 3/sqrt(2) = 1.879 mm short on the
+        // diagonal.
+        assert!(
+            (1.879 - rep.material_left.max_standoff).abs() < 0.06,
+            "stand-off {:.4}",
+            rep.material_left.max_standoff
+        );
+        assert_eq!(
+            rep.material_left.untouched_walls, 1,
+            "the outside is not cut here"
+        );
+    }
+
+    // ---- the G-code reader ------------------------------------------------
+
+    /// Posting a toolpath and reading it back must give the same moves. The
+    /// reader is the oracle's other front door, and a G-code file is what
+    /// actually reaches the machine.
+    #[test]
+    fn gcode_round_trips_through_the_post() {
+        use crate::post::{GrblPost, PostProcessor};
+        let (_, window) = windowed_plate();
+        let tool = mill(6.0);
+        let settings = CamSettings {
+            stepdown: 2.0,
+            ..CamSettings::default()
+        };
+        let tp = Contour2D::inside(contour_of(&window), 6.0)
+            .generate(&tool, &settings)
+            .unwrap();
+        let text = GrblPost::default().generate("window", &tool, &tp, &settings);
+        let opts = VerifyOptions::default();
+        let from_path = replay_toolpath(&tp, &opts).unwrap();
+        let from_text = parse_gcode(&text, &opts).unwrap();
+        // The post's header and footer add their own rapids.
+        assert!(from_text.len() >= from_path.len());
+        let cuts_path: Vec<[f64; 3]> = from_path
+            .iter()
+            .filter(|m| !m.rapid)
+            .map(|m| m.to)
+            .collect();
+        let cuts_text: Vec<[f64; 3]> = from_text
+            .iter()
+            .filter(|m| !m.rapid)
+            .map(|m| m.to)
+            .collect();
+        assert_eq!(cuts_path.len(), cuts_text.len());
+        for (a, b) in cuts_path.iter().zip(&cuts_text) {
+            for k in 0..3 {
+                // The post rounds to three decimals.
+                assert!((a[k] - b[k]).abs() < 5e-4, "{a:?} vs {b:?}");
+            }
+        }
+    }
+
+    /// What the reader does not understand it refuses. A skipped line is a
+    /// move nothing checked.
+    #[test]
+    fn gcode_refuses_what_it_cannot_replay() {
+        let opts = VerifyOptions::default();
+        let cases = [
+            ("G0 X0 Y0 Z5\nG81 X10 Y10 Z-5 R2\n", "G81"),
+            ("G0 X0 Y0 Z5\nG1 X10 Y0 Z-1\n", "feed"),
+            ("G0 X0 Y0 Z5\nG2 X10 Y0 R5 F100\n", "I and J"),
+            ("G0 X0 Y0 Z5\nG1 X10 Y0 Z-1 F100 A90\n", "'A'"),
+            ("G1 X10 Y0 Z-1 F100\n", "position is known"),
+            ("G0 X0 Y0 Z5\nG2 X10 Y0 I3 J0 F100\n", "radius"),
+            ("G0 X0 Y0 Z5\nG1 X10 Y0 Z-1 F100 (unclosed\n", "comment"),
+        ];
+        for (text, needle) in cases {
+            let err = parse_gcode(text, &opts).unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains(needle), "{text:?} gave {msg:?}");
+        }
+    }
+
+    /// Inches, incremental moves and arcs all have to land in the same frame
+    /// as everything else.
+    #[test]
+    fn gcode_reads_units_modes_and_arcs() {
+        let opts = VerifyOptions::default();
+        // Every number here is inches: G20 is in effect.
+        let moves = parse_gcode(
+            "(t)\nG20 G90\nG0 X0 Y0 Z1\nG1 Z-0.1 F10\nG91\nG1 X1 F20\nG90\nG3 X1 Y0 I0 J-0.5 F100\n",
+            &opts,
+        )
+        .unwrap();
+        // G20: one inch of incremental X is 25.4 mm.
+        let linear: Vec<&Move> = moves.iter().filter(|m| !m.rapid).collect();
+        assert!((linear[0].to[2] + 2.54).abs() < 1e-9, "{:?}", linear[0]);
+        assert!((linear[1].to[0] - 25.4).abs() < 1e-9, "{:?}", linear[1]);
+        assert!((linear[1].feed - 508.0).abs() < 1e-9, "feed in mm/min");
+        // A full circle of radius 12.7 mm, sampled: back where it started.
+        let arc: Vec<&Move> = moves.iter().filter(|m| m.index == 8).collect();
+        assert!(arc.len() > 20, "{} samples", arc.len());
+        let last = arc.last().unwrap().to;
+        assert!(
+            (last[0] - 25.4).abs() < 1e-6 && last[1].abs() < 1e-6,
+            "{last:?}"
+        );
+        let radius: Vec<f64> = arc
+            .iter()
+            .map(|m| (m.to[0] - 25.4).hypot(m.to[1] + 12.7))
+            .collect();
+        for r in radius {
+            assert!((r - 12.7).abs() < 1e-6, "arc sample at radius {r}");
+        }
+    }
+
+    /// The oracle must be usable on a job of the size a real part produces.
+    #[test]
+    fn a_thirty_thousand_move_job_is_replayed_in_seconds() {
+        let loops = stator_in_stock_frame();
+        let part = PartRegion::new(loops[0].clone(), vec![loops[1].clone()]).unwrap();
+        let tool = mill(2.0);
+        let tp = Contour2D::inside(contour_of(&loops[1]), 6.0)
+            .generate(
+                &tool,
+                &CamSettings {
+                    stepdown: 0.1,
+                    ..CamSettings::default()
+                },
+            )
+            .unwrap();
+        let spec = JobSpec::new(part, 6.0, 2.0);
+        let t = std::time::Instant::now();
+        let rep = verify_toolpath(&tp, &spec, &VerifyOptions::default()).unwrap();
+        let took = t.elapsed();
+        assert!(rep.moves > 30_000, "{} moves", rep.moves);
+        assert!(
+            took.as_secs_f64() < 30.0,
+            "{} moves took {took:?}",
+            rep.moves
+        );
+        println!("{} moves verified in {took:?}", rep.moves);
+    }
 
     #[test]
-    fn smoke() {
+    fn a_report_survives_a_round_trip_through_json() {
         let part = PartRegion::new(
             vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
             vec![],
         )
         .unwrap();
         assert!((part.area() - 600.0).abs() < 1e-9);
+        let mut tp = Toolpath::new();
+        tp.push(ToolpathSegment::rapid(-3.0, -3.0, 5.0));
+        tp.push(ToolpathSegment::linear(-3.0, -3.0, -6.0, 100.0));
+        tp.push(ToolpathSegment::linear(33.0, -3.0, -6.0, 400.0));
+        tp.push(ToolpathSegment::rapid(33.0, -3.0, 5.0));
+        let rep = verify_toolpath(
+            &tp,
+            &JobSpec::new(part, 6.0, 3.0),
+            &VerifyOptions::default(),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&rep).unwrap();
+        let back: JobVerification = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.pass, rep.pass);
+        assert_eq!(back.gouge.name, "gouge");
     }
 }

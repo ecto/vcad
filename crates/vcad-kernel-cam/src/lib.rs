@@ -61,7 +61,7 @@ pub mod verify2d;
 
 // Re-exports
 pub use error::CamError;
-pub use fit::{fit_contour, ContourSide, FitOptions, FitReport};
+pub use fit::{fit_contour, offset_loop, ContourSide, FitOptions, FitReport, OffsetOptions};
 pub use operation::{
     CamOperation, Contour, Contour2D, ContourSegment, Face, Pocket2D, Point2D, Roughing3D, Tab,
 };

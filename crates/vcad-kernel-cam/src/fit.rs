@@ -176,9 +176,12 @@ pub struct FitReport {
 /// The raw offset curve is sampled, the samples that end up nearer the
 /// original than `|delta|` are dropped (those are the self-intersection lobes
 /// that every offsetter has to trim), and the surviving runs are stitched back
-/// together at the crossings. That is what lets a shrink return *several*
-/// loops: the stator's slots leaving its bore.
-pub(crate) fn offset_loop(points: &[[f64; 2]], delta: f64, opts: &OffsetOptions) -> Vec<Loop2> {
+/// together at the crossings, solving for the crossing point itself. That is
+/// what lets a shrink return *several* loops: the stator's slots leaving its
+/// bore.
+///
+/// Pure Rust and no clipper, so it works on `wasm32` as it does natively.
+pub fn offset_loop(points: &[[f64; 2]], delta: f64, opts: &OffsetOptions) -> Vec<Loop2> {
     let mut src = clean_loop(points);
     if src.len() < 3 {
         return Vec::new();
