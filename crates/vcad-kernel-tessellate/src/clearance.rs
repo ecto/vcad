@@ -808,7 +808,7 @@ fn ray_hits_aabb(orig: [f64; 3], dir: [f64; 3], min: [f64; 3], max: [f64; 3]) ->
 }
 
 /// Closest point on the mesh surface to `p`, as `(distance, point)`.
-fn point_mesh_closest(p: [f64; 3], bvh: &TriBvh) -> (f64, [f64; 3]) {
+pub(crate) fn point_mesh_closest(p: [f64; 3], bvh: &TriBvh) -> (f64, [f64; 3]) {
     let mut best_sq = f64::INFINITY;
     let mut best_pt = [0.0; 3];
     fn recurse(p: [f64; 3], bvh: &TriBvh, idx: u32, best_sq: &mut f64, best_pt: &mut [f64; 3]) {
@@ -889,6 +889,77 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
 fn dist_sq(a: [f64; 3], b: [f64; 3]) -> f64 {
     let d = sub(a, b);
     dot(d, d)
+}
+
+/// One-sided Hausdorff from `from`'s surface to `to`'s surface, in mm.
+///
+/// Sampled at every vertex and every triangle centroid of `from` — enough to
+/// catch a face that was deleted, torn open or slid sideways, and cheap
+/// enough to run inside a repair loop (one BVH build plus 4 nearest-point
+/// queries per triangle).
+///
+/// Returns `f64::INFINITY` when `to` has no surface at all: everything moved.
+pub(crate) fn surface_deviation(from: &TriangleMesh, to: &TriangleMesh) -> f64 {
+    let Some(bvh) = TriBvh::build(to) else {
+        return if from.indices.is_empty() {
+            0.0
+        } else {
+            f64::INFINITY
+        };
+    };
+    let v = |i: u32| -> [f64; 3] {
+        let k = i as usize * 3;
+        [
+            from.vertices[k] as f64,
+            from.vertices[k + 1] as f64,
+            from.vertices[k + 2] as f64,
+        ]
+    };
+    let mut worst = 0.0f64;
+    for t in from.indices.chunks(3) {
+        let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
+        let centroid = [
+            (a[0] + b[0] + c[0]) / 3.0,
+            (a[1] + b[1] + c[1]) / 3.0,
+            (a[2] + b[2] + c[2]) / 3.0,
+        ];
+        for p in [a, b, c, centroid] {
+            worst = worst.max(point_mesh_closest(p, &bvh).0);
+        }
+    }
+    worst
+}
+
+/// Where `from` deviates most from `to`, for a message a human can act on.
+pub(crate) fn surface_deviation_at(from: &TriangleMesh, to: &TriangleMesh) -> (f64, [f64; 3]) {
+    let Some(bvh) = TriBvh::build(to) else {
+        return (f64::INFINITY, [0.0; 3]);
+    };
+    let v = |i: u32| -> [f64; 3] {
+        let k = i as usize * 3;
+        [
+            from.vertices[k] as f64,
+            from.vertices[k + 1] as f64,
+            from.vertices[k + 2] as f64,
+        ]
+    };
+    let (mut worst, mut at) = (0.0f64, [0.0; 3]);
+    for t in from.indices.chunks(3) {
+        let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
+        let centroid = [
+            (a[0] + b[0] + c[0]) / 3.0,
+            (a[1] + b[1] + c[1]) / 3.0,
+            (a[2] + b[2] + c[2]) / 3.0,
+        ];
+        for p in [a, b, c, centroid] {
+            let d = point_mesh_closest(p, &bvh).0;
+            if d > worst {
+                worst = d;
+                at = p;
+            }
+        }
+    }
+    (worst, at)
 }
 
 #[cfg(test)]

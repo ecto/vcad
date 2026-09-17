@@ -7410,7 +7410,129 @@ fn collapse_zero_area_triangles(mesh: &mut TriangleMesh) {
 /// what remains. Every constituent pass is individually reverted when it
 /// fails to strictly reduce the defective-edge count, so the result is
 /// never worse than the input.
+/// Run `pass`, and put the mesh back if it left more defective edges than it
+/// found. For the passes whose whole justification is that they only take
+/// away surface that should not be there.
+/// How far a repair pass may move the part's boundary, in mm.
+///
+/// Chosen from what the passes actually do. Traced over the rana-60 stator's
+/// export (`VCAD_REPAIR_TRACE=1`), the passes that were doing their job moved
+/// the surface by at most 0.00107 mm, while the ones tearing the lead notch
+/// moved it 0.50, 0.71 and 2.51 mm — three orders of magnitude apart, so the
+/// threshold is not delicately placed. 0.02 mm is also the boundary-agreement
+/// gate the CAM section oracle holds a part to, and about 4x the chordal sag
+/// a 256-segment rim carries at this part's radii, so a pass that stays under
+/// it cannot be seen in the outline the machinist cuts to.
+///
+/// A repair that cannot beat this is not a repair. It is declined, and the
+/// caller is told (`RepairOutcome`) rather than handed a different part.
+pub const SHAPE_TOLERANCE: f64 = 0.02;
+
+/// What [`repair_watertightness_reported`] did, for a caller that must not
+/// present a degraded mesh as a good one (native-app friction log item 30).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RepairOutcome {
+    /// Defective edges (position-quantized, over-used or unpaired) on entry.
+    pub defects_before: usize,
+    /// Defective edges on exit. Non-zero means the mesh is still not
+    /// watertight and the caller is holding a degraded part.
+    pub defects_after: usize,
+    /// Passes refused because they would have moved the part's boundary
+    /// further than [`SHAPE_TOLERANCE`], as `(pass, mm it would have moved)`.
+    /// A non-empty list with `defects_after > 0` is the honest answer "this
+    /// mesh cannot be repaired without changing the part".
+    pub declined: Vec<(&'static str, f64)>,
+}
+
+impl RepairOutcome {
+    /// Did the mesh come out watertight?
+    pub fn is_watertight(&self) -> bool {
+        self.defects_after == 0
+    }
+
+    /// One line a human can act on, or `None` when there is nothing to say.
+    pub fn warning(&self) -> Option<String> {
+        if self.defects_after == 0 {
+            return None;
+        }
+        let worst = self.declined.iter().fold(0.0f64, |m, &(_, d)| m.max(d));
+        if self.declined.is_empty() {
+            Some(format!(
+                "mesh is not watertight: {} defective edge(s) remain",
+                self.defects_after
+            ))
+        } else {
+            Some(format!(
+                "mesh is not watertight: {} defective edge(s) remain; repair declined \
+                 because it would have moved the surface by {worst:.4} mm",
+                self.defects_after
+            ))
+        }
+    }
+}
+
+/// Run `pass`; put the mesh back unless it both reduced the defective-edge
+/// count and left the boundary within [`SHAPE_TOLERANCE`] of where it was.
+fn guarded_pass(
+    mesh: &mut TriangleMesh,
+    label: &'static str,
+    outcome: &mut RepairOutcome,
+    pass: impl FnOnce(&mut TriangleMesh),
+) {
+    let before_defects = defective_edge_count(mesh);
+    let before = mesh.clone();
+    pass(mesh);
+    if defective_edge_count(mesh) > before_defects {
+        *mesh = before;
+        return;
+    }
+    if std::env::var_os("VCAD_NO_SHAPE_GUARD").is_some() {
+        return;
+    }
+    let moved = crate::clearance::surface_deviation(&before, mesh);
+    if moved > SHAPE_TOLERANCE {
+        if std::env::var_os("VCAD_REPAIR_TRACE").is_some() {
+            eprintln!("repair[{label}]: DECLINED — would move the surface {moved:.5} mm");
+        }
+        outcome.declined.push((label, moved));
+        *mesh = before;
+    }
+}
+
+fn revert_unless_it_helps(mesh: &mut TriangleMesh, pass: impl FnOnce(&mut TriangleMesh)) {
+    let before_defects = defective_edge_count(mesh);
+    let before = mesh.clone();
+    pass(mesh);
+    if defective_edge_count(mesh) > before_defects {
+        *mesh = before;
+    }
+}
+
+/// Best-effort watertightness repair; [`repair_watertightness_reported`]
+/// returns the verdict this one discards.
 pub fn repair_watertightness(mesh: &mut TriangleMesh) {
+    let _ = repair_watertightness_reported(mesh);
+}
+
+/// As [`repair_watertightness`], but says what it did — whether the mesh came
+/// out watertight, and whether a pass was refused for moving the part.
+///
+/// Export paths should use this and pass the verdict on. A mesh that still
+/// carries defective edges is a degraded part, and the whole point of the
+/// shape guard is that the caller finds out instead of receiving a quietly
+/// different solid.
+pub fn repair_watertightness_reported(mesh: &mut TriangleMesh) -> RepairOutcome {
+    let mut outcome = RepairOutcome {
+        defects_before: defective_edge_count(mesh),
+        defects_after: 0,
+        declined: Vec::new(),
+    };
+    repair_watertightness_inner(mesh, &mut outcome);
+    outcome.defects_after = defective_edge_count(mesh);
+    outcome
+}
+
+fn repair_watertightness_inner(mesh: &mut TriangleMesh, outcome: &mut RepairOutcome) {
     if !worth_repairing(mesh) {
         return;
     }
@@ -7424,8 +7546,44 @@ pub fn repair_watertightness(mesh: &mut TriangleMesh) {
     // or a membrane only removes surface that should not exist, and a
     // doubled sheet double-counts whatever it encloses — so the volume
     // reference is only meaningful AFTER they have run.
-    drop_exact_duplicate_triangles(mesh);
-    mesh_ray::strip_membranes_once(mesh);
+    // `VCAD_REPAIR_TRACE=1`: one line per pass — triangles, defective edges,
+    // and how far the pass moved the surface away from what came in. The
+    // deviation is what the shape guard below acts on; tracing it is how the
+    // guard's tolerance was chosen, and how to find which pass tore a part.
+    let trace = std::env::var_os("VCAD_REPAIR_TRACE").is_some();
+    let step = |mesh: &TriangleMesh, label: &str| {
+        if trace {
+            let (d, at) = crate::clearance::surface_deviation_at(&original, mesh);
+            eprintln!(
+                "repair[{label}]: {} tris, {} defective, surface moved {:.5} mm at {:?}",
+                mesh.indices.len() / 3,
+                defective_edge_count(mesh),
+                d,
+                at
+            );
+        }
+    };
+    step(mesh, "in");
+    // These two used to run unguarded, on the reasoning that peeling a
+    // doubled sheet or an interior membrane can only remove surface that
+    // should not exist. That is not true of the membrane peeler. On the
+    // rana-60 stator it deleted 42 triangles of the lead notch's R1.05
+    // fillet walls — real outer boundary — moving the surface 0.50 mm and
+    // taking the defect count UP, from 677 to 713. Everything after it then
+    // worked on a torn mesh, and the exported part was 0.68 mm out at the
+    // notch while the volume stayed inside the 1% guard that is checked
+    // AFTER these passes (`docs/boolean-multilump-union-diagnosis.md`).
+    //
+    // Removing a genuine membrane always pairs edges that were unpaired, so
+    // it cannot raise the count. Reverting a removal that does is sound with
+    // no tolerance to calibrate, and it is what puts the reference volume
+    // back on the real surface.
+    revert_unless_it_helps(mesh, drop_exact_duplicate_triangles);
+    step(mesh, "drop_duplicates");
+    revert_unless_it_helps(mesh, |m: &mut TriangleMesh| {
+        mesh_ray::strip_membranes_once(m);
+    });
+    step(mesh, "strip_membranes");
     let vol0 = mesh_signed_volume_f64(mesh).abs();
     // Every remaining pass is bounded to defect-local surgery, so the
     // enclosed volume must come through (nearly) unchanged. A candidate
@@ -7442,12 +7600,36 @@ pub fn repair_watertightness(mesh: &mut TriangleMesh) {
     }
     for _ in 0..8 {
         let before = defective_edge_count(mesh);
-        collapse_short_defective_edges(mesh);
-        mesh_ray::strip_membranes_once(mesh);
-        prune_redundant_patches(mesh);
-        snap_boundary_rails(mesh);
-        bridge_boundary_slits(mesh);
-        refill_defective_neighborhoods(mesh);
+        // Each pass is now answerable for the SHAPE it leaves, not only for
+        // the defect count and the enclosed volume. A pass that moves the
+        // boundary further than `SHAPE_TOLERANCE` is put back, however many
+        // defects it fixed: a slicer would rather have a reported crack than
+        // a silently different part.
+        //
+        // `strip_membranes_once` is the exception, and has to be: an interior
+        // membrane has no other surface coincident with it, so removing it
+        // legitimately "moves the boundary" by the membrane's own stand-off.
+        // It answers to `revert_unless_it_helps` instead — a real membrane's
+        // removal pairs edges, so it cannot raise the defect count.
+        guarded_pass(
+            mesh,
+            "collapse_short",
+            outcome,
+            collapse_short_defective_edges,
+        );
+        step(mesh, "collapse_short");
+        revert_unless_it_helps(mesh, |m: &mut TriangleMesh| {
+            mesh_ray::strip_membranes_once(m);
+        });
+        step(mesh, "strip_membranes");
+        guarded_pass(mesh, "prune_patches", outcome, prune_redundant_patches);
+        step(mesh, "prune_patches");
+        guarded_pass(mesh, "snap_rails", outcome, snap_boundary_rails);
+        step(mesh, "snap_rails");
+        guarded_pass(mesh, "bridge_slits", outcome, bridge_boundary_slits);
+        step(mesh, "bridge_slits");
+        guarded_pass(mesh, "refill", outcome, refill_defective_neighborhoods);
+        step(mesh, "refill");
         let after = defective_edge_count(mesh);
         if vol_ok(mesh) && after < best.0 {
             best = (after, mesh.clone());
