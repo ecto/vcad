@@ -57,6 +57,7 @@ pub mod gear;
 mod job;
 pub mod materials;
 mod operation;
+pub mod outline;
 pub mod post;
 mod tool;
 mod toolpath;
@@ -73,6 +74,11 @@ pub use operation::{
     tip_length, BreakThrough, CamOperation, CentreLineStretch, Contour, Contour2D, ContourPhase,
     ContourReport, ContourSegment, CutDirection, Drill, DrillCycle, DrillError, EntryStyle, Face,
     HelicalBore, Hole, Pocket2D, Point2D, Roughing3D, Spoilboard, Tab, ThinSlotStrategy,
+};
+pub use outline::{
+    compare_outlines, is_prismatic, read_dxf, section_at_z, silhouette_from_above, write_dxf,
+    CircleFit, Gap, Outline, OutlineDiff, OutlineError, PrismaticReport, Region, SectionOptions,
+    SimplifyOptions,
 };
 pub use tool::{
     check_flute_length, check_slot_ratio, check_stickout, check_tool_for_cut, has_error,
