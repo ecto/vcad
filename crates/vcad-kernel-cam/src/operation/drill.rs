@@ -1099,7 +1099,7 @@ mod tests {
 
     /// The error a refused operation returns.
     fn refusal(result: Result<Toolpath, DrillError>) -> DrillError {
-        result.err().expect("expected a refusal")
+        result.expect_err("expected a refusal")
     }
 
     fn close(a: f64, b: f64) -> bool {

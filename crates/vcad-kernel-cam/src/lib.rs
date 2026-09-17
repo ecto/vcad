@@ -52,6 +52,7 @@
 
 pub mod dropcutter;
 mod error;
+mod job;
 mod operation;
 pub mod post;
 mod tool;
@@ -59,6 +60,10 @@ mod toolpath;
 
 // Re-exports
 pub use error::CamError;
+pub use job::{
+    BlockRange, Job, JobError, JobOp, JobOperation, OpRole, Program, ProgramBlock, ProgramEnd,
+    ToolChangeStrategy, Wcs,
+};
 pub use operation::{
     tip_length, BreakThrough, CamOperation, Contour, Contour2D, ContourSegment, Drill, DrillCycle,
     DrillError, Face, HelicalBore, Hole, Pocket2D, Point2D, Roughing3D, Spoilboard, Tab,
