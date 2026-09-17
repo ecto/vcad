@@ -222,6 +222,30 @@ is to merge `main` into `claude/cam-roadmap` and re-measure, not to re-fix it
 here. Until then, any stator number quoted from this branch should be quoted
 with the run count.
 
+## What CI will show on the export shape guard
+
+The torture baseline (`crates/vcad-torture/baseline.json`) is
+platform-specific and deliberately untouched, so a PR carrying the export
+repair's shape guard will show these against it:
+
+| case | change | why |
+|---|---|---|
+| `chain-13` | bad-geometry → **pass** | its tessellation carries 0.0791 mm of sag, so the 0.032–0.067 mm repairs it needs are inside what the mesh can express and are no longer declined |
+| `rand-094`, `rand-098` | bad-geometry → **pass** | |
+| `chain-23` | pass → **bad-geometry**, 94 open boundary edges | **by design** |
+
+`chain-23` is the honest regression and should not be tuned away. Its export
+mesh is fine enough that its sag sits under the 0.02 mm floor, and the repair
+that used to close those 94 edges wanted to move the surface **0.0498 mm** —
+two and a half times what the mesh's own error can hide. The export now says
+"94 open edges, repair declined: would move the surface 0.050 mm" instead of
+quietly shipping a different part. The real fix for those edges is upstream in
+the boolean, not in the repair. (For scale: the *permissive* mesh-boolean path
+on the same case moves **1.97 mm**, over 6.12 % of the surface.)
+
+Making the floor sag-relative, or nudging it to 0.05 mm to admit this one
+move, would be tuning the rule to the corpus.
+
 ## Open item: the mesh fallback moves intermediate solids by millimetres
 
 Separate from the seam, and not addressed here. The mesh-boolean path repairs

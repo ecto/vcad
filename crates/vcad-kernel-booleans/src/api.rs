@@ -661,7 +661,9 @@ pub fn boolean_op_reported(
         && std::env::var_os("VCAD_NO_UNION_REFEREE").is_none()
     {
         if let Some((mesh_a, mesh_b)) = &operands {
-            if let Ok(alt) = mesh_fallback(mesh_a, mesh_b, op, &quadrics, true) {
+            if let Ok((alt, refinement_moved)) =
+                mesh_fallback_measured(mesh_a, mesh_b, op, &quadrics, true)
+            {
                 // The referee's question is "is there a WATERTIGHT solid that
                 // disagrees with the analytic one", so its reference is meshed
                 // under the permissive policy — the one that pursues
@@ -671,7 +673,8 @@ pub fn boolean_op_reported(
                 // twenty-times-cleaner test, and flipped the verdict on the
                 // twelve-post union. The solid it returns still exports
                 // strictly, as everything does.
-                let alt_mesh = manifold_reference_mesh(&alt, segments);
+                let (alt_mesh, reference_uncertainty) =
+                    reference_mesh_and_uncertainty(&alt, segments);
                 let alt_report = crate::mesh_report(&alt_mesh);
                 let brep_vol = crate::validate::mesh_signed_volume(&result_mesh).abs();
                 let alt_vol = alt_report.signed_volume.abs();
@@ -685,18 +688,32 @@ pub fn boolean_op_reported(
                 let watertight = alt_report.triangles > 0
                     && alt_report.open_edges.saturating_mul(20) <= result_open_edges
                     && alt_mesh.boundary_edges().len().saturating_mul(20) <= result_open_edges;
+                // What the verdict has to beat: tessellation slack, plus the
+                // volume the reference's own repair moved. A reference that
+                // had to invent 20 mm³ of itself to become watertight cannot
+                // convict anything of a 22 mm³ error.
+                let threshold = union_referee_slack(segments) * alt_vol
+                    + reference_uncertainty
+                    + refinement_moved;
                 if std::env::var_os("VCAD_BOOLEAN_WARN").is_some() {
                     eprintln!(
                         "vcad boolean: union referee: analytic {brep_vol:.1} (open {result_open_edges}) \
-                         vs mesh {alt_vol:.1} (open {}, raw boundary {})",
+                         vs mesh {alt_vol:.1} (open {}, raw boundary {}); disagreement {:.2} \
+                         against threshold {threshold:.2} (slack {:.2} + reference repair {reference_uncertainty:.2} + fallback refinement \
+                         {refinement_moved:.2})",
                         alt_report.open_edges,
-                        alt_mesh.boundary_edges().len()
+                        alt_mesh.boundary_edges().len(),
+                        (alt_vol - brep_vol).abs(),
+                        union_referee_slack(segments) * alt_vol,
                     );
                 }
                 if watertight
-                    && (alt_vol - brep_vol).abs() > union_referee_slack(segments) * alt_vol
+                    && (alt_vol - brep_vol).abs() > threshold
                     && !crate::validate::union_volume_out_of_bounds(&alt_mesh, mesh_a, mesh_b)
                 {
+                    if std::env::var_os("VCAD_BOOLEAN_WARN").is_some() {
+                        eprintln!("vcad boolean: union referee OVERRULED the analytic result");
+                    }
                     let mut report = BooleanReport::degraded(op, DegradeReason::VolumeDisagreement)
                         .with_result(&alt);
                     report.overused_edges = alt_report.overused_edges;
@@ -921,8 +938,25 @@ fn tessellation_sag(brep: &BRepSolid) -> Option<f64> {
 /// than move a part; a referee holding that mesh cannot tell a genuinely
 /// watertight alternative from one the guard declined to close.
 fn manifold_reference_mesh(alt: &BooleanResult, segments: u32) -> TriangleMesh {
+    reference_mesh_and_uncertainty(alt, segments).0
+}
+
+/// A referee's reference, and how much volume its own repair is worth.
+///
+/// The repair that makes this mesh watertight is the permissive one — it will
+/// move the surface as far as it takes. On the stator's twelve-post union it
+/// moved the reference 0.30 mm over 7% of its area to close 1567 defective
+/// edges. A reference altered that much cannot then convict an analytic
+/// result of a 22 mm³ (0.3%) disagreement: the disagreement is the same size
+/// as the damage in the yardstick.
+///
+/// So the damage is priced in the unit the verdict is given in. `|vol before
+/// the repair − vol after|` is exactly the volume the repair invented or
+/// destroyed, and a disagreement smaller than that says nothing.
+fn reference_mesh_and_uncertainty(alt: &BooleanResult, segments: u32) -> (TriangleMesh, f64) {
     let BooleanResult::BRep(brep) = alt;
     let mut mesh = tessellate_brep(brep.as_ref(), segments);
+    let before = mesh.clone();
     vcad_kernel_tessellate::repair_watertightness_with(
         &mut mesh,
         vcad_kernel_tessellate::RepairPolicy::manifold_at_any_cost(),
@@ -930,7 +964,49 @@ fn manifold_reference_mesh(alt: &BooleanResult, segments: u32) -> TriangleMesh {
     if crate::mesh::is_triangle_soup(brep.as_ref()) {
         QuadricCtx::collect(brep.as_ref(), brep.as_ref()).project_mesh(&mut mesh);
     }
-    mesh
+    // NOT the volume difference. Measured on the stator's twelve-post union,
+    // the repair moved 7% of the reference's surface by up to 0.30 mm and the
+    // enclosed volume did not change at all — it slid the boundary rather
+    // than adding or removing material, and the pass's own 1% volume guard
+    // makes that the normal case. Volume is blind to exactly the damage that
+    // matters here.
+    //
+    // Area x distance is not blind to it: how much of the surface moved,
+    // times how far. It is an upper bound on the volume that could have been
+    // displaced, and a bound is what a threshold wants — the referee should
+    // overrule only when the disagreement is larger than anything the
+    // reference's own surgery could account for.
+    let moved = vcad_kernel_tessellate::surface_move_report(&before, &mesh);
+    let area = mesh_surface_area(&mesh);
+    let uncertainty = area * moved.surface_lost.area_over[0] * moved.surface_lost.max;
+    (mesh, uncertainty)
+}
+
+/// Total triangle area of a mesh, mm².
+fn mesh_surface_area(mesh: &TriangleMesh) -> f64 {
+    let p = |i: u32| -> [f64; 3] {
+        let k = i as usize * 3;
+        [
+            mesh.vertices[k] as f64,
+            mesh.vertices[k + 1] as f64,
+            mesh.vertices[k + 2] as f64,
+        ]
+    };
+    let mut total = 0.0;
+    for t in mesh.indices.chunks(3) {
+        let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
+        let (u, v) = (
+            [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+            [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+        );
+        let cr = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        total += 0.5 * (cr[0] * cr[0] + cr[1] * cr[1] + cr[2] * cr[2]).sqrt();
+    }
+    total
 }
 
 /// Rail separation (mm) above which a crack counts as a genuine gap
@@ -1122,6 +1198,30 @@ fn mesh_fallback(
     quadrics: &QuadricCtx,
     refine: bool,
 ) -> Result<BooleanResult, BooleanError> {
+    mesh_fallback_measured(mesh_a, mesh_b, op, quadrics, refine).map(|(r, _)| r)
+}
+
+/// [`mesh_fallback`], and an upper bound on the volume its refinement moved.
+///
+/// The refinement repairs under `manifold_at_any_cost`, which on a real part
+/// slides the boundary by tenths of a millimetre over several percent of the
+/// surface. A caller that is about to use this result to JUDGE another one —
+/// the union referee — needs to know how much of its own answer it invented.
+///
+/// Not the volume difference: measured on the stator's twelve-post union the
+/// repair moved 7% of the surface by 0.30 mm and the enclosed volume did not
+/// change at all, because it slid the boundary rather than adding material
+/// (the pass's own 1% volume guard makes that the normal case). Area moved x
+/// distance moved is an upper bound on the volume that could have shifted,
+/// and a bound is what a threshold wants.
+fn mesh_fallback_measured(
+    mesh_a: &TriangleMesh,
+    mesh_b: &TriangleMesh,
+    op: BooleanOp,
+    quadrics: &QuadricCtx,
+    refine: bool,
+) -> Result<(BooleanResult, f64), BooleanError> {
+    let mut refinement_moved = 0.0f64;
     let mut out = crate::mesh::csg::mesh_csg(mesh_a, mesh_b, op);
     // First projection runs on the pristine topology: the constraint each
     // vertex lives under is read off its incident triangle normals, so it
@@ -1137,6 +1237,7 @@ fn mesh_fallback(
         // added volume (a chained pocket-and-slot part read 4% high).
         let unrefined = out.clone();
         let unrefined_boundary = out.boundary_edges().len();
+        let before_refinement = out.clone();
         crate::mesh::remove_interior_membranes_with(
             &mut out,
             vcad_kernel_tessellate::RepairPolicy::manifold_at_any_cost(),
@@ -1176,8 +1277,12 @@ fn mesh_fallback(
         // level because the passes between the projections interact: the
         // refinement must not hand back more raw boundary edges than the
         // plain fallback had.
+        let moved = vcad_kernel_tessellate::surface_move_report(&before_refinement, &out);
+        refinement_moved =
+            mesh_surface_area(&out) * moved.surface_lost.area_over[0] * moved.surface_lost.max;
         if out.boundary_edges().len() > unrefined_boundary {
             out = unrefined;
+            refinement_moved = 0.0;
         }
     }
     validate_boolean_result(&out).map_err(BooleanError::InvalidResult)?;
@@ -1189,7 +1294,7 @@ fn mesh_fallback(
     // fallback in a chain is the LAST time the surfaces are known, and
     // every subsequent cut re-shatters the quadric regions unrepaired.
     quadrics.stash_into(&mut brep.geometry);
-    Ok(BooleanResult::BRep(Box::new(brep)))
+    Ok((BooleanResult::BRep(Box::new(brep)), refinement_moved))
 }
 
 /// Analytic quadric carriers of the two operands, used to push the mesh
