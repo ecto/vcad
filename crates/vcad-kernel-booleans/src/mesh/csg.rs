@@ -830,15 +830,40 @@ pub fn mesh_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> 
 /// time keeps every intermediate a valid solid, so a failure is localised
 /// to the tool that caused it rather than surfacing at the end.
 pub fn manifold_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> TriangleMesh {
+    manifold_csg_reported(mesh_a, mesh_b, op).0
+}
+
+/// [`manifold_csg`], with what pursuing manifoldness cost the shape.
+///
+/// This path repairs under [`vcad_kernel_tessellate::RepairPolicy::
+/// manifold_at_any_cost`] — its contract is to return something that bounds a
+/// solid, and a caller that reached it has already accepted a degraded
+/// result. That is a trade, and this is where its price is legible:
+/// `RepairOutcome::surface_lost` says how far the mesh moved, where, and over
+/// how much of the area. Measured on the real parts, a single step of the
+/// shell ring moved 2.96 mm and the rana-60c shell 2.65 mm.
+pub fn manifold_csg_reported(
+    mesh_a: &TriangleMesh,
+    mesh_b: &TriangleMesh,
+    op: BooleanOp,
+) -> (TriangleMesh, vcad_kernel_tessellate::RepairOutcome) {
     let mut out = mesh_csg(mesh_a, mesh_b, op);
+    let before_repair = out.clone();
     // Strip double covers that `make_manifold` cannot see. Its cancellation
     // matches triangles by vertex set, which catches a patch and its exact
     // mirror but not two patches covering the same surface with *different*
     // triangulations — the shape a difference leaves where a tool's face
     // grazes an existing wall. This pass classifies by ray casting instead,
     // so the triangulations need not agree.
-    super::remove_interior_membranes(&mut out);
-    make_manifold(&out, DEFAULT_WELD_EPS)
+    super::remove_interior_membranes_with(
+        &mut out,
+        vcad_kernel_tessellate::RepairPolicy::manifold_at_any_cost(),
+    );
+    let result = make_manifold(&out, DEFAULT_WELD_EPS);
+    // Measured across the whole path — the membrane strip, its repair, and
+    // the weld — so the number is what the caller is actually holding.
+    let outcome = vcad_kernel_tessellate::surface_move_report(&before_repair, &result);
+    (result, outcome)
 }
 
 /// Pin the global orientation: a bounded solid — outer shells minus any

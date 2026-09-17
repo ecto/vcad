@@ -409,7 +409,15 @@ pub fn boolean_op_reported(
     // circles, which the cap splitter cannot partition.
     let mut sphere_unrepresentable = false;
     let result = brep_boolean(solid_a, solid_b, op, segments, &mut sphere_unrepresentable)?;
-    let result_mesh = result.to_mesh(segments);
+    // Measured, not exported. Every gate below — the volume checks, the
+    // open-edge counts, the referee — asks "what is the best this result can
+    // be", so it is repaired under the permissive policy, exactly as it was
+    // before the export path became strict. Meshing it strictly instead left
+    // legitimate results reading 174 open edges, which woke the referee and
+    // flipped the twelve-post union onto the mesh fallback. The shape guard
+    // belongs at the export boundary (`repair_export_mesh`), where a mesh
+    // actually leaves the kernel and becomes a part.
+    let result_mesh = manifold_reference_mesh(&result, segments);
 
     // Sound unconditionally: a bounded solid always has positive volume.
     let inverted = validate_boolean_result(&result_mesh).is_err();
@@ -654,7 +662,16 @@ pub fn boolean_op_reported(
     {
         if let Some((mesh_a, mesh_b)) = &operands {
             if let Ok(alt) = mesh_fallback(mesh_a, mesh_b, op, &quadrics, true) {
-                let alt_mesh = alt.to_mesh(segments);
+                // The referee's question is "is there a WATERTIGHT solid that
+                // disagrees with the analytic one", so its reference is meshed
+                // under the permissive policy — the one that pursues
+                // manifoldness — not the strict export policy that would
+                // rather leave a crack than move the part. Meshing it through
+                // the strict path instead left `alt` open, failed the
+                // twenty-times-cleaner test, and flipped the verdict on the
+                // twelve-post union. The solid it returns still exports
+                // strictly, as everything does.
+                let alt_mesh = manifold_reference_mesh(&alt, segments);
                 let alt_report = crate::mesh_report(&alt_mesh);
                 let brep_vol = crate::validate::mesh_signed_volume(&result_mesh).abs();
                 let alt_vol = alt_report.signed_volume.abs();
@@ -749,7 +766,26 @@ pub fn boolean_op_reported(
 /// Without the re-projection, a repair chasing a slit across a curved seam
 /// flattens it — measured 0.36 mm off a R25 sphere at 32 segments.
 pub fn repair_export_mesh(brep: &BRepSolid, mesh: &mut TriangleMesh) {
-    vcad_kernel_tessellate::repair_watertightness(mesh);
+    let _ = repair_export_mesh_reported(brep, mesh);
+}
+
+/// [`repair_export_mesh`], with the verdict.
+///
+/// This is the STRICT path — an STL a user machines from, the mesh the CAM
+/// section reads. A repair that would move the part further than
+/// `SHAPE_TOLERANCE` is declined and the caller is told, rather than handed a
+/// different solid that looks fine (native-app friction log item 30). Callers
+/// that would rather have manifoldness at any cost go through
+/// `RepairPolicy::manifold_at_any_cost`, as the mesh fallback does.
+pub fn repair_export_mesh_reported(
+    brep: &BRepSolid,
+    mesh: &mut TriangleMesh,
+) -> vcad_kernel_tessellate::RepairOutcome {
+    let policy = match tessellation_sag(brep) {
+        Some(sag) => vcad_kernel_tessellate::RepairPolicy::strict_for_sag(sag),
+        None => vcad_kernel_tessellate::RepairPolicy::strict(),
+    };
+    let outcome = vcad_kernel_tessellate::repair_watertightness_with(mesh, policy);
     // Re-projection is for triangle-soup fallback results only: they
     // stash their operands' quadric carriers precisely so a repair here
     // can be pulled back on-surface. An ANALYTIC B-rep's surface list
@@ -759,6 +795,142 @@ pub fn repair_export_mesh(brep: &BRepSolid, mesh: &mut TriangleMesh) {
     if crate::mesh::is_triangle_soup(brep) {
         QuadricCtx::collect(brep, brep).project_mesh(mesh);
     }
+    outcome
+}
+
+/// The chordal error this solid's tessellation already carries, in mm.
+///
+/// A triangle mesh approximates a curved surface to within its own sag, so a
+/// repair that moves it by less than that has not changed the shape in any
+/// sense the mesh could express — refusing such a repair buys nothing but
+/// open edges. The strict policy therefore holds passes to
+/// `clamp(sag, SHAPE_TOLERANCE, SHAPE_TOLERANCE_CAP)`, and this is the sag.
+///
+/// Measured on the B-rep rather than on the mesh, and on the FACE BOUNDARIES
+/// rather than the interior: every curved face's loops are sampled on the
+/// same grid the tessellator uses inside them, so the midpoint of a loop
+/// segment is exactly one chord's worth off the true surface. A straight
+/// edge of a curved face (a cylinder's vertical rail) has its midpoint on the
+/// surface and contributes nothing, which is correct.
+///
+/// Returns `None` for a solid with no curved faces — a planar part has no
+/// chordal error and stays on the floor.
+fn tessellation_sag(brep: &BRepSolid) -> Option<f64> {
+    // Every curved carrier the solid still knows about. For an analytic
+    // B-rep these are its faces' surfaces; for a triangle-soup result every
+    // face is a planar triangle, but the operands' quadrics are stashed in
+    // the geometry store (that is what `QuadricCtx` re-projects against), so
+    // the chordal error is still measurable — and a soup result is exactly
+    // the case where the mesh is coarsest and the floor most misleading.
+    let curved: Vec<&Box<dyn vcad_kernel_geom::Surface>> = brep
+        .geometry
+        .surfaces
+        .iter()
+        .filter(|s| s.surface_type() != vcad_kernel_geom::SurfaceKind::Plane)
+        .collect();
+    if curved.is_empty() {
+        return None;
+    }
+
+    // Distinct loop segments, deduplicated by vertex pair.
+    let mut segments: Vec<(Point3, Point3)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (_, face) in &brep.topology.faces {
+        let loops = std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied());
+        for lp in loops {
+            let vs: Vec<_> = brep
+                .topology
+                .loop_half_edges(lp)
+                .map(|he| brep.topology.half_edges[he].origin)
+                .collect();
+            for i in 0..vs.len() {
+                let (va, vb) = (vs[i], vs[(i + 1) % vs.len()]);
+                if va == vb {
+                    continue;
+                }
+                let key = if va < vb { (va, vb) } else { (vb, va) };
+                if !seen.insert(key) {
+                    continue;
+                }
+                segments.push((
+                    brep.topology.vertices[va].point,
+                    brep.topology.vertices[vb].point,
+                ));
+            }
+        }
+    }
+    if segments.is_empty() {
+        return None;
+    }
+    // A chord's sag is a property of the sampling grid, not of any one edge,
+    // so a sample is as good as the whole set on a part with thousands — and
+    // it has to be a sample: this runs on every export, a projection is not
+    // free, and the work is (curved carriers x segments). A soup result from
+    // a chained boolean carries tens of thousands of both, which is how the
+    // first version of this put the torture corpus's `chain-13` back over its
+    // 20 s budget.
+    const PROJECTION_BUDGET: usize = 6_000;
+    let stride = segments
+        .len()
+        .div_ceil((PROJECTION_BUDGET / curved.len().max(1)).max(1))
+        .max(1);
+
+    // How close a point must be to a carrier to count as lying on it.
+    const ON_SURFACE: f64 = 1e-6;
+    let deviation = |surface: &dyn vcad_kernel_geom::Surface, p: Point3| -> f64 {
+        let uv = crate::trim::project_point_to_uv(surface, &p);
+        (p - surface.evaluate(uv)).norm()
+    };
+
+    let mut worst: f64 = 0.0;
+    let mut measured = false;
+    'carriers: for surface in &curved {
+        let surface = surface.as_ref();
+        for &(a, b) in segments.iter().step_by(stride) {
+            // Past the cap the answer cannot change: the policy clamps there.
+            if worst >= vcad_kernel_tessellate::SHAPE_TOLERANCE_CAP {
+                break 'carriers;
+            }
+            let chord = (b - a).norm();
+            if chord < 1e-9 {
+                continue;
+            }
+            // Both ends have to sit ON this carrier, or the segment belongs
+            // to some other feature and its midpoint says nothing about how
+            // finely this one was sampled.
+            if deviation(surface, a) > ON_SURFACE || deviation(surface, b) > ON_SURFACE {
+                continue;
+            }
+            let sag = deviation(surface, a + (b - a) * 0.5);
+            // A midpoint that lands nowhere near the surface means the
+            // projection failed (a seam, a degenerate parameterisation);
+            // half the chord is the most a real sag can be.
+            if sag.is_finite() && sag <= 0.5 * chord {
+                worst = worst.max(sag);
+                measured = true;
+            }
+        }
+    }
+    measured.then_some(worst)
+}
+
+/// Tessellate a mesh-fallback result the way a REFEREE needs it: closed if
+/// the repair can close it, whatever that costs the shape.
+///
+/// The export path is the strict one and deliberately leaves a crack rather
+/// than move a part; a referee holding that mesh cannot tell a genuinely
+/// watertight alternative from one the guard declined to close.
+fn manifold_reference_mesh(alt: &BooleanResult, segments: u32) -> TriangleMesh {
+    let BooleanResult::BRep(brep) = alt;
+    let mut mesh = tessellate_brep(brep.as_ref(), segments);
+    vcad_kernel_tessellate::repair_watertightness_with(
+        &mut mesh,
+        vcad_kernel_tessellate::RepairPolicy::manifold_at_any_cost(),
+    );
+    if crate::mesh::is_triangle_soup(brep.as_ref()) {
+        QuadricCtx::collect(brep.as_ref(), brep.as_ref()).project_mesh(&mut mesh);
+    }
+    mesh
 }
 
 /// Rail separation (mm) above which a crack counts as a genuine gap
@@ -965,8 +1137,37 @@ fn mesh_fallback(
         // added volume (a chained pocket-and-slot part read 4% high).
         let unrefined = out.clone();
         let unrefined_boundary = out.boundary_edges().len();
-        crate::mesh::remove_interior_membranes(&mut out);
-        vcad_kernel_tessellate::repair_watertightness(&mut out);
+        crate::mesh::remove_interior_membranes_with(
+            &mut out,
+            vcad_kernel_tessellate::RepairPolicy::manifold_at_any_cost(),
+        );
+        // Permissive on purpose: this path's whole contract is to return
+        // something that bounds a solid, and a caller that reached the mesh
+        // fallback has already accepted a degraded result. The EXPORT path
+        // (`repair_export_mesh`) is the strict one — see
+        // `vcad_kernel_tessellate::RepairPolicy`.
+        //
+        // Not silent, though. What it cost is measured and logged, so the
+        // "manifold at any cost" trade is a number someone can look at
+        // rather than an assumption (native-app friction log item 30).
+        let repair = vcad_kernel_tessellate::repair_watertightness_with(
+            &mut out,
+            vcad_kernel_tessellate::RepairPolicy::manifold_at_any_cost(),
+        );
+        if repair.surface_lost.max > vcad_kernel_tessellate::SHAPE_TOLERANCE
+            && std::env::var_os("VCAD_REPAIR_TRACE").is_some()
+        {
+            eprintln!(
+                "mesh fallback repair moved the surface {:.4} mm at {:?} \
+                 ({:.2}% of the area past {:.3} mm); defects {} -> {}",
+                repair.surface_lost.max,
+                repair.surface_lost.at,
+                repair.surface_lost.area_over[0] * 100.0,
+                vcad_kernel_tessellate::SHAPE_TOLERANCE,
+                repair.defects_before,
+                repair.defects_after
+            );
+        }
         // Second projection pulls anything the repair moved back onto its
         // carrier. Vertices the repair did not move are already
         // on-surface, so a changed pinning decision cannot displace them.

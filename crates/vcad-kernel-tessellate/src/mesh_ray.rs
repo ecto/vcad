@@ -368,8 +368,15 @@ fn point_in_triangle_coplanar(p: &Point3, v0: &Point3, v1: &Point3, v2: &Point3)
 /// expose rims that the watertightness repair then re-pairs; triangles on
 /// the true boundary always have one probe outside and are never touched.
 pub fn remove_interior_membranes(mesh: &mut TriangleMesh) {
+    remove_interior_membranes_with(mesh, crate::RepairPolicy::strict());
+}
+
+/// [`remove_interior_membranes`] under an explicit [`crate::RepairPolicy`] —
+/// the re-pairing repair it triggers is the same one, and a caller whose
+/// contract is manifoldness at any cost has to say so here too.
+pub fn remove_interior_membranes_with(mesh: &mut TriangleMesh, policy: crate::RepairPolicy) {
     if strip_membranes_once(mesh) {
-        crate::repair_watertightness(mesh);
+        crate::repair_watertightness_with(mesh, policy);
     }
 }
 

@@ -3,7 +3,7 @@
 pub mod csg;
 
 pub use vcad_kernel_tessellate::mesh_ray::{
-    point_in_mesh, remove_interior_membranes, MeshRayIndex,
+    point_in_mesh, remove_interior_membranes, remove_interior_membranes_with, MeshRayIndex,
 };
 
 use std::collections::HashMap;
