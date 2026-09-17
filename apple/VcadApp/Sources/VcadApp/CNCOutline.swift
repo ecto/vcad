@@ -24,6 +24,25 @@ struct CNCLoop: Equatable {
         for p in points { r = r.union(CGRect(origin: p, size: .zero)) }
         return r
     }
+
+    /// The loop as a circle, when it is one.
+    ///
+    /// A DXF writes a hole as a tessellated polyline, so "this is a Ø2.5 pilot"
+    /// has to be read back off the points rather than trusted from a flag. The
+    /// test is the one that matters for machining: every point the same
+    /// distance from the centre, to within a fortieth of a millimetre or 1% of
+    /// the radius — anything looser and a slot mouth would pass as a bore.
+    var circle: (centre: CGPoint, diameter: Double)? {
+        guard points.count >= 8 else { return nil }
+        let n = Double(points.count)
+        let centre = CGPoint(x: points.reduce(0) { $0 + $1.x } / n,
+                             y: points.reduce(0) { $0 + $1.y } / n)
+        let radii = points.map { hypot($0.x - centre.x, $0.y - centre.y) }
+        guard let mean = radii.reduce(0, +) / n as Double?, mean > 1e-6 else { return nil }
+        let tolerance = max(0.025, mean * 0.01)
+        guard radii.allSatisfy({ abs($0 - mean) <= tolerance }) else { return nil }
+        return (centre, mean * 2)
+    }
 }
 
 /// An imported outline: one outer loop plus any holes, already translated so
@@ -32,9 +51,22 @@ struct CNCOutline: Equatable {
     var outer: CNCLoop
     var holes: [CNCLoop]
     var name: String
+    /// Where the stock frame's zero sits in the coordinates the outline was
+    /// drawn in. Friction-log item 47: the toolpath was drawn in the stock
+    /// frame while the part stayed where it was modelled, so the path floated
+    /// beside the solid instead of lying on it. Putting this back on the
+    /// overlay's root is what lands one on the other.
+    var origin: CGPoint = .zero
     /// Stock extents that just contain the outer loop.
     var width: Double { outer.bounds.width }
     var height: Double { outer.bounds.height }
+
+    /// Holes that are circles, by index, with their diameters.
+    var circularHoles: [(index: Int, centre: CGPoint, diameter: Double)] {
+        holes.enumerated().compactMap { index, hole in
+            hole.circle.map { (index, $0.centre, $0.diameter) }
+        }
+    }
 
     /// Parse every closed LWPOLYLINE in a DXF. Bulge arcs are not supported
     /// (export the outline pre-tessellated); a polyline carrying a bulge is
@@ -80,6 +112,6 @@ struct CNCOutline: Equatable {
         guard outer.bounds.width >= 0.01, outer.bounds.height >= 0.01 else {
             throw CNCError.message("\(name)'s outline is degenerate.")
         }
-        return CNCOutline(outer: outer, holes: holes, name: name)
+        return CNCOutline(outer: outer, holes: holes, name: name, origin: origin)
     }
 }

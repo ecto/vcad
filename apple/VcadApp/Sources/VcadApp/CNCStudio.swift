@@ -140,9 +140,18 @@ struct CNCStudioOutline: View {
                 Spacer(minLength: 0)
             }.font(.caption).padding(.horizontal, 12).padding(.bottom, 8)
             if let outline = cnc.outline {
-                Label("\(outline.name) · \(counted(outline.holes.count, "hole"))", systemImage: "scribble.variable")
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    .padding(.horizontal, 12).padding(.bottom, 8)
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("\(outline.name) · \(counted(outline.holes.count, "hole"))", systemImage: "scribble.variable")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    // Item 49: which holes the installed cutter cannot make is
+                    // answered again every time the tool changes, without a
+                    // re-import, because it is derived and never stored.
+                    ForEach(cnc.unmachinableHoles, id: \.index) { hole in
+                        Label("Ø \(hole.diameter.formatted(.number.precision(.fractionLength(0...2)))) hole · not machinable with T1 Ø \(cnc.toolDiameter.formatted())",
+                              systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange).lineLimit(2)
+                    }
+                }.padding(.horizontal, 12).padding(.bottom, 8)
             }
             if cnc.importedProgram != nil {
                 Button { cnc.useImportedJob() } label: {
@@ -155,28 +164,40 @@ struct CNCStudioOutline: View {
                 Divider().padding(.vertical, 8)
             }
             Eyebrow("Job setup").padding(Theme.Space.m)
-            item("Stock", detail: "\(cnc.stockWidth.formatted()) × \(cnc.stockHeight.formatted()) × \(cnc.stockThickness.formatted()) mm", symbol: "shippingbox", selection: .stock)
+            item("Stock", detail: "\(cnc.stockWidth.formatted()) × \(cnc.stockHeight.formatted()) × \(cnc.stockThickness.formatted()) mm · \(cnc.underStock.label)", symbol: "shippingbox", selection: .stock)
             item("Work origin", detail: "G54 · stock top", symbol: "move.3d", selection: .origin)
             item("Tool", detail: "T1 · Ø \(cnc.toolDiameter.formatted()) mm", symbol: "wrench.adjustable", selection: .tool)
             Divider().padding(.horizontal, 16).padding(.vertical, 8)
-            HStack {
+            HStack(spacing: Theme.Space.xs) {
                 Eyebrow("Operations")
                 Spacer()
+                // Reordering is on buttons, not only a drag or a context menu,
+                // so it can be reached from the keyboard.
+                Button { cnc.moveSelectedOperation(by: -1) } label: { Image(systemName: "arrow.up") }
+                    .disabled(!cnc.canMoveSelectedOperation(by: -1))
+                    .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                    .help("Move the selected operation up (⌥⌘↑)").accessibilityLabel("Move operation up")
+                Button { cnc.moveSelectedOperation(by: 1) } label: { Image(systemName: "arrow.down") }
+                    .disabled(!cnc.canMoveSelectedOperation(by: 1))
+                    .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                    .help("Move the selected operation down (⌥⌘↓)").accessibilityLabel("Move operation down")
                 Menu {
-                    ForEach(["face", "pocket", "profile"], id: \.self) { kind in
-                        Button(CNCOperation.name(kind)) { cnc.addOperation(kind) }
+                    ForEach([CNCOpKind.face, .pocket, .contourOutside], id: \.self) { kind in
+                        Button(CNCWorkspace.manualLabel(kind)) { cnc.addOperation(kind) }
                     }
                 } label: { Image(systemName: "plus") }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .help("Add operation").accessibilityLabel("Add operation")
                     .disabled(cnc.machine.active || cnc.generating)
-            }.padding(.horizontal, 18).padding(.bottom, 9)
+            }.buttonStyle(.borderless).controlSize(.small)
+                .padding(.horizontal, 18).padding(.bottom, 9)
             ScrollView {
                 VStack(spacing: 3) {
                     ForEach(cnc.operations) { operation in
                         item(operation.name,
-                             detail: operation.current ? "T1 · ~\(CNCWorkspace.durationLabel(operation.preview.duration))" : "T1 · needs generation",
-                             symbol: operation.symbol, selection: .operation(operation.id), current: operation.current)
+                             detail: operationDetail(operation),
+                             symbol: operation.symbol, selection: .operation(operation.id),
+                             status: status(of: operation))
                             .contextMenu {
                                 Button("Move up") { cnc.select(.operation(operation.id)); cnc.moveSelectedOperation(by: -1) }
                                 Button("Move down") { cnc.select(.operation(operation.id)); cnc.moveSelectedOperation(by: 1) }
@@ -189,13 +210,53 @@ struct CNCStudioOutline: View {
             }
             VStack(alignment: .leading, spacing: 8) {
                 Text("1 tool · \(counted(cnc.operations.count, "operation"))").font(.caption).foregroundStyle(.secondary)
-                if cnc.jobCurrent { Text("~\(CNCWorkspace.durationLabel(cnc.jobDuration)) estimated motion").font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
-                Button(cnc.generating ? "Generating…" : "Generate all") { cnc.generate(all: true) }
+                if cnc.jobCurrent {
+                    Text("~\(CNCWorkspace.durationLabel(cnc.jobDuration)) with acceleration")
+                        .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    Label(verdictLabel, systemImage: verdictSymbol)
+                        .font(.caption).foregroundStyle(verdictColour).lineLimit(2)
+                }
+                Button(cnc.generating ? "Building…" : cnc.jobCurrent ? "Rebuild job" : "Build job") { cnc.build() }
                     .frame(maxWidth: .infinity).disabled(cnc.generating || cnc.machine.active)
             }.padding(16)
         }.frame(width: Theme.Width.cncOutline)
     }
-    private func item(_ title: String, detail: String, symbol: String, selection: CNCSelection, current: Bool? = nil) -> some View {
+
+    private func operationDetail(_ operation: CNCOperation) -> String {
+        guard cnc.jobCurrent, operation.seconds > 0 else { return "T1 · not built" }
+        return "T1 · \(CNCWorkspace.durationLabel(operation.seconds))"
+    }
+    private var verdictLabel: String {
+        if !cnc.blockers.isEmpty { return "Refused · \(counted(cnc.blockers.count, "reason"))" }
+        if !cnc.verified { return "Not verified" }
+        let pending = cnc.unacknowledgedWarnings.count
+        return pending > 0 ? "\(counted(pending, "warning")) to acknowledge" : "Verified against the part"
+    }
+    private var verdictSymbol: String {
+        if !cnc.blockers.isEmpty { return "xmark.octagon.fill" }
+        if !cnc.verified { return "questionmark.circle" }
+        return cnc.unacknowledgedWarnings.isEmpty ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
+    }
+    private var verdictColour: Color {
+        if !cnc.blockers.isEmpty { return .red }
+        if !cnc.verified { return .secondary }
+        return cnc.unacknowledgedWarnings.isEmpty ? .green : .orange
+    }
+    /// What the tick on an operation row means. A refused job used to show a
+    /// green check on every operation, which reads as "all good" beside a
+    /// blocker — so the mark now says which cut the refusal is about.
+    enum CNCRowStatus { case none, built, warned, refused }
+
+    private func status(of operation: CNCOperation) -> CNCRowStatus {
+        guard cnc.jobCurrent else { return .none }
+        if cnc.blockers.contains(where: { $0.operationID == operation.id }) { return .refused }
+        if !cnc.blockers.isEmpty && cnc.operations.count == 1 { return .refused }
+        if cnc.warnings.contains(where: { $0.operationID == operation.id }) { return .warned }
+        return operation.ranges.isEmpty ? .none : .built
+    }
+
+    private func item(_ title: String, detail: String, symbol: String, selection: CNCSelection,
+                      status: CNCRowStatus = .none) -> some View {
         let selected = !cnc.usesImportedProgram && cnc.selection == selection && cnc.mode != .machine
         return Button { cnc.select(selection) } label: {
             HStack(spacing: 9) {
@@ -205,7 +266,18 @@ struct CNCStudioOutline: View {
                     Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
                 Spacer(minLength: 0)
-                if let current { Image(systemName: current ? "checkmark" : "circle.dotted").font(.caption).foregroundStyle(current ? Color.green : .secondary) }
+                switch status {
+                case .none: EmptyView()
+                case .built:
+                    Image(systemName: "checkmark").font(.caption).foregroundStyle(Color.green)
+                        .accessibilityLabel("built")
+                case .warned:
+                    Image(systemName: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(Color.orange)
+                        .accessibilityLabel("warning")
+                case .refused:
+                    Image(systemName: "xmark.octagon.fill").font(.caption).foregroundStyle(Color.red)
+                        .accessibilityLabel("refused")
+                }
             }.padding(.horizontal, 11).padding(.vertical, 7).frame(maxWidth: .infinity, alignment: .leading)
                 .selectableRow(selected: selected)
         }.buttonStyle(.plain).padding(.horizontal, 7).accessibilityAddTraits(selected ? .isSelected : [])
@@ -225,24 +297,6 @@ private struct CNCHeading: View {
     }
 }
 
-private struct CNCNumber: View {
-    var label: String
-    @Binding var value: Double
-    var unit = "mm"
-    var body: some View {
-        HStack {
-            Text(label).font(.callout)
-            Spacer(minLength: 5)
-            HStack(spacing: 5) {
-                TextField(label, value: $value, format: .number.precision(.fractionLength(0...3)))
-                    .multilineTextAlignment(.trailing).textFieldStyle(.roundedBorder).frame(width: 76)
-                    .font(.callout.monospaced()).accessibilityLabel(label)
-                Text(unit).font(.caption).foregroundStyle(.secondary).frame(minWidth: 18, alignment: .trailing)
-            }
-        }
-    }
-}
-
 struct CNCStudioViewportChrome: View {
     @Bindable var model: EditorModel
     private var cnc: CNCWorkspace { model.cnc }
@@ -253,9 +307,12 @@ struct CNCStudioViewportChrome: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(cnc.mode == .setup ? "Stock & work origin" : cnc.mode == .machine ? "Machine position" : cnc.previewTitle)
                         .font(.callout.weight(.medium))
-                    Text(cnc.mode == .machine ? (cnc.machine.demo ? "Simulated telemetry" : "Reported position · G54") : "T1 · Ø \(cnc.setup.diameter.formatted()) mm flat end mill")
+                    Text(cnc.mode == .machine ? (cnc.machine.demo ? "Simulated telemetry" : "Reported position · G54") : "T1 · Ø \(cnc.toolDiameter.formatted()) mm flat end mill")
                         .font(.caption).foregroundStyle(.secondary)
-                    if cnc.mode == .toolpaths && !cnc.current { Text("Setup changed · showing last generated path").font(.caption).foregroundStyle(.orange) }
+                    if cnc.mode == .toolpaths && !cnc.jobCurrent { Text("Setup changed · showing the last job that was built").font(.caption).foregroundStyle(.orange) }
+                    if cnc.mode == .toolpaths, cnc.jobCurrent, let first = cnc.blockers.first {
+                        Text(first.text).font(.caption).foregroundStyle(.red).lineLimit(3).frame(maxWidth: 420, alignment: .leading)
+                    }
                 }.allowsHitTesting(false)
                 Spacer()
                 Eyebrow(cnc.mode == .toolpaths ? "Path preview" : cnc.mode == .setup ? "Setup" : cnc.machine.demo ? "Simulated" : "Reported")
@@ -360,6 +417,9 @@ struct CNCStudioInspector: View {
         KeyValueRow("Tool", "one, installed by hand")
         Text("Preview assumes XYZ0 before the program establishes a position. Initial travel and fixtures are not verified.")
             .font(.caption).foregroundStyle(.secondary)
+        Divider()
+        CNCVerificationSection(cnc: cnc)
+        Divider()
         Button("Edit generated operations") { cnc.useGeneratedJob(); cnc.select(.operation(cnc.selectedOperation.id)) }
             .disabled(cnc.machine.active)
     }
@@ -369,62 +429,87 @@ struct CNCStudioInspector: View {
         Group {
             switch cnc.selection {
             case .operation:
-                if cnc.setup.isContour {
-                    Eyebrow("Contour")
-                    KeyValueRow("Points", "\(cnc.setup.contour.count)")
-                    KeyValueRow("Side", cnc.setup.operation == "contour_outside" ? "Outside" : "Inside")
-                    if cnc.setup.operation == "contour_outside" {
-                        Stepper(value: $cnc.setup.tabs, in: 0...12) { KeyValueRow("Holding tabs", "\(cnc.setup.tabs)") }
-                        if cnc.setup.tabs > 0 {
-                            CNCNumber(label: "Tab width", value: $cnc.setup.tabWidth)
-                            CNCNumber(label: "Tab height", value: $cnc.setup.tabHeight)
-                        }
-                    }
-                    Divider()
-                }
-                Eyebrow("Cut")
-                CNCNumber(label: "Cut depth", value: $cnc.setup.depth)
-                CNCNumber(label: "Stepdown", value: $cnc.setup.stepdown)
-                CNCNumber(label: "Stepover", value: $cnc.setup.stepover)
-                CNCNumber(label: "Clearance", value: $cnc.setup.clearance)
+                // The verdict comes first. It was below thirty settings, which
+                // is the same as not being there: on a refused job the only
+                // thing on screen was a form that looked fine.
+                CNCVerificationSection(cnc: cnc)
                 Divider()
-                Eyebrow("Feeds and speeds")
-                CNCNumber(label: "Cutting feed", value: $cnc.setup.feed, unit: "mm/min")
-                CNCNumber(label: "Plunge", value: $cnc.setup.plunge, unit: "mm/min")
-                CNCNumber(label: "Spindle", value: $cnc.setup.rpm, unit: "RPM")
+                Button(cnc.generating ? "Building…" : cnc.jobCurrent ? "Rebuild and check" : "Build and check the job") { cnc.build() }
+                    .disabled(cnc.machine.active || cnc.generating)
+                Divider()
+                CNCOperationInspector(cnc: cnc)
                 Divider()
                 Toggle("Show clearance plane", isOn: $cnc.showClearance)
-                Text("Vertical plunge · retract before XY travel\(cnc.setup.operation == "profile" ? " · no holding tabs" : "")")
-                    .font(.caption).foregroundStyle(.secondary)
-                Divider()
-                Button(cnc.generating ? "Generating…" : "Update toolpath") { cnc.generate() }
-                    .disabled(cnc.machine.active || cnc.generating)
-                Text(cnc.current ? "Toolpath up to date" : "Needs generation").font(.caption).foregroundStyle(.secondary)
             case .stock:
+                CNCSetupSummary(cnc: cnc)
+                Divider()
                 Eyebrow("Size")
                 CNCNumber(label: "Width · X", value: $cnc.stockWidth)
                 CNCNumber(label: "Length · Y", value: $cnc.stockHeight)
                 CNCNumber(label: "Thickness · Z", value: $cnc.stockThickness)
+                CNCNumber(label: "Margin round the part",
+                          value: Binding(get: { cnc.effectiveMargin }, set: { cnc.stockMargin = $0 }),
+                          help: "How far the blank stands proud of the part. The cutter runs a radius outside the profile, so it needs material to stand on.")
+                if cnc.stockMargin != nil {
+                    Button("Follow the cutter (\(cnc.automaticMargin.formatted()) mm)") { cnc.stockMargin = nil }
+                }
+                Divider()
+                Eyebrow("What is under the stock")
+                // Item 50: on a bare bed the only safe through-cut was one the
+                // user shortened by hand. Now the app knows, and refuses.
+                Picker("Under the stock", selection: Binding(
+                    get: { cnc.underStock.thickness == nil ? 0 : 1 },
+                    set: { cnc.underStock = $0 == 0 ? .machineBed : .spoilboard(cnc.underStock.thickness ?? 3) })) {
+                        Text("Machine bed").tag(0)
+                        Text("Spoilboard").tag(1)
+                    }.pickerStyle(.segmented).labelsHidden()
+                    .accessibilityLabel("What is under the stock")
+                if let thickness = cnc.underStock.thickness {
+                    CNCNumber(label: "Spoilboard thickness",
+                              value: Binding(get: { thickness }, set: { cnc.underStock = .spoilboard($0) }))
+                } else {
+                    Text("On a bare bed a cut may not break through, so an operation set to break through is refused.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Divider()
                 Toggle("Show stock", isOn: $cnc.showStock)
+                Toggle("Show cutter sweep", isOn: $cnc.showEnvelope)
                 Toggle("Show part", isOn: $cnc.showPart)
                 Button("Use model bounds") { placeFromModel(changeStock: true) }
                 Button("Set work origin") { cnc.select(.origin) }
-                Text("Stock top is Z0. Facing and profiles extend beyond the rectangle by the cutter radius.")
+                Text("Stock top is Z0 and work zero is the part's lower-left corner. The blank is drawn with its margin.")
                     .font(.caption).foregroundStyle(.secondary)
             case .origin:
+                CNCSetupSummary(cnc: cnc)
+                Divider()
                 Eyebrow("G54 in the model")
                 CNCNumber(label: "CAD X", value: $cnc.origin.x)
                 CNCNumber(label: "CAD Y", value: $cnc.origin.y)
                 CNCNumber(label: "CAD Z", value: $cnc.origin.z)
+                if let outline = cnc.outline {
+                    KeyValueRow("From the outline", "X \(Double(outline.origin.x).formatted()) · Y \(Double(outline.origin.y).formatted())")
+                }
+                KeyValueRow("Blank corner from zero",
+                            "X −\(cnc.effectiveMargin.formatted()) · Y −\(cnc.effectiveMargin.formatted()) mm")
                 Divider()
                 Button("Place at model top") { placeFromModel(changeStock: false) }
                 Toggle("Show clearance plane", isOn: $cnc.showClearance)
-                Text("Places G54 in the model. Set machine zero in the Machine dock.")
+                Text("Places G54 in the model, so the toolpath is drawn on the part rather than beside it. Set machine zero in the machine bar.")
                     .font(.caption).foregroundStyle(.secondary)
             case .tool:
+                CNCSetupSummary(cnc: cnc)
+                Divider()
                 Eyebrow("T1 · flat end mill")
                 CNCNumber(label: "Diameter", value: $cnc.toolDiameter)
+                Stepper(value: $cnc.toolFlutes, in: 1...6) { KeyValueRow("Flutes", "\(cnc.toolFlutes)") }
+                CNCNumber(label: "Flute length", value: $cnc.toolFluteLength,
+                          help: "Usable cutting length. Zero means undeclared, and the job cannot check the cut against it.")
+                CNCNumber(label: "Stickout", value: $cnc.toolStickout,
+                          help: "How far the tool stands out of the collet. Zero means undeclared, and holder clearance over the stock cannot be checked.")
+                if !cnc.unmachinableHoles.isEmpty {
+                    Text("\(counted(cnc.unmachinableHoles.count, "hole")) in this outline is too small for this cutter. Fit a smaller one and they come back on their own.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
                 Text("One installed centre-cutting tool for the entire job. Set feed and spindle speed per operation.")
                     .font(.caption).foregroundStyle(.secondary)
             }

@@ -80,7 +80,7 @@ final class CNCTests: XCTestCase {
         let root = try XCTUnwrap(parent.findEntity(named: "cncRoot"))
         XCTAssertTrue(root.isEnabled)
         XCTAssertNotNil(root.findEntity(named: "cncTool"))
-        workspace.setup.width += 10
+        workspace.stockWidth += 10
         XCTAssertFalse(workspace.current)
         workspace.overlay = false
         syncCNCOverlay(workspace, in: parent)
