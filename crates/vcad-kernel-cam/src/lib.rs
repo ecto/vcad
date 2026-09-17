@@ -24,13 +24,7 @@
 //! };
 //!
 //! // Create a facing operation
-//! let face = Face {
-//!     min_x: 0.0,
-//!     min_y: 0.0,
-//!     max_x: 100.0,
-//!     max_y: 50.0,
-//!     depth: 1.0,
-//! };
+//! let face = Face::new(0.0, 0.0, 100.0, 50.0, 1.0);
 //!
 //! let settings = CamSettings {
 //!     stepover: 4.0,
@@ -78,7 +72,8 @@ pub use job::{
 pub use operation::{
     tip_length, BreakThrough, CamOperation, CentreLineStretch, Contour, Contour2D, ContourPhase,
     ContourReport, ContourSegment, CutDirection, Drill, DrillCycle, DrillError, EntryStyle, Face,
-    HelicalBore, Hole, Pocket2D, Point2D, Roughing3D, Spoilboard, Tab, ThinSlotStrategy,
+    HelicalBore, Hole, Pocket2D, PocketReport, Point2D, Roughing3D, Spoilboard, Stepover, Tab,
+    ThinSlotStrategy, UncutPatch,
 };
 pub use outline::{
     compare_outlines, is_prismatic, read_dxf, section_at_z, silhouette_from_above, write_dxf,
