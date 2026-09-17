@@ -52,6 +52,7 @@
 
 pub mod dropcutter;
 mod error;
+pub mod materials;
 mod operation;
 pub mod post;
 mod tool;
@@ -59,6 +60,10 @@ mod toolpath;
 
 // Re-exports
 pub use error::CamError;
+pub use materials::{
+    check, material, materials, recommend, Machine, MachineClass, Material, MaterialsError, Note,
+    NoteLevel, OpKind, Recommendation, Spindle, ToolKind, ToolSpec,
+};
 pub use operation::{
     CamOperation, Contour, Contour2D, ContourSegment, Face, Pocket2D, Point2D, Roughing3D, Tab,
 };
