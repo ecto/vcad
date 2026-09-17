@@ -12,8 +12,14 @@
 //! 2. **Is that low enough?** The fillet tangency must sit below the lowest
 //!    point of contact on an external gear and above the highest on an
 //!    internal one, or the mating tip runs on the fillet.
-//!    [`Reachability`] reports the margin and the largest cutter that keeps it
-//!    positive — [`GearError`] is the answer when nothing does.
+//!    [`SpurGear::reachability_exact`] reports that margin and the largest
+//!    cutter that keeps it positive. But a radius crossing a line is not yet a
+//!    defect: what matters on a part is the *metal* the fillet leaves on the
+//!    active flank, which is quadratically smaller —
+//!    [`SpurGear::flank_deviation_at`] measures it along the flank normal and
+//!    [`SpurGear::reachability_within`] grades the same geometry against a
+//!    tolerance a machine can be held to. The reference ring overlaps by
+//!    0.034 mm of radius and 1.4 µm of metal; those are the same fact.
 //! 3. **What does the machine follow?** The tool-centre path is the exact
 //!    parallel curve of the flank, which for an involute is another involute
 //!    of the same base circle (see [`contour::tool_centre_path`]) — never a
@@ -57,7 +63,7 @@ mod report;
 
 pub mod contour;
 
-pub use cutter::{Reachability, RootBinding, ToothSpace};
+pub use cutter::{FilletEncroachment, Reachability, RootBinding, ToothSpace};
 pub use error::GearError;
 pub use measure::{Compensation, PinMeasurement, SpanMeasurement};
 pub use pair::{

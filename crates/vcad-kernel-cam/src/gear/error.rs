@@ -84,6 +84,10 @@ pub enum GearError {
     #[error("inverse involute has no solution for {0}")]
     InverseInvolute(f64),
 
+    /// A flank-deviation tolerance that is negative or not finite.
+    #[error("invalid flank deviation tolerance: {0} (must be >= 0)")]
+    InvalidFlankTolerance(f64),
+
     /// Cutter diameter is zero, negative or not finite.
     #[error("invalid cutter diameter: {0}")]
     InvalidCutterDiameter(f64),

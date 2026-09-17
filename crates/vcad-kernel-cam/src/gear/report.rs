@@ -67,6 +67,13 @@ pub struct GearReport {
     pub mouth_width: f64,
     /// Whether the involute survives the contact range, and by how much.
     pub reachability: Option<Reachability>,
+    /// Metal standing proud of the true involute at the contact limit, mm —
+    /// lifted out of `reachability` because it is the number a receipt is
+    /// claimed against.
+    pub flank_deviation_at_contact_limit: Option<f64>,
+    /// How far the fillet has eaten past the contact limit, in radius, mm.
+    /// Positive means it intrudes.
+    pub radial_overlap: Option<f64>,
     /// Predicted over/between-pins measurement.
     pub over_pins: Option<PinMeasurement>,
     /// Predicted base tangent measurement.
@@ -108,6 +115,8 @@ impl GearReport {
             space_width_at_form: space.space_width_at_form,
             mouth_width: space.mouth_width,
             reachability: None,
+            flank_deviation_at_contact_limit: None,
+            radial_overlap: None,
             over_pins: None,
             span: None,
             meshes: Vec::new(),
@@ -115,14 +124,38 @@ impl GearReport {
         })
     }
 
-    /// Add the reachability verdict against a contact limit.
+    /// Add the strict reachability verdict against a contact limit: the flank
+    /// has to be exactly involute everywhere contact happens.
     pub fn with_contact_limit(
         mut self,
         gear: &SpurGear,
         contact_limit: f64,
     ) -> Result<Self, GearError> {
-        self.reachability = Some(gear.reachability(self.cutter_diameter, contact_limit)?);
+        self.set_reachability(gear.reachability_exact(self.cutter_diameter, contact_limit)?);
         Ok(self)
+    }
+
+    /// Add the verdict taken at a stated flank-deviation tolerance — the one
+    /// to show a machinist, since it grades the metal left rather than the
+    /// radius crossed.
+    pub fn with_contact_tolerance(
+        mut self,
+        gear: &SpurGear,
+        contact_limit: f64,
+        max_flank_deviation: f64,
+    ) -> Result<Self, GearError> {
+        self.set_reachability(gear.reachability_within(
+            self.cutter_diameter,
+            contact_limit,
+            max_flank_deviation,
+        )?);
+        Ok(self)
+    }
+
+    fn set_reachability(&mut self, r: Reachability) {
+        self.flank_deviation_at_contact_limit = Some(r.flank_deviation_at_contact_limit);
+        self.radial_overlap = Some(r.radial_overlap);
+        self.reachability = Some(r);
     }
 
     /// Add the predicted pin measurement.
@@ -161,6 +194,27 @@ impl PlanetaryTrain {
     ///
     /// Order is sun, planet, ring.
     pub fn reports(&self, cutter_diameter: f64) -> Result<Vec<GearReport>, GearError> {
+        self.reports_graded(cutter_diameter, None)
+    }
+
+    /// The same three reports, graded at a flank-deviation tolerance instead of
+    /// demanding an exactly involute flank across contact.
+    ///
+    /// This is what a job sheet wants: the strict verdict answers "is this
+    /// geometry ideal", this one answers "will the part work on my machine".
+    pub fn reports_within(
+        &self,
+        cutter_diameter: f64,
+        max_flank_deviation: f64,
+    ) -> Result<Vec<GearReport>, GearError> {
+        self.reports_graded(cutter_diameter, Some(max_flank_deviation))
+    }
+
+    fn reports_graded(
+        &self,
+        cutter_diameter: f64,
+        max_flank_deviation: Option<f64>,
+    ) -> Result<Vec<GearReport>, GearError> {
         let mesh = self.mesh()?;
         let sp = self.sun_planet().contact_radii()?;
         let pr = self.planet_ring().contact_radii()?;
@@ -175,8 +229,14 @@ impl PlanetaryTrain {
             (self.ring, pr.wheel_highest, vec![mesh.planet_ring]),
         ] {
             let pin = gear.recommended_pin_diameter()?;
-            let mut r = GearReport::new(&gear, cutter_diameter)?
-                .with_contact_limit(&gear, limit)?
+            let graded = match max_flank_deviation {
+                Some(tol) => GearReport::new(&gear, cutter_diameter)?
+                    .with_contact_tolerance(&gear, limit, tol)?,
+                None => {
+                    GearReport::new(&gear, cutter_diameter)?.with_contact_limit(&gear, limit)?
+                }
+            };
+            let mut r = graded
                 .with_pin(&gear, pin)?
                 .with_span(&gear)?
                 .with_planetary(mesh);
@@ -192,6 +252,7 @@ impl PlanetaryTrain {
 #[cfg(test)]
 mod tests {
     use super::super::tests::{planet, ring, sun};
+    use super::super::FilletEncroachment;
     use super::*;
 
     #[test]
@@ -217,6 +278,60 @@ mod tests {
         assert!(reports[1].reachability.unwrap().ok);
         assert!(!reports[2].reachability.unwrap().ok);
         assert!(reports[2].reachability.unwrap().margin < 0.0);
+    }
+
+    /// The same train graded at 5 µm of flank deviation: the ring passes, and
+    /// the report carries both numbers so a reader can see why the two verdicts
+    /// differ without recomputing anything.
+    #[test]
+    fn graded_report_passes_the_ring_and_says_by_how_much() {
+        let train = PlanetaryTrain::new(sun(), planet(), ring(), 3);
+        let strict = train.reports(1.0).unwrap();
+        let graded = train.reports_within(1.0, 0.005).unwrap();
+
+        for (s, g) in strict.iter().zip(graded.iter()) {
+            // Same geometry, same numbers: only the verdict is graded.
+            assert_eq!(s.radial_overlap, g.radial_overlap);
+            assert_eq!(
+                s.flank_deviation_at_contact_limit,
+                g.flank_deviation_at_contact_limit
+            );
+            assert_eq!(s.form_radius, g.form_radius);
+        }
+        assert!(graded.iter().all(|r| r.reachability.unwrap().ok));
+        assert_eq!(
+            graded[2].reachability.unwrap().encroachment,
+            FilletEncroachment::WithinTolerance
+        );
+        assert_eq!(
+            strict[2].reachability.unwrap().encroachment,
+            FilletEncroachment::Exceeds
+        );
+        assert!((graded[2].radial_overlap.unwrap() - 0.033641).abs() < 1e-4);
+        assert!(
+            (graded[2].flank_deviation_at_contact_limit.unwrap() - 0.0013557).abs() < 1e-6,
+            "ring deviation {:?}",
+            graded[2].flank_deviation_at_contact_limit
+        );
+        // The externals are clear either way, with no deviation at all.
+        assert_eq!(graded[0].flank_deviation_at_contact_limit, Some(0.0));
+        assert_eq!(graded[1].flank_deviation_at_contact_limit, Some(0.0));
+        // And the tolerance the verdict was taken at is in the claim.
+        assert_eq!(
+            graded[2].reachability.unwrap().flank_deviation_tolerance,
+            Some(0.005)
+        );
+        assert_eq!(
+            strict[2].reachability.unwrap().flank_deviation_tolerance,
+            None
+        );
+
+        let json = serde_json::to_string(&graded).unwrap();
+        let back: Vec<GearReport> = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back[2].reachability.unwrap().encroachment,
+            FilletEncroachment::WithinTolerance
+        );
     }
 
     /// Every field that the fixture also carries agrees with it.
