@@ -50,6 +50,7 @@
 //! let gcode = post.generate("facing_op", &tool, &toolpath, &settings);
 //! ```
 
+pub mod arcfit;
 pub mod dropcutter;
 mod error;
 mod operation;
@@ -58,6 +59,7 @@ mod tool;
 mod toolpath;
 
 // Re-exports
+pub use arcfit::{fit_arcs, fit_arcs_reported, ArcFitOptions, ArcFitReport};
 pub use error::CamError;
 pub use operation::{
     CamOperation, Contour, Contour2D, ContourSegment, Face, Pocket2D, Point2D, Roughing3D, Tab,
