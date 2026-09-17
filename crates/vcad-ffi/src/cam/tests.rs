@@ -1285,3 +1285,60 @@ fn the_legacy_entry_point_is_unchanged() {
     let bad = CString::new("{}").unwrap();
     assert!(super::vcad_cam_generate(bad.as_ptr()).is_null());
 }
+
+/// The part this roadmap started with, solved by the kernel and sectioned
+/// through the C ABI. `VCAD_STATOR_VCAD` points at the evaluated document
+/// (`loon2vcad stator.loon`); the solve takes ~20 s, so it is opt-in.
+#[test]
+#[ignore = "needs VCAD_STATOR_VCAD and ~20 s"]
+fn the_real_stator_gives_its_own_contour() {
+    let Ok(path) = std::env::var("VCAD_STATOR_VCAD") else {
+        panic!("set VCAD_STATOR_VCAD");
+    };
+    let doc = std::fs::read_to_string(path).unwrap();
+    let scene = crate::vcad_scene_from_json(doc.as_ptr(), doc.len());
+    assert!(!scene.is_null(), "the stator has to evaluate");
+    let mut report = Vec::new();
+    for z in [11.4, 13.0, 14.1, 16.8] {
+        // `VCAD_STATOR_HEAL` (mm) loosens the default 1e-3 heal: until the
+        // tangent tab-corner seam is closed in the kernel the raw solid
+        // carries two 0.015 mm cracks, and the default rightly refuses them.
+        let heal = std::env::var("VCAD_STATOR_HEAL").ok();
+        let options = CString::new(match &heal {
+            Some(h) => format!("{{\"heal_tolerance\": {h}}}"),
+            None => "{}".to_string(),
+        })
+        .unwrap();
+        let raw = super::vcad_cam_outline_from_scene(scene, 0, z, 0, options.as_ptr());
+        let text = unsafe { CStr::from_ptr(raw) }.to_str().unwrap().to_string();
+        super::vcad_cam_free(raw);
+        let out: Value = serde_json::from_str(&text).unwrap();
+        if out.get("error").is_some() {
+            report.push(format!("z {z}: REFUSED {}", out["error"]));
+            continue;
+        }
+        let compare = call(
+            super::vcad_cam_compare_outline,
+            &json!({ "dxf": fixture("stator-outline.dxf"), "outline": out["outline"], "tolerance": 0.02 }),
+        );
+        report.push(format!(
+            "z {z}: {} | holes {} | circles {} | max boundary {:.5} mm | agrees {}",
+            out["mesh_source"],
+            out["outline"]["regions"][0]["holes"]
+                .as_array()
+                .map_or(0, Vec::len),
+            out["circles"].as_array().map_or(0, Vec::len),
+            f(&compare["diff"]["max_boundary_distance"]),
+            compare["agrees"]
+        ));
+    }
+    crate::vcad_scene_free(scene);
+    for line in &report {
+        println!("{line}");
+    }
+    assert!(
+        report.iter().all(|l| l.contains("agrees true")),
+        "the contour taken from the solid is not the part:\n{}",
+        report.join("\n")
+    );
+}
