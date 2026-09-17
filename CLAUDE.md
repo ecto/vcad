@@ -205,6 +205,11 @@ vcad/
 │   ├── vcad-kernel-assembly/      # Posed assemblies: mates (coaxial, planar-offset,
 │   │                              # pattern-phase), interference, exploded views
 │   ├── vcad-kernel-cam/           # 2.5D CAM toolpath generation + G-code post
+│   ├── vcad-cam-api/             # The CAM JSON request/response surface (job, verify,
+│   │                              # fit, outline, materials, gear). Pure Rust, compiles
+│   │                              # for wasm32 — ONE implementation behind the app's FFI,
+│   │                              # the browser's WASM and the MCP `cam` pack, so an agent
+│   │                              # and the app cannot disagree about whether a job is safe
 │   ├── vcad-kernel-stocksim/      # CAM stock sim (octree SDF) + toolpath verification oracle
 │   ├── vcad-kernel-topopt/        # SIMP topology optimization (voxel FEA + surface nets)
 │   ├── vcad-kernel/               # Unified kernel API
@@ -448,6 +453,27 @@ target/debug/vcad-render path/to/part.vcad > out.svg
 - `verify_part` / `list_eval_tasks` — grade the document against mecheval
   benchmark tasks via the official `mecheval-grade` binary (self-grading
   oracle; the benchmark harness excludes these during scored runs)
+- **`cam` pack** (`set_tool_packs({enable:["cam"]})`) — mill a part, and refuse
+  to hand over a program that does not make it. All six go through
+  `vcad-cam-api`, the same crate the native app's FFI calls, so an agent and
+  the app cannot disagree about whether a job is safe:
+  - `cam_outline` — section a part at Z/auto into the contours a job cuts:
+    regions, holes, fitted circle diameters, suggested stock thickness, and a
+    prismatic verdict measured in mm. Sections the **raw** tessellation of the
+    B-rep, never the repaired export mesh (0.4 mm of tear on the stator); a
+    section that does not close is refused with the gap positions. Names the
+    contours (`"outer"`, `"hole:0"`) so the points need not travel
+  - `cam_fit` — does this cutter fit? unreachable corners, metal left, and the
+    largest cutter that would
+  - `cam_recommend_feeds` — feeds, speeds, stepdown, stepover, and the router
+    dial to set by hand (on a trim router the `S` word does nothing)
+  - `cam_job` — post a whole job and verify it before returning it. **A refusal
+    carries `blocked: true` and no G-code anywhere in the result**; a pass
+    returns the program as an artifact with the check summary, op table and
+    cycle time
+  - `cam_verify_gcode` — replay a program you already have against the part
+  - `cam_gear` — involute gear geometry, over-pins measurement, and the cutter
+    offset a measured reading implies
 - `create_robot_env` — create physics simulation from assembly
 - `gym_step` — step simulation with torque/position/velocity actions
 - `gym_reset` — reset simulation to initial state

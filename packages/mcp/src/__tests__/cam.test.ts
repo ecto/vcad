@@ -22,7 +22,7 @@ import { Engine } from "@vcad/engine";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "../server.js";
-import { documents } from "../tools/session.js";
+import { documents, getSession } from "../tools/session.js";
 
 interface ToolCallResult {
   content: Array<{ type: string; text: string }>;
@@ -381,6 +381,56 @@ describe.skipIf(!hasCam)("cam_outline", () => {
     // Compact by default: the names travel, the four hundred points do not.
     expect(regions[0].outer).toBeUndefined();
     expect(body.contour_names).toEqual(["outer", "hole:0", "hole:1", "hole:2"]);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("agrees with the export mesh on a part simple enough for them to agree", async () => {
+    // Read this one for what it does NOT prove.
+    //
+    // `cam_outline` sections the B-rep's raw tessellation and says so in
+    // `mesh_source`. Asserting that string only checks the label — a
+    // deliberate mutation that sectioned `to_mesh()` while still reporting
+    // "raw_tessellation" passed every test in this file, because on a plate
+    // with three round holes the repair pass has nothing to move and the two
+    // meshes section to the same contour: identical area to five decimals,
+    // identical fitted diameters, identical fit errors.
+    //
+    // The 0.4 mm divergence that motivates the raw path needs a part where
+    // repair really does move vertices — tangent fillets meeting, as on the
+    // stator, which is a ~20 s kernel solve and lives in the Rust fixtures.
+    //
+    // What this test IS: the regression guard that they agree here. A simple
+    // prismatic boolean sectioning differently through the two paths would
+    // mean one of them has broken, and that is worth catching cheaply.
+    const { client, server } = await connect();
+    const docId = await makeDoc(client, PLATE);
+
+    const raw = bodyOf(
+      (await client.callTool({
+        name: "cam_outline",
+        arguments: { document_id: docId },
+      })) as ToolCallResult,
+    );
+    expect(raw.mesh_source).toBe("raw_tessellation");
+
+    // The export mesh, as the evaluated scene hands it to JavaScript.
+    const mesh = engine.evaluate(getSession(docId)).parts[0].mesh!;
+    const exported = engine.camOutlineFromMesh<Json>({
+      positions: Array.from(mesh.positions),
+      indices: Array.from(mesh.indices),
+      auto_z: true,
+    });
+    expect(exported.error).toBeUndefined();
+    expect(exported.mesh_source).toBe("inline");
+
+    expect(exported.area as number).toBeCloseTo(raw.area_mm2 as number, 4);
+    const diameters = (o: Json[]) =>
+      o.map((c) => Number((c.diameter as number).toFixed(4))).sort((a, b) => b - a);
+    expect(diameters(exported.circles as Json[])).toEqual(
+      diameters(raw.circles as Json[]),
+    );
 
     await client.close();
     await server.close();
