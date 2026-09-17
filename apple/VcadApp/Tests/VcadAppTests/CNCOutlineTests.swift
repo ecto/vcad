@@ -85,6 +85,21 @@ final class CNCOutlineTests: XCTestCase {
         }
     }
 
+    /// Entering the stock thickness after importing the outline must not leave
+    /// the contours cutting to the thickness that was there at import.
+    func testThroughCutsFollowTheStockThickness() throws {
+        let cnc = CNCWorkspace()
+        let square = "0\nLWPOLYLINE\n70\n1\n10\n0\n20\n0\n10\n40\n20\n0\n10\n40\n20\n40\n10\n0\n20\n40\n0\nEOF\n"
+        try cnc.importOutline(try CNCOutline.parseDXF(square, name: "square.dxf"))
+        XCTAssertEqual(cnc.operations.map(\.setup.depth), [10])
+        cnc.stockThickness = 6
+        XCTAssertEqual(cnc.operations.map(\.setup.depth), [6])
+        // A depth the user set by hand is theirs.
+        cnc.setup.depth = 2
+        cnc.stockThickness = 8
+        XCTAssertEqual(cnc.operations.map(\.setup.depth), [2])
+    }
+
     /// The real part: the rana stator outline, when `VCAD_STATOR_DXF` points at it.
     func testStatorOutlineGeneratesWithTabs() async throws {
         guard let path = ProcessInfo.processInfo.environment["VCAD_STATOR_DXF"],
@@ -104,5 +119,9 @@ final class CNCOutlineTests: XCTestCase {
         print("STATOR CAM: \(String(format: "%.1f", Date().timeIntervalSince(t0))) s, moves \(cnc.operations.map { $0.program?.moves.count ?? 0 }), est \(CNCWorkspace.durationLabel(cnc.jobDuration))")
         XCTAssertNil(cnc.error)
         XCTAssertTrue(cnc.jobCurrent)
+        // `VCAD_STATOR_GCODE_OUT` keeps the job so it can be checked outside the app.
+        if let out = ProcessInfo.processInfo.environment["VCAD_STATOR_GCODE_OUT"] {
+            try XCTUnwrap(cnc.jobCode).write(toFile: out, atomically: true, encoding: .utf8)
+        }
     }
 }

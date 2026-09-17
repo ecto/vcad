@@ -1,0 +1,9 @@
+{
+  "id": "2026-09-17-contour-cam-side-and-tabs",
+  "version": "0.10.0",
+  "date": "2026-09-17",
+  "category": "fix",
+  "title": "Inside contours cut inside; holding tabs hold",
+  "summary": "Inside contour toolpaths were offset outward, into the part. Tabs now survive every pass at their stated width, avoid notches and corners, and cut depth follows stock thickness.",
+  "features": ["cam", "native-app", "manufacture"]
+}

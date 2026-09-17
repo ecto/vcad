@@ -90,6 +90,7 @@ struct CNCStudioMacros: View {
         }.controlSize(.small).padding(.horizontal, 18).padding(.bottom, 12)
             .confirmationDialog("Run macro \(pending?.name ?? "")?", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
                 if let macro = pending { Button("Send command") { cnc.setupConfirmed = false; cnc.machine.sendMDI(macro.command); pending = nil } }
+                Button("Cancel", role: .cancel) {}.keyboardShortcut(.defaultAction)
             } message: { Text(pending?.command ?? "") }
     }
 }
