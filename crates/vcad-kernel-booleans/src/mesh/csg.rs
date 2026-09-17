@@ -321,7 +321,7 @@ impl Membership {
     fn new(mesh: &TriangleMesh) -> Self {
         let shifted = |k: usize| {
             let mut m = mesh.clone();
-            for v in m.vertices.chunks_exact_mut(3) {
+            for v in m.vertices.as_chunks_mut::<3>().0 {
                 v.rotate_left(k);
             }
             m
