@@ -861,15 +861,17 @@ mod tests {
         let v2 = verify_gcode(gcode, &spec, &V2::default()).unwrap();
         assert!(v2.gouge.pass, "the 2D oracle finds no gouge");
         assert_eq!(v2.gouge.worst, 0.0);
-        // It does find leftover metal on the walls — the slot wedges the
-        // Ø2 cutter cannot clean out.
-        assert!(!v2.material_left.check.pass);
-        let left_2d_mm3 = v2.material_left.unswept_area * 0.8;
-        assert!(
-            (v2.material_left.unswept_area - 26.29).abs() < 0.5,
-            "2D unswept {}",
-            v2.material_left.unswept_area
-        );
+        assert!(v2.rapids.pass);
+
+        // What the 2D oracle says is still standing in the stock, by plan
+        // area: wall band it never swept, plus every piece it says the job
+        // frees. Contour-cutting the bore-and-slots loop drops a slug out of
+        // the bore and a wedge out of each of the twelve slots; the slug is
+        // 700-odd mm² and the wedges 5.67 mm² each.
+        assert_eq!(v2.loose.pieces.len(), 13, "one slug and twelve wedges");
+        let slug = v2.loose.pieces[0].area; // pieces come largest first
+        let wedges: f64 = v2.loose.pieces[1..].iter().map(|p| p.area).sum();
+        assert!(slug > 100.0 * (wedges / 12.0), "the slug is the bore");
 
         // --- 3D ---------------------------------------------------------
         let tp = toolpath_from_gcode(gcode);
@@ -923,27 +925,44 @@ mod tests {
         assert!(v3.resolution.min_detectable_depth < 0.35);
         assert_eq!(v3.motion_segments, 7580);
 
-        // 2. Leftover material inside the band agrees with the 2D oracle in
-        //    magnitude. Voxels cannot match an exact polygon area, but they
-        //    must land in the same order of magnitude or one of them is
-        //    measuring something else.
+        // 2. Both oracles account for the same standing metal, and the band
+        //    sorts it the way the 2D oracle's own categories do. The twelve
+        //    slot wedges sit inside the slots, within the 2 mm band; the bore
+        //    slug is 15 mm from any wall, so it lands outside it.
+        //
+        //    Comparing *volumes* rather than verdicts is deliberate. The same
+        //    metal can be booked as unswept wall band or as a freed piece
+        //    depending on how the band geometry is read, and `material_left`
+        //    has changed its mind about that; the volume standing in the
+        //    stock has not. `unswept_area` is a subset of the wedges, never a
+        //    separate lump, so it is checked as a bound rather than summed.
+        let t = 0.8; // copper thickness
         let left_3d = v3.material_left.in_band_volume;
+        let wedges_mm3 = wedges * t;
         assert!(
-            left_3d > 0.25 * left_2d_mm3 && left_3d < 4.0 * left_2d_mm3,
-            "3D leftover {left_3d:.2} mm³ vs 2D {left_2d_mm3:.2} mm³"
+            (left_3d - wedges_mm3).abs() < 0.2 * wedges_mm3,
+            "3D says {left_3d:.2} mm³ standing within {} mm of the part; the twelve slot \
+             wedges the 2D oracle frees are {wedges_mm3:.2} mm³",
+            v3.material_left.band
+        );
+        assert!(
+            v2.material_left.unswept_area * t <= left_3d * 1.25,
+            "whatever the 2D oracle books as unswept wall ({:.2} mm²) is part of the \
+             same metal, not extra",
+            v2.material_left.unswept_area
         );
 
-        // 3. The waste frame and the freed slugs are stock, not a defect —
-        //    and the report says how much of it there is rather than
-        //    silently dropping it.
+        // 3. The bore slug is stock, not a defect: it is beyond the band, and
+        //    the report gives its volume rather than dropping it.
+        let beyond = v3.material_left.beyond_band_volume;
         assert!(
-            v3.material_left.beyond_band_volume > 5.0 * left_3d,
-            "the waste frame and the freed slugs dwarf what is left on the walls"
+            (beyond - slug * t).abs() < 0.25 * slug * t,
+            "3D says {beyond:.1} mm³ beyond the band; the bore slug is {:.1} mm³",
+            slug * t
         );
         assert!(v3.material_left.worst_standoff > 10.0);
 
         // 4. Rapids: the 2D oracle finds none unsafe, and neither does this.
-        assert!(v2.rapids.pass);
         assert_eq!(v3.rapids.through_material, 0);
         assert_eq!(v3.rapids.below_safe_height, 0);
 
