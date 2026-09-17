@@ -52,18 +52,24 @@
 
 pub mod dropcutter;
 mod error;
+pub mod fit;
 mod operation;
 pub mod post;
 mod tool;
 mod toolpath;
+pub mod verify2d;
 
 // Re-exports
 pub use error::CamError;
+pub use fit::{fit_contour, ContourSide, FitOptions, FitReport};
 pub use operation::{
     CamOperation, Contour, Contour2D, ContourSegment, Face, Pocket2D, Point2D, Roughing3D, Tab,
 };
 pub use tool::{Tool, ToolEntry, ToolHolder, ToolLibrary};
 pub use toolpath::{ArcDir, ArcPlane, CoolantMode, SpindleDir, Toolpath, ToolpathSegment};
+pub use verify2d::{
+    verify_gcode, verify_toolpath, JobSpec, JobVerification, PartRegion, VerifyOptions,
+};
 
 use serde::{Deserialize, Serialize};
 
