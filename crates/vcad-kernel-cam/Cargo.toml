@@ -23,5 +23,3 @@ geo-clipper = "0.8"
 
 [features]
 default = []
-# Use native geo-clipper when available (non-WASM)
-native-offset = []
