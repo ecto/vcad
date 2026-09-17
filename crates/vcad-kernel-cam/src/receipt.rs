@@ -565,24 +565,23 @@ pub fn job_claims(v: &JobVerification, spec: &JobSpec, opts: &VerifyOptions) -> 
         .fold(f64::INFINITY, f64::min);
     let declared = spec.declared_tabs.len();
     if t.observations.is_empty() && declared == 0 {
-        for name in ["job.tabs", "job.tabs_hold"] {
-            out.push(
-                Claim::new(
-                    name,
-                    "mm",
-                    "tabs hold the part until the job is done",
-                    if name == "job.tabs" {
-                        Basis::Computed
-                    } else {
-                        Basis::Predicted
-                    },
-                    deps,
-                )
-                .unverified(
-                    "the job declares no tabs and the moves show none — there is nothing \
+        for (name, note, basis) in [
+            (
+                "job.tabs",
+                "every tab leaves at least the stated metal, and every pass that \
+                 goes below a tab steps over it",
+                Basis::Computed,
+            ),
+            (
+                "job.tabs_hold",
+                "the tabs carry the part through the last pass without it moving",
+                Basis::Predicted,
+            ),
+        ] {
+            out.push(Claim::new(name, "mm", note, basis, deps).unverified(
+                "the job declares no tabs and the moves show none — there is nothing \
                      to audit, which is not the same as tabs that hold",
-                ),
-            );
+            ));
         }
     } else {
         let audit = Claim::new(
