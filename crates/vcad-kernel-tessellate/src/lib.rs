@@ -7444,15 +7444,71 @@ pub const SHAPE_TOLERANCE: f64 = 0.02;
 pub struct RepairPolicy {
     /// How far a single pass may move the boundary before it is reverted, mm.
     pub max_surface_move: f64,
+    /// Where that number came from, for the report.
+    pub tolerance_basis: ToleranceBasis,
 }
 
+/// Why a strict policy settled on the tolerance it did.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum ToleranceBasis {
+    /// The mesh carries less chordal error than [`SHAPE_TOLERANCE`], or none
+    /// could be measured (a planar-only part, or no B-rep to measure against).
+    #[default]
+    Floor,
+    /// The tessellation's own worst chordal sag, in mm — the mesh already
+    /// approximates the surface by this much, so a repair that stays inside
+    /// it has not changed the shape in any sense the mesh can express.
+    TessellationSag(f64),
+    /// The sag exceeded [`SHAPE_TOLERANCE_CAP`] and the per-pass limit was
+    /// clamped to it; the measured sag is carried so the net check can still
+    /// use it. A mesh that coarse cannot license unlimited surgery in one
+    /// step, but it also cannot testify that a sub-sag change altered the
+    /// part.
+    Cap(f64),
+    /// No limit: [`RepairPolicy::manifold_at_any_cost`].
+    Unbounded,
+}
+
+/// Ceiling on the sag-derived per-pass tolerance, mm.
+///
+/// A very coarse tessellation carries a large chordal error, but "the mesh is
+/// a poor approximation" is not a licence for one pass to move the part
+/// arbitrarily. 0.1 mm is five times the floor and the scale at which a
+/// machinist reading a 0.02 mm section gate would call the part different.
+pub const SHAPE_TOLERANCE_CAP: f64 = 0.1;
+
 impl RepairPolicy {
-    /// What a user manufactures from: the part must survive intact, and a
-    /// mesh that cannot be closed within [`SHAPE_TOLERANCE`] comes back
-    /// un-repaired with the reason attached.
+    /// What a user manufactures from, with no measurement of the mesh's own
+    /// chordal error available: the floor.
     pub fn strict() -> Self {
         Self {
             max_surface_move: SHAPE_TOLERANCE,
+            tolerance_basis: ToleranceBasis::Floor,
+        }
+    }
+
+    /// Strict, told how far the tessellation already departs from the true
+    /// surface.
+    ///
+    /// A triangle mesh approximates its surface to within its own chordal
+    /// sag, so a repair that moves it by less than that has not changed the
+    /// shape in any sense the mesh could express — and refusing such a repair
+    /// buys nothing but open edges. Below [`SHAPE_TOLERANCE`] the floor
+    /// applies (round-off is not a licence either); above
+    /// [`SHAPE_TOLERANCE_CAP`] the per-pass limit is clamped.
+    pub fn strict_for_sag(sag: f64) -> Self {
+        if !(sag.is_finite() && sag > SHAPE_TOLERANCE) {
+            return Self::strict();
+        }
+        if sag > SHAPE_TOLERANCE_CAP {
+            return Self {
+                max_surface_move: SHAPE_TOLERANCE_CAP,
+                tolerance_basis: ToleranceBasis::Cap(sag),
+            };
+        }
+        Self {
+            max_surface_move: sag,
+            tolerance_basis: ToleranceBasis::TessellationSag(sag),
         }
     }
 
@@ -7462,6 +7518,23 @@ impl RepairPolicy {
     pub fn manifold_at_any_cost() -> Self {
         Self {
             max_surface_move: f64::INFINITY,
+            tolerance_basis: ToleranceBasis::Unbounded,
+        }
+    }
+
+    /// How far the FINISHED mesh may be from the one handed in, mm.
+    ///
+    /// Larger than the per-pass limit when the cap is what clamped it, and
+    /// deliberately so. The two limits answer different questions: no single
+    /// pass may do something wild, but whether the result is still the same
+    /// part is a question the mesh can only answer to its own chordal
+    /// precision — a mesh carrying 1.2 mm of sag cannot tell you that 0.24 mm
+    /// of repair changed the shape, and declining on its behalf just ships
+    /// open edges (the torture corpus's deliberately coarse `chain-09`).
+    pub fn net_surface_move(&self) -> f64 {
+        match self.tolerance_basis {
+            ToleranceBasis::Cap(sag) => sag.max(self.max_surface_move),
+            _ => self.max_surface_move,
         }
     }
 }
@@ -7494,6 +7567,10 @@ pub struct RepairOutcome {
     /// The other direction: surface the repair invented, measured against
     /// what it was given. A hole fill lands here by design.
     pub surface_added: crate::clearance::SurfaceMove,
+    /// The per-pass tolerance this run held passes to, mm.
+    pub tolerance: f64,
+    /// Where that tolerance came from.
+    pub tolerance_basis: ToleranceBasis,
 }
 
 impl RepairOutcome {
@@ -7560,29 +7637,23 @@ fn guarded_pass(
     *mesh = before;
 }
 
-/// As [`revert_unless_it_helps`], but only under a policy that cares about
-/// the shape. A `manifold_at_any_cost` caller wants the old behaviour, where
-/// an individually-regressive pass is allowed to set up a better final state
-/// and the iteration's own accept/reject decides — which is what the
-/// shell-ring corpus was calibrated on.
+/// A pass that runs OUTSIDE the accept/reject loop, where nothing can undo
+/// it, held to the same bar as one inside.
+///
+/// A `manifold_at_any_cost` caller wants the old behaviour — the pass runs
+/// raw, and an individually-regressive one is allowed to set up a better
+/// final state, which is what the shell-ring corpus was calibrated on.
 fn revert_unless_it_helps_under(
     mesh: &mut TriangleMesh,
+    label: &'static str,
     policy: RepairPolicy,
+    outcome: &mut RepairOutcome,
     pass: impl FnOnce(&mut TriangleMesh),
 ) {
     if policy.max_surface_move.is_finite() {
-        revert_unless_it_helps(mesh, pass);
+        guarded_pass(mesh, label, policy, outcome, pass);
     } else {
         pass(mesh);
-    }
-}
-
-fn revert_unless_it_helps(mesh: &mut TriangleMesh, pass: impl FnOnce(&mut TriangleMesh)) {
-    let before_defects = defective_edge_count(mesh);
-    let before = mesh.clone();
-    pass(mesh);
-    if defective_edge_count(mesh) > before_defects {
-        *mesh = before;
     }
 }
 
@@ -7603,6 +7674,24 @@ pub fn repair_watertightness_reported(mesh: &mut TriangleMesh) -> RepairOutcome 
     repair_watertightness_with(mesh, RepairPolicy::strict())
 }
 
+/// Measure what happened between two states of a mesh, as a [`RepairOutcome`].
+///
+/// For callers that repair across several steps and want one number for the
+/// lot — the mesh boolean's strip, repair and weld, say — rather than the
+/// outcome of a single `repair_watertightness_with`.
+pub fn surface_move_report(before: &TriangleMesh, after: &TriangleMesh) -> RepairOutcome {
+    let thresholds = [SHAPE_TOLERANCE, 5.0 * SHAPE_TOLERANCE];
+    RepairOutcome {
+        defects_before: defective_edge_count(before),
+        defects_after: defective_edge_count(after),
+        declined: Vec::new(),
+        surface_lost: crate::clearance::deviation_stats(before, after, thresholds),
+        surface_added: crate::clearance::deviation_stats(after, before, thresholds),
+        tolerance: f64::INFINITY,
+        tolerance_basis: ToleranceBasis::Unbounded,
+    }
+}
+
 /// [`repair_watertightness_reported`] under an explicit [`RepairPolicy`].
 ///
 /// The final `surface_lost` / `surface_added` are measured whatever the
@@ -7621,6 +7710,8 @@ pub fn repair_watertightness_with(mesh: &mut TriangleMesh, policy: RepairPolicy)
     let entry = mesh.clone();
     let mut outcome = RepairOutcome {
         defects_before: defective_edge_count(mesh),
+        tolerance: policy.max_surface_move,
+        tolerance_basis: policy.tolerance_basis,
         ..RepairOutcome::default()
     };
     repair_watertightness_inner(mesh, policy, &mut outcome);
@@ -7630,8 +7721,10 @@ pub fn repair_watertightness_with(mesh: &mut TriangleMesh, policy: RepairPolicy)
     outcome.surface_added = crate::clearance::deviation_stats(mesh, &entry, thresholds);
     if std::env::var_os("VCAD_REPAIR_TRACE").is_some() {
         eprintln!(
-            "repair[out]: {} -> {} defective; lost {:.5} mm at {:?} ({:.2}% of area > {:.3}, \
-             {:.2}% > {:.3}); added {:.5} mm",
+            "repair[out]: tolerance {:.5} mm ({:?}); {} -> {} defective; lost {:.5} mm at {:?} \
+             ({:.2}% of area > {:.3}, {:.2}% > {:.3}); added {:.5} mm",
+            outcome.tolerance,
+            outcome.tolerance_basis,
             outcome.defects_before,
             outcome.defects_after,
             outcome.surface_lost.max,
@@ -7696,11 +7789,23 @@ fn repair_watertightness_inner(
     // it cannot raise the count. Reverting a removal that does is sound with
     // no tolerance to calibrate, and it is what puts the reference volume
     // back on the real surface.
-    revert_unless_it_helps_under(mesh, policy, drop_exact_duplicate_triangles);
+    revert_unless_it_helps_under(
+        mesh,
+        "drop_duplicates",
+        policy,
+        outcome,
+        drop_exact_duplicate_triangles,
+    );
     step(mesh, "drop_duplicates");
-    revert_unless_it_helps_under(mesh, policy, |m: &mut TriangleMesh| {
-        mesh_ray::strip_membranes_once(m);
-    });
+    revert_unless_it_helps_under(
+        mesh,
+        "strip_membranes",
+        policy,
+        outcome,
+        |m: &mut TriangleMesh| {
+            mesh_ray::strip_membranes_once(m);
+        },
+    );
     step(mesh, "strip_membranes");
     let vol0 = mesh_signed_volume_f64(mesh).abs();
     // Every remaining pass is bounded to defect-local surgery, so the
@@ -7783,6 +7888,27 @@ fn repair_watertightness_inner(
     weld_coincident_vertices(mesh);
     heal_t_junctions(mesh);
     collapse_zero_area_triangles(mesh);
+    // Hard exit invariant on the SHAPE. Guarding each pass against its own
+    // input bounds one step, not the journey: six passes over eight
+    // iterations, each moving a legal 0.02 mm, can land half a millimetre
+    // away — which is what the stator's export did, losing 0.50 mm of the
+    // lead notch with every individual pass inside tolerance. The promise
+    // the policy makes is about the part that comes out, so it is checked on
+    // the part that comes out.
+    if let Some(moved) =
+        crate::clearance::surface_moved_beyond(&original, mesh, policy.net_surface_move())
+    {
+        if std::env::var_os("VCAD_REPAIR_TRACE").is_some() {
+            eprintln!(
+                "repair: DECLINED overall — the repaired mesh is {moved:.5} mm from the \
+                 input (tolerance {:.5})",
+                policy.net_surface_move()
+            );
+        }
+        outcome.declined.push(("net", moved));
+        *mesh = original;
+        return;
+    }
     // Hard exit invariant: the repair optimizes a position-quantized
     // defect measure, but plenty of consumers (the torture track's
     // validity oracle among them) count INDEX-level boundary edges. A

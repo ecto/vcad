@@ -816,3 +816,51 @@ fn support_check_is_clean() {
         defects.join("\n  ")
     );
 }
+
+/// What pursuing manifoldness costs this part's shape, pinned.
+///
+/// `manifold_csg` repairs under `RepairPolicy::manifold_at_any_cost` — its
+/// contract is to return something that bounds a solid, and every assertion
+/// above rests on it doing so. That is a trade, and it was made without
+/// anyone measuring it: the repair moves this shell's surface by
+/// MILLIMETRES on some steps, on a part whose features are millimetre-scale.
+///
+/// The number lives here so a change to the repair shows up as a number
+/// rather than as a silently different part. It is an upper bound, not a
+/// target: whoever makes the analytic path close these seams should watch it
+/// fall.
+///
+/// (The same measurement on the eval-side shell ring reads 2.96 mm. And note
+/// that these are INTERMEDIATE steps whose output feeds the next boolean —
+/// see `docs/boolean-multilump-union-diagnosis.md`.)
+#[test]
+fn the_permissive_repair_moves_this_shell_by_millimetres() {
+    let mut shell = tube();
+    let mut worst = 0.0f64;
+    let mut worst_at = [0.0; 3];
+    let mut worst_area = 0.0f64;
+    for (_name, tool) in bottom_channel_tools() {
+        let (next, outcome) =
+            vcad_kernel_booleans::manifold_csg_reported(&shell, &tool, BooleanOp::Difference);
+        if outcome.surface_lost.max > worst {
+            worst = outcome.surface_lost.max;
+            worst_at = outcome.surface_lost.at;
+            worst_area = outcome.surface_lost.area_over[0];
+        }
+        shell = next;
+    }
+    // Pinned an order of magnitude above nothing and comfortably above what
+    // is measured today (~2.7 mm), so a real change in the trade trips it.
+    const PINNED: f64 = 4.0;
+    assert!(
+        worst <= PINNED,
+        "the permissive repair now moves this shell {worst:.4} mm at {worst_at:?} \
+         ({:.2}% of the area past 0.02 mm) — it used to be under {PINNED} mm",
+        worst_area * 100.0
+    );
+    assert!(
+        worst > 0.0,
+        "the permissive repair moved nothing at all — if the analytic path \
+         got better, lower the pin; if the measurement broke, fix it"
+    );
+}

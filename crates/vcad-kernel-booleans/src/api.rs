@@ -781,10 +781,11 @@ pub fn repair_export_mesh_reported(
     brep: &BRepSolid,
     mesh: &mut TriangleMesh,
 ) -> vcad_kernel_tessellate::RepairOutcome {
-    let outcome = vcad_kernel_tessellate::repair_watertightness_with(
-        mesh,
-        vcad_kernel_tessellate::RepairPolicy::strict(),
-    );
+    let policy = match tessellation_sag(brep) {
+        Some(sag) => vcad_kernel_tessellate::RepairPolicy::strict_for_sag(sag),
+        None => vcad_kernel_tessellate::RepairPolicy::strict(),
+    };
+    let outcome = vcad_kernel_tessellate::repair_watertightness_with(mesh, policy);
     // Re-projection is for triangle-soup fallback results only: they
     // stash their operands' quadric carriers precisely so a repair here
     // can be pulled back on-surface. An ANALYTIC B-rep's surface list
@@ -795,6 +796,122 @@ pub fn repair_export_mesh_reported(
         QuadricCtx::collect(brep, brep).project_mesh(mesh);
     }
     outcome
+}
+
+/// The chordal error this solid's tessellation already carries, in mm.
+///
+/// A triangle mesh approximates a curved surface to within its own sag, so a
+/// repair that moves it by less than that has not changed the shape in any
+/// sense the mesh could express — refusing such a repair buys nothing but
+/// open edges. The strict policy therefore holds passes to
+/// `clamp(sag, SHAPE_TOLERANCE, SHAPE_TOLERANCE_CAP)`, and this is the sag.
+///
+/// Measured on the B-rep rather than on the mesh, and on the FACE BOUNDARIES
+/// rather than the interior: every curved face's loops are sampled on the
+/// same grid the tessellator uses inside them, so the midpoint of a loop
+/// segment is exactly one chord's worth off the true surface. A straight
+/// edge of a curved face (a cylinder's vertical rail) has its midpoint on the
+/// surface and contributes nothing, which is correct.
+///
+/// Returns `None` for a solid with no curved faces — a planar part has no
+/// chordal error and stays on the floor.
+fn tessellation_sag(brep: &BRepSolid) -> Option<f64> {
+    // Every curved carrier the solid still knows about. For an analytic
+    // B-rep these are its faces' surfaces; for a triangle-soup result every
+    // face is a planar triangle, but the operands' quadrics are stashed in
+    // the geometry store (that is what `QuadricCtx` re-projects against), so
+    // the chordal error is still measurable — and a soup result is exactly
+    // the case where the mesh is coarsest and the floor most misleading.
+    let curved: Vec<&Box<dyn vcad_kernel_geom::Surface>> = brep
+        .geometry
+        .surfaces
+        .iter()
+        .filter(|s| s.surface_type() != vcad_kernel_geom::SurfaceKind::Plane)
+        .collect();
+    if curved.is_empty() {
+        return None;
+    }
+
+    // Distinct loop segments, deduplicated by vertex pair.
+    let mut segments: Vec<(Point3, Point3)> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for (_, face) in &brep.topology.faces {
+        let loops = std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied());
+        for lp in loops {
+            let vs: Vec<_> = brep
+                .topology
+                .loop_half_edges(lp)
+                .map(|he| brep.topology.half_edges[he].origin)
+                .collect();
+            for i in 0..vs.len() {
+                let (va, vb) = (vs[i], vs[(i + 1) % vs.len()]);
+                if va == vb {
+                    continue;
+                }
+                let key = if va < vb { (va, vb) } else { (vb, va) };
+                if !seen.insert(key) {
+                    continue;
+                }
+                segments.push((
+                    brep.topology.vertices[va].point,
+                    brep.topology.vertices[vb].point,
+                ));
+            }
+        }
+    }
+    if segments.is_empty() {
+        return None;
+    }
+    // A chord's sag is a property of the sampling grid, not of any one edge,
+    // so a sample is as good as the whole set on a part with thousands — and
+    // it has to be a sample: this runs on every export, a projection is not
+    // free, and the work is (curved carriers x segments). A soup result from
+    // a chained boolean carries tens of thousands of both, which is how the
+    // first version of this put the torture corpus's `chain-13` back over its
+    // 20 s budget.
+    const PROJECTION_BUDGET: usize = 6_000;
+    let stride = segments
+        .len()
+        .div_ceil((PROJECTION_BUDGET / curved.len().max(1)).max(1))
+        .max(1);
+
+    // How close a point must be to a carrier to count as lying on it.
+    const ON_SURFACE: f64 = 1e-6;
+    let deviation = |surface: &dyn vcad_kernel_geom::Surface, p: Point3| -> f64 {
+        let uv = crate::trim::project_point_to_uv(surface, &p);
+        (p - surface.evaluate(uv)).norm()
+    };
+
+    let mut worst: f64 = 0.0;
+    let mut measured = false;
+    'carriers: for surface in &curved {
+        let surface = surface.as_ref();
+        for &(a, b) in segments.iter().step_by(stride) {
+            // Past the cap the answer cannot change: the policy clamps there.
+            if worst >= vcad_kernel_tessellate::SHAPE_TOLERANCE_CAP {
+                break 'carriers;
+            }
+            let chord = (b - a).norm();
+            if chord < 1e-9 {
+                continue;
+            }
+            // Both ends have to sit ON this carrier, or the segment belongs
+            // to some other feature and its midpoint says nothing about how
+            // finely this one was sampled.
+            if deviation(surface, a) > ON_SURFACE || deviation(surface, b) > ON_SURFACE {
+                continue;
+            }
+            let sag = deviation(surface, a + (b - a) * 0.5);
+            // A midpoint that lands nowhere near the surface means the
+            // projection failed (a seam, a degenerate parameterisation);
+            // half the chord is the most a real sag can be.
+            if sag.is_finite() && sag <= 0.5 * chord {
+                worst = worst.max(sag);
+                measured = true;
+            }
+        }
+    }
+    measured.then_some(worst)
 }
 
 /// Tessellate a mesh-fallback result the way a REFEREE needs it: closed if

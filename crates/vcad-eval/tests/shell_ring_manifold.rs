@@ -115,20 +115,20 @@ fn check_shell_ring(src: &str) {
     }
     let bad = edges.values().filter(|&&c| c != 2).count();
     // This asserts the EXPORT, which since the repair's shape guard
-    // (`vcad_kernel_tessellate::RepairPolicy::strict`) refuses to close a
-    // mesh by moving the part more than 0.02 mm. Measured on this part, the
-    // repair that used to drive `bad` to 0 moved the exported surface 0.104
-    // mm — and its intermediate candidates wanted 3.6 mm. The defect that
-    // this test was written for was 1000+ edges from whole interior cap
-    // faces surviving the subtraction; 194 of 23 325 (0.83%) is the residue
-    // of trim mismatches the splitters leave at seams, which is a different
-    // and much smaller thing.
+    // (`vcad_kernel_tessellate::RepairPolicy`) will not close a mesh by
+    // moving the part further than its own tessellation already departs from
+    // the true surface. On this part that sag is 0.48 mm, clamped to the
+    // 0.1 mm cap, and inside that budget the repair closes 2790 defective
+    // edges down to 2 while moving the surface 0.014 mm — better on both
+    // counts than the old unguarded pipeline, which reached 0 by moving it
+    // 0.104 mm.
     //
-    // So the number is pinned, not zeroed: a regression to the original
-    // defect class would blow straight past it, while the honest state of
-    // the part stays visible instead of being bought with 0.1 mm of shape.
-    // Whoever closes the seams properly should lower this to 0.
-    const RESIDUAL_SEAM_EDGES: usize = 194;
+    // The defect this test was written for was 1000+ edges from whole
+    // interior cap faces surviving the subtraction. Two is the residue of a
+    // trim mismatch at one seam; it is pinned rather than zeroed so the
+    // honest state stays visible, and whoever closes that seam should take
+    // it to 0.
+    const RESIDUAL_SEAM_EDGES: usize = 2;
     assert!(
         bad <= RESIDUAL_SEAM_EDGES,
         "mesh is worse than the pinned residue: {bad} of {} undirected edges \

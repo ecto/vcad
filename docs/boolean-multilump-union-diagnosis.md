@@ -222,6 +222,22 @@ is to merge `main` into `claude/cam-roadmap` and re-measure, not to re-fix it
 here. Until then, any stator number quoted from this branch should be quoted
 with the run count.
 
+## Open item: the mesh fallback moves intermediate solids by millimetres
+
+Separate from the seam, and not addressed here. The mesh-boolean path repairs
+under `RepairPolicy::manifold_at_any_cost`, and measured on the real parts a
+single step moves the surface **2.96 mm** (the eval shell ring), **2.65 mm**
+(the rana-60c shell) and **1.97 mm** (torture `chain-23`). That is defensible
+for a terminal result whose caller has already accepted a degraded solid — but
+these are *intermediate* steps in a chain, and **their output is the next
+boolean's input**. A 2.7 mm error does not stay where it was made.
+
+The numbers are pinned in
+`vcad-kernel-booleans/tests/rana_60c_shell.rs::the_permissive_repair_moves_this_shell_by_millimetres`
+so a change shows up as a number. Closing it means either making the analytic
+path handle these arrangements, or carrying the degradation forward as
+provenance so a chain can refuse to build on a solid that moved this far.
+
 ## What landed on `cam/w1-union`
 
 * `crates/vcad-kernel-booleans/tests/tangent_fillet_rim_seam.rs` — three
