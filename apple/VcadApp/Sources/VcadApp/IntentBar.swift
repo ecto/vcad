@@ -199,10 +199,10 @@ struct CommandBar: View {
             .frame(width: 380, height: 22)
             .padding(.horizontal, 11)
             .padding(.vertical, 5)
-            .background(.quaternary.opacity(0.55), in: Capsule(style: .continuous))
+            .pillSurface()
             .overlay(Capsule(style: .continuous).strokeBorder(borderColor, lineWidth: 1))
-            .animation(.smooth(duration: 0.24), value: engine.phase)
-            .animation(.snappy(duration: 0.2), value: focused)
+            .animation(Motion.smooth, value: engine.phase)
+            .animation(Motion.snappy, value: focused)
             .background(shortcutButton)
             .onEscape { engine.dismissError(); focused = false }
             .onChange(of: engine.focusRequested) { _, req in
@@ -213,45 +213,47 @@ struct CommandBar: View {
     @ViewBuilder private var stateContent: some View {
         switch engine.phase {
         case .idle:
-            Image(systemName: "sparkles").font(.system(size: 12)).foregroundStyle(.tint)
-            TextField("Describe a change…", text: $engine.draft)
+            Image(systemName: "sparkles").font(.callout).foregroundStyle(.tint)
+            TextField("Describe a part…", text: $engine.draft)
+                .accessibilityLabel("Describe a part")
                 .textFieldStyle(.plain)
-                .font(.system(size: 13))
+                .font(.body)
                 .focused($focused)
                 .onSubmit { engine.submit(into: model) }
             if engine.draft.isEmpty {
                 KeycapView("⌘K")
             } else {
                 Button { engine.submit(into: model) } label: {
-                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 16))
+                    Image(systemName: "arrow.up.circle.fill").font(.title3)
                 }
                 .buttonStyle(.plain).foregroundStyle(.tint)
                 .help("Build (Return)")
             }
 
         case .thinking:
-            Image(systemName: "sparkles").font(.system(size: 12)).foregroundStyle(.tint)
+            Image(systemName: "sparkles").font(.callout).foregroundStyle(.tint)
                 .symbolEffect(.pulse, options: .repeating)
-            Text("Designing…").font(.system(size: 13))
+            Text("Designing…").font(.body)
             Spacer(minLength: 0)
             ProgressView().controlSize(.small).scaleEffect(0.78)
             Button { engine.cancel() } label: {
-                Image(systemName: "xmark.circle.fill").font(.system(size: 14))
+                Image(systemName: "xmark.circle.fill").font(.body)
             }
             .buttonStyle(.plain).foregroundStyle(.secondary).help("Cancel")
 
         case .done(let summary):
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 13)).foregroundStyle(.green)
-            Text(summary).font(.system(size: 13))
+            Image(systemName: "checkmark.circle.fill").font(.body).foregroundStyle(.green)
+            Text(summary).font(.body)
             Spacer(minLength: 0)
 
         case .failed(let message):
-            Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 12)).foregroundStyle(.orange)
-            Text(message).font(.system(size: 12)).foregroundStyle(.secondary)
+            Image(systemName: "exclamationmark.triangle.fill").font(.callout).foregroundStyle(.orange)
+            Text(message).font(.callout).foregroundStyle(.secondary)
                 .lineLimit(1).truncationMode(.tail)
+                .help(message)
             Spacer(minLength: 0)
             Button { engine.dismissError(); focused = true } label: {
-                Image(systemName: "arrow.counterclockwise").font(.system(size: 12))
+                Image(systemName: "arrow.counterclockwise").font(.callout)
             }
             .buttonStyle(.plain).foregroundStyle(.secondary).help("Try again")
         }
@@ -261,7 +263,7 @@ struct CommandBar: View {
         if engine.isThinking { return .accentColor.opacity(0.6) }
         if focused { return .accentColor.opacity(0.45) }
         if case .failed = engine.phase { return .orange.opacity(0.4) }
-        return .white.opacity(0.10)
+        return .clear
     }
 
     /// Invisible ⌘K accelerator that focuses the field from anywhere.
@@ -281,12 +283,12 @@ struct KeycapView: View {
     init(_ text: String) { self.text = text }
     var body: some View {
         Text(text)
-            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .font(.system(.caption, design: .rounded, weight: .medium))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 5).padding(.vertical, 1.5)
-            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .strokeBorder(.white.opacity(0.12), lineWidth: 0.5))
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                .strokeBorder(.separator, lineWidth: 0.5))
     }
 }
 

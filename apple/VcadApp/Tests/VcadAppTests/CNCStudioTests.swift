@@ -143,7 +143,7 @@ final class CNCStudioTests: XCTestCase {
         try cnc.importProgram("G0 X1\nM2", name: "part.nc")
         cnc.select(.tool)
         XCTAssertFalse(cnc.usesImportedProgram)
-        XCTAssertEqual(cnc.inspectorTab, .inspector)
+        XCTAssertTrue(cnc.rightPanelShown)
         XCTAssertNotNil(cnc.importedProgram)
         cnc.useImportedJob()
         XCTAssertTrue(cnc.usesImportedProgram)

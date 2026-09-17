@@ -266,8 +266,12 @@ struct RenderScene {
     /// Index-aligned with `meshes`: non-nil when part i is a pattern rendered
     /// as one shared MeshResource + N per-instance transforms (else one entity).
     var instancing: [PatternInstancing?] = []
+    /// The kernel is still evaluating this document on a background thread;
+    /// the viewport keeps whatever it was showing until the real scene lands.
+    var solving = false
 
     static let empty = RenderScene(meshes: [], center: .zero, size: 1, triangleCount: 0, partCount: 0)
+    static var pending: RenderScene { var s = RenderScene.empty; s.solving = true; return s }
 }
 
 /// One assembly instance ready to render. `index` is the FFI instance index —

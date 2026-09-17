@@ -29,6 +29,10 @@ enum AppInstance {
     /// This instance's document, for the AppDelegate paths that have no view
     /// to read it from (Finder open/drop). Weak: the model outlives nothing.
     weak static var currentModel: EditorModel?
+    /// Files macOS handed us before the editor view existed (a launch by
+    /// double-click). Drained by the view's first task instead of spawning a
+    /// second instance and leaving an empty scratch behind.
+    static var pendingOpen: [URL] = []
 
     /// Launch another copy of this app, optionally opening a document.
     ///
@@ -81,6 +85,8 @@ enum AppInstance {
     /// reuses its empty Untitled window. Anything else already has a document
     /// worth keeping on screen, so the new one gets its own instance.
     static func opening(_ url: URL, from model: EditorModel) {
+        // An outline always joins the document on screen.
+        if url.pathExtension.lowercased() == "dxf" { model.openDocument(url); return }
         if model.isDisposableScratch {
             model.openDocument(url)
         } else {

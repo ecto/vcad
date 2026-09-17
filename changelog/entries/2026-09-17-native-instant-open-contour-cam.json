@@ -1,0 +1,16 @@
+{
+  "id": "2026-09-17-native-instant-open-contour-cam",
+  "version": "0.10.0",
+  "date": "2026-09-17",
+  "category": "feat",
+  "title": "Native app: background solve, cached opens, contour CAM",
+  "summary": "The Mac app solves documents off the main thread with live progress, reuses the on-disk mesh cache and a shipped .vcadmesh bundle for instant reopen, and machines DXF outlines as contour cuts with tabs.",
+  "details": "Opening a slow document no longer beachballs: the kernel runs on its own thread, the viewport shows 'Solving… n of N' and draws parts as they land, and every document is evaluated once instead of twice. The app now consults the content-addressed root-mesh cache that the CLI already used, so anything a vcad tool has solved opens without a kernel walk, and Save writes a .vcadmesh bundle beside the document that Open imports first. In the kernel, unions of prismatic parts that share their top and bottom planes now come out right: a face split was being silently refused once a neighbouring split had imprinted vertices on its edge, the mesh boolean classified fragments with a single ray that any cracked operand could fool, a fillet tangent to a bore stopped the bore from cutting the fillet's caps, and a union outside its volume bound (or visibly cracked and contradicted by the mesh boolean) is re-cut instead of returned as a silently wrong analytic solid. Face-name propagation no longer dominates chained mesh booleans (it was ~100% of their cost). A 50-stage motor stator that did not finish in 40 minutes and then solved to 84% of its volume now solves in about a minute within 0.3%. Manufacture gains contour operations — outside or inside along a closed polyline, with holding tabs — fed by a DXF outline import, a right-rail inspector that follows the job outline, and a single machine bar with an optional Terminal/G-code/Macros drawer in place of the old dock. Loon programs open directly, a DXF dropped on the app lands in Manufacture, launching by opening a file no longer spawns a second instance, and switching workspaces no longer resizes the window. The app also opts out of AppKit window restoration, which after a crash could block the next launch behind a system prompt or crash it outright.",
+  "features": [
+    "app",
+    "native",
+    "cam",
+    "kernel",
+    "performance"
+  ]
+}
