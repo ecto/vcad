@@ -1,6 +1,6 @@
 //! CAM operation definitions.
 
-use crate::{CamError, CamSettings, Tool, Toolpath};
+use crate::{CamError, CamSettings, CutContext, Tool, Toolpath};
 use serde::{Deserialize, Serialize};
 
 mod contour;
@@ -9,18 +9,23 @@ mod face;
 mod pocket;
 mod roughing3d;
 
+pub use crate::stock::Spoilboard;
 pub use contour::{
     CentreLineStretch, Contour2D, ContourPhase, ContourReport, CutDirection, EntryStyle, Tab,
     ThinSlotStrategy,
 };
-pub use drill::{
-    tip_length, BreakThrough, Drill, DrillCycle, DrillError, HelicalBore, Hole, Spoilboard,
-};
+pub use drill::{tip_length, BreakThrough, Drill, DrillCycle, DrillError, HelicalBore, Hole};
 pub use face::Face;
 pub use pocket::Pocket2D;
 pub use roughing3d::Roughing3D;
 
 /// A CAM operation that can generate a toolpath.
+///
+/// Hole making is in here too, as of wave 2. It used to sit outside in a
+/// parallel `JobOperation` enum because [`DrillError`] says things `CamError`
+/// could not; [`CamError::Operation`] carries those words verbatim, so one
+/// enum is enough and a caller no longer has to know which of two to reach
+/// for.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum CamOperation {
@@ -32,19 +37,95 @@ pub enum CamOperation {
     Contour2D(Contour2D),
     /// 3D roughing operation.
     Roughing3D(Roughing3D),
+    /// Drilling a list of holes.
+    Drill(Drill),
+    /// Boring a hole larger than the cutter, helically.
+    HelicalBore(HelicalBore),
+}
+
+impl From<Face> for CamOperation {
+    fn from(op: Face) -> Self {
+        CamOperation::Face(op)
+    }
+}
+
+impl From<Pocket2D> for CamOperation {
+    fn from(op: Pocket2D) -> Self {
+        CamOperation::Pocket2D(op)
+    }
+}
+
+impl From<Contour2D> for CamOperation {
+    fn from(op: Contour2D) -> Self {
+        CamOperation::Contour2D(op)
+    }
+}
+
+impl From<Roughing3D> for CamOperation {
+    fn from(op: Roughing3D) -> Self {
+        CamOperation::Roughing3D(op)
+    }
+}
+
+impl From<Drill> for CamOperation {
+    fn from(op: Drill) -> Self {
+        CamOperation::Drill(op)
+    }
+}
+
+impl From<HelicalBore> for CamOperation {
+    fn from(op: HelicalBore) -> Self {
+        CamOperation::HelicalBore(op)
+    }
 }
 
 impl CamOperation {
     /// Generate a toolpath for this operation.
     ///
     /// Note: For Roughing3D, use `generate_with_height_field` instead.
+    ///
+    /// The hole operations ask the tool whether it cuts across its own centre
+    /// and how long its flutes are. Nothing here declares that, so this
+    /// refuses — in the tool's own words. Use
+    /// [`CamOperation::generate_with_geometry`] with the tool library's entry
+    /// when the answer is known.
     pub fn generate(&self, tool: &Tool, settings: &CamSettings) -> Result<Toolpath, CamError> {
+        self.generate_with_geometry(tool, &crate::ToolGeometry::default(), settings)
+    }
+
+    /// Generate a toolpath, with what is known about the tool's geometry.
+    pub fn generate_with_geometry(
+        &self,
+        tool: &Tool,
+        geometry: &crate::ToolGeometry,
+        settings: &CamSettings,
+    ) -> Result<Toolpath, CamError> {
         match self {
             CamOperation::Face(op) => op.generate(tool, settings),
             CamOperation::Pocket2D(op) => op.generate(tool, settings),
             CamOperation::Contour2D(op) => op.generate(tool, settings),
             CamOperation::Roughing3D(_) => Err(CamError::EmptyContour), // Need height field
+            CamOperation::Drill(op) => Ok(op.generate(tool, geometry, settings)?),
+            CamOperation::HelicalBore(op) => Ok(op.generate(tool, geometry, settings)?),
         }
+    }
+
+    /// What this operation asks of its tool, for the tool-geometry checks.
+    pub fn cut_context(&self, tool: &Tool) -> Result<CutContext, CamError> {
+        Ok(match self {
+            CamOperation::Face(op) => CutContext::new(op.depth),
+            CamOperation::Pocket2D(op) => CutContext::new(op.depth),
+            CamOperation::Contour2D(op) => CutContext::new(op.depth),
+            // The depth a 3D roughing pass reaches is the height field's to
+            // say, and this does not carry one.
+            CamOperation::Roughing3D(_) => {
+                return Err(CamError::Operation(
+                    "3D roughing needs a height field before its depth is known".into(),
+                ))
+            }
+            CamOperation::Drill(op) => op.cut_context(tool)?,
+            CamOperation::HelicalBore(op) => op.cut_context(tool),
+        })
     }
 
     /// Generate a toolpath for Roughing3D operation with a height field.
@@ -67,12 +148,25 @@ impl CamOperation {
             CamOperation::Pocket2D(_) => "Pocket 2D",
             CamOperation::Contour2D(_) => "Contour 2D",
             CamOperation::Roughing3D(_) => "Roughing 3D",
+            CamOperation::Drill(_) => "Drill",
+            CamOperation::HelicalBore(_) => "Helical bore",
         }
     }
 
     /// Check if this operation requires a height field.
     pub fn requires_height_field(&self) -> bool {
         matches!(self, CamOperation::Roughing3D(_))
+    }
+
+    /// Where this kind of operation sits in the order a job runs things.
+    pub fn default_role(&self) -> crate::OpRole {
+        match self {
+            CamOperation::Face(_) => crate::OpRole::Facing,
+            // An outside contour is the cut that frees the part; everything
+            // else works inside it.
+            CamOperation::Contour2D(op) if !op.inside => crate::OpRole::OutsideProfile,
+            _ => crate::OpRole::InsideFeature,
+        }
     }
 }
 

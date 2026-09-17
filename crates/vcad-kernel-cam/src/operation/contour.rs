@@ -1,10 +1,10 @@
 //! 2D contour/profile machining operation.
 
+use crate::geom2d;
 use crate::operation::{Contour, ContourSegment, Point2D};
+use crate::stock::{AllowanceRefusal, BottomAllowance, Spoilboard};
 use crate::{CamError, CamSettings, Tool, Toolpath, ToolpathSegment};
-use geo::algorithm::contains::Contains;
-use geo::algorithm::euclidean_distance::EuclideanDistance;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 use geo_clipper::Clipper;
 use serde::{Deserialize, Serialize};
 
@@ -185,13 +185,18 @@ pub struct Contour2D {
     #[serde(default)]
     pub lead_radius: Option<f64>,
     /// Positive leaves an onion skin (the cut stops this far above `depth`);
-    /// negative cuts that far past it, which needs a spoilboard.
+    /// negative cuts that far past it, which needs a spoilboard. The sign
+    /// convention is [`BottomAllowance`]'s, written out once there.
     #[serde(default)]
     pub bottom_allowance: f64,
-    /// Thickness of the sacrificial board under the stock, in mm. Required
-    /// before a negative bottom allowance is allowed.
-    #[serde(default)]
-    pub spoilboard_thickness: Option<f64>,
+    /// The sacrificial board under the stock. Required before a negative
+    /// bottom allowance is allowed.
+    ///
+    /// Was `spoilboard_thickness: Option<f64>` before wave 2 shared one
+    /// [`Spoilboard`] with drilling; the old field name and its bare number
+    /// both still deserialise.
+    #[serde(default, alias = "spoilboard_thickness")]
+    pub spoilboard: Option<Spoilboard>,
     /// What to do when the cutter is as wide as the opening.
     #[serde(default)]
     pub thin_slot: ThinSlotStrategy,
@@ -224,7 +229,7 @@ impl Contour2D {
             lead_in: true,
             lead_radius: None,
             bottom_allowance: 0.0,
-            spoilboard_thickness: None,
+            spoilboard: None,
             thin_slot: ThinSlotStrategy::default(),
         }
     }
@@ -313,8 +318,13 @@ impl Contour2D {
 
     /// Declare the sacrificial board under the stock, in mm.
     pub fn with_spoilboard(mut self, thickness: f64) -> Self {
-        self.spoilboard_thickness = Some(thickness);
+        self.spoilboard = Some(Spoilboard::new(thickness));
         self
+    }
+
+    /// Thickness of the declared spoilboard, or zero when none is declared.
+    pub fn spoilboard_thickness(&self) -> f64 {
+        self.spoilboard.map_or(0.0, |s| s.thickness)
     }
 
     /// What to do when the cutter is about as wide as the opening.
@@ -395,23 +405,20 @@ impl Contour2D {
         // The stock's underside stays at -depth however the allowance moves
         // the cut: a break-through eats into the spoilboard, an onion skin
         // stops short, and tab tops are measured from the underside either way.
-        if self.bottom_allowance < 0.0 {
-            let overcut = -self.bottom_allowance;
-            let declared = self.spoilboard_thickness.unwrap_or(0.0);
-            if declared < overcut - 1e-9 {
-                return Err(CamError::BreakThroughWithoutSpoilboard {
+        let final_depth = BottomAllowance(self.bottom_allowance)
+            .check(self.depth, self.spoilboard)
+            .map_err(|refusal| match refusal {
+                AllowanceRefusal::BreakThroughWithoutSpoilboard {
                     overcut,
-                    spoilboard: declared,
-                });
-            }
-        }
-        let final_depth = self.depth - self.bottom_allowance;
-        if final_depth <= 1e-9 {
-            return Err(CamError::BottomAllowanceExceedsDepth {
-                allowance: self.bottom_allowance,
-                depth: self.depth,
-            });
-        }
+                    spoilboard,
+                } => CamError::BreakThroughWithoutSpoilboard {
+                    overcut,
+                    spoilboard,
+                },
+                AllowanceRefusal::ExceedsDepth { allowance, depth } => {
+                    CamError::BottomAllowanceExceedsDepth { allowance, depth }
+                }
+            })?;
 
         let mut report = ContourReport {
             final_depth,
@@ -479,7 +486,7 @@ impl Contour2D {
             toolpath.push(ToolpathSegment::comment(format!(
                 "break-through: {:.3}mm past the stock into a {:.3}mm spoilboard",
                 -self.bottom_allowance,
-                self.spoilboard_thickness.unwrap_or(0.0)
+                self.spoilboard_thickness()
             )));
         }
         for stretch in &report.centre_line {
@@ -614,90 +621,67 @@ impl Contour2D {
         Ok(lp)
     }
 
-    /// Offset the contour by the given amount (native version with geo-clipper).
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Offset the contour by the given amount: the tool-centre path.
+    ///
+    /// One implementation on every target. Until wave 2 this was two: a
+    /// clipper offset natively, and on `wasm32` a fallback that offset the
+    /// contour's **bounding box** — so every contour the browser or the MCP
+    /// server generated for a part that was not a rectangle or a circle was
+    /// the wrong shape, silently. [`fit::offset_loop`] is pure Rust and round
+    /// jointed, which is what the cutter is, so it replaces both.
     fn offset_contour(&self, offset: f64) -> Result<Vec<Point2D>, CamError> {
+        self.offset_contour_with(OffsetBackend::PureRust, offset)
+    }
+
+    /// The offset, from a named backend. The clipper backend exists for the
+    /// parity tests that hold the pure-Rust one to it.
+    fn offset_contour_with(
+        &self,
+        backend: OffsetBackend,
+        offset: f64,
+    ) -> Result<Vec<Point2D>, CamError> {
         if offset.abs() < 0.001 {
             // No offset needed, return original points
             return Ok(self.contour_to_points(&self.contour));
         }
 
-        let result = offset_polygons(&self.contour.to_geo_polygon(), offset);
-
-        if result.is_empty() {
+        let pieces = self.offset_pieces(backend, offset);
+        if pieces.is_empty() {
             return Err(CamError::EmptyContour);
         }
         // An inward offset that falls apart means the cutter cannot pass a
         // neck of the opening. Following only the first piece would leave the
         // rest uncut without a word.
-        if result.len() > 1 {
-            return Err(CamError::ContourSplit(result.len()));
+        if pieces.len() > 1 {
+            return Err(CamError::ContourSplit(pieces.len()));
         }
-
-        // Extract points from first polygon
-        if let Some(poly) = result.first() {
-            let exterior = poly.exterior();
-            Ok(exterior.0.iter().map(|c| Point2D::new(c.x, c.y)).collect())
-        } else {
-            Err(CamError::EmptyContour)
-        }
+        Ok(pieces.into_iter().next().unwrap_or_default())
     }
 
-    /// Offset the contour by the given amount (WASM version with simple offset).
-    ///
-    /// This is a simplified implementation for rectangular and circular contours.
-    #[cfg(target_arch = "wasm32")]
-    fn offset_contour(&self, offset: f64) -> Result<Vec<Point2D>, CamError> {
-        use geo::BoundingRect;
-
-        if offset.abs() < 0.001 {
-            return Ok(self.contour_to_points(&self.contour));
-        }
-
-        let polygon = self.contour.to_geo_polygon();
-        let Some(bbox) = polygon.bounding_rect() else {
-            return Err(CamError::EmptyContour);
-        };
-
-        let width = bbox.width();
-        let height = bbox.height();
-        let cx = bbox.min().x + width / 2.0;
-        let cy = bbox.min().y + height / 2.0;
-
-        // For simple offset, expand/contract the bounding rectangle
-        let is_circular = self.contour.is_circular();
-
-        if is_circular {
-            // Circular offset
-            let radius = width.min(height) / 2.0 + offset;
-            if radius <= 0.0 {
-                return Err(CamError::EmptyContour);
+    /// Every piece the offset falls into, largest first.
+    fn offset_pieces(&self, backend: OffsetBackend, offset: f64) -> Vec<Vec<Point2D>> {
+        match backend {
+            OffsetBackend::PureRust => {
+                let ring = ring_of(&self.contour.to_geo_polygon());
+                let mut pieces: Vec<Vec<Point2D>> =
+                    crate::fit::offset_loop(&ring, offset, &offset_options())
+                        .into_iter()
+                        .map(|l| l.iter().map(|p| Point2D::new(p[0], p[1])).collect())
+                        .collect();
+                pieces.sort_by(|a, b| signed_area(b).abs().total_cmp(&signed_area(a).abs()));
+                pieces
             }
-
-            let segments = 36;
-            let points: Vec<Point2D> = (0..=segments)
-                .map(|i| {
-                    let angle = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
-                    Point2D::new(cx + radius * angle.cos(), cy + radius * angle.sin())
+            #[cfg(all(test, not(target_arch = "wasm32")))]
+            OffsetBackend::Clipper => offset_polygons(&self.contour.to_geo_polygon(), offset)
+                .into_iter()
+                .map(|poly| {
+                    poly.exterior()
+                        .0
+                        .iter()
+                        .map(|c| Point2D::new(c.x, c.y))
+                        .collect()
                 })
-                .collect();
-            Ok(points)
-        } else {
-            // Rectangular offset
-            let half_w = width / 2.0 + offset;
-            let half_h = height / 2.0 + offset;
-
-            if half_w <= 0.0 || half_h <= 0.0 {
-                return Err(CamError::EmptyContour);
-            }
-
-            Ok(vec![
-                Point2D::new(cx - half_w, cy - half_h),
-                Point2D::new(cx + half_w, cy - half_h),
-                Point2D::new(cx + half_w, cy + half_h),
-                Point2D::new(cx - half_w, cy + half_h),
-                Point2D::new(cx - half_w, cy - half_h),
-            ])
+                .collect(),
         }
     }
 
@@ -1145,27 +1129,39 @@ impl Contour2D {
 }
 
 /// The part's wall, and how much room a point has from it.
+///
+/// A thin skin over [`geom2d::Wall`] in this module's `Point2D`: the
+/// arithmetic is shared so the verification oracle can be pointed at the same
+/// implementation.
 struct Wall {
-    poly: geo::Polygon<f64>,
-    inside: bool,
+    inner: geom2d::Wall,
 }
 
 impl Wall {
     fn new(poly: geo::Polygon<f64>, inside: bool) -> Self {
-        Self { poly, inside }
+        let ring: Vec<[f64; 2]> = poly.exterior().0.iter().map(|c| [c.x, c.y]).collect();
+        Self {
+            inner: geom2d::Wall::new(
+                &ring,
+                if inside {
+                    geom2d::WasteSide::Inside
+                } else {
+                    geom2d::WasteSide::Outside
+                },
+            ),
+        }
     }
 
     /// Distance from the contour on the side the cutter is allowed to be, in
     /// mm. Negative means the tool centre has crossed to the part's side.
     fn clearance(&self, p: Point2D) -> f64 {
-        let pt = geo::Point::new(p.x, p.y);
-        let d = pt.euclidean_distance(self.poly.exterior());
-        let signed = if self.poly.contains(&pt) { d } else { -d };
-        if self.inside {
-            signed
-        } else {
-            -signed
-        }
+        self.inner.clearance([p.x, p.y])
+    }
+
+    /// Walk a point away from the wall until it has `target` mm of room.
+    fn march_to_clearance(&self, p: Point2D, target: f64) -> Point2D {
+        let q = self.inner.march_to_clearance([p.x, p.y], target);
+        Point2D::new(q[0], q[1])
     }
 }
 
@@ -1298,21 +1294,14 @@ fn levels(depth: f64, count: usize) -> Vec<f64> {
     (1..=n).map(|k| -depth * k as f64 / n as f64).collect()
 }
 
-/// Twice the signed area of the closed loop: positive when it runs
-/// counter-clockwise.
+/// Signed area of the closed loop: positive when it runs counter-clockwise.
 fn signed_area(points: &[Point2D]) -> f64 {
-    let n = points.len();
-    (0..n)
-        .map(|k| {
-            let (a, b) = (points[k], points[(k + 1) % n]);
-            a.x * b.y - b.x * a.y
-        })
-        .sum::<f64>()
-        / 2.0
+    geom2d::signed_area(&points.iter().map(|p| [p.x, p.y]).collect::<Vec<_>>())
 }
 
 /// Drop a repeated closing point, so winding and reversal are unambiguous.
-fn dedup_closing(mut points: Vec<Point2D>) -> Vec<Point2D> {
+fn dedup_closing(points: Vec<Point2D>) -> Vec<Point2D> {
+    let mut points = points;
     while points.len() > 1 {
         let first = points[0];
         let last = points[points.len() - 1];
@@ -1358,89 +1347,56 @@ fn reverse_keeping_seam(points: &[Point2D]) -> Vec<Point2D> {
     out
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+/// Which polygon offsetter computes the tool-centre path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OffsetBackend {
+    /// [`fit::offset_loop`]: pure Rust, round joins, the same answer on every
+    /// target including `wasm32`.
+    PureRust,
+    /// `geo-clipper`. Native only, and only reachable from the parity tests
+    /// that hold the pure-Rust backend to it.
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    Clipper,
+}
+
+/// Sampling for the pure-Rust offsetter.
+///
+/// Finer than [`fit`](crate::fit)'s own default, and measured rather than
+/// guessed: at its 0.01 mm step the stator's outer offset still moves
+/// 0.0135 mm between one refinement and the next — all of it at the cusps
+/// where the offset curve is trimmed, which is where a step lands or does
+/// not. At 0.002 mm it is within 0.14 µm of converged, and the whole outer
+/// profile offsets in about 15 ms.
+fn offset_options() -> crate::fit::OffsetOptions {
+    crate::fit::OffsetOptions {
+        step: 0.002,
+        simplify: 1e-5,
+        ..crate::fit::OffsetOptions::default()
+    }
+}
+
+/// The polygon's exterior ring as plain points, without its closing repeat.
+fn ring_of(polygon: &geo::Polygon<f64>) -> Vec<[f64; 2]> {
+    let ring: Vec<[f64; 2]> = polygon.exterior().0.iter().map(|c| [c.x, c.y]).collect();
+    geom2d::clean_loop(&ring)
+}
+
+/// The clipper offset, for the parity tests only.
+///
+/// `Round(1.0)` at a scale of 1000 is an arc tolerance of 0.001 mm. The
+/// production code used `Round(10.0)` — 0.01 mm — and chorded its round
+/// joins that coarsely, which is the whole of the disagreement between the
+/// two backends: at 0.01 mm the *reference* is the one that is off.
+#[cfg(all(test, not(target_arch = "wasm32")))]
 fn offset_polygons(polygon: &geo::Polygon<f64>, offset: f64) -> Vec<geo::Polygon<f64>> {
     polygon
         .offset(
             offset, // geo-clipper applies the coordinate scale internally.
-            geo_clipper::JoinType::Round(10.0),
+            geo_clipper::JoinType::Round(100.0),
             geo_clipper::EndType::ClosedPolygon,
-            1000.0,
+            100_000.0,
         )
         .0
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-/// The contour's boundary as segments, for distance and escape queries.
-struct Edges {
-    segs: Vec<(Point2D, Point2D)>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-impl Edges {
-    fn new(polygon: &geo::Polygon<f64>) -> Self {
-        let ring: Vec<Point2D> = polygon
-            .exterior()
-            .0
-            .iter()
-            .map(|c| Point2D::new(c.x, c.y))
-            .collect();
-        let ring = dedup_closing(ring);
-        let segs = (0..ring.len())
-            .map(|k| (ring[k], ring[(k + 1) % ring.len()]))
-            .filter(|(a, b)| a.distance_to(b) > 1e-12)
-            .collect();
-        Self { segs }
-    }
-
-    /// Distance to the wall, and the direction that gets away from it fastest:
-    /// the sum of the unit vectors away from every feature that is (nearly)
-    /// the nearest one. Between two walls of a slot those cancel — that is the
-    /// centre line, and there is nowhere further to go.
-    fn escape(&self, p: Point2D) -> (f64, (f64, f64)) {
-        let mut best = f64::INFINITY;
-        let mut near: Vec<(f64, f64)> = Vec::new();
-        for (a, b) in &self.segs {
-            let q = nearest_on_segment(p, *a, *b);
-            let d = p.distance_to(&q);
-            if d < best - 1e-9 {
-                best = d;
-                near.clear();
-            }
-            if d <= best + 1e-9 && d > 1e-12 {
-                near.push(((p.x - q.x) / d, (p.y - q.y) / d));
-            }
-        }
-        // Features within a whisker of the nearest one steer as well, so a
-        // corner sends the point out along the bisector and not into a wall.
-        let tol = (best * 0.05).max(1e-6);
-        let mut sum = (0.0, 0.0);
-        for (a, b) in &self.segs {
-            let q = nearest_on_segment(p, *a, *b);
-            let d = p.distance_to(&q);
-            if d <= best + tol && d > 1e-12 {
-                sum = (sum.0 + (p.x - q.x) / d, sum.1 + (p.y - q.y) / d);
-            }
-        }
-        let n = sum.0.hypot(sum.1);
-        if n > 1e-9 {
-            sum = (sum.0 / n, sum.1 / n);
-        } else {
-            sum = (0.0, 0.0);
-        }
-        (best, sum)
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn nearest_on_segment(p: Point2D, a: Point2D, b: Point2D) -> Point2D {
-    let (dx, dy) = (b.x - a.x, b.y - a.y);
-    let len2 = dx * dx + dy * dy;
-    if len2 <= 0.0 {
-        return a;
-    }
-    let t = (((p.x - a.x) * dx + (p.y - a.y) * dy) / len2).clamp(0.0, 1.0);
-    Point2D::new(a.x + dx * t, a.y + dy * t)
 }
 
 impl Contour2D {
@@ -1454,7 +1410,10 @@ impl Contour2D {
     /// wanted clearance or runs out of room. What the construction claims is
     /// then *measured* against the contour, densely, and the job is refused if
     /// the cutter would take more than `tolerance` off the wall anywhere.
-    #[cfg(not(target_arch = "wasm32"))]
+    ///
+    /// Wave 2 made this available on `wasm32` too: the seed used to come from
+    /// the native clipper, so the browser refused every thin slot with
+    /// [`CamError::CentreLineUnavailable`].
     fn centre_line(
         &self,
         distance: f64,
@@ -1466,18 +1425,16 @@ impl Contour2D {
         if tolerance < 0.0 {
             return Err(CamError::InvalidCentreLineTolerance(tolerance));
         }
-        let polygon = self.contour.to_geo_polygon();
         let sign = if self.inside { -1.0 } else { 1.0 };
-        let edges = Edges::new(&polygon);
 
         // Largest single-piece offset: the seed. Anything more splits, which is
         // the very case being handled here.
         let mut lo = 0.0;
         let mut hi = distance;
-        let mut seed = None;
+        let mut seed: Option<Vec<Point2D>> = None;
         for _ in 0..16 {
             let mid = 0.5 * (lo + hi);
-            let pieces = offset_polygons(&polygon, sign * mid);
+            let pieces = self.offset_pieces(OffsetBackend::PureRust, sign * mid);
             if pieces.len() == 1 {
                 lo = mid;
                 seed = pieces.into_iter().next();
@@ -1489,13 +1446,7 @@ impl Contour2D {
             return Err(CamError::ContourSplit(2));
         };
 
-        let ring: Vec<Point2D> = dedup_closing(
-            seed.exterior()
-                .0
-                .iter()
-                .map(|c| Point2D::new(c.x, c.y))
-                .collect(),
-        );
+        let ring = dedup_closing(seed);
         if ring.len() < 3 {
             return Err(CamError::EmptyContour);
         }
@@ -1516,7 +1467,7 @@ impl Contour2D {
 
         let marched: Vec<Point2D> = dense
             .into_iter()
-            .map(|p| march_to_clearance(&edges, p, distance))
+            .map(|p| wall.march_to_clearance(p, distance))
             .collect();
 
         // Measure what was actually built, at the midpoints too: a chord
@@ -1578,50 +1529,6 @@ impl Contour2D {
 
         Ok((marched, stretches, worst))
     }
-
-    /// The centre-line fallback needs a real polygon offsetter, which this
-    /// build does not have.
-    #[cfg(target_arch = "wasm32")]
-    fn centre_line(
-        &self,
-        _distance: f64,
-        _tool_radius: f64,
-        _tolerance: f64,
-        _wall: &Wall,
-        _phase: ContourPhase,
-    ) -> Result<(Vec<Point2D>, Vec<CentreLineStretch>, f64), CamError> {
-        Err(CamError::CentreLineUnavailable)
-    }
-}
-
-/// Walk a point away from the wall until it has `target` mm of room or the
-/// region runs out (the centre line), whichever comes first.
-#[cfg(not(target_arch = "wasm32"))]
-fn march_to_clearance(edges: &Edges, mut p: Point2D, target: f64) -> Point2D {
-    for _ in 0..32 {
-        let (clearance, dir) = edges.escape(p);
-        if clearance >= target - 1e-7 {
-            break;
-        }
-        if dir.0.hypot(dir.1) < 0.3 {
-            break; // Equidistant from both walls: this is the centre line.
-        }
-        let mut step = target - clearance;
-        let mut moved = false;
-        for _ in 0..4 {
-            let q = Point2D::new(p.x + dir.0 * step, p.y + dir.1 * step);
-            if edges.escape(q).0 > clearance + 1e-9 {
-                p = q;
-                moved = true;
-                break;
-            }
-            step *= 0.5;
-        }
-        if !moved {
-            break;
-        }
-    }
-    p
 }
 
 #[cfg(test)]
@@ -2165,7 +2072,8 @@ mod tests {
         let mut best = (f64::INFINITY, 0.0);
         for k in 0..n {
             let (a, b) = (lp.points[k], lp.points[(k + 1) % n]);
-            let q = nearest_on_segment(p, a, b);
+            let q = geom2d::nearest_on_segment([p.x, p.y], [a.x, a.y], [b.x, b.y]);
+            let q = Point2D::new(q[0], q[1]);
             let d = p.distance_to(&q);
             if d < best.0 {
                 best = (d, lp.cum[k] + a.distance_to(&q));
@@ -2623,7 +2531,7 @@ mod tests {
         assert!((op.ramp_angle - 3.0).abs() < 1e-12);
         assert!(op.lead_in);
         assert_eq!(op.bottom_allowance, 0.0);
-        assert_eq!(op.spoilboard_thickness, None);
+        assert_eq!(op.spoilboard, None);
         assert_eq!(op.thin_slot, ThinSlotStrategy::Refuse);
         assert!(!op.spring_pass);
         assert_eq!(op.finish_stepdowns, None);
@@ -2647,11 +2555,312 @@ mod tests {
         assert!((deepest + 4.0).abs() < 1e-12);
     }
 
+    /// A `Contour2D` written before the spoilboard became a shared type still
+    /// loads, and still means the same thing: the old field name carried a
+    /// bare thickness, and a break-through is refused or allowed on exactly
+    /// the same numbers.
+    #[test]
+    fn old_json_still_loads_and_still_means_the_same_thing() {
+        let body = r#"
+            "contour": {
+                "start": {"x": 0.0, "y": 0.0},
+                "segments": [
+                    {"type": "Line", "to": {"x": 20.0, "y": 0.0}},
+                    {"type": "Line", "to": {"x": 20.0, "y": 20.0}},
+                    {"type": "Line", "to": {"x": 0.0, "y": 20.0}},
+                    {"type": "Line", "to": {"x": 0.0, "y": 0.0}}
+                ]
+            },
+            "depth": 5.0,
+            "offset": 0.0,
+            "tabs": [],
+            "stock_to_leave": 0.0,
+            "inside": false,
+            "bottom_allowance": -0.3
+        "#;
+        let old: Contour2D =
+            serde_json::from_str(&format!("{{{body}, \"spoilboard_thickness\": 3.0}}")).unwrap();
+        let new: Contour2D = serde_json::from_str(&format!(
+            "{{{body}, \"spoilboard\": {{\"thickness\": 3.0}}}}"
+        ))
+        .unwrap();
+        let bare: Contour2D =
+            serde_json::from_str(&format!("{{{body}, \"spoilboard\": 3.0}}")).unwrap();
+        for op in [&old, &new, &bare] {
+            assert_eq!(op.spoilboard, Some(Spoilboard::new(3.0)));
+            assert!((op.spoilboard_thickness() - 3.0).abs() < 1e-12);
+        }
+
+        // Same meaning, not just the same field: a 0.3 mm break-through over
+        // a 3 mm board cuts 5.3 mm deep, and the same job over a 0.2 mm board
+        // is refused with the same two numbers it always was.
+        let settings = CamSettings::default();
+        let (_, report) = old.generate_reported(&mill(3.0), &settings).unwrap();
+        assert!((report.final_depth - 5.3).abs() < 1e-12);
+
+        let thin: Contour2D =
+            serde_json::from_str(&format!("{{{body}, \"spoilboard_thickness\": 0.2}}")).unwrap();
+        assert!(matches!(
+            thin.generate(&mill(3.0), &settings),
+            Err(CamError::BreakThroughWithoutSpoilboard { overcut, spoilboard })
+                if (overcut - 0.3).abs() < 1e-9 && (spoilboard - 0.2).abs() < 1e-9
+        ));
+
+        // A document with no spoilboard at all still loads, and still refuses.
+        let none: Contour2D = serde_json::from_str(&format!("{{{body}}}")).unwrap();
+        assert_eq!(none.spoilboard, None);
+        assert!(matches!(
+            none.generate(&mill(3.0), &settings),
+            Err(CamError::BreakThroughWithoutSpoilboard { spoilboard, .. }) if spoilboard == 0.0
+        ));
+    }
+
+    /// What this crate writes, it reads.
+    #[test]
+    fn a_contour_round_trips_through_json() {
+        let op = Contour2D::inside(
+            polyline(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]),
+            4.0,
+        )
+        .with_bottom_allowance(-0.2)
+        .with_spoilboard(6.0)
+        .with_tabs(3, 4.0, 1.0);
+        let text = serde_json::to_string(&op).unwrap();
+        let back: Contour2D = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.spoilboard, Some(Spoilboard::new(6.0)));
+        assert!((back.bottom_allowance + 0.2).abs() < 1e-12);
+        assert_eq!(back.tabs.len(), 3);
+    }
+
     #[test]
     fn test_tab_creation() {
         let tab = Tab::new(0.25, 5.0, 2.0);
         assert!((tab.position - 0.25).abs() < 1e-6);
         assert!((tab.width - 5.0).abs() < 1e-6);
         assert!((tab.height - 2.0).abs() < 1e-6);
+    }
+
+    /// The pure-Rust offsetter against the clipper it replaces.
+    ///
+    /// This is the test that had to exist before the `wasm32` bounding-box
+    /// fallback could go: the browser and the desktop have to cut the same
+    /// shape. Every case is checked both ways round (inside and outside) at
+    /// the two diameters the stator was cut with, on the real fixture and on
+    /// a concave shape with a slot narrow enough to split the path.
+    #[cfg(not(target_arch = "wasm32"))]
+    mod offset_parity {
+        use super::*;
+
+        /// Every point of every piece.
+        fn points_of(pieces: &[Vec<Point2D>]) -> Vec<Point2D> {
+            pieces.iter().flat_map(|p| p.iter().copied()).collect()
+        }
+
+        /// One-sided distance: the farthest any vertex of `a` is from the
+        /// boundary of `b`.
+        fn one_way(a: &[Point2D], b: &[Vec<Point2D>]) -> f64 {
+            a.iter()
+                .map(|p| {
+                    b.iter()
+                        .map(|ring| {
+                            let n = ring.len();
+                            (0..n)
+                                .map(|k| {
+                                    geom2d::point_segment_distance(
+                                        [p.x, p.y],
+                                        [ring[k].x, ring[k].y],
+                                        [ring[(k + 1) % n].x, ring[(k + 1) % n].y],
+                                    )
+                                })
+                                .fold(f64::INFINITY, f64::min)
+                        })
+                        .fold(f64::INFINITY, f64::min)
+                })
+                .fold(0.0, f64::max)
+        }
+
+        /// Symmetric Hausdorff distance between two sets of closed loops.
+        fn hausdorff(a: &[Vec<Point2D>], b: &[Vec<Point2D>]) -> f64 {
+            one_way(&points_of(a), b).max(one_way(&points_of(b), a))
+        }
+
+        /// Both backends, on one contour at one offset: same number of
+        /// pieces, same curve to 0.01 mm.
+        fn check(name: &str, contour: &Contour, inside: bool, diameter: f64) -> usize {
+            let op = if inside {
+                Contour2D::inside(contour.clone(), 1.0)
+            } else {
+                Contour2D::outside(contour.clone(), 1.0)
+            };
+            let delta = if inside { -1.0 } else { 1.0 } * diameter / 2.0;
+            let pure = op.offset_pieces(OffsetBackend::PureRust, delta);
+            let clipper = op.offset_pieces(OffsetBackend::Clipper, delta);
+            let side = if inside { "inside" } else { "outside" };
+            assert_eq!(
+                pure.len(),
+                clipper.len(),
+                "{name} {side} d{diameter}: {} pieces pure-Rust, {} with clipper",
+                pure.len(),
+                clipper.len()
+            );
+            if pure.is_empty() {
+                println!("{name} {side} d{diameter}: empty both ways");
+                return 0;
+            }
+            let h = hausdorff(&pure, &clipper);
+            assert!(
+                h <= 0.01,
+                "{name} {side} d{diameter}: the two offsets differ by {h:.5} mm"
+            );
+            println!(
+                "{name} {side} d{diameter}: {} piece(s), Hausdorff {h:.5} mm",
+                pure.len()
+            );
+            pure.len()
+        }
+
+        /// The fixture's loops as contours: the outer profile, then the
+        /// holes, the widest of which is the bore with its twelve slots.
+        fn stator_loops() -> Vec<(String, Contour)> {
+            let path = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../docs/cam-fixtures/stator-outline.dxf"
+            );
+            let text = std::fs::read_to_string(path).expect("the stator fixture");
+            let outline = crate::outline::read_dxf(&text).expect("the fixture parses");
+            let mut loops: Vec<(String, Contour)> = Vec::new();
+            for region in &outline.regions {
+                loops.push(("outer".to_string(), contour_of(&region.outer.points)));
+                for (i, hole) in region.holes.iter().enumerate() {
+                    loops.push((format!("hole{i}"), contour_of(&hole.points)));
+                }
+            }
+            assert!(loops.len() >= 5, "1 outer + 4 holes, got {}", loops.len());
+            loops
+        }
+
+        fn contour_of(points: &[Point2D]) -> Contour {
+            let pairs: Vec<(f64, f64)> = points.iter().map(|p| (p.x, p.y)).collect();
+            polyline(&pairs)
+        }
+
+        /// A pocket with a 3 mm waist: two notches facing each other across
+        /// the middle. A cutter that fits through the waist gets one loop; a
+        /// wider one leaves two islands, which is exactly the case
+        /// [`CamError::ContourSplit`] is raised from. Three millimetres and
+        /// not two, because a passage exactly as wide as the cutter is a
+        /// knife edge where either answer is defensible, and a test has no
+        /// business standing on one.
+        fn notched() -> Contour {
+            polyline(&[
+                (0.0, 0.0),
+                (13.0, 0.0),
+                (13.0, 8.5),
+                (17.0, 8.5),
+                (17.0, 0.0),
+                (30.0, 0.0),
+                (30.0, 20.0),
+                (17.0, 20.0),
+                (17.0, 11.5),
+                (13.0, 11.5),
+                (13.0, 20.0),
+                (0.0, 20.0),
+            ])
+        }
+
+        /// The offset is where it says it is, and refining the sampling does
+        /// not move it.
+        ///
+        /// This is the assertion the parity test cannot make: two backends
+        /// can agree and both be wrong. Every point of the tool-centre path
+        /// has to be exactly one tool radius from the contour it was taken
+        /// from, and halving the step must not move the curve — which is how
+        /// [`offset_options`]'s 0.002 mm was chosen rather than guessed.
+        #[test]
+        fn the_offset_is_a_radius_from_the_wall_and_converged() {
+            let (_, contour) = stator_loops().remove(0);
+            let src = ring_of(&contour.to_geo_polygon());
+            let radius = 1.0;
+
+            let at_step = |step: f64| -> Vec<Vec<Point2D>> {
+                let opts = crate::fit::OffsetOptions {
+                    step,
+                    simplify: 1e-5,
+                    ..crate::fit::OffsetOptions::default()
+                };
+                crate::fit::offset_loop(&src, radius, &opts)
+                    .into_iter()
+                    .map(|l| l.iter().map(|p| Point2D::new(p[0], p[1])).collect())
+                    .collect()
+            };
+
+            let ours = Contour2D::outside(contour.clone(), 1.0)
+                .offset_pieces(OffsetBackend::PureRust, radius);
+            let worst = ours
+                .iter()
+                .flatten()
+                .map(|p| (geom2d::distance_to_loop([p.x, p.y], &src) - radius).abs())
+                .fold(0.0, f64::max);
+            assert!(
+                worst < 5e-5,
+                "a point of the tool-centre path sits {worst:.6} mm off the radius"
+            );
+
+            // Converged: the production step against half of it.
+            let refined = at_step(0.001);
+            let moved = hausdorff(&ours, &refined);
+            assert!(
+                moved < 1e-3,
+                "refining the step moved the path {moved:.5} mm"
+            );
+
+            // And the step that was there before wave 2 was not: the cusps
+            // where the offset curve is trimmed move ten times as far.
+            let coarse = at_step(0.01);
+            let was = hausdorff(&coarse, &refined);
+            assert!(
+                was > 10.0 * moved,
+                "the 0.01 mm step is {was:.5} mm off, the 0.002 mm one {moved:.5} mm"
+            );
+        }
+
+        #[test]
+        fn pure_rust_matches_clipper_on_the_stator() {
+            for (name, contour) in stator_loops() {
+                for diameter in [2.0, 3.175] {
+                    for inside in [true, false] {
+                        check(&name, &contour, inside, diameter);
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn pure_rust_matches_clipper_on_a_notched_shape() {
+            let contour = notched();
+            let mut split_seen = false;
+            for diameter in [2.0, 3.175] {
+                for inside in [true, false] {
+                    let pieces = check("notch", &contour, inside, diameter);
+                    split_seen |= pieces > 1;
+                }
+            }
+            // A cutter wider than the 2 mm slot cannot follow the contour:
+            // the inward offset falls into pieces, and both backends agree on
+            // that, which is the case `ContourSplit` is raised from.
+            assert!(split_seen, "no offset split: the slot case did not fire");
+            let op = Contour2D::inside(contour.clone(), 1.0);
+            assert!(
+                matches!(
+                    op.offset_contour_with(OffsetBackend::PureRust, -3.175 / 2.0),
+                    Err(CamError::ContourSplit(n)) if n > 1
+                ),
+                "a 3.175 mm cutter has to be refused in the 3 mm slot"
+            );
+            assert!(matches!(
+                op.offset_contour_with(OffsetBackend::Clipper, -3.175 / 2.0),
+                Err(CamError::ContourSplit(_))
+            ));
+        }
     }
 }

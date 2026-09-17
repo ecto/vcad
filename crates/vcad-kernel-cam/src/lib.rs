@@ -55,11 +55,13 @@ pub mod dropcutter;
 mod error;
 pub mod fit;
 pub mod gear;
+pub mod geom2d;
 mod job;
 pub mod materials;
 mod operation;
 pub mod outline;
 pub mod post;
+pub mod stock;
 mod tool;
 mod toolpath;
 pub mod verify2d;
@@ -83,12 +85,15 @@ pub use outline::{
     CircleFit, Gap, Outline, OutlineDiff, OutlineError, PrismaticReport, Region, SectionOptions,
     SimplifyOptions,
 };
+pub use stock::{AllowanceRefusal, BottomAllowance, Stock};
 pub use tool::{
     check_flute_length, check_slot_ratio, check_stickout, check_tool_for_cut, has_error,
     CheckSeverity, CutContext, Tool, ToolCheck, ToolCheckKind, ToolEntry, ToolGeometry, ToolHolder,
     ToolLibrary,
 };
-pub use toolpath::{ArcDir, ArcPlane, CoolantMode, SpindleDir, Toolpath, ToolpathSegment};
+pub use toolpath::{
+    ArcDir, ArcPlane, CoolantMode, MachineLimits, SpindleDir, Toolpath, ToolpathSegment,
+};
 pub use verify2d::{
     verify_gcode, verify_toolpath, JobSpec, JobVerification, PartRegion, VerifyOptions,
 };

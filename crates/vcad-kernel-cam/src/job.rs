@@ -12,8 +12,8 @@
 //! the part are cut before the outside profile that frees it from the stock,
 //! and the operations of one tool are kept together.
 
-use crate::operation::{CamOperation, Drill, HelicalBore};
-use crate::post::{PostProcessor, PostState};
+use crate::operation::CamOperation;
+use crate::post::{PostProcessor, ProgramOptions};
 use crate::{
     check_tool_for_cut, CamSettings, CheckSeverity, CutContext, SpindleDir, ToolCheck, ToolEntry,
     ToolLibrary, Toolpath, ToolpathSegment,
@@ -196,97 +196,47 @@ impl OpRole {
 
 /// An operation a job can run.
 ///
-/// The hole operations are kept out of [`CamOperation`] on purpose: they
-/// report refusals a machinist can act on (`DrillError`), and `CamError` —
-/// which `CamOperation::generate` returns and which this package does not own
-/// — has nowhere to put that text.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
-pub enum JobOperation {
-    /// One of the 2.5D milling operations.
-    Cam(CamOperation),
-    /// Drilling a list of holes.
-    Drill(Drill),
-    /// Boring a hole larger than the cutter.
-    Bore(HelicalBore),
-}
+/// Wave 1 had a parallel enum here — `Cam` / `Drill` / `Bore` — because the
+/// hole operations refuse in [`DrillError`](crate::DrillError)'s words and
+/// [`CamError`](crate::CamError) had nowhere to put them. It has somewhere
+/// now ([`CamError::Operation`](crate::CamError::Operation), which carries
+/// the text verbatim), so there is one enum, and this name is kept only so
+/// callers that spelled it out still compile.
+pub type JobOperation = CamOperation;
 
-impl From<CamOperation> for JobOperation {
-    fn from(op: CamOperation) -> Self {
-        JobOperation::Cam(op)
+/// The cut an operation asks of its tool, with the job's name on any refusal.
+fn cut_context(
+    operation: &CamOperation,
+    entry: &ToolEntry,
+    name: &str,
+) -> Result<CutContext, JobError> {
+    if operation.requires_height_field() {
+        return Err(JobError::NeedsHeightField { op: name.into() });
     }
-}
-
-impl From<Drill> for JobOperation {
-    fn from(op: Drill) -> Self {
-        JobOperation::Drill(op)
-    }
-}
-
-impl From<HelicalBore> for JobOperation {
-    fn from(op: HelicalBore) -> Self {
-        JobOperation::Bore(op)
-    }
-}
-
-impl JobOperation {
-    /// Where this kind of operation sits in the order by default.
-    pub fn default_role(&self) -> OpRole {
-        match self {
-            JobOperation::Cam(CamOperation::Face(_)) => OpRole::Facing,
-            // An outside contour is the cut that frees the part; everything
-            // else works inside it.
-            JobOperation::Cam(CamOperation::Contour2D(op)) if !op.inside => OpRole::OutsideProfile,
-            _ => OpRole::InsideFeature,
-        }
-    }
-
-    /// The cut this operation asks of its tool, for the tool checks.
-    fn cut_context(&self, entry: &ToolEntry, name: &str) -> Result<CutContext, JobError> {
-        Ok(match self {
-            JobOperation::Cam(CamOperation::Face(op)) => CutContext::new(op.depth),
-            JobOperation::Cam(CamOperation::Pocket2D(op)) => CutContext::new(op.depth),
-            JobOperation::Cam(CamOperation::Contour2D(op)) => CutContext::new(op.depth),
-            JobOperation::Cam(CamOperation::Roughing3D(_)) => {
-                return Err(JobError::NeedsHeightField { op: name.into() })
-            }
-            JobOperation::Drill(op) => {
-                op.cut_context(&entry.tool)
-                    .map_err(|e| JobError::OpFailed {
-                        op: name.into(),
-                        message: e.to_string(),
-                    })?
-            }
-            JobOperation::Bore(op) => op.cut_context(&entry.tool),
-        })
-    }
-
-    /// Generate this operation's toolpath.
-    fn generate(
-        &self,
-        entry: &ToolEntry,
-        settings: &CamSettings,
-        name: &str,
-    ) -> Result<Toolpath, JobError> {
-        let failed = |message: String| JobError::OpFailed {
+    operation
+        .cut_context(&entry.tool)
+        .map_err(|e| JobError::OpFailed {
             op: name.to_string(),
-            message,
-        };
-        match self {
-            JobOperation::Cam(CamOperation::Roughing3D(_)) => {
-                Err(JobError::NeedsHeightField { op: name.into() })
-            }
-            JobOperation::Cam(op) => op
-                .generate(&entry.tool, settings)
-                .map_err(|e| failed(e.to_string())),
-            JobOperation::Drill(op) => op
-                .generate(&entry.tool, &entry.geometry, settings)
-                .map_err(|e| failed(e.to_string())),
-            JobOperation::Bore(op) => op
-                .generate(&entry.tool, &entry.geometry, settings)
-                .map_err(|e| failed(e.to_string())),
-        }
+            message: e.to_string(),
+        })
+}
+
+/// Generate an operation's toolpath, with the job's name on any refusal.
+fn generate(
+    operation: &CamOperation,
+    entry: &ToolEntry,
+    settings: &CamSettings,
+    name: &str,
+) -> Result<Toolpath, JobError> {
+    if operation.requires_height_field() {
+        return Err(JobError::NeedsHeightField { op: name.into() });
     }
+    operation
+        .generate_with_geometry(&entry.tool, &entry.geometry, settings)
+        .map_err(|e| JobError::OpFailed {
+            op: name.to_string(),
+            message: e.to_string(),
+        })
 }
 
 /// One operation in a job: what to cut, with which tool, and when.
@@ -469,7 +419,7 @@ impl Job {
         for i in self.order() {
             let op = &self.ops[i];
             let entry = self.entry(op)?;
-            let cut = op.operation.cut_context(entry, &op.name)?;
+            let cut = cut_context(&op.operation, entry, &op.name)?;
             out.push((i, check_tool_for_cut(&entry.tool, &entry.geometry, &cut)));
         }
         Ok(out)
@@ -522,7 +472,7 @@ impl Job {
             let entry = self.entry(op)?;
             let settings = op.settings.as_ref().unwrap_or(&self.settings);
 
-            let cut = op.operation.cut_context(entry, &op.name)?;
+            let cut = cut_context(&op.operation, entry, &op.name)?;
             let findings = check_tool_for_cut(&entry.tool, &entry.geometry, &cut);
             let errors: Vec<String> = findings
                 .iter()
@@ -537,7 +487,7 @@ impl Job {
                 });
             }
 
-            let op_path = op.operation.generate(entry, settings, &op.name)?;
+            let op_path = generate(&op.operation, entry, settings, &op.name)?;
             if op_path.segments.iter().any(|s| {
                 matches!(
                     s,
@@ -580,11 +530,24 @@ impl Job {
                             ToolChangeStrategy::M6 => {
                                 toolpath.push(ToolpathSegment::tool_change(entry.number))
                             }
-                            ToolChangeStrategy::ManualPauseReprobe { .. } => {
-                                toolpath.push(ToolpathSegment::comment(format!(
-                                    "PAUSE (M0): fit T{}, then re-establish Z before resuming",
+                            ToolChangeStrategy::ManualPauseReprobe { probe_macro } => {
+                                // A real stop, not a comment about one: the
+                                // post writes the word, so every post writes
+                                // the word it means.
+                                toolpath.push(ToolpathSegment::pause(format!(
+                                    "fit T{}, then re-establish Z before resuming",
                                     entry.number
-                                )))
+                                )));
+                                match probe_macro {
+                                    Some(text) => toolpath
+                                        .push(ToolpathSegment::raw(text.trim_end().to_string())),
+                                    None => toolpath.push(ToolpathSegment::comment(format!(
+                                        "re-establish Z for T{}: touch off and set {} Z0 before \
+                                         resuming",
+                                        entry.number,
+                                        self.wcs.code()
+                                    ))),
+                                }
                             }
                         }
                         at = [at[0], at[1], self.park_z];
@@ -764,56 +727,29 @@ impl Program {
             .collect()
     }
 
+    /// What the post needs to know about this program that is not in the
+    /// toolpath: its name, its work offset, where it parks and how it ends.
+    pub fn options(&self) -> ProgramOptions {
+        ProgramOptions {
+            name: self.name.clone(),
+            wcs: Some(self.wcs),
+            park_z: Some(self.park_z),
+            end: self.end,
+            spindle: None,
+        }
+    }
+
     /// Post the whole program.
     ///
-    /// The header, the pause and the end word are written here rather than by
-    /// the post-processor: a post's own `header`/`footer` assume a single-tool
-    /// program with one spindle start, and `ToolpathSegment` has no way to say
-    /// "stop and wait". Everything that is motion still goes through the post,
-    /// so coordinates, arcs and modality stay machine-specific.
+    /// Thin on purpose. Until wave 2 the header, the `M0` pause and the end
+    /// word were written *here*, in one dialect, because a post's own header
+    /// assumed a single-tool program and started a spindle of its own that
+    /// fought the one the job had already started — and because
+    /// `ToolpathSegment` had no way to say "stop and wait". Both holes are
+    /// closed: the pause is a [`ToolpathSegment::Pause`] like any other
+    /// segment, and the preamble and postamble are the post's.
     pub fn to_gcode<P: PostProcessor + ?Sized>(&self, post: &P) -> String {
-        let mut out = String::new();
-        out.push_str(&format!("({})\n", self.name));
-        out.push_str("(vcad-kernel-cam: stock top Z0, XY lower-left at 0)\n");
-        out.push_str("G21\n"); // mm
-        out.push_str("G90\n"); // absolute
-        out.push_str("G94\n"); // feed per minute
-        out.push_str("G17\n"); // arcs in XY
-        out.push_str("G40\n"); // no cutter compensation
-        out.push_str("G49\n"); // no tool length compensation
-        out.push_str(&format!("{}\n", self.wcs.code()));
-        out.push_str(&format!("G0 Z{:.3}\n", self.park_z));
-
-        let mut state = PostState {
-            z: self.park_z,
-            ..PostState::default()
-        };
-        for block in &self.blocks {
-            for seg in &self.toolpath.segments[block.start..block.end] {
-                out.push_str(&post.segment(seg, &mut state));
-            }
-            let ProgramBlock::ToolChange { to, .. } = &block.block else {
-                continue;
-            };
-            let ToolChangeStrategy::ManualPauseReprobe { probe_macro } = &self.strategy else {
-                continue;
-            };
-            out.push_str("M0\n");
-            match probe_macro {
-                Some(macro_text) => {
-                    out.push_str(macro_text.trim_end());
-                    out.push('\n');
-                }
-                None => out.push_str(&format!(
-                    "(re-establish Z for T{}: touch off and set {} Z0 before resuming)\n",
-                    to,
-                    self.wcs.code()
-                )),
-            }
-        }
-
-        out.push_str(&format!("{}\n", self.end.code()));
-        out
+        post.program(&self.options(), &self.toolpath)
     }
 }
 
@@ -1169,6 +1105,210 @@ mod tests {
             if line.starts_with("M3 S") {
                 assert_eq!(gcode.lines().nth(i + 1).unwrap(), "G4 P3000");
             }
+        }
+    }
+
+    /// The five things a posted two-tool program has to get right, in one
+    /// place, because wave 1 got three of them wrong at once: the pause came
+    /// from the assembler rather than the post, the post wrote a `G54` the
+    /// job had not asked for, and nothing checked that the text read back.
+    #[test]
+    fn a_two_tool_program_posts_one_pause_the_asked_for_wcs_and_re_parses() {
+        let program = job()
+            .with_op(pilot_holes())
+            .with_op(outside_profile())
+            .with_wcs(Wcs::G55)
+            .with_strategy(ToolChangeStrategy::ManualPauseReprobe { probe_macro: None })
+            .assemble()
+            .unwrap();
+        assert_eq!(program.tool_sequence(), vec![2, 1], "two tools, in order");
+        let gcode = program.to_gcode(&GrblPost::default());
+
+        // 1. Exactly one stop, and the POST wrote it: the assembled toolpath
+        //    carries a Pause segment, and nothing outside the post emits M0.
+        let pauses = program
+            .toolpath
+            .segments
+            .iter()
+            .filter(|s| matches!(s, ToolpathSegment::Pause { .. }))
+            .count();
+        assert_eq!(pauses, 1, "one pause segment between two tools");
+        assert_eq!(gcode.matches("\nM0\n").count(), 1, "{gcode}");
+
+        // 2. It is between the two tools' work, not at either end.
+        let stop = gcode.find("\nM0\n").unwrap();
+        let first_cut = gcode.find("G1 ").unwrap();
+        let last_cut = gcode.rfind("G1 ").unwrap();
+        assert!(
+            first_cut < stop && stop < last_cut,
+            "the pause is mid-program"
+        );
+
+        // 3. The work offset is the one the job asked for, and the post
+        //    contributes no G54 of its own.
+        // Once as a command; the tool-change note mentions it again, which
+        // is the point of the note.
+        assert_eq!(gcode.lines().filter(|l| *l == "G55").count(), 1);
+        assert_eq!(gcode.matches("G54").count(), 0, "{gcode}");
+
+        // 4. One spindle start per tool, each with its spin-up dwell, and no
+        //    spindle the post started on its own account.
+        assert_eq!(gcode.matches("M3 S").count(), 2);
+
+        // 5. It reads back. The oracle's reader refuses any word it does not
+        //    understand, so this is the check that the posted text is G-code
+        //    a machine would take rather than something only we can read.
+        let moves =
+            crate::verify2d::parse_gcode(&gcode, &crate::verify2d::VerifyOptions::default())
+                .expect("the posted program re-parses");
+        assert!(moves.len() > 10, "{} moves", moves.len());
+    }
+
+    /// The pause message reaches the operator, and the probe macro runs on
+    /// resume rather than before the stop.
+    #[test]
+    fn the_pause_says_what_to_do_and_the_probe_follows_it() {
+        let gcode = job()
+            .with_op(pilot_holes())
+            .with_op(outside_profile())
+            .with_strategy(ToolChangeStrategy::ManualPauseReprobe {
+                probe_macro: Some("G38.2 Z-30 F100\nG10 L20 P1 Z19.05".into()),
+            })
+            .assemble()
+            .unwrap()
+            .to_gcode(&GrblPost::default());
+
+        let stop = gcode.find("\nM0\n").expect("a pause");
+        let reason = gcode
+            .find("(fit T1, then re-establish Z before resuming)")
+            .expect("the operator is told which tool goes in");
+        assert!(reason < stop, "the reason is read before the machine stops");
+        assert!(
+            gcode.find("G38.2").unwrap() > stop,
+            "the probe has to run on resume"
+        );
+    }
+
+    /// Hole making through `CamOperation` keeps the machinist's words. Wave 1
+    /// kept `Drill` out of `CamOperation` because `CamError` had nowhere to
+    /// put a `DrillError`; this is the test that says it does now.
+    #[test]
+    fn a_drill_refusal_keeps_its_own_words() {
+        // A flat end mill that is not declared centre-cutting cannot plunge.
+        let mut lib = ToolLibrary::new();
+        lib.add(
+            ToolEntry::new(
+                7,
+                "Ø3 flat, nothing declared",
+                Tool::FlatEndMill {
+                    diameter: 3.0,
+                    flute_length: 12.0,
+                    flutes: 2,
+                },
+            )
+            .with_geometry(ToolGeometry::new().with_stickout(20.0)),
+        );
+        let drill = Drill::new([(10.0, 10.0)], 4.0);
+        let expected = drill
+            .generate(
+                &lib.get_by_number(7).unwrap().tool,
+                &lib.get_by_number(7).unwrap().geometry,
+                &settings(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(
+            expected.contains("cuts across its own centre"),
+            "{expected}"
+        );
+
+        let op = CamOperation::Drill(drill);
+        let through_cam = op
+            .generate_with_geometry(
+                &lib.get_by_number(7).unwrap().tool,
+                &lib.get_by_number(7).unwrap().geometry,
+                &settings(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert_eq!(through_cam, expected, "the message survives the carrier");
+
+        // And through a job, with the operation's name in front of it.
+        let refusal = Job::new("holes", lib, settings())
+            .with_op(JobOp::new("Pilot holes", 7, op))
+            .assemble()
+            .unwrap_err();
+        let JobError::OpFailed { op, message } = &refusal else {
+            panic!("expected OpFailed, got {refusal:?}");
+        };
+        assert_eq!(op, "Pilot holes");
+        assert_eq!(message, &expected);
+    }
+
+    /// Drilling and boring sit in the same enum as milling, run in the same
+    /// order rules, and post into the same program.
+    #[test]
+    fn holes_and_bores_are_ordinary_cam_operations() {
+        let bore = HelicalBore::new(25.0, 20.0, 2.5, 3.0, 0.2);
+        let program = job()
+            .with_op(outside_profile())
+            .with_op(JobOp::new("Bore", 3, bore))
+            .with_op(pilot_holes())
+            .assemble()
+            .unwrap();
+
+        // The outside profile frees the part, so it is cut last whatever
+        // order the operations were added in.
+        let names: Vec<String> = program
+            .op_ranges()
+            .map(|b| match &b.block {
+                ProgramBlock::Operation { name, .. } => name.clone(),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(names.last().unwrap(), "Outside profile", "{names:?}");
+        assert!(names.contains(&"Bore".to_string()));
+        assert!(names.contains(&"Pilot holes".to_string()));
+
+        // The enum knows where each kind belongs without being told.
+        assert_eq!(
+            CamOperation::Drill(Drill::new([(1.0, 1.0)], 1.0)).default_role(),
+            OpRole::InsideFeature
+        );
+        assert_eq!(
+            CamOperation::HelicalBore(HelicalBore::new(0.0, 0.0, 3.0, 1.0, 0.2)).default_role(),
+            OpRole::InsideFeature
+        );
+    }
+
+    /// What the oracle's reader makes of the words a posted program now
+    /// contains. It refuses anything it does not understand, so this is the
+    /// list of what a post may safely emit — and `G18`/`G19` are not on it.
+    #[test]
+    fn the_oracle_reader_accepts_the_words_a_post_emits() {
+        let opts = crate::verify2d::VerifyOptions::default();
+        let prologue = "G21\nG90\nG94\nG17\nG0 X0 Y0 Z5\n";
+        for word in [
+            "M0", "M1", "M2", "M30", "G4 P1500", "G55", "G56", "G57", "G58", "G59", "G53",
+        ] {
+            let text = format!("{prologue}{word}\nG0 X1\n");
+            assert!(
+                crate::verify2d::parse_gcode(&text, &opts).is_ok(),
+                "the reader refused {word}, which a post emits"
+            );
+        }
+        // The planes the GRBL post now emits when an arc leaves XY are NOT
+        // understood: an XZ or YZ arc posts correctly but the oracle cannot
+        // replay it. Nothing in this crate generates one yet (every
+        // operation is 2.5D), and verify2d belongs to another package — this
+        // test is here so the day one does, it is a failing test and not a
+        // surprise.
+        for word in ["G18", "G19"] {
+            let text = format!("{prologue}{word}\nG0 X1\n");
+            assert!(
+                crate::verify2d::parse_gcode(&text, &opts).is_err(),
+                "{word} is understood now: this test can go"
+            );
         }
     }
 
