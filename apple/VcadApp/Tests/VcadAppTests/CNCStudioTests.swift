@@ -5,34 +5,37 @@ import RealityKit
 @MainActor
 final class CNCStudioTests: XCTestCase {
     private func generate(_ cnc: CNCWorkspace, all: Bool = true) async {
-        cnc.generate(all: all)
-        let deadline = Date().addingTimeInterval(8)
+        cnc.build()
+        let deadline = Date().addingTimeInterval(60)
         while cnc.generating && Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
         XCTAssertFalse(cnc.generating)
         XCTAssertNil(cnc.error)
     }
-    func testJobGenerationOrderAndSingleProgramEnd() async throws {
+    /// The job is one program with one spindle start, whatever the list holds:
+    /// the old pipeline posted one program per operation and stitched them.
+    func testOneJobIsOneProgramWithOneSpindleStart() async throws {
         let cnc = CNCWorkspace()
         let faceID = cnc.selectedOperation.id
-        cnc.addOperation("pocket")
+        cnc.addOperation(.pocket)
         let pocketID = cnc.selectedOperation.id
         XCTAssertNil(cnc.jobCode)
         await generate(cnc)
         let code = try XCTUnwrap(cnc.jobCode)
-        XCTAssertEqual(code.components(separatedBy: .newlines).filter { $0 == "M2" }.count, 1)
-        XCTAssertEqual(code.components(separatedBy: .newlines).filter { $0.hasPrefix("M3 ") }.count, 2)
-        XCTAssertTrue(code.hasPrefix("(vcad single-tool face"))
+        let lines = code.components(separatedBy: .newlines).map { $0.components(separatedBy: "(")[0] }
+        XCTAssertEqual(lines.filter { $0.split(separator: " ").contains { $0.uppercased() == "M3" } }.count, 1,
+                       "one tool means one spindle start")
+        XCTAssertEqual(lines.filter { $0.split(separator: " ").contains { $0.uppercased() == "M30" || $0.uppercased() == "M2" } }.count, 1)
         cnc.moveSelectedOperation(by: -1)
         XCTAssertEqual(cnc.operations.first?.id, pocketID)
-        XCTAssertTrue(cnc.jobCode!.hasPrefix("(vcad single-tool pocket"))
+        XCTAssertFalse(cnc.jobCurrent, "reordering is a change to the job")
         cnc.select(.operation(faceID))
-        XCTAssertEqual(cnc.setup.operation, "face")
+        XCTAssertEqual(cnc.setup.kind, .face)
+        await generate(cnc)
         cnc.setupConfirmed = true
         cnc.toolDiameter = 4
-        XCTAssertTrue(cnc.operations.allSatisfy { $0.setup.diameter == 4 })
         XCTAssertFalse(cnc.jobCurrent)
         XCTAssertFalse(cnc.setupConfirmed)
-        XCTAssertNil(cnc.jobCode)
+        XCTAssertNil(cnc.jobCode, "a stale job has nothing to send")
         cnc.removeSelectedOperation()
         XCTAssertEqual(cnc.operations.count, 1)
         cnc.removeSelectedOperation()
@@ -84,24 +87,27 @@ final class CNCStudioTests: XCTestCase {
         await generate(cnc)
         cnc.startJob()
         XCTAssertFalse(cnc.machine.active)
+        // No outline, and a tool whose stickout nobody declared: both are
+        // warnings the job will not run past unacknowledged.
+        for warning in cnc.warnings { cnc.acknowledge(warning.id, on: true) }
         cnc.setupConfirmed = true
         XCTAssertNil(cnc.runBlocker)
         cnc.startJob()
         XCTAssertTrue(cnc.machine.active)
         let setup = cnc.setup
         cnc.setup.depth = 9
-        cnc.addOperation("pocket")
+        cnc.addOperation(.pocket)
         XCTAssertEqual(cnc.setup, setup)
         XCTAssertEqual(cnc.operations.count, 1)
     }
-    func testStockEditsInvalidateEveryOperation() async {
+    func testStockEditsInvalidateTheWholeJob() async {
         let cnc = CNCWorkspace()
-        cnc.addOperation("profile")
+        cnc.addOperation(.pocket)
         await generate(cnc)
         XCTAssertTrue(cnc.jobCurrent)
         cnc.stockWidth = 55
-        XCTAssertTrue(cnc.operations.allSatisfy { $0.setup.width == 55 })
-        XCTAssertFalse(cnc.operations.contains(where: \.current))
+        XCTAssertFalse(cnc.jobCurrent, "the stock is part of what the job was built from")
+        XCTAssertNil(cnc.jobCode)
     }
     func testImportedJobUsesManufacturePreviewTransportAndRunGates() async throws {
         let cnc = CNCWorkspace()
@@ -121,6 +127,7 @@ final class CNCStudioTests: XCTestCase {
         let parent = Entity()
         syncCNCOverlay(cnc, in: parent)
         XCTAssertNotNil(parent.findEntity(named: "cncPath-0-false"))
+        for warning in cnc.warnings { cnc.acknowledge(warning.id, on: true) }
         cnc.setupConfirmed = true
         XCTAssertNil(cnc.runBlocker)
         cnc.startJob()

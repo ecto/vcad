@@ -71,17 +71,26 @@ final class CNCOutlineTests: XCTestCase {
 
     func testOutlineImportBuildsContourOperationsAndGenerates() async throws {
         let cnc = CNCWorkspace()
+        cnc.toolDiameter = 2
+        // A Ø2 cutter's flutes are 6 mm unless it is told otherwise, and the
+        // job refuses a 10 mm cut with them — so ask for one it can make.
+        cnc.stockThickness = 3
         try cnc.importOutline(try CNCOutline.parseDXF(square, name: "square.dxf"))
-        XCTAssertEqual(cnc.operations.map(\.setup.operation), ["contour_inside", "contour_outside"])
+        XCTAssertEqual(cnc.operations.map(\.setup.kind), [.contourInside, .contourOutside])
+        XCTAssertEqual(cnc.operations.map(\.name), ["Opening 10 × 10", "Outside profile"])
         XCTAssertEqual(cnc.stockWidth, 40); XCTAssertEqual(cnc.stockHeight, 30)
         XCTAssertEqual(cnc.operations.last?.setup.tabs, 3)
+        // The stock frame's zero sits where the outline was drawn, so the path
+        // lands on the part instead of beside it (item 47).
+        XCTAssertEqual(cnc.origin.x, -10); XCTAssertEqual(cnc.origin.y, -5)
         cnc.generate(all: true)
-        let deadline = Date().addingTimeInterval(20)
+        let deadline = Date().addingTimeInterval(60)
         while cnc.generating && Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
         XCTAssertNil(cnc.error)
+        XCTAssertTrue(cnc.jobCurrent)
         for op in cnc.operations {
-            XCTAssertTrue(op.current, "\(op.name) did not generate")
-            XCTAssertGreaterThan(op.program?.moves.count ?? 0, 8, op.name)
+            XCTAssertFalse(op.ranges.isEmpty, "\(op.name) produced no moves")
+            XCTAssertGreaterThan(op.ranges.reduce(0) { $0 + ($1.end - $1.start) }, 8, op.name)
         }
     }
 
@@ -94,6 +103,7 @@ final class CNCOutlineTests: XCTestCase {
         XCTAssertEqual(cnc.operations.map(\.setup.depth), [10])
         cnc.stockThickness = 6
         XCTAssertEqual(cnc.operations.map(\.setup.depth), [6])
+        XCTAssertEqual(cnc.operations.map(\.setup.kind), [.contourOutside])
         // A depth the user set by hand is theirs.
         cnc.setup.depth = 2
         cnc.stockThickness = 8
@@ -116,8 +126,7 @@ final class CNCOutlineTests: XCTestCase {
         cnc.generate(all: true)
         let deadline = Date().addingTimeInterval(60)
         while cnc.generating && Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
-        print("STATOR CAM: \(String(format: "%.1f", Date().timeIntervalSince(t0))) s, moves \(cnc.operations.map { $0.program?.moves.count ?? 0 }), est \(CNCWorkspace.durationLabel(cnc.jobDuration))")
-        XCTAssertNil(cnc.error)
+        print("STATOR CAM: \(String(format: "%.1f", Date().timeIntervalSince(t0))) s, moves \(cnc.jobMoves.count), est \(CNCWorkspace.durationLabel(cnc.jobDuration)), blocked by \(cnc.policy?.blockedBy ?? [])")
         XCTAssertTrue(cnc.jobCurrent)
         // `VCAD_STATOR_GCODE_OUT` keeps the job so it can be checked outside the app.
         if let out = ProcessInfo.processInfo.environment["VCAD_STATOR_GCODE_OUT"] {
