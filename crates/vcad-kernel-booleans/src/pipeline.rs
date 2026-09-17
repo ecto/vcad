@@ -156,6 +156,167 @@ fn evaluate_curve(curve: &ssi::IntersectionCurve, t: f64) -> Point3 {
     snap_point(p)
 }
 
+/// Would splitting planar `face` along its intersection with planar
+/// `cutter` accomplish nothing but fragmentation? Only meaningful for a
+/// UNION — see the call site.
+///
+/// True when two conditions hold together:
+///
+/// 1. `cutter` does not CROSS `face`'s plane — it ends on it, flush. A wall
+///    that stops at the plane removes nothing from the face below it; a wall
+///    that passes through does, and that cut is real.
+/// 2. The cutter's solid presents a face coplanar with `face`, overlapping
+///    it, facing the SAME way, and SMALLER than it. That pair is already
+///    resolved by the coplanar tie-break in `classify` — `OnSameInner` drops
+///    the smaller and keeps the larger whole — so cutting the larger one
+///    only breaks it into pieces the tie-break can no longer recognise as
+///    one region. The same-direction test is what keeps this off an ordinary
+///    stack (a boss sitting ON a plate): there the two coplanar faces OPPOSE,
+///    both are dropped, and the chords are what carve the boss's footprint
+///    out of the plate's top face. Suppressing them there leaves the boss's
+///    walls landing mid-face — 313 T-junctions on `bore_breaking_out_through
+///    _faces`.
+///
+/// Measured on the rana-60 stator: the ring's r 24..28.75 cap took a
+/// full-width chord from every side and end plane of every post (four each,
+/// 48 in all) even though a post reaches only 0.5 mm into the wall. Two
+/// posts 30° apart are enough — their end planes cross at r 25.36, inside
+/// the cap — to turn `ring ∪ posts` into a 7556 mm³ answer to a 5170 mm³
+/// question with 647 unpaired edges, and twelve posts lose 9.3% of the
+/// solid. With the chords suppressed the same union is exact to 0.001% and
+/// closed.
+fn flush_wall_phantom_cut(
+    solid: &BRepSolid,
+    face: FaceId,
+    other: &BRepSolid,
+    cutter: FaceId,
+) -> bool {
+    use vcad_kernel_geom::{Plane, SurfaceKind};
+    const TOL: f64 = 1e-6;
+
+    let plane_of = |s: &BRepSolid, f: FaceId| -> Option<Plane> {
+        let surf = &s.geometry.surfaces[s.topology.faces[f].surface_index];
+        (surf.surface_type() == SurfaceKind::Plane)
+            .then(|| surf.as_any().downcast_ref::<Plane>().cloned())
+            .flatten()
+    };
+    let (Some(face_plane), Some(_)) = (plane_of(solid, face), plane_of(other, cutter)) else {
+        return false;
+    };
+    let normal = *face_plane.normal_dir.as_ref();
+    let dist = |p: &Point3| (*p - face_plane.origin).dot(normal);
+
+    // 1. Does the cutter straddle the plane?
+    let cutter_verts: Vec<Point3> = other
+        .topology
+        .loop_half_edges(other.topology.faces[cutter].outer_loop)
+        .map(|he| other.topology.vertices[other.topology.half_edges[he].origin].point)
+        .collect();
+    if cutter_verts.len() < 3 {
+        return false;
+    }
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for v in &cutter_verts {
+        let d = dist(v);
+        lo = lo.min(d);
+        hi = hi.max(d);
+    }
+    if lo < -TOL && hi > TOL {
+        return false; // a real crossing
+    }
+
+    // 2. Is there a smaller, same-facing coplanar partner over this face?
+    let oriented = |s: &BRepSolid, f: FaceId, n: vcad_kernel_math::Vec3| match s.topology.faces[f]
+        .orientation
+    {
+        vcad_kernel_topo::Orientation::Forward => n,
+        vcad_kernel_topo::Orientation::Reversed => -n,
+    };
+    let face_normal = oriented(solid, face, normal);
+    let face_area = planar_loop_area(solid, solid.topology.faces[face].outer_loop)
+        - solid.topology.faces[face]
+            .inner_loops
+            .iter()
+            .map(|&lp| planar_loop_area(solid, lp))
+            .sum::<f64>();
+    if face_area <= 0.0 {
+        return false;
+    }
+    let face_box = bbox::face_aabb(solid, face);
+    other.topology.faces.iter().any(|(fid, f)| {
+        let Some(p) = plane_of(other, fid) else {
+            return false;
+        };
+        if (*p.normal_dir.as_ref()).cross(normal).norm() > TOL
+            || (p.origin - face_plane.origin).dot(normal).abs() > TOL
+        {
+            return false;
+        }
+        if oriented(other, fid, *p.normal_dir.as_ref()).dot(face_normal) <= 0.0 {
+            return false;
+        }
+        if !bbox::face_aabb(other, fid).overlaps(&face_box) {
+            return false;
+        }
+        let area = planar_loop_area(other, f.outer_loop)
+            - f.inner_loops
+                .iter()
+                .map(|&lp| planar_loop_area(other, lp))
+                .sum::<f64>();
+        if area <= 0.0 || area >= face_area * (1.0 - 1e-3) {
+            return false;
+        }
+        // Smaller is not enough — it must be CONTAINED, which is the exact
+        // precondition `OnSameInner` needs to drop it. A partially
+        // overlapping coplanar pair (a sheet-metal flange reaching past the
+        // plate it folds off) is coincident to neither classifier, so both
+        // faces survive and the chords are the only thing separating them:
+        // suppressing them there costs `loon_sheet_metal` 0.05-1.7% of the
+        // fold.
+        let verts: Vec<Point3> = other
+            .topology
+            .loop_half_edges(f.outer_loop)
+            .map(|he| other.topology.vertices[other.topology.half_edges[he].origin].point)
+            .collect();
+        if verts.len() < 3 {
+            return false;
+        }
+        let n = verts.len();
+        let c = Point3::new(
+            verts.iter().map(|v| v.x).sum::<f64>() / n as f64,
+            verts.iter().map(|v| v.y).sum::<f64>() / n as f64,
+            verts.iter().map(|v| v.z).sum::<f64>() / n as f64,
+        );
+        // Stride the loop: a frozen rim carries hundreds of vertices and each
+        // probe is a point-in-face walk. 32 points around a boundary is
+        // plenty to catch a face that hangs over the edge.
+        let step = n.div_ceil(32).max(1);
+        (0..n).step_by(step).all(|i| {
+            // Pull in from the boundary: a contained face often shares an
+            // edge with its container, where point-in-face is a coin flip.
+            let p = verts[i] + (c - verts[i]) * 0.05;
+            trim::point_in_face(solid, face, &p)
+        })
+    })
+}
+
+/// Area of one planar loop.
+fn planar_loop_area(solid: &BRepSolid, lp: vcad_kernel_topo::LoopId) -> f64 {
+    let pts: Vec<Point3> = solid
+        .topology
+        .loop_half_edges(lp)
+        .map(|he| solid.topology.vertices[solid.topology.half_edges[he].origin].point)
+        .collect();
+    if pts.len() < 3 {
+        return 0.0;
+    }
+    let mut total = vcad_kernel_math::Vec3::zeros();
+    for i in 1..pts.len() - 1 {
+        total += (pts[i] - pts[0]).cross(pts[i + 1] - pts[0]);
+    }
+    0.5 * total.norm()
+}
+
 /// Apply splits from intersection curves to solid A.
 fn apply_splits_to_solid(
     solid: &mut BRepSolid,
@@ -388,14 +549,11 @@ fn apply_splits_to_solid(
                                 _l.direction.y,
                                 _l.direction.z
                             );
+                            // The trimmed segment, not a placeholder: on a
+                            // notched face the same line offers several
+                            // chords and only this one is the recorded cut.
                             let result = split::split_planar_face(
-                                solid,
-                                fid,
-                                &curve,
-                                &Point3::origin(),
-                                &Point3::origin(),
-                                segments,
-                                false,
+                                solid, fid, &curve, &entry, &exit, segments, false,
                             );
                             debug_bool!(
                                 "    -> planar Line split result: {} sub-faces {:?}",
@@ -985,6 +1143,22 @@ pub(crate) fn brep_boolean(
                     out
                 };
                 let line_curve = matches!(single_curve, ssi::IntersectionCurve::Line(_));
+                // A wall that merely ENDS on this face's plane (flush
+                // prismatic stack: the other operand's cap sits in the same
+                // plane) asks for a chord that partitions nothing. The
+                // coplanar pair is settled by the OnSame/OnSameInner
+                // tie-break, and the larger of the two is the one kept whole
+                // — so cutting it is not just useless, it is destructive.
+                // Unions only. The gate's premise is that the larger coplanar
+                // face survives WHOLE — true of a union, where the region under
+                // the smaller face is material either way. A difference has to
+                // cut that region out and an intersection keeps nothing else,
+                // so there the chords are the cut itself: a flush through-hole
+                // (a 64-gon bore prism out of a 64-gon disc, both caps
+                // coplanar) kept its caps and read 1120.79 mm³ against 1053.88.
+                let gate = line_curve && op == BooleanOp::Union;
+                let phantom_a = gate && flush_wall_phantom_cut(&a, face_a, &b, face_b);
+                let phantom_b = gate && flush_wall_phantom_cut(&b, face_b, &a, face_a);
                 let clipped_a: Option<Vec<(f64, f64)>> = (line_curve
                     && split::is_conical_face(&a, face_a))
                 .then(|| clip_to(&segs_a, &segs_b));
@@ -997,9 +1171,13 @@ pub(crate) fn brep_boolean(
                     segs_a.len()
                 );
                 let mut recorded_a = false;
-                let intervals_a: Vec<(f64, f64)> = match &clipped_a {
-                    Some(c) => c.clone(),
-                    None => segs_a.iter().map(|s| (s.t_start, s.t_end)).collect(),
+                let intervals_a: Vec<(f64, f64)> = if phantom_a {
+                    Vec::new()
+                } else {
+                    match &clipped_a {
+                        Some(c) => c.clone(),
+                        None => segs_a.iter().map(|s| (s.t_start, s.t_end)).collect(),
+                    }
                 };
                 for &(t_start, t_end) in &intervals_a {
                     let entry = evaluate_curve(single_curve, t_start);
@@ -1059,9 +1237,13 @@ pub(crate) fn brep_boolean(
                     segs_b.len()
                 );
                 let mut recorded_b = false;
-                let intervals_b: Vec<(f64, f64)> = match &clipped_b {
-                    Some(c) => c.clone(),
-                    None => segs_b.iter().map(|s| (s.t_start, s.t_end)).collect(),
+                let intervals_b: Vec<(f64, f64)> = if phantom_b {
+                    Vec::new()
+                } else {
+                    match &clipped_b {
+                        Some(c) => c.clone(),
+                        None => segs_b.iter().map(|s| (s.t_start, s.t_end)).collect(),
+                    }
                 };
                 for &(t_start, t_end) in &intervals_b {
                     let entry = evaluate_curve(single_curve, t_start);

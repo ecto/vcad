@@ -34,6 +34,29 @@ pub enum FaceClassification {
     OnSame,
     /// Face is on the boundary, normals oppose.
     OnOpposite,
+    /// Face is on the boundary with normals agreeing, but the mating face is
+    /// strictly LARGER — the coincidence is one-sided.
+    ///
+    /// `OnSame` carries an implicit promise that the two faces cover the same
+    /// region, which is what makes "A wins the tie" a safe rule for a union:
+    /// dropping B's copy loses nothing. When the other face merely *contains*
+    /// this one, that promise fails. The larger face is classified `Outside`
+    /// (it reaches past the contact) and is therefore kept whichever operand
+    /// carries it, so keeping this one too covers the overlap twice: on the
+    /// rana-60 stator's ring cap, `post ∪ ring` came out 4951.99 mm³ against
+    /// 4946.55 — exactly the flux of a doubled 2.717 mm² cap pair at
+    /// z = 11.1 and z = 17.1 — with 30 open and 24 over-used edges, while
+    /// `ring ∪ post` was exact because there the duplicate landed on the B
+    /// side, which loses that tie-break anyway.
+    ///
+    /// Splitting the larger face until the pair is mutual is not the answer:
+    /// the ring's cap is an annulus and every chord a post offers it runs
+    /// through the bore, which the planar splitter cannot partition — and
+    /// where such chords DO land they fragment the cap into pieces that no
+    /// longer classify coherently (see `flush_wall_phantom_cut`). So the rule
+    /// is "the larger face wins", which is what made the working operand
+    /// order correct in the first place.
+    OnSameInner,
 }
 
 /// Most boundary probes to take for one face, on top of its interior
@@ -961,6 +984,10 @@ fn find_coincident_classification(
     const PLANE_TOL: f64 = 1e-6;
     const ANGLE_TOL: f64 = 1e-4;
 
+    // A one-sided match is only the verdict when no mutual one turns up: the
+    // same patch can sit inside a big face and exactly on a small one.
+    let mut one_sided: Option<FaceClassification> = None;
+
     for (other_fid, other_face) in &other.topology.faces {
         let other_surf = &other.geometry.surfaces[other_face.surface_index];
         if other_surf.surface_type() != SurfaceKind::Plane {
@@ -1058,12 +1085,102 @@ fn find_coincident_classification(
         };
         let dot = self_normal.dot(other_normal);
         if dot > 1.0 - ANGLE_TOL {
+            // A mating face that genuinely REACHES PAST this one keeps its
+            // own copy of the contact (it classifies Outside), so this one is
+            // a duplicate — see `OnSameInner`.
+            //
+            // Bigger area alone does not establish that. The sheet-metal
+            // fold's bend sector meets the flange along a 0.0600 mm² face
+            // whose partner measures 0.0608 — 1.3% apart, entirely from the
+            // ε lip the sector is oversized by, and no part of either sits
+            // outside the other in any way that matters. Reading that as
+            // one-sided dropped a face from every bend end and cost the fold
+            // 1.6 mm³ per end (`relief_notches_are_the_only_delta_across_a
+            // _split_edge`: 162.0000 → 163.6000). So the area test only
+            // orders the pair; what decides is whether the other face still
+            // has boundary OUTSIDE this one after being pulled 5% toward its
+            // own centroid — a margin no discretization mismatch reaches,
+            // and one the stator's ring cap (787 mm² around a 2.7 mm² post
+            // patch) clears everywhere.
+            let self_area = planar_face_area(brep, face_id);
+            let other_area = planar_face_area(other, other_fid);
+            if self_area > 0.0
+                && other_area > self_area * 1.001
+                && reaches_outside(other, other_fid, brep, face_id)
+            {
+                one_sided = Some(FaceClassification::OnSameInner);
+                continue;
+            }
             return Some(FaceClassification::OnSame);
         } else if dot < -1.0 + ANGLE_TOL {
             return Some(FaceClassification::OnOpposite);
         }
     }
-    None
+    // Only reached when no mutual coincidence was found anywhere.
+    one_sided
+}
+
+/// Does `outer`'s face keep boundary outside `inner`'s face once pulled 5%
+/// toward its own centroid?
+///
+/// The nudge is what makes the answer mean something: two coplanar faces that
+/// share an edge put boundary points exactly on each other's boundary, where
+/// point-in-face is a coin flip, and two nominally identical faces can differ
+/// by a fraction of a percent purely from how each was discretized. A point
+/// 5% of the way in from the boundary is past both, so a `false` here is a
+/// face that genuinely extends beyond the other rather than one that merely
+/// measures larger.
+///
+/// Sampled at a stride: a frozen rim carries hundreds of vertices and each
+/// probe is a point-in-face walk.
+fn reaches_outside(
+    outer: &BRepSolid,
+    outer_face: FaceId,
+    inner: &BRepSolid,
+    inner_face: FaceId,
+) -> bool {
+    let verts: Vec<Point3> = outer
+        .topology
+        .loop_half_edges(outer.topology.faces[outer_face].outer_loop)
+        .map(|he| outer.topology.vertices[outer.topology.half_edges[he].origin].point)
+        .collect();
+    let n = verts.len();
+    if n < 3 {
+        return false;
+    }
+    let c = Point3::new(
+        verts.iter().map(|v| v.x).sum::<f64>() / n as f64,
+        verts.iter().map(|v| v.y).sum::<f64>() / n as f64,
+        verts.iter().map(|v| v.z).sum::<f64>() / n as f64,
+    );
+    let step = n.div_ceil(MAX_BOUNDARY_PROBES).max(1);
+    (0..n).step_by(step).any(|i| {
+        let p = verts[i] + (c - verts[i]) * 0.05;
+        !crate::trim::point_in_face(inner, inner_face, &p)
+    })
+}
+
+/// Area of a planar face: its outer loop less its holes.
+fn planar_face_area(brep: &BRepSolid, face_id: FaceId) -> f64 {
+    let face = &brep.topology.faces[face_id];
+    let loop_area = |lp| -> f64 {
+        let pts: Vec<Point3> = brep
+            .topology
+            .loop_half_edges(lp)
+            .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+            .collect();
+        if pts.len() < 3 {
+            return 0.0;
+        }
+        let mut total = vcad_kernel_math::Vec3::zeros();
+        for i in 1..pts.len() - 1 {
+            total += (pts[i] - pts[0]).cross(pts[i + 1] - pts[0]);
+        }
+        0.5 * total.norm()
+    };
+    let outer = loop_area(face.outer_loop);
+    let holes: f64 = face.inner_loops.iter().map(|&lp| loop_area(lp)).sum();
+    (outer - holes).max(0.0)
 }
 
 /// Coincidence classification for cylindrical faces: when another face
@@ -1613,9 +1730,15 @@ pub fn select_faces(
                     FaceClassification::Outside | FaceClassification::OnOpposite
                 )
             }
-            BooleanOp::Intersection => {
-                matches!(c, FaceClassification::Inside | FaceClassification::OnSame)
-            }
+            // The intersection's boundary over a one-sided contact IS the
+            // smaller face, so `OnSameInner` is kept here for the same reason
+            // the union drops it.
+            BooleanOp::Intersection => matches!(
+                c,
+                FaceClassification::Inside
+                    | FaceClassification::OnSame
+                    | FaceClassification::OnSameInner
+            ),
         })
         .map(|(f, _)| *f)
         .collect();
