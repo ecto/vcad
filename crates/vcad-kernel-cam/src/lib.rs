@@ -53,6 +53,7 @@
 pub mod arcfit;
 pub mod dropcutter;
 mod error;
+pub mod gear;
 mod job;
 pub mod materials;
 mod operation;
@@ -63,6 +64,7 @@ mod toolpath;
 // Re-exports
 pub use arcfit::{fit_arcs, fit_arcs_reported, ArcFitOptions, ArcFitReport};
 pub use error::CamError;
+pub use gear::{GearError, GearPair, GearReport, PlanetaryTrain, SpurGear, ToothSpace};
 pub use job::{
     BlockRange, Job, JobError, JobOp, JobOperation, OpRole, Program, ProgramBlock, ProgramEnd,
     ToolChangeStrategy, Wcs,
