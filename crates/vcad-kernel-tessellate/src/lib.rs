@@ -984,6 +984,12 @@ fn heal_t_junctions_pass(mesh: &mut TriangleMesh) -> bool {
     if candidates.is_empty() {
         return false;
     }
+    // `counts` is a HashMap, so the seed decides what order the candidates
+    // came out in — and the slab scan below keeps ties in that order, where
+    // two coincident candidates on one edge make `dedup_by_key` keep a
+    // different one per process. Sort by index: cheap, and the whole pass
+    // becomes a function of the mesh alone.
+    candidates.sort_unstable();
 
     let pos = |i: u32| -> [f64; 3] {
         let k = i as usize * 3;
@@ -1205,7 +1211,7 @@ fn snap_boundary_rails(mesh: &mut TriangleMesh) {
 
     // Unpaired undirected edges and the vertices on them.
     let counts = mesh.edge_use_counts();
-    let open: Vec<(u32, u32)> = counts
+    let mut open: Vec<(u32, u32)> = counts
         .iter()
         .filter(|&(_, &n)| n == 1)
         .map(|(&e, _)| e)
@@ -1213,6 +1219,14 @@ fn snap_boundary_rails(mesh: &mut TriangleMesh) {
     if open.is_empty() {
         return;
     }
+    // Sorted, not `counts` order. The snap below keeps the FIRST nearest
+    // edge (strict `d2 < bd`), and a slit's two rails routinely offer a
+    // vertex two exactly-equidistant candidates — so HashMap order, which
+    // is seeded per process, chose where the vertex landed. Measured on
+    // the rana-60 stator: the same 172-face union repaired to two
+    // different 6704-triangle meshes across runs, and the mesh fallback
+    // three unions later returned 8118.6 mm³ or 8150.6 mm³ from it.
+    open.sort_unstable();
     let pos = |i: u32| -> [f64; 3] {
         let k = i as usize * 3;
         [
