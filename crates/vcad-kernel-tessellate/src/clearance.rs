@@ -930,6 +930,91 @@ pub(crate) fn surface_deviation(from: &TriangleMesh, to: &TriangleMesh) -> f64 {
     worst
 }
 
+/// How far `from`'s surface ended up from `to`'s, and how much of it.
+///
+/// `max`/`at` answer "how wrong, and where"; `area_over` answers "how much of
+/// the part", as the fraction of `from`'s area whose triangles deviate by
+/// more than each threshold. A single 3 mm spike on a sliver is a different
+/// problem from 8% of the surface being 0.1 mm out, and a part that may have
+/// been machined or printed needs both numbers.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SurfaceMove {
+    /// Largest deviation, mm.
+    pub max: f64,
+    /// Where, in part coordinates.
+    pub at: [f64; 3],
+    /// Fraction of `from`'s area deviating by more than each threshold.
+    pub area_over: [f64; 2],
+}
+
+/// [`SurfaceMove`] for `from` against `to`, at the two given thresholds (mm).
+pub(crate) fn deviation_stats(
+    from: &TriangleMesh,
+    to: &TriangleMesh,
+    thresholds: [f64; 2],
+) -> SurfaceMove {
+    let Some(bvh) = TriBvh::build(to) else {
+        return SurfaceMove {
+            max: if from.indices.is_empty() {
+                0.0
+            } else {
+                f64::INFINITY
+            },
+            at: [0.0; 3],
+            area_over: [1.0, 1.0],
+        };
+    };
+    let v = |i: u32| -> [f64; 3] {
+        let k = i as usize * 3;
+        [
+            from.vertices[k] as f64,
+            from.vertices[k + 1] as f64,
+            from.vertices[k + 2] as f64,
+        ]
+    };
+    let (mut max, mut at) = (0.0f64, [0.0; 3]);
+    let (mut total, mut over) = (0.0f64, [0.0f64; 2]);
+    for t in from.indices.chunks(3) {
+        let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
+        let centroid = [
+            (a[0] + b[0] + c[0]) / 3.0,
+            (a[1] + b[1] + c[1]) / 3.0,
+            (a[2] + b[2] + c[2]) / 3.0,
+        ];
+        let (u, w) = (
+            [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+            [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+        );
+        let cr = [
+            u[1] * w[2] - u[2] * w[1],
+            u[2] * w[0] - u[0] * w[2],
+            u[0] * w[1] - u[1] * w[0],
+        ];
+        let area = 0.5 * (cr[0] * cr[0] + cr[1] * cr[1] + cr[2] * cr[2]).sqrt();
+        total += area;
+        let mut worst_here = 0.0f64;
+        for p in [a, b, c, centroid] {
+            let d = point_mesh_closest(p, &bvh).0;
+            if d > max {
+                max = d;
+                at = p;
+            }
+            worst_here = worst_here.max(d);
+        }
+        for (k, &th) in thresholds.iter().enumerate() {
+            if worst_here > th {
+                over[k] += area;
+            }
+        }
+    }
+    let frac = |x: f64| if total > 0.0 { x / total } else { 0.0 };
+    SurfaceMove {
+        max,
+        at,
+        area_over: [frac(over[0]), frac(over[1])],
+    }
+}
+
 /// Where `from` deviates most from `to`, for a message a human can act on.
 pub(crate) fn surface_deviation_at(from: &TriangleMesh, to: &TriangleMesh) -> (f64, [f64; 3]) {
     let Some(bvh) = TriBvh::build(to) else {

@@ -749,7 +749,25 @@ pub fn boolean_op_reported(
 /// Without the re-projection, a repair chasing a slit across a curved seam
 /// flattens it — measured 0.36 mm off a R25 sphere at 32 segments.
 pub fn repair_export_mesh(brep: &BRepSolid, mesh: &mut TriangleMesh) {
-    vcad_kernel_tessellate::repair_watertightness(mesh);
+    let _ = repair_export_mesh_reported(brep, mesh);
+}
+
+/// [`repair_export_mesh`], with the verdict.
+///
+/// This is the STRICT path — an STL a user machines from, the mesh the CAM
+/// section reads. A repair that would move the part further than
+/// `SHAPE_TOLERANCE` is declined and the caller is told, rather than handed a
+/// different solid that looks fine (native-app friction log item 30). Callers
+/// that would rather have manifoldness at any cost go through
+/// `RepairPolicy::manifold_at_any_cost`, as the mesh fallback does.
+pub fn repair_export_mesh_reported(
+    brep: &BRepSolid,
+    mesh: &mut TriangleMesh,
+) -> vcad_kernel_tessellate::RepairOutcome {
+    let outcome = vcad_kernel_tessellate::repair_watertightness_with(
+        mesh,
+        vcad_kernel_tessellate::RepairPolicy::strict(),
+    );
     // Re-projection is for triangle-soup fallback results only: they
     // stash their operands' quadric carriers precisely so a repair here
     // can be pulled back on-surface. An ANALYTIC B-rep's surface list
@@ -759,6 +777,7 @@ pub fn repair_export_mesh(brep: &BRepSolid, mesh: &mut TriangleMesh) {
     if crate::mesh::is_triangle_soup(brep) {
         QuadricCtx::collect(brep, brep).project_mesh(mesh);
     }
+    outcome
 }
 
 /// Rail separation (mm) above which a crack counts as a genuine gap
@@ -965,8 +984,37 @@ fn mesh_fallback(
         // added volume (a chained pocket-and-slot part read 4% high).
         let unrefined = out.clone();
         let unrefined_boundary = out.boundary_edges().len();
-        crate::mesh::remove_interior_membranes(&mut out);
-        vcad_kernel_tessellate::repair_watertightness(&mut out);
+        crate::mesh::remove_interior_membranes_with(
+            &mut out,
+            vcad_kernel_tessellate::RepairPolicy::manifold_at_any_cost(),
+        );
+        // Permissive on purpose: this path's whole contract is to return
+        // something that bounds a solid, and a caller that reached the mesh
+        // fallback has already accepted a degraded result. The EXPORT path
+        // (`repair_export_mesh`) is the strict one — see
+        // `vcad_kernel_tessellate::RepairPolicy`.
+        //
+        // Not silent, though. What it cost is measured and logged, so the
+        // "manifold at any cost" trade is a number someone can look at
+        // rather than an assumption (native-app friction log item 30).
+        let repair = vcad_kernel_tessellate::repair_watertightness_with(
+            &mut out,
+            vcad_kernel_tessellate::RepairPolicy::manifold_at_any_cost(),
+        );
+        if repair.surface_lost.max > vcad_kernel_tessellate::SHAPE_TOLERANCE
+            && std::env::var_os("VCAD_REPAIR_TRACE").is_some()
+        {
+            eprintln!(
+                "mesh fallback repair moved the surface {:.4} mm at {:?} \
+                 ({:.2}% of the area past {:.3} mm); defects {} -> {}",
+                repair.surface_lost.max,
+                repair.surface_lost.at,
+                repair.surface_lost.area_over[0] * 100.0,
+                vcad_kernel_tessellate::SHAPE_TOLERANCE,
+                repair.defects_before,
+                repair.defects_after
+            );
+        }
         // Second projection pulls anything the repair moved back onto its
         // carrier. Vertices the repair did not move are already
         // on-surface, so a changed pinning decision cannot displace them.

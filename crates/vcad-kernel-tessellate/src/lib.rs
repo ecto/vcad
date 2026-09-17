@@ -7428,6 +7428,50 @@ fn collapse_zero_area_triangles(mesh: &mut TriangleMesh) {
 /// caller is told (`RepairOutcome`) rather than handed a different part.
 pub const SHAPE_TOLERANCE: f64 = 0.02;
 
+/// How much a repair is allowed to change the part to close it.
+///
+/// Two callers want opposite things and both are legitimate. An export — an
+/// STL a user machines from, the mesh the CAM section reads — wants the part
+/// it modelled, and would rather be told a crack is there than be handed a
+/// different solid. [`crate::mesh_props`]-style manifold consumers, and the
+/// mesh boolean fallback whose whole contract is "return something that
+/// bounds a solid", would rather have a closed mesh and be told what it cost.
+///
+/// So the tolerance is a parameter, not a constant, and whichever way it is
+/// set the answer comes back in a [`RepairOutcome`]: nothing about the trade
+/// is silent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RepairPolicy {
+    /// How far a single pass may move the boundary before it is reverted, mm.
+    pub max_surface_move: f64,
+}
+
+impl RepairPolicy {
+    /// What a user manufactures from: the part must survive intact, and a
+    /// mesh that cannot be closed within [`SHAPE_TOLERANCE`] comes back
+    /// un-repaired with the reason attached.
+    pub fn strict() -> Self {
+        Self {
+            max_surface_move: SHAPE_TOLERANCE,
+        }
+    }
+
+    /// Manifoldness at (almost) any cost, for callers whose contract is to
+    /// return something that bounds a solid. Still measured and still
+    /// reported — `RepairOutcome::surface_lost` says what it cost.
+    pub fn manifold_at_any_cost() -> Self {
+        Self {
+            max_surface_move: f64::INFINITY,
+        }
+    }
+}
+
+impl Default for RepairPolicy {
+    fn default() -> Self {
+        Self::strict()
+    }
+}
+
 /// What [`repair_watertightness_reported`] did, for a caller that must not
 /// present a degraded mesh as a good one (native-app friction log item 30).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -7438,10 +7482,18 @@ pub struct RepairOutcome {
     /// watertight and the caller is holding a degraded part.
     pub defects_after: usize,
     /// Passes refused because they would have moved the part's boundary
-    /// further than [`SHAPE_TOLERANCE`], as `(pass, mm it would have moved)`.
+    /// further than the policy allows, as `(pass, mm it would have moved)`.
     /// A non-empty list with `defects_after > 0` is the honest answer "this
     /// mesh cannot be repaired without changing the part".
     pub declined: Vec<(&'static str, f64)>,
+    /// How far the mesh handed in ended up from the mesh handed back —
+    /// surface that was deleted or slid. Under a strict policy this is
+    /// bounded by [`SHAPE_TOLERANCE`]; under a permissive one it is the
+    /// price that was paid, and the caller is expected to record it.
+    pub surface_lost: crate::clearance::SurfaceMove,
+    /// The other direction: surface the repair invented, measured against
+    /// what it was given. A hole fill lands here by design.
+    pub surface_added: crate::clearance::SurfaceMove,
 }
 
 impl RepairOutcome {
@@ -7476,6 +7528,7 @@ impl RepairOutcome {
 fn guarded_pass(
     mesh: &mut TriangleMesh,
     label: &'static str,
+    policy: RepairPolicy,
     outcome: &mut RepairOutcome,
     pass: impl FnOnce(&mut TriangleMesh),
 ) {
@@ -7486,16 +7539,33 @@ fn guarded_pass(
         *mesh = before;
         return;
     }
-    if std::env::var_os("VCAD_NO_SHAPE_GUARD").is_some() {
+    if !policy.max_surface_move.is_finite() {
         return;
     }
     let moved = crate::clearance::surface_deviation(&before, mesh);
-    if moved > SHAPE_TOLERANCE {
+    if moved > policy.max_surface_move {
         if std::env::var_os("VCAD_REPAIR_TRACE").is_some() {
             eprintln!("repair[{label}]: DECLINED — would move the surface {moved:.5} mm");
         }
         outcome.declined.push((label, moved));
         *mesh = before;
+    }
+}
+
+/// As [`revert_unless_it_helps`], but only under a policy that cares about
+/// the shape. A `manifold_at_any_cost` caller wants the old behaviour, where
+/// an individually-regressive pass is allowed to set up a better final state
+/// and the iteration's own accept/reject decides — which is what the
+/// shell-ring corpus was calibrated on.
+fn revert_unless_it_helps_under(
+    mesh: &mut TriangleMesh,
+    policy: RepairPolicy,
+    pass: impl FnOnce(&mut TriangleMesh),
+) {
+    if policy.max_surface_move.is_finite() {
+        revert_unless_it_helps(mesh, pass);
+    } else {
+        pass(mesh);
     }
 }
 
@@ -7522,17 +7592,57 @@ pub fn repair_watertightness(mesh: &mut TriangleMesh) {
 /// shape guard is that the caller finds out instead of receiving a quietly
 /// different solid.
 pub fn repair_watertightness_reported(mesh: &mut TriangleMesh) -> RepairOutcome {
+    repair_watertightness_with(mesh, RepairPolicy::strict())
+}
+
+/// [`repair_watertightness_reported`] under an explicit [`RepairPolicy`].
+///
+/// The final `surface_lost` / `surface_added` are measured whatever the
+/// policy — a permissive caller is meant to record them, not to be spared
+/// them. Thresholds for the area fractions are [`SHAPE_TOLERANCE`] and five
+/// times it, so one number says "how wrong" and the other "how much of it".
+pub fn repair_watertightness_with(mesh: &mut TriangleMesh, policy: RepairPolicy) -> RepairOutcome {
+    // `VCAD_NO_SHAPE_GUARD=1` puts the whole pipeline back the way it was
+    // before the shape guard — every path permissive — so a part can be
+    // measured both ways without rebuilding.
+    let policy = if std::env::var_os("VCAD_NO_SHAPE_GUARD").is_some() {
+        RepairPolicy::manifold_at_any_cost()
+    } else {
+        policy
+    };
+    let entry = mesh.clone();
     let mut outcome = RepairOutcome {
         defects_before: defective_edge_count(mesh),
-        defects_after: 0,
-        declined: Vec::new(),
+        ..RepairOutcome::default()
     };
-    repair_watertightness_inner(mesh, &mut outcome);
+    repair_watertightness_inner(mesh, policy, &mut outcome);
     outcome.defects_after = defective_edge_count(mesh);
+    let thresholds = [SHAPE_TOLERANCE, 5.0 * SHAPE_TOLERANCE];
+    outcome.surface_lost = crate::clearance::deviation_stats(&entry, mesh, thresholds);
+    outcome.surface_added = crate::clearance::deviation_stats(mesh, &entry, thresholds);
+    if std::env::var_os("VCAD_REPAIR_TRACE").is_some() {
+        eprintln!(
+            "repair[out]: {} -> {} defective; lost {:.5} mm at {:?} ({:.2}% of area > {:.3}, \
+             {:.2}% > {:.3}); added {:.5} mm",
+            outcome.defects_before,
+            outcome.defects_after,
+            outcome.surface_lost.max,
+            outcome.surface_lost.at,
+            outcome.surface_lost.area_over[0] * 100.0,
+            thresholds[0],
+            outcome.surface_lost.area_over[1] * 100.0,
+            thresholds[1],
+            outcome.surface_added.max,
+        );
+    }
     outcome
 }
 
-fn repair_watertightness_inner(mesh: &mut TriangleMesh, outcome: &mut RepairOutcome) {
+fn repair_watertightness_inner(
+    mesh: &mut TriangleMesh,
+    policy: RepairPolicy,
+    outcome: &mut RepairOutcome,
+) {
     if !worth_repairing(mesh) {
         return;
     }
@@ -7578,9 +7688,9 @@ fn repair_watertightness_inner(mesh: &mut TriangleMesh, outcome: &mut RepairOutc
     // it cannot raise the count. Reverting a removal that does is sound with
     // no tolerance to calibrate, and it is what puts the reference volume
     // back on the real surface.
-    revert_unless_it_helps(mesh, drop_exact_duplicate_triangles);
+    revert_unless_it_helps_under(mesh, policy, drop_exact_duplicate_triangles);
     step(mesh, "drop_duplicates");
-    revert_unless_it_helps(mesh, |m: &mut TriangleMesh| {
+    revert_unless_it_helps_under(mesh, policy, |m: &mut TriangleMesh| {
         mesh_ray::strip_membranes_once(m);
     });
     step(mesh, "strip_membranes");
@@ -7614,21 +7724,36 @@ fn repair_watertightness_inner(mesh: &mut TriangleMesh, outcome: &mut RepairOutc
         guarded_pass(
             mesh,
             "collapse_short",
+            policy,
             outcome,
             collapse_short_defective_edges,
         );
         step(mesh, "collapse_short");
-        revert_unless_it_helps(mesh, |m: &mut TriangleMesh| {
-            mesh_ray::strip_membranes_once(m);
-        });
+        // Ungated inside the loop, unlike the pre-loop call: here the
+        // iteration's own accept/reject can undo a pass that turned out not
+        // to pay, so an individually-regressive strip is allowed to set up a
+        // better final state. The pre-loop one has no such backstop.
+        mesh_ray::strip_membranes_once(mesh);
         step(mesh, "strip_membranes");
-        guarded_pass(mesh, "prune_patches", outcome, prune_redundant_patches);
+        guarded_pass(
+            mesh,
+            "prune_patches",
+            policy,
+            outcome,
+            prune_redundant_patches,
+        );
         step(mesh, "prune_patches");
-        guarded_pass(mesh, "snap_rails", outcome, snap_boundary_rails);
+        guarded_pass(mesh, "snap_rails", policy, outcome, snap_boundary_rails);
         step(mesh, "snap_rails");
-        guarded_pass(mesh, "bridge_slits", outcome, bridge_boundary_slits);
+        guarded_pass(mesh, "bridge_slits", policy, outcome, bridge_boundary_slits);
         step(mesh, "bridge_slits");
-        guarded_pass(mesh, "refill", outcome, refill_defective_neighborhoods);
+        guarded_pass(
+            mesh,
+            "refill",
+            policy,
+            outcome,
+            refill_defective_neighborhoods,
+        );
         step(mesh, "refill");
         let after = defective_edge_count(mesh);
         if vol_ok(mesh) && after < best.0 {

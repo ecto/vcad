@@ -206,3 +206,61 @@ fn the_outcome_reports_a_mesh_it_could_not_close() {
     assert!(outcome.is_watertight());
     assert_eq!(outcome.warning(), None, "nothing to warn about");
 }
+
+/// The permissive policy still measures what it costs.
+///
+/// `RepairPolicy::manifold_at_any_cost` is what the mesh-boolean fallback
+/// uses: its contract is to return something that bounds a solid, and a
+/// caller that reached it has already accepted a degraded result. That is a
+/// trade, not a free lunch, and the point of the split is that the trade is a
+/// number someone can read — `surface_lost` — rather than an assumption.
+/// Measured on the real parts: the shell ring's export moved 0.104 mm, its
+/// worst intermediate mesh-CSG step 2.96 mm (1.8% of the area past 0.02 mm),
+/// and the rana-60c shell 2.65 mm.
+#[test]
+fn the_permissive_policy_reports_what_it_moved() {
+    use vcad_kernel_tessellate::{repair_watertightness_with, RepairPolicy};
+
+    // A box with its lid removed: the only way to close it is to invent
+    // surface or to throw the rest away, so a permissive repair has to move
+    // something, and a strict one has to decline.
+    let clean = box_mesh(10.0, 8.0, 6.0);
+    let open: Vec<u32> = clean
+        .indices
+        .chunks(3)
+        .enumerate()
+        .filter(|(t, _)| *t != 2 && *t != 3)
+        .flat_map(|(_, tri)| tri.to_vec())
+        .collect();
+
+    let mut strict = clean.clone();
+    strict.indices = open.clone();
+    let strict_outcome = repair_watertightness_with(&mut strict, RepairPolicy::strict());
+
+    let mut loose = clean.clone();
+    loose.indices = open;
+    let loose_outcome =
+        repair_watertightness_with(&mut loose, RepairPolicy::manifold_at_any_cost());
+
+    assert!(
+        strict_outcome.surface_lost.max <= SHAPE_TOLERANCE,
+        "the strict policy let the surface move {:.4} mm",
+        strict_outcome.surface_lost.max
+    );
+    assert!(
+        !strict_outcome.declined.is_empty(),
+        "the strict policy should have had something to decline here"
+    );
+    // Whatever the permissive one chose, it is on the record.
+    assert!(
+        loose_outcome.surface_lost.max.is_finite(),
+        "the permissive policy must still report its surface move"
+    );
+    assert!(
+        loose_outcome.surface_lost.max >= strict_outcome.surface_lost.max,
+        "the permissive policy cannot move LESS than the strict one: \
+         {:.4} vs {:.4}",
+        loose_outcome.surface_lost.max,
+        strict_outcome.surface_lost.max
+    );
+}

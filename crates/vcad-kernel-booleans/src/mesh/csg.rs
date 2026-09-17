@@ -837,7 +837,10 @@ pub fn manifold_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp)
     // triangulations — the shape a difference leaves where a tool's face
     // grazes an existing wall. This pass classifies by ray casting instead,
     // so the triangulations need not agree.
-    super::remove_interior_membranes(&mut out);
+    super::remove_interior_membranes_with(
+        &mut out,
+        vcad_kernel_tessellate::RepairPolicy::manifold_at_any_cost(),
+    );
     make_manifold(&out, DEFAULT_WELD_EPS)
 }
 
