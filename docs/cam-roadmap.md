@@ -88,7 +88,7 @@ loop (pins → compensation → re-cut) · indexed 4th axis (design first).
 20T module-1.0 planet from C360 plate, Ø1 cutter, verified in-app, measured
 over pins within tolerance.
 
-## Status (2026-09-18)
+## Status (2026-09-17)
 
 - **Wave 1 — merged:** contour strategies, arc fitting, drill/helical bore +
   tool checks + job assembly, 2D verify oracle + cutter fit (+ multi-op
