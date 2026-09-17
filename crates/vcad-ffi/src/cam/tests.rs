@@ -760,6 +760,105 @@ fn a_stale_outline_is_caught_before_it_machines_the_wrong_part() {
     );
 }
 
+#[test]
+#[ignore = "prints the measured numbers; not an assertion"]
+fn zz_numbers() {
+    let plain = call(super::vcad_cam_job, &stator_job(0.15, 1.0, None));
+    let mut a = stator_job(0.15, 1.0, None);
+    a["options"]["arc_fit"] = json!({ "tolerance": 0.01 });
+    let fitted = call(super::vcad_cam_job, &a);
+    println!(
+        "ARCFIT moves {} -> {} ; arcs {} ; dev {} ; segs {} -> {}",
+        plain["moves"].as_array().unwrap().len(),
+        fitted["moves"].as_array().unwrap().len(),
+        fitted["arc_fit"]["arcs_emitted"],
+        fitted["arc_fit"]["max_deviation"],
+        fitted["arc_fit"]["segments_in"],
+        fitted["arc_fit"]["segments_out"],
+    );
+    println!("DURATION {}", plain["duration"]);
+    println!(
+        "ENVELOPE min {} max {}",
+        plain["verification"]["envelope"]["work_min"],
+        plain["verification"]["envelope"]["work_max"]
+    );
+    println!("DEEPEST {}", plain["verification"]["depth"]["deepest_z"]);
+    let s = stator();
+    let c = centroid(&s.holes[0]);
+    let w: Vec<[f64; 2]> = s.holes[0]
+        .iter()
+        .map(|p| {
+            let (dx, dy) = (p[0] - c[0], p[1] - c[1]);
+            let r = dx.hypot(dy).max(1e-9);
+            [p[0] + 2.0 * dx / r, p[1] + 2.0 * dy / r]
+        })
+        .collect();
+    let wrong = call(
+        super::vcad_cam_job,
+        &json!({
+            "stock": { "thickness": 1.0, "margin": 2.0 },
+            "tools": [d2_tool(1)],
+            "operations": [{ "name": "bore", "tool": 1, "kind": "contour_inside",
+                "contour": w, "depth": 1.0, "stepdown": 0.17,
+                "feed": 250, "plunge": 40, "rpm": 13500, "bottom_allowance": 0.15 }],
+            "options": { "part": { "outer": s.outer, "holes": s.holes } },
+        }),
+    );
+    println!("GOUGE worst {}", wrong["verification"]["gouge"]["worst"]);
+    for d in [2.0, 3.175] {
+        let r = call(
+            super::vcad_cam_fit,
+            &json!({ "contour": s.holes[0], "tool_diameter": d, "side": "inside" }),
+        );
+        println!(
+            "FIT d{d} area {} standoff {} count {} largest {}",
+            r["report"]["unreachable"]["total_area"],
+            r["report"]["unreachable"]["max_standoff"],
+            r["report"]["unreachable"]["count"],
+            r["largest_tool_diameter"]
+        );
+    }
+    let two = call(super::vcad_cam_job, &two_tool_job());
+    println!(
+        "TWOTOOL moves {} ranges {} policy {}",
+        two["moves"].as_array().unwrap().len(),
+        two["op_ranges"].as_array().unwrap().len(),
+        two["policy"]
+    );
+    let vg = call(
+        super::vcad_cam_verify_gcode,
+        &json!({
+            "gcode": fixture("stator-copper-d2.nc"),
+            "part": { "outer": s.outer, "holes": s.holes },
+            "stock": { "thickness": 1.0, "margin": 2.0 },
+            "tool_diameter": 2.0, "bottom_allowance": 0.15,
+            "tabs": [{ "width": 4.0, "height": 0.42 }, { "width": 4.0, "height": 0.42 },
+                     { "width": 4.0, "height": 0.42 }],
+        }),
+    );
+    println!(
+        "NCFILE pass {} moves {}",
+        vg["pass"], vg["verification"]["moves"]
+    );
+    let dxf = read_dxf(&fixture("stator-outline.dxf")).unwrap();
+    let (positions, indices) = extrude(&dxf, 0.0, 6.0);
+    let sec = call(
+        super::vcad_cam_outline_from_mesh,
+        &json!({ "positions": positions, "indices": indices, "auto_z": true }),
+    );
+    let cmp = call(
+        super::vcad_cam_compare_outline,
+        &json!({ "dxf": fixture("stator-outline.dxf"), "outline": sec["outline"], "tolerance": 0.02 }),
+    );
+    println!(
+        "SECTION holes {} circles {} maxdist {} symdiff {}",
+        sec["regions"][0]["holes"].as_array().unwrap().len(),
+        sec["circles"],
+        cmp["diff"]["max_boundary_distance"],
+        cmp["diff"]["symmetric_difference_area"]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 7. Cutter fit
 // ---------------------------------------------------------------------------
@@ -792,6 +891,35 @@ fn the_cutter_fit_report_names_the_corners_a_bigger_tool_cannot_reach() {
     assert!(
         f(&small["report"]["unreachable"]["max_standoff"]) < 0.02,
         "a Ø2 cutter reaches the R1.05 fillets"
+    );
+
+    // And it reproduces what was counted by hand on the day: 24 inside
+    // corners keeping up to 0.29 mm, about 10.8 mm² in all.
+    assert_eq!(
+        large["report"]["unreachable"]["count"],
+        json!(24),
+        "the friction log counted 24 inside corners a Ø3.175 cutter misses"
+    );
+    assert!(
+        (large_area - 10.6).abs() < 0.5,
+        "those corners hold about 10.8 mm² of metal, not {large_area:.4}"
+    );
+    let standoff = f(&large["report"]["unreachable"]["max_standoff"]);
+    assert!(
+        (standoff - 0.29).abs() < 0.01,
+        "the worst of them stands off 0.29 mm, not {standoff:.4}"
+    );
+
+    // Item 36's other number: Ø3.175 passes the 3.87 mm slot mouths and
+    // anything from about Ø3.9 up does not.
+    let largest = f(&small["largest_tool_diameter"]);
+    assert!(
+        (3.8..3.9).contains(&largest),
+        "the largest cutter that still fits is Ø{largest:.4}, not the Ø3.87 the slot mouths allow"
+    );
+    assert_eq!(
+        small["largest_tool_diameter"], large["largest_tool_diameter"],
+        "the largest cutter that fits is a property of the contour, not of the tool asked about"
     );
 }
 
