@@ -1370,11 +1370,13 @@ fn offset_polygons(polygon: &geo::Polygon<f64>, offset: f64) -> Vec<geo::Polygon
         .0
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// The contour's boundary as segments, for distance and escape queries.
 struct Edges {
     segs: Vec<(Point2D, Point2D)>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Edges {
     fn new(polygon: &geo::Polygon<f64>) -> Self {
         let ring: Vec<Point2D> = polygon
@@ -1430,6 +1432,7 @@ impl Edges {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn nearest_on_segment(p: Point2D, a: Point2D, b: Point2D) -> Point2D {
     let (dx, dy) = (b.x - a.x, b.y - a.y);
     let len2 = dx * dx + dy * dy;
@@ -2592,6 +2595,56 @@ mod tests {
                 m.to
             );
         }
+    }
+
+    /// A document written before any of this existed still loads, and loads
+    /// as what it used to mean — except the entry, which is now a ramp.
+    #[test]
+    fn test_old_documents_still_deserialize() {
+        let json = r#"{
+            "contour": {
+                "start": {"x": 0.0, "y": 0.0},
+                "segments": [
+                    {"type": "Line", "to": {"x": 30.0, "y": 0.0}},
+                    {"type": "Line", "to": {"x": 30.0, "y": 20.0}},
+                    {"type": "Line", "to": {"x": 0.0, "y": 20.0}},
+                    {"type": "Line", "to": {"x": 0.0, "y": 0.0}}
+                ]
+            },
+            "depth": 4.0,
+            "offset": 0.0,
+            "tabs": [{"position": 0.5, "width": 5.0, "height": 1.0}],
+            "stock_to_leave": 0.0
+        }"#;
+        let op: Contour2D = serde_json::from_str(json).unwrap();
+        assert!(!op.inside);
+        assert_eq!(op.direction, CutDirection::Climb);
+        assert_eq!(op.entry, EntryStyle::Ramp);
+        assert!((op.ramp_angle - 3.0).abs() < 1e-12);
+        assert!(op.lead_in);
+        assert_eq!(op.bottom_allowance, 0.0);
+        assert_eq!(op.spoilboard_thickness, None);
+        assert_eq!(op.thin_slot, ThinSlotStrategy::Refuse);
+        assert!(!op.spring_pass);
+        assert_eq!(op.finish_stepdowns, None);
+
+        let settings = CamSettings {
+            stepdown: 1.0,
+            ..CamSettings::default()
+        };
+        let (toolpath, report) = op.generate_reported(&mill(6.0), &settings).unwrap();
+        assert_eq!(
+            report.finish_passes, 4,
+            "the stepdown still sets the passes"
+        );
+        assert_eq!(report.rough_passes, 0);
+        assert!((report.final_depth - 4.0).abs() < 1e-12);
+        let deepest = runs(&toolpath, "profile")
+            .into_iter()
+            .flatten()
+            .map(|m| m.to[2])
+            .fold(f64::INFINITY, f64::min);
+        assert!((deepest + 4.0).abs() < 1e-12);
     }
 
     #[test]
