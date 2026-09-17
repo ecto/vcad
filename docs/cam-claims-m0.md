@@ -344,16 +344,27 @@ contour puts the kerf).
 | runtime | **13.6 s** (2.4 s subtraction, ~5.6 s per grading pass, two passes) |
 | gouge | `Pass`, worst 0.0000 mm — the 2D oracle agrees exactly |
 | material left in band (2 mm) | 3 740 samples, **52.8 mm³** |
-| beyond the band | 41 664 samples, 588 mm³ (the waste frame and the freed slugs) |
+| beyond the band | 41 664 samples, 588 mm³ |
 | rapids | 0 through material, 0 below the safe height — 2D agrees |
 | holder | `Unresolved` (the fixture declares none), so the job does not pass |
 
-The exact 2D oracle measures 26.29 mm² of unswept wall band, i.e. 21.0 mm³
-through 0.8 mm of copper. The voxel oracle reads 52.8 mm³ at a 1.06 mm
-sample pitch — 2.5× high, which is what a 1 mm pitch does to a feature a
-fraction of a millimetre wide. The test asserts agreement within a factor
-of four in both directions; asserting more than that would be asserting the
-discretization, not the job.
+The leftover agreement is stated as a **volume standing in the stock**,
+not as a verdict. Contour-cutting the bore-and-slots loop drops a slug out
+of the bore (721.8 mm²) and a wedge out of each of the twelve slots
+(5.67 mm² each). Through 0.8 mm of copper:
+
+| | 2D (exact polygons) | 3D (1.06 mm sample pitch) |
+|---|---|---|
+| within 2 mm of a wall | twelve wedges, 54.4 mm³ | 52.8 mm³ (−3 %) |
+| beyond it | the bore slug, 577.4 mm³ | 588 mm³ (+1.8 %) |
+
+That is a far sharper cross-check than comparing verdicts, and it is
+stable in a way verdicts are not. `verify2d`'s `material_left` booked the
+wedges as 26.29 mm² of unswept wall band before the w1-verify integration
+fix and books them as 0 after it — the same metal, counted once as wall
+band and once as freed pieces. The volume did not move, because the metal
+did not, so `unswept_area` is checked as a *bound* on the same leftover
+rather than summed with it.
 
 **The deliberately wrong job** (friction-log item 32): an inside contour
 pushed one tool diameter outward. A Ø2 cutter on a Ø10 bore in a 30 × 30 ×
@@ -406,7 +417,9 @@ All in `cargo test -p vcad-kernel-cam` and `cargo test -p vcad-kernel-stocksim`.
 - The stator's bore-and-slots loop: Ø2 reaches everything; Ø3.175 passes
   the 3.87 mm mouths but leaves 24 corners / 10.57 mm² / 0.292 mm; Ø4 does
   not pass at all and the claim names Ø3.874.
-- 3D vs 2D on the real job, and the wrong job's 1.9978 mm gouge.
+- 3D vs 2D on the real job — no gouge either way, and the standing volume
+  agrees to 3 % inside the band and 2 % beyond it — and the wrong job's
+  1.9978 mm gouge.
 - `Unresolved` below the margin; the margin falls as the cells shrink.
 - Serde round-trips for the claim set and the 3D report.
 
