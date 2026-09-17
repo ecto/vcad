@@ -308,6 +308,34 @@ mod tests {
         assert_eq!(BottomAllowance::skin(0.2).check(5.0, None), Ok(4.8));
     }
 
+    /// The bridge to the verification oracle: the FFI builds a `JobSpec` from
+    /// the shared types without knowing how the oracle spells any of it.
+    #[test]
+    fn stock_builds_the_oracle_a_job_spec() {
+        let part = crate::verify2d::PartRegion::new(
+            vec![[10.0, 10.0], [40.0, 10.0], [40.0, 30.0], [10.0, 30.0]],
+            Vec::new(),
+        )
+        .unwrap();
+        let stock = Stock::new(6.0).with_bbox([0.0, 0.0, 50.0, 40.0]).over(3.0);
+        let spec = stock.job_spec(part.clone(), 3.175, BottomAllowance::break_through(0.3));
+
+        assert!((spec.stock_thickness - 6.0).abs() < 1e-12);
+        assert_eq!(spec.stock_bbox, Some([0.0, 0.0, 50.0, 40.0]));
+        assert!((spec.tool_diameter - 3.175).abs() < 1e-12);
+        assert!((spec.bottom_allowance + 0.3).abs() < 1e-12);
+        assert!(spec.spoilboard, "a declared board is a declared board");
+        // The floor the job means to reach: 0.3 mm past the underside.
+        assert!((spec.floor_z() + 6.3).abs() < 1e-12);
+
+        // No board declared, no break-through allowed to claim one.
+        let bare = Stock::new(6.0).job_spec(part, 3.175, BottomAllowance::skin(0.2));
+        assert!(!bare.spoilboard);
+        assert!((bare.floor_z() + 5.8).abs() < 1e-12);
+        // And with no outline, the oracle gets the part plus the margin.
+        assert_eq!(bare.stock_bbox, Some([5.0, 5.0, 45.0, 35.0]));
+    }
+
     /// The outline falls back to the part's bounds grown by the margin, and a
     /// declared outline wins.
     #[test]

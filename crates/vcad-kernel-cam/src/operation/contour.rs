@@ -2555,6 +2555,83 @@ mod tests {
         assert!((deepest + 4.0).abs() < 1e-12);
     }
 
+    /// A `Contour2D` written before the spoilboard became a shared type still
+    /// loads, and still means the same thing: the old field name carried a
+    /// bare thickness, and a break-through is refused or allowed on exactly
+    /// the same numbers.
+    #[test]
+    fn old_json_still_loads_and_still_means_the_same_thing() {
+        let body = r#"
+            "contour": {
+                "start": {"x": 0.0, "y": 0.0},
+                "segments": [
+                    {"type": "Line", "to": {"x": 20.0, "y": 0.0}},
+                    {"type": "Line", "to": {"x": 20.0, "y": 20.0}},
+                    {"type": "Line", "to": {"x": 0.0, "y": 20.0}},
+                    {"type": "Line", "to": {"x": 0.0, "y": 0.0}}
+                ]
+            },
+            "depth": 5.0,
+            "offset": 0.0,
+            "tabs": [],
+            "stock_to_leave": 0.0,
+            "inside": false,
+            "bottom_allowance": -0.3
+        "#;
+        let old: Contour2D =
+            serde_json::from_str(&format!("{{{body}, \"spoilboard_thickness\": 3.0}}")).unwrap();
+        let new: Contour2D = serde_json::from_str(&format!(
+            "{{{body}, \"spoilboard\": {{\"thickness\": 3.0}}}}"
+        ))
+        .unwrap();
+        let bare: Contour2D =
+            serde_json::from_str(&format!("{{{body}, \"spoilboard\": 3.0}}")).unwrap();
+        for op in [&old, &new, &bare] {
+            assert_eq!(op.spoilboard, Some(Spoilboard::new(3.0)));
+            assert!((op.spoilboard_thickness() - 3.0).abs() < 1e-12);
+        }
+
+        // Same meaning, not just the same field: a 0.3 mm break-through over
+        // a 3 mm board cuts 5.3 mm deep, and the same job over a 0.2 mm board
+        // is refused with the same two numbers it always was.
+        let settings = CamSettings::default();
+        let (_, report) = old.generate_reported(&mill(3.0), &settings).unwrap();
+        assert!((report.final_depth - 5.3).abs() < 1e-12);
+
+        let thin: Contour2D =
+            serde_json::from_str(&format!("{{{body}, \"spoilboard_thickness\": 0.2}}")).unwrap();
+        assert!(matches!(
+            thin.generate(&mill(3.0), &settings),
+            Err(CamError::BreakThroughWithoutSpoilboard { overcut, spoilboard })
+                if (overcut - 0.3).abs() < 1e-9 && (spoilboard - 0.2).abs() < 1e-9
+        ));
+
+        // A document with no spoilboard at all still loads, and still refuses.
+        let none: Contour2D = serde_json::from_str(&format!("{{{body}}}")).unwrap();
+        assert_eq!(none.spoilboard, None);
+        assert!(matches!(
+            none.generate(&mill(3.0), &settings),
+            Err(CamError::BreakThroughWithoutSpoilboard { spoilboard, .. }) if spoilboard == 0.0
+        ));
+    }
+
+    /// What this crate writes, it reads.
+    #[test]
+    fn a_contour_round_trips_through_json() {
+        let op = Contour2D::inside(
+            polyline(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]),
+            4.0,
+        )
+        .with_bottom_allowance(-0.2)
+        .with_spoilboard(6.0)
+        .with_tabs(3, 4.0, 1.0);
+        let text = serde_json::to_string(&op).unwrap();
+        let back: Contour2D = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.spoilboard, Some(Spoilboard::new(6.0)));
+        assert!((back.bottom_allowance + 0.2).abs() < 1e-12);
+        assert_eq!(back.tabs.len(), 3);
+    }
+
     #[test]
     fn test_tab_creation() {
         let tab = Tab::new(0.25, 5.0, 2.0);

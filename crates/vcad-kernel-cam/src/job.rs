@@ -1108,6 +1108,210 @@ mod tests {
         }
     }
 
+    /// The five things a posted two-tool program has to get right, in one
+    /// place, because wave 1 got three of them wrong at once: the pause came
+    /// from the assembler rather than the post, the post wrote a `G54` the
+    /// job had not asked for, and nothing checked that the text read back.
+    #[test]
+    fn a_two_tool_program_posts_one_pause_the_asked_for_wcs_and_re_parses() {
+        let program = job()
+            .with_op(pilot_holes())
+            .with_op(outside_profile())
+            .with_wcs(Wcs::G55)
+            .with_strategy(ToolChangeStrategy::ManualPauseReprobe { probe_macro: None })
+            .assemble()
+            .unwrap();
+        assert_eq!(program.tool_sequence(), vec![2, 1], "two tools, in order");
+        let gcode = program.to_gcode(&GrblPost::default());
+
+        // 1. Exactly one stop, and the POST wrote it: the assembled toolpath
+        //    carries a Pause segment, and nothing outside the post emits M0.
+        let pauses = program
+            .toolpath
+            .segments
+            .iter()
+            .filter(|s| matches!(s, ToolpathSegment::Pause { .. }))
+            .count();
+        assert_eq!(pauses, 1, "one pause segment between two tools");
+        assert_eq!(gcode.matches("\nM0\n").count(), 1, "{gcode}");
+
+        // 2. It is between the two tools' work, not at either end.
+        let stop = gcode.find("\nM0\n").unwrap();
+        let first_cut = gcode.find("G1 ").unwrap();
+        let last_cut = gcode.rfind("G1 ").unwrap();
+        assert!(
+            first_cut < stop && stop < last_cut,
+            "the pause is mid-program"
+        );
+
+        // 3. The work offset is the one the job asked for, and the post
+        //    contributes no G54 of its own.
+        // Once as a command; the tool-change note mentions it again, which
+        // is the point of the note.
+        assert_eq!(gcode.lines().filter(|l| *l == "G55").count(), 1);
+        assert_eq!(gcode.matches("G54").count(), 0, "{gcode}");
+
+        // 4. One spindle start per tool, each with its spin-up dwell, and no
+        //    spindle the post started on its own account.
+        assert_eq!(gcode.matches("M3 S").count(), 2);
+
+        // 5. It reads back. The oracle's reader refuses any word it does not
+        //    understand, so this is the check that the posted text is G-code
+        //    a machine would take rather than something only we can read.
+        let moves =
+            crate::verify2d::parse_gcode(&gcode, &crate::verify2d::VerifyOptions::default())
+                .expect("the posted program re-parses");
+        assert!(moves.len() > 10, "{} moves", moves.len());
+    }
+
+    /// The pause message reaches the operator, and the probe macro runs on
+    /// resume rather than before the stop.
+    #[test]
+    fn the_pause_says_what_to_do_and_the_probe_follows_it() {
+        let gcode = job()
+            .with_op(pilot_holes())
+            .with_op(outside_profile())
+            .with_strategy(ToolChangeStrategy::ManualPauseReprobe {
+                probe_macro: Some("G38.2 Z-30 F100\nG10 L20 P1 Z19.05".into()),
+            })
+            .assemble()
+            .unwrap()
+            .to_gcode(&GrblPost::default());
+
+        let stop = gcode.find("\nM0\n").expect("a pause");
+        let reason = gcode
+            .find("(fit T1, then re-establish Z before resuming)")
+            .expect("the operator is told which tool goes in");
+        assert!(reason < stop, "the reason is read before the machine stops");
+        assert!(
+            gcode.find("G38.2").unwrap() > stop,
+            "the probe has to run on resume"
+        );
+    }
+
+    /// Hole making through `CamOperation` keeps the machinist's words. Wave 1
+    /// kept `Drill` out of `CamOperation` because `CamError` had nowhere to
+    /// put a `DrillError`; this is the test that says it does now.
+    #[test]
+    fn a_drill_refusal_keeps_its_own_words() {
+        // A flat end mill that is not declared centre-cutting cannot plunge.
+        let mut lib = ToolLibrary::new();
+        lib.add(
+            ToolEntry::new(
+                7,
+                "Ø3 flat, nothing declared",
+                Tool::FlatEndMill {
+                    diameter: 3.0,
+                    flute_length: 12.0,
+                    flutes: 2,
+                },
+            )
+            .with_geometry(ToolGeometry::new().with_stickout(20.0)),
+        );
+        let drill = Drill::new([(10.0, 10.0)], 4.0);
+        let expected = drill
+            .generate(
+                &lib.get_by_number(7).unwrap().tool,
+                &lib.get_by_number(7).unwrap().geometry,
+                &settings(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert!(
+            expected.contains("cuts across its own centre"),
+            "{expected}"
+        );
+
+        let op = CamOperation::Drill(drill);
+        let through_cam = op
+            .generate_with_geometry(
+                &lib.get_by_number(7).unwrap().tool,
+                &lib.get_by_number(7).unwrap().geometry,
+                &settings(),
+            )
+            .unwrap_err()
+            .to_string();
+        assert_eq!(through_cam, expected, "the message survives the carrier");
+
+        // And through a job, with the operation's name in front of it.
+        let refusal = Job::new("holes", lib, settings())
+            .with_op(JobOp::new("Pilot holes", 7, op))
+            .assemble()
+            .unwrap_err();
+        let JobError::OpFailed { op, message } = &refusal else {
+            panic!("expected OpFailed, got {refusal:?}");
+        };
+        assert_eq!(op, "Pilot holes");
+        assert_eq!(message, &expected);
+    }
+
+    /// Drilling and boring sit in the same enum as milling, run in the same
+    /// order rules, and post into the same program.
+    #[test]
+    fn holes_and_bores_are_ordinary_cam_operations() {
+        let bore = HelicalBore::new(25.0, 20.0, 2.5, 3.0, 0.2);
+        let program = job()
+            .with_op(outside_profile())
+            .with_op(JobOp::new("Bore", 3, bore))
+            .with_op(pilot_holes())
+            .assemble()
+            .unwrap();
+
+        // The outside profile frees the part, so it is cut last whatever
+        // order the operations were added in.
+        let names: Vec<String> = program
+            .op_ranges()
+            .map(|b| match &b.block {
+                ProgramBlock::Operation { name, .. } => name.clone(),
+                _ => unreachable!(),
+            })
+            .collect();
+        assert_eq!(names.last().unwrap(), "Outside profile", "{names:?}");
+        assert!(names.contains(&"Bore".to_string()));
+        assert!(names.contains(&"Pilot holes".to_string()));
+
+        // The enum knows where each kind belongs without being told.
+        assert_eq!(
+            CamOperation::Drill(Drill::new([(1.0, 1.0)], 1.0)).default_role(),
+            OpRole::InsideFeature
+        );
+        assert_eq!(
+            CamOperation::HelicalBore(HelicalBore::new(0.0, 0.0, 3.0, 1.0, 0.2)).default_role(),
+            OpRole::InsideFeature
+        );
+    }
+
+    /// What the oracle's reader makes of the words a posted program now
+    /// contains. It refuses anything it does not understand, so this is the
+    /// list of what a post may safely emit — and `G18`/`G19` are not on it.
+    #[test]
+    fn the_oracle_reader_accepts_the_words_a_post_emits() {
+        let opts = crate::verify2d::VerifyOptions::default();
+        let prologue = "G21\nG90\nG94\nG17\nG0 X0 Y0 Z5\n";
+        for word in [
+            "M0", "M1", "M2", "M30", "G4 P1500", "G55", "G56", "G57", "G58", "G59", "G53",
+        ] {
+            let text = format!("{prologue}{word}\nG0 X1\n");
+            assert!(
+                crate::verify2d::parse_gcode(&text, &opts).is_ok(),
+                "the reader refused {word}, which a post emits"
+            );
+        }
+        // The planes the GRBL post now emits when an arc leaves XY are NOT
+        // understood: an XZ or YZ arc posts correctly but the oracle cannot
+        // replay it. Nothing in this crate generates one yet (every
+        // operation is 2.5D), and verify2d belongs to another package — this
+        // test is here so the day one does, it is a failing test and not a
+        // surprise.
+        for word in ["G18", "G19"] {
+            let text = format!("{prologue}{word}\nG0 X1\n");
+            assert!(
+                crate::verify2d::parse_gcode(&text, &opts).is_err(),
+                "{word} is understood now: this test can go"
+            );
+        }
+    }
+
     /// A tool that cannot make the cut stops the job, with the reason.
     #[test]
     fn test_assembly_refuses_a_tool_that_cannot_make_the_cut() {

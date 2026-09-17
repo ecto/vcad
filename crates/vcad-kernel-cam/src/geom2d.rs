@@ -3,13 +3,25 @@
 //!
 //! Every module that has to answer "is the cutter in the metal?" grew its own
 //! copy of this. [`operation::contour`](crate::operation) had a private
-//! `Wall` over `geo::Polygon` and a private `Edges` for the escape direction;
-//! [`verify2d`](crate::verify2d) has `point_segment_distance`, `signed_area`,
-//! `clean_loop` and its own point-in-polygon inside `Poly`. The arithmetic is
-//! the same arithmetic. It lives here, in the crate's own `[f64; 2]`, so the
-//! next module needing it does not write a third copy — and so the two that
-//! exist can be pointed at one implementation without changing what they
-//! answer.
+//! `Wall` over `geo::Polygon` and a private `Edges` for the escape
+//! direction — both of which are now this module — and
+//! [`verify2d`](crate::verify2d) still has its own:
+//!
+//! | `verify2d` | here |
+//! |---|---|
+//! | `point_segment_distance` | [`point_segment_distance`] |
+//! | `signed_area` (and `signed_area2`, twice it) | [`signed_area`] |
+//! | `clean_loop` | [`clean_loop`] |
+//! | `Poly::contains` | [`point_in_loop`] |
+//! | `Poly::distance_to_segment` | — (no twin: segment-to-region) |
+//!
+//! Pointing `verify2d` at these is wave 3's job, and it is not a blind
+//! substitution: its `Poly` carries a uniform-grid index over the edges, so
+//! its `contains` and its distance queries are accelerated where these walk
+//! every segment. The arithmetic agrees; the complexity does not. A `Wall`
+//! over a few thousand points is fine for a toolpath, which asks a few
+//! thousand times; the oracle asks millions of times and would need the
+//! index brought along.
 //!
 //! Loops are closed implicitly: the last point joins the first, and a
 //! repeated closing point is dropped by [`clean_loop`].
