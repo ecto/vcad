@@ -52,6 +52,7 @@
 
 pub mod dropcutter;
 mod error;
+pub mod gear;
 mod operation;
 pub mod post;
 mod tool;
@@ -59,6 +60,7 @@ mod toolpath;
 
 // Re-exports
 pub use error::CamError;
+pub use gear::{GearError, GearPair, GearReport, PlanetaryTrain, SpurGear, ToothSpace};
 pub use operation::{
     CamOperation, Contour, Contour2D, ContourSegment, Face, Pocket2D, Point2D, Roughing3D, Tab,
 };
