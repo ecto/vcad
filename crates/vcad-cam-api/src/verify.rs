@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use vcad_kernel_cam::verify2d::{DeclaredTab, VerifyOptions};
 use vcad_kernel_cam::{fit_contour, verify_gcode, BottomAllowance, ContourSide, FitOptions};
 
-use super::types::{loop_points, non_negative, positive, MachineReq, PartReq, StockReq};
+use crate::types::{loop_points, non_negative, positive, MachineReq, PartReq, StockReq};
 
 // ---------------------------------------------------------------------------
 // vcad_cam_verify_gcode
@@ -63,7 +63,7 @@ pub fn verify_gcode_request(input: &str) -> Result<Value, String> {
     let part = req.part.build()?;
     let tool_diameter = positive("tool_diameter", req.tool_diameter)?;
     let allowance = BottomAllowance(match req.bottom_allowance {
-        Some(a) => super::types::finite("bottom_allowance", a)?,
+        Some(a) => crate::types::finite("bottom_allowance", a)?,
         None => 0.0,
     });
 

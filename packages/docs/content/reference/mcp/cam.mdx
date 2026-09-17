@@ -1,0 +1,207 @@
+---
+title: "CAM Tools"
+description: "Mill a part from a vcad document — outline, cutter fit, feeds, verified job, G-code verification, gears"
+order: 9
+---
+
+The `cam` tool pack turns a vcad document into a CNC milling program, and
+refuses to hand one over that does not make the part.
+
+These are gated behind a [tool pack](#enabling-the-pack), so enable `cam` before
+calling them.
+
+## The safety contract
+
+Three rules, and they are the reason this pack exists rather than a
+`generate_toolpath` call.
+
+**Verify by default.** `cam_job` posts the program and then replays it against
+the part it is meant to make — every move, against the outline, the stock, the
+declared tabs and the machine's travel — before returning it.
+
+**Blocked means do not cut.** If any error-severity check objects, the result
+carries `blocked: true`, the names of the checks that objected, and **no G-code
+anywhere in it**. Not a flag beside a program you could still run: there is
+nothing to export.
+
+**Physical predictions are provisional.** Cycle time, feeds, speeds and cutter
+fit are computed from geometry and published chiploads. They are predictions
+until a part comes off the machine and is measured. `cam_gear` closes that loop
+explicitly: measure over pins, pass the reading back, get the cutter offset for
+the next part.
+
+## The workflow
+
+```
+create_cad_loon  →  cam_outline  →  cam_fit  →  cam_recommend_feeds  →  cam_job
+                         ↓                                                 ↓
+                   is it prismatic?                            blocked, or G-code
+                   which holes, how big?                       at an artifact URL
+```
+
+`cam_outline` names the contours it finds — `"outer"`, `"hole:0"`, `"hole:1"` —
+and `cam_fit` and `cam_job` accept those names against the same `document_id`.
+The coordinates never have to travel through the conversation.
+
+Every tool takes `detail: "full"` to attach the arrays it otherwise summarises:
+contour points, the complete verification report, the G-code text inline.
+
+## cam_outline
+
+Sections a document part at a Z height into the closed contours a milling job
+cuts.
+
+### Which mesh it sections, and why that matters
+
+A part carries two meshes' worth of geometry: the *export* mesh the app renders
+and prints, and — where the root is still a B-rep — the solid itself. The export
+mesh is `tessellate_brep` followed by `repair_export_mesh`, which closes the
+boundary for printing and ray-tracing by moving vertices onto their analytic
+carriers. A plane through the moved region then cuts a slightly different shape.
+
+Measured on the stator (2026-09-17): the export mesh sections with tears up to
+**0.4 mm** where tangent fillets meet, while the raw tessellation of the same
+B-rep sections cleanly to **0.005 mm**. A CAM contour is a wall the cutter
+follows, so 0.4 mm is not a rounding difference — it is a quarter of a slot
+mouth.
+
+So `cam_outline` sections the **raw tessellation** whenever there is a B-rep,
+and says which it used in `mesh_source`. A part with no B-rep behind it — an
+imported mesh — can only be sectioned as it stands, and the result says so
+rather than letting you assume the better path was taken.
+
+A section that does not close is **refused**, with the gap positions, rather
+than quietly healed: an open section means the solid is torn there, and the
+outline is the symptom.
+
+<Param name="document_id" type="string" required={true}>
+CAD session holding the part.
+</Param>
+
+<Param name="part" type="string" required={false}>
+Root part id or exact name. Optional when the document holds one part.
+</Param>
+
+<Param name="z" type="number" required={false}>
+Height to section at, mm. Omit to section at the part's own mid-height.
+</Param>
+
+<Param name="heal_tolerance" type="number" required={false}>
+Close gaps narrower than this when chaining the section, mm (default `1e-3`).
+Raising it hides a torn solid rather than fixing one.
+</Param>
+
+### Returns
+
+`mesh_source`, the section height and the part's Z range (which is the stock
+thickness to buy), one entry per region with its hole count and area, every
+hole that fits a circle with its fitted diameter and fit error, and a
+**prismatic verdict** — whether sections at several heights agree, and by how
+many millimetres they do not. A 2.5D contour job only describes a part whose
+shape does not change with depth; a cone is not one, and the report says so in
+millimetres rather than as a boolean.
+
+## cam_fit
+
+Does this cutter physically fit this contour?
+
+Answers the number of inside corners it cannot reach, how much metal that
+leaves (mm²), how far the worst of it stands off, and the largest cutter that
+would still fit. Run it before `cam_job`: a cutter that does not fit does not
+fail — it quietly leaves wall standing in every corner.
+
+Geometry only. It says nothing about deflection or chatter, so treat a pass as
+necessary and not sufficient.
+
+## cam_recommend_feeds
+
+Feeds, speeds, stepdown and stepover for a material and cutter on a machine of a
+given rigidity class.
+
+Includes the **dial position** to set by hand whenever the spindle is a trim
+router, because on those the `S` word does nothing and a recommendation that
+only said "13 500 rpm" would be unusable.
+
+Pass `settings` with numbers you already have and they are checked against the
+table instead. Pass `list: true` for the materials.
+
+## cam_job
+
+Post a whole job — several operations, several tools, one spindle start per
+tool — and verify it before handing it over.
+
+Operation kinds: `face`, `pocket`, `contour_outside`, `contour_inside`, `drill`,
+`helical_bore`. Inside features are sequenced before the outside profile that
+frees the part, whatever order they were given in.
+
+The checks that can block: **gouge** (the cutter enters the part),
+**material_left** (wall the job never reaches), **rapids** (a rapid below the
+stock top with XY motion), **depth** (past the stock with nothing declared
+beneath it), **tabs** (the tabs asked for are not the tabs standing),
+**envelope** (outside the machine's travel, given a work offset), **loose** (the
+job frees a piece before it is finished), **plunges** (a straight plunge with a
+tool that cannot cut on its centre).
+
+Two fields worth knowing:
+
+<Param name="tab_positions" type="array" required={false}>
+Where the tabs go, as fractions of the way round the cutter's loop, instead of
+spacing `tabs` of them evenly. Nominal — the kernel settles each one onto the
+nearest stretch that runs straight, and `tab_placement` in the result reports
+where each ended up, how much metal it leaves and how far apart they are.
+</Param>
+
+<Param name="options.placement" type="object" required={false}>
+`{ dx, dy, rotation_deg }` — where the part sits on the stock, rotated about the
+stock origin and then shifted. Moves every operation **and** the part the oracle
+replays against, so a job on skewed stock still verifies against the skewed
+part. A per-operation `placement` moves that operation's geometry alone, and the
+result says so.
+</Param>
+
+### Returns
+
+On a pass: the G-code as an artifact URL with its size and SHA-256, the check
+summary, the operation table with per-operation seconds, the swept envelope, the
+deepest Z reached, and where the tabs landed.
+
+On a refusal: `blocked: true`, `blocked_by`, the checks with their worst values,
+and `gcode: null`.
+
+## cam_verify_gcode
+
+Replay a program you already have — off disk, out of another CAM package, edited
+by hand — against the part it is meant to make.
+
+This answers the question you cannot answer by reading the file: does it cut the
+right side of every wall, stay out of the part, reach the right depth, leave the
+tabs it claims, and stay inside the machine? A pass is a 2.5D geometric replay;
+it does not model deflection, chatter, or a machine that is not where it says it
+is.
+
+## cam_gear
+
+Exact involute gear geometry for cutting on a mill: the tooth-space contour the
+named cutter actually leaves, the reachability check (a cutter too fat for the
+space is refused rather than cutting a different tooth), the over-pins dimension
+to measure, contact ratio, and planetary-train meshing.
+
+Pass `measured` with the pin diameter you used and it returns the cutter offset
+that reading implies for the next part. That loop is how a predicted tooth
+thickness becomes a known one.
+
+## Enabling the pack
+
+```
+set_tool_packs({ enable: ["cam"] })
+```
+
+or set `VCAD_MCP_PACKS=cam,...` in the server environment. `list_tool_packs`
+shows what is on.
+
+## One implementation, three front ends
+
+These tools, the native app's C ABI and the browser's WASM all call the same
+crate — `vcad-cam-api`. That is deliberate: an agent and the app must never be
+able to disagree about whether a job is safe to run, and a second
+implementation of "is this blocked?" would be a second answer.

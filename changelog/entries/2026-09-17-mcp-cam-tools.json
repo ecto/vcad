@@ -1,0 +1,23 @@
+{
+  "id": "2026-09-17-mcp-cam-tools",
+  "version": "0.10.0",
+  "date": "2026-09-17",
+  "category": "feat",
+  "title": "Agents can mill: the cam MCP tool pack",
+  "summary": "Six MCP tools take a document to a verified G-code program — and refuse to hand one over that does not make the part, with no G-code in the refusal at all.",
+  "details": "CAM existed in the kernel, in the native app and in the C ABI, and nowhere an agent could reach; on the first real cut an agent had to take over the screen to press Export job. The new `cam` tool pack is the door. `cam_outline` sections a part into the contours a job cuts — regions, holes, fitted circle diameters, and a verdict on whether the part is constant-section at all, measured in millimetres rather than returned as a boolean — and it sections the B-rep's raw tessellation rather than the repaired export mesh, which on the stator tears by 0.4 mm where tangent fillets meet. `cam_fit` says whether a cutter physically fits and what the largest one that does is. `cam_recommend_feeds` gives feeds, speeds and the router dial to set by hand. `cam_job` posts a whole job, replays it against the part it is meant to make, and on a refusal returns the checks that objected with no G-code anywhere in the result — there is nothing to export by accident. `cam_verify_gcode` does the same for a program you already have. `cam_gear` closes the measurement loop: measure over pins, get the cutter offset for the next part. Results are compact by default, with `detail: \"full\"` for the arrays. Behind all of them, and behind the app's FFI and the browser's WASM, is one implementation — the new `vcad-cam-api` crate — so an agent and the app cannot disagree about whether a job is safe to run. A job can now also say where its tabs go (`tab_positions`, with the result reporting where each actually landed) and where the part sits on the stock (`placement`, which moves the part the oracle checks against too, so a job on skewed stock still verifies).",
+  "features": [
+    "cam",
+    "mcp",
+    "manufacturing",
+    "kernel"
+  ],
+  "mcpTools": [
+    "cam_outline",
+    "cam_fit",
+    "cam_recommend_feeds",
+    "cam_job",
+    "cam_verify_gcode",
+    "cam_gear"
+  ]
+}

@@ -769,6 +769,40 @@ export interface KernelModule {
     positions: Float32Array,
     indices: Uint32Array,
   ) => unknown;
+  /**
+   * The shared CAM request surface (`vcad-cam-api`) — the same schema the
+   * native app reaches through the C ABI. Every one of these answers a JSON
+   * document and never throws: failure is `{"error": "…"}`.
+   */
+  camJob?: (requestJson: string) => string;
+  /** Verify G-code text against the part it is meant to make. */
+  camVerifyGcode?: (requestJson: string) => string;
+  /** Cutter-fit report for one contour, one tool and one side. */
+  camFit?: (requestJson: string) => string;
+  /** Section an inline triangle mesh at a Z plane. */
+  camOutlineFromMesh?: (requestJson: string) => string;
+  /** Compare two outlines and say whether they are the same part. */
+  camCompareOutline?: (requestJson: string) => string;
+  /** The CAM material table. */
+  camMaterials?: () => string;
+  /** Feeds, speeds and the router dial to set. */
+  camRecommendFeeds?: (requestJson: string) => string;
+  /** A second opinion on feeds the operator already has. */
+  camCheckFeeds?: (requestJson: string) => string;
+  /** Gear geometry, over-pins measurement and measured compensation. */
+  camGear?: (requestJson: string) => string;
+  /**
+   * A machining contour out of a document part, sectioned from its **raw**
+   * tessellation where there is a B-rep behind it — never the export mesh,
+   * which the repair pass can tear by as much as 0.4 mm.
+   */
+  camOutlineFromDocument?: (
+    docJson: string,
+    partIndex: number,
+    z: number,
+    autoZ: boolean,
+    optionsJson: string,
+  ) => string;
   /** Charged-particle optics simulation (DeviceSpec/params/options JSON). */
   particleSimulate?: (
     specJson: string,
@@ -1332,6 +1366,16 @@ export class Engine {
       mesh_clearance: (wasmModule as Record<string, unknown>).mesh_clearance as KernelModule["mesh_clearance"],
       topologyOptimizeBox: (wasmModule as Record<string, unknown>).topologyOptimizeBox as KernelModule["topologyOptimizeBox"],
       topologyOptimizeMesh: (wasmModule as Record<string, unknown>).topologyOptimizeMesh as KernelModule["topologyOptimizeMesh"],
+      camJob: (wasmModule as Record<string, unknown>).camJob as KernelModule["camJob"],
+      camVerifyGcode: (wasmModule as Record<string, unknown>).camVerifyGcode as KernelModule["camVerifyGcode"],
+      camFit: (wasmModule as Record<string, unknown>).camFit as KernelModule["camFit"],
+      camOutlineFromMesh: (wasmModule as Record<string, unknown>).camOutlineFromMesh as KernelModule["camOutlineFromMesh"],
+      camCompareOutline: (wasmModule as Record<string, unknown>).camCompareOutline as KernelModule["camCompareOutline"],
+      camMaterials: (wasmModule as Record<string, unknown>).camMaterials as KernelModule["camMaterials"],
+      camRecommendFeeds: (wasmModule as Record<string, unknown>).camRecommendFeeds as KernelModule["camRecommendFeeds"],
+      camCheckFeeds: (wasmModule as Record<string, unknown>).camCheckFeeds as KernelModule["camCheckFeeds"],
+      camGear: (wasmModule as Record<string, unknown>).camGear as KernelModule["camGear"],
+      camOutlineFromDocument: (wasmModule as Record<string, unknown>).camOutlineFromDocument as KernelModule["camOutlineFromDocument"],
       particleSimulate: (wasmModule as Record<string, unknown>).particleSimulate as KernelModule["particleSimulate"],
       particleOptimize: (wasmModule as Record<string, unknown>).particleOptimize as KernelModule["particleOptimize"],
       toleranceAnalyze: (wasmModule as Record<string, unknown>).toleranceAnalyze as KernelModule["toleranceAnalyze"],
@@ -1964,6 +2008,115 @@ export class Engine {
       );
     }
     return fn(JSON.stringify(spec), mesh.positions, mesh.indices) as TopoOptResult;
+  }
+
+  // =========================================================================
+  // CAM — the shared request surface
+  // =========================================================================
+  //
+  // One implementation behind three front ends: this, the native app's C ABI,
+  // and an agent's MCP tools. That is the point — an agent and the app must
+  // never be able to disagree about whether a job is safe to run.
+  //
+  // These all take and return JSON documents and never throw for a *machining*
+  // reason: a refused job comes back as `{"blocked": true, …}` with no `gcode`
+  // key, and a malformed request as `{"error": "…"}`. They throw only when the
+  // binding is missing from the loaded WASM, which is a build problem.
+
+  /** Call one of the kernel's CAM entry points and parse its document. */
+  private camCall<T>(name: keyof KernelModule, request: string): T {
+    const fn = this.kernel[name];
+    if (typeof fn !== "function") {
+      throw new Error(
+        `${String(name)} is not exported by this kernel WASM build — rebuild packages/kernel-wasm`,
+      );
+    }
+    return JSON.parse(
+      (fn as (request: string) => string)(request),
+    ) as T;
+  }
+
+  /**
+   * Build and verify a whole CAM job. Fails closed: a blocked job carries
+   * `blocked: true` and **no `gcode` key at all**.
+   */
+  camJob<T = Record<string, unknown>>(request: unknown): T {
+    return this.camCall<T>("camJob", JSON.stringify(request));
+  }
+
+  /** Verify G-code text against the part it is meant to make. */
+  camVerifyGcode<T = Record<string, unknown>>(request: unknown): T {
+    return this.camCall<T>("camVerifyGcode", JSON.stringify(request));
+  }
+
+  /** Cutter-fit report for one contour, one tool and one side. */
+  camFit<T = Record<string, unknown>>(request: unknown): T {
+    return this.camCall<T>("camFit", JSON.stringify(request));
+  }
+
+  /** Section an inline triangle mesh at a Z plane. */
+  camOutlineFromMesh<T = Record<string, unknown>>(request: unknown): T {
+    return this.camCall<T>("camOutlineFromMesh", JSON.stringify(request));
+  }
+
+  /** Compare two outlines and say whether they are the same part. */
+  camCompareOutline<T = Record<string, unknown>>(request: unknown): T {
+    return this.camCall<T>("camCompareOutline", JSON.stringify(request));
+  }
+
+  /** The CAM material table, with the hazards attached to each entry. */
+  camMaterials<T = Record<string, unknown>>(): T {
+    const fn = this.kernel.camMaterials;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "camMaterials is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return JSON.parse(fn()) as T;
+  }
+
+  /** Feeds, speeds, stepdown, stepover and the router dial to set. */
+  camRecommendFeeds<T = Record<string, unknown>>(request: unknown): T {
+    return this.camCall<T>("camRecommendFeeds", JSON.stringify(request));
+  }
+
+  /** A second opinion on feeds and speeds the operator already has. */
+  camCheckFeeds<T = Record<string, unknown>>(request: unknown): T {
+    return this.camCall<T>("camCheckFeeds", JSON.stringify(request));
+  }
+
+  /** Gear geometry, over-pins measurement and measured compensation. */
+  camGear<T = Record<string, unknown>>(request: unknown): T {
+    return this.camCall<T>("camGear", JSON.stringify(request));
+  }
+
+  /**
+   * A machining contour out of a document part at `z` — or at the mid-height
+   * of the part's own bounds when `autoZ`, in which case `z` is ignored.
+   *
+   * The document goes into the kernel whole rather than being evaluated here
+   * first, and that is the whole point: only the kernel still holds the B-rep,
+   * and only the B-rep's **raw** tessellation sections cleanly. The mesh an
+   * evaluated scene hands back is the export mesh, which the repair pass can
+   * tear by 0.4 mm where tangent fillets meet — a quarter of a slot mouth. The
+   * answer says which was used in `mesh_source`.
+   */
+  camOutlineFromDocument<T = Record<string, unknown>>(
+    doc: unknown,
+    partIndex: number,
+    z: number,
+    autoZ: boolean,
+    options: unknown = {},
+  ): T {
+    const fn = this.kernel.camOutlineFromDocument;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "camOutlineFromDocument is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return JSON.parse(
+      fn(JSON.stringify(doc), partIndex, z, autoZ, JSON.stringify(options)),
+    ) as T;
   }
 
   /**

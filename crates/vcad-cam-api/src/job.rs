@@ -78,11 +78,12 @@ use vcad_kernel_cam::{
     BreakThrough, CamOperation, CamSettings, Contour, Contour2D, ContourSegment, ContourSide,
     CutDirection, Drill, DrillCycle, Face, FitOptions, HelicalBore, Hole, Job, JobOp,
     MachineLimits, OpRole, PartRegion, Pocket2D, Program, ProgramBlock, ProgramEnd, Spoilboard,
-    Stock, ThinSlotStrategy, ToolChangeStrategy, ToolEntry, ToolLibrary, Toolpath, ToolpathSegment,
-    Wcs,
+    Stock, Tab, ThinSlotStrategy, ToolChangeStrategy, ToolEntry, ToolLibrary, Toolpath,
+    ToolpathSegment, Wcs,
 };
 
-use super::types::{
+use crate::placement::{Placement, PlacementReq};
+use crate::types::{
     contour_from, finite, non_negative, positive, settings as build_settings, MachineReq, PartReq,
     StockReq, ToolReq,
 };
@@ -106,6 +107,34 @@ enum HoleReq {
 }
 
 impl HoleReq {
+    /// The same hole, moved onto the stock.
+    fn placed(&self, placement: &Placement) -> Self {
+        match self {
+            HoleReq::Pair(p) => {
+                if p[0].is_finite() && p[1].is_finite() {
+                    HoleReq::Pair(placement.apply(*p))
+                } else {
+                    // Leave a number that is not a number alone: `build` names
+                    // it in the refusal, and arithmetic here would only turn
+                    // one NaN into two.
+                    self.clone()
+                }
+            }
+            HoleReq::Full { x, y, depth } => {
+                if x.is_finite() && y.is_finite() {
+                    let moved = placement.apply([*x, *y]);
+                    HoleReq::Full {
+                        x: moved[0],
+                        y: moved[1],
+                        depth: *depth,
+                    }
+                } else {
+                    self.clone()
+                }
+            }
+        }
+    }
+
     fn build(&self, what: &str) -> Result<Hole, String> {
         match self {
             HoleReq::Pair([x, y]) => Ok(Hole::at(
@@ -173,6 +202,12 @@ struct OptionsReq {
     verify: bool,
     #[serde(default)]
     part: Option<PartReq>,
+    /// Where the part sits on the stock: `{ dx, dy, rotation_deg }`, rotation
+    /// first, about the stock-frame origin. Moves every operation that does
+    /// not carry its own `placement`, **and** `options.part`, so a skewed job
+    /// still verifies against the skewed part. See [`crate::placement`].
+    #[serde(default)]
+    placement: Option<PlacementReq>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -231,10 +266,28 @@ struct OperationReq {
 
     #[serde(default)]
     tabs: Option<usize>,
+    /// Where the tabs go, as fractions (0..1) of the way round the cutter's
+    /// own offset loop, in the direction of cut. When this is given it *is*
+    /// the tab list, and `tabs` (the count) has to agree with it if both are
+    /// present; leaving it out spaces `tabs` of them evenly, half a pitch in
+    /// from the seam, as before.
+    ///
+    /// These are nominal: the kernel settles each tab onto the nearest stretch
+    /// that runs straight, within half a tab pitch, so it never lands in a
+    /// notch or wraps a tight corner. `tab_placement` in the response reports
+    /// where each one ended up, measured off the toolpath.
+    #[serde(default)]
+    tab_positions: Option<Vec<f64>>,
     #[serde(default)]
     tab_width: Option<f64>,
     #[serde(default)]
     tab_height: Option<f64>,
+
+    /// Where this operation's geometry sits on the stock. See
+    /// [`crate::placement`]. Overrides `options.placement` for this operation
+    /// only — and only its geometry, never the part the oracle checks against.
+    #[serde(default)]
+    placement: Option<PlacementReq>,
 
     #[serde(default)]
     bottom_allowance: Option<f64>,
@@ -383,9 +436,27 @@ fn build(req: JobRequest) -> Result<Value, String> {
         None => ToolChangeStrategy::ManualPauseReprobe { probe_macro: None },
     });
 
+    // Where the part sits on the stock. The job placement moves the part the
+    // oracle checks against too; an operation that overrides it moves alone,
+    // which is worth saying out loud because the oracle will then read it as
+    // cutting somewhere the part is not.
+    let job_placement = match &req.options.placement {
+        Some(p) => p.build("options.placement")?,
+        None => Placement::identity(),
+    };
+    if !job_placement.is_identity() {
+        notes.push(Note::info(format!(
+            "this job is placed {}: every operation and the part it is verified against were moved together.",
+            job_placement.describe()
+        )));
+    }
+
     // Built operations, kept beside the job so the per-op reports can be
-    // regenerated without guessing which settings the job used.
-    let mut built: Vec<(CamSettings, &OperationReq, ToolEntry)> = Vec::new();
+    // regenerated without guessing which settings the job used. The request
+    // kept beside each one is the *placed* request, so everything downstream —
+    // reports, the tab audit, the derived part — reads the geometry that is
+    // really cut rather than the geometry that was drawn.
+    let mut built: Vec<(CamSettings, OperationReq, ToolEntry)> = Vec::new();
     for (i, op) in req.operations.iter().enumerate() {
         let entry = library.get_by_number(op.tool).ok_or_else(|| {
             format!(
@@ -394,7 +465,22 @@ fn build(req: JobRequest) -> Result<Value, String> {
                 op.tool
             )
         })?;
-        let (job_op, op_settings) = build_op(i, op, entry, &stock, safe_z, park_z, &mut notes)?;
+        let name = op_name(i, op);
+        let placement = match &op.placement {
+            Some(p) => {
+                let own = p.build(&format!("operation \"{name}\".placement"))?;
+                if own != job_placement {
+                    notes.push(Note::caution(format!(
+                        "{name} carries its own placement ({}): its geometry moved, the part the job is verified against did not. Anything it cuts away from the part reads as a gouge.",
+                        own.describe()
+                    )));
+                }
+                own
+            }
+            None => job_placement,
+        };
+        let op = place(op, &placement, &name)?;
+        let (job_op, op_settings) = build_op(i, &op, entry, &stock, safe_z, park_z, &mut notes)?;
         built.push((op_settings, op, entry.clone()));
         job.push(job_op);
     }
@@ -557,7 +643,10 @@ fn build(req: JobRequest) -> Result<Value, String> {
     }
 
     let part = match &req.options.part {
-        Some(p) => p.build()?,
+        // A stated part is stated in the part's own frame, so it is placed
+        // exactly as the operations were. A derived one is read back off
+        // operations that have already moved, so it is not placed twice.
+        Some(p) => p.placed(&job_placement)?,
         None => derive_part(&job, &library, &mut notes)?,
     };
     let allowance = BottomAllowance(
@@ -569,17 +658,20 @@ fn build(req: JobRequest) -> Result<Value, String> {
     let (travel, work_offset) = req.machine.travel_limits()?;
     // A tab is one tab: an operation that asks for three declares three, so
     // the audit compares three against three rather than one against three.
-    let declared_tabs: Vec<DeclaredTab> = req
-        .operations
+    let declared_tabs: Vec<DeclaredTab> = built
         .iter()
-        .flat_map(|o| {
-            let count = o.tabs.unwrap_or(0);
-            (0..count).map(move |_| DeclaredTab {
-                width: o.tab_width.unwrap_or(0.0),
-                height: o.tab_height.unwrap_or(0.0),
-            })
+        .enumerate()
+        .map(|(i, (_, o, _))| {
+            let count = tab_positions(o, &format!("operation \"{}\"", op_name(i, o)))?.len();
+            Ok((0..count)
+                .map(|_| DeclaredTab {
+                    width: o.tab_width.unwrap_or(0.0),
+                    height: o.tab_height.unwrap_or(0.0),
+                })
+                .collect::<Vec<_>>())
         })
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?
+        .concat();
     let spec_for = |diameter: f64, centre_cutting: bool| {
         let mut spec = stock.job_spec(part.clone(), diameter, allowance);
         spec.travel = travel;
@@ -687,6 +779,16 @@ fn build(req: JobRequest) -> Result<Value, String> {
         (combined, how)
     };
 
+    // Where the tabs actually ended up, against where they were asked for.
+    // The kernel settles every tab onto the nearest straight stretch, so
+    // "three tabs at 0.1, 0.4, 0.7" is a request, not a result — and a tab
+    // that moved 8 mm to find a straight run is something the operator has to
+    // be able to see before the part comes loose somewhere unexpected.
+    let tab_audit = tab_audit(&job, &built, &verification);
+    if !tab_audit.is_empty() {
+        response["tab_placement"] = json!(tab_audit);
+    }
+
     let (blocked_by, warnings) = policy(&verification, &req.verify_policy)?;
     let blocked = !blocked_by.is_empty();
     response["blocked"] = json!(blocked);
@@ -719,6 +821,97 @@ fn normalise_kind(kind: &str) -> String {
     kind.to_ascii_lowercase().replace([' ', '-'], "_")
 }
 
+/// What an operation is called in every message about it.
+fn op_name(index: usize, op: &OperationReq) -> String {
+    op.name
+        .clone()
+        .unwrap_or_else(|| format!("{} {}", op.kind, index + 1))
+}
+
+/// The tabs an operation asks for, as fractions of the way round the loop.
+///
+/// `tab_positions` is authoritative when it is given: the count is then a
+/// cross-check rather than a spacing rule, so a request that says both and
+/// means two different things is refused rather than silently believing one.
+fn tab_positions(op: &OperationReq, what: &str) -> Result<Vec<f64>, String> {
+    let count = op.tabs.unwrap_or(0);
+    let Some(explicit) = &op.tab_positions else {
+        // Half a pitch in, so no tab sits on the seam where each pass plunges
+        // — the same rule the kernel's own even spacing follows.
+        return Ok((0..count)
+            .map(|i| (i as f64 + 0.5) / count as f64)
+            .collect());
+    };
+    if explicit.is_empty() {
+        return Err(format!(
+            "{what}.tab_positions is empty: leave it out to space {count} tab(s) evenly, or say where they go."
+        ));
+    }
+    if op.tabs.is_some() && count != explicit.len() {
+        return Err(format!(
+            "{what} asks for {count} tabs but lists {} position(s). Give one or the other, or make them agree.",
+            explicit.len()
+        ));
+    }
+    let mut out = Vec::with_capacity(explicit.len());
+    for (i, position) in explicit.iter().enumerate() {
+        let position = finite(&format!("{what}.tab_positions[{i}]"), *position)?;
+        if !(0.0..=1.0).contains(&position) {
+            return Err(format!(
+                "{what}.tab_positions[{i}] is {position}: a position is a fraction of the way round the loop, from 0 to 1."
+            ));
+        }
+        out.push(position);
+    }
+    Ok(out)
+}
+
+/// The same operation with its geometry moved onto the stock.
+///
+/// Only geometry moves. Depths, feeds and tab fractions are frames-independent
+/// and stay exactly as they were.
+fn place(op: &OperationReq, placement: &Placement, name: &str) -> Result<OperationReq, String> {
+    if placement.is_identity() {
+        return Ok(op.clone());
+    }
+    let mut out = op.clone();
+    if let Some(points) = &op.contour {
+        out.contour = Some(placement.apply_loop(points));
+    }
+    if let Some(holes) = &op.holes {
+        out.holes = Some(
+            holes
+                .iter()
+                .map(|h| h.placed(placement))
+                .collect::<Vec<_>>(),
+        );
+    }
+    if let (Some(x), Some(y)) = (op.x, op.y) {
+        let moved = placement.apply([finite("x", x)?, finite("y", y)?]);
+        out.x = Some(moved[0]);
+        out.y = Some(moved[1]);
+    }
+    if let Some(r) = op.rectangle {
+        // A rectangle is axis-aligned by construction, so a turned one is no
+        // longer a rectangle. Refusing is the only honest answer: silently
+        // taking the bounding box of the turned rectangle would machine a
+        // larger area than was asked for.
+        if placement.rotates() {
+            return Err(format!(
+                "operation \"{name}\" is placed at {:.3}° but its geometry is a \"rectangle\", which cannot be turned and stay a rectangle. Give it as a \"contour\" of four points instead.",
+                placement.rotation_deg
+            ));
+        }
+        out.rectangle = Some([
+            r[0] + placement.dx,
+            r[1] + placement.dy,
+            r[2] + placement.dx,
+            r[3] + placement.dy,
+        ]);
+    }
+    Ok(out)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_op(
     index: usize,
@@ -729,10 +922,7 @@ fn build_op(
     park_z: f64,
     notes: &mut Vec<Note>,
 ) -> Result<(JobOp, CamSettings), String> {
-    let name = op
-        .name
-        .clone()
-        .unwrap_or_else(|| format!("{} {}", op.kind, index + 1));
+    let name = op_name(index, op);
     let what = format!("operation \"{name}\"");
     let diameter = entry.tool.diameter();
     let settings = build_settings(
@@ -860,10 +1050,13 @@ fn build_op(
                     other => return Err(format!("{what}.thin_slot.strategy is \"{other}\": it has to be \"refuse\" or \"centre_line\".")),
                 };
             }
-            let tabs = op.tabs.unwrap_or(0);
-            if tabs > 0 {
-                if tabs > 64 {
-                    return Err(format!("{what} asks for {tabs} tabs: 64 is the most a loop can carry."));
+            let positions = tab_positions(op, &what)?;
+            if !positions.is_empty() {
+                if positions.len() > 64 {
+                    return Err(format!(
+                        "{what} asks for {} tabs: 64 is the most a loop can carry.",
+                        positions.len()
+                    ));
                 }
                 let width = positive(&format!("{what}.tab_width"), op.tab_width.unwrap_or(0.0))?;
                 let height = positive(&format!("{what}.tab_height"), op.tab_height.unwrap_or(0.0))?;
@@ -872,7 +1065,9 @@ fn build_op(
                         "{what} asks for {height:.3} mm tabs in a {final_depth:.3} mm cut: a tab as tall as the cut is not a tab."
                     ));
                 }
-                c = c.with_tabs(tabs, width, height);
+                for position in positions {
+                    c = c.with_tab(Tab::new(position, width, height));
+                }
             }
             CamOperation::Contour2D(c)
         }
@@ -1415,6 +1610,189 @@ fn derive_part(
     )));
     PartRegion::new(outer, holes)
         .map_err(|e| format!("the part read off the operations is unusable: {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// Tab audit
+// ---------------------------------------------------------------------------
+
+/// Where the tabs of every tabbed operation actually ended up.
+///
+/// The oracle sees lifted stretches, not tabs: one tab is several
+/// observations, one per pass that had to ride over it. This folds them back
+/// into one entry per tab, on the operation that asked for it.
+///
+/// # What is reported, and what is not
+///
+/// Every number here is **measured off the toolpath**: where the cutter was
+/// when it lifted, how much metal that leaves, how tall it stands, and how far
+/// along the part's outline the next tab is. What is deliberately *not*
+/// reported is "this tab is 3 mm from where you asked for it", because that
+/// subtraction cannot be done honestly: a requested position is a fraction of
+/// the **cutter's own offset loop**, which runs in the direction of cut and is
+/// a different length from the contour the caller drew, while a landed
+/// position can only be measured on the contour the caller drew. The two
+/// frames differ by a reversal and by arc-length drift around every corner,
+/// and a difference taken across them would be a number that looks like
+/// millimetres of settling and is not.
+///
+/// So: the count and the spacing are the checkable claims. Six tabs asked for
+/// in one third of the loop that come back 20 mm apart went where they were
+/// asked; three tabs that come back 70 mm apart did not.
+fn tab_audit(
+    job: &Job,
+    built: &[(CamSettings, OperationReq, ToolEntry)],
+    verification: &JobVerification,
+) -> Vec<Value> {
+    // Contours that asked for tabs, with their arc-length parameterisation.
+    let mut tabbed: Vec<(usize, Vec<[f64; 2]>, Vec<f64>)> = Vec::new();
+    for (index, (_, op, _)) in built.iter().enumerate() {
+        let Ok(requested) = tab_positions(op, "") else {
+            continue;
+        };
+        if requested.is_empty() {
+            continue;
+        }
+        let CamOperation::Contour2D(c2d) = &job.ops[index].operation else {
+            continue;
+        };
+        tabbed.push((index, loop_to_points(&c2d.contour), requested));
+    }
+    if tabbed.is_empty() {
+        return Vec::new();
+    }
+
+    // Each observation belongs to whichever tabbed contour it sits closest to:
+    // a job may tab two separate profiles, and a tab on one is not a tab on
+    // the other.
+    let mut assigned: Vec<Vec<(f64, &vcad_kernel_cam::verify2d::TabObservation)>> =
+        vec![Vec::new(); tabbed.len()];
+    for observation in &verification.tabs.observations {
+        let mut best: Option<(usize, f64, f64)> = None;
+        for (slot, (_, points, _)) in tabbed.iter().enumerate() {
+            let (fraction, distance) = project(points, observation.xy);
+            if best.is_none_or(|(_, _, d)| distance < d) {
+                best = Some((slot, fraction, distance));
+            }
+        }
+        if let Some((slot, fraction, _)) = best {
+            assigned[slot].push((fraction, observation));
+        }
+    }
+
+    let mut out = Vec::with_capacity(tabbed.len());
+    for (slot, (index, points, requested)) in tabbed.iter().enumerate() {
+        let observations = &assigned[slot];
+        let total = perimeter(points);
+        // Cluster by position round the loop: every pass that rode over the
+        // same tab lands at the same place, within the tab's own width.
+        let span = if total > 0.0 {
+            (observations
+                .iter()
+                .map(|(_, o)| o.lifted_run)
+                .fold(0.0f64, f64::max)
+                / total)
+                .max(1e-4)
+        } else {
+            1e-4
+        };
+        let mut clusters: Vec<Vec<usize>> = Vec::new();
+        for (i, (fraction, _)) in observations.iter().enumerate() {
+            match clusters
+                .iter_mut()
+                .find(|c| cyclic_gap(*fraction, observations[c[0]].0) <= span)
+            {
+                Some(c) => c.push(i),
+                None => clusters.push(vec![i]),
+            }
+        }
+        // In order round the part, so `gap_to_next_mm` reads as a walk.
+        clusters.sort_by(|a, b| observations[a[0]].0.total_cmp(&observations[b[0]].0));
+
+        let at: Vec<f64> = clusters.iter().map(|c| observations[c[0]].0).collect();
+        let tabs: Vec<Value> = clusters
+            .iter()
+            .enumerate()
+            .map(|(i, members)| {
+                let n = members.len() as f64;
+                let centre = members.iter().fold([0.0f64; 2], |a, i| {
+                    let xy = observations[*i].1.xy;
+                    [a[0] + xy[0] / n, a[1] + xy[1] / n]
+                });
+                let mean = |f: fn(&vcad_kernel_cam::verify2d::TabObservation) -> f64| {
+                    members.iter().map(|i| f(observations[*i].1)).sum::<f64>() / n
+                };
+                let next = at[(i + 1) % at.len()];
+                json!({
+                    "at": centre,
+                    // Fraction of the way round the contour *as the caller
+                    // drew it* — not the frame `tab_positions` is stated in.
+                    "along_contour": at[i],
+                    "gap_to_next_mm": if at.len() > 1 {
+                        (next - at[i]).rem_euclid(1.0) * total
+                    } else {
+                        total
+                    },
+                    "metal_width": mean(|o| o.metal_width),
+                    "height": mean(|o| o.height),
+                    "straight": members.iter().all(|i| observations[*i].1.straight),
+                    "passes": members.len(),
+                })
+            })
+            .collect();
+
+        out.push(json!({
+            "op": job.ops[*index].name,
+            "op_index": index,
+            "tool": job.ops[*index].tool_number,
+            "requested": requested.len(),
+            "requested_positions": requested,
+            "found": tabs.len(),
+            "perimeter_mm": total,
+            "tabs": tabs,
+            "note": "positions in `tab_positions` are fractions of the cutter's own offset loop; `at` and `gap_to_next_mm` are measured on the contour as drawn. Compare counts and spacing, not the two fractions.",
+        }));
+    }
+    out
+}
+
+/// Where `p` falls along a closed polyline: the fraction of the way round, and
+/// how far off the polyline it is.
+fn project(points: &[[f64; 2]], p: [f64; 2]) -> (f64, f64) {
+    let total = perimeter(points);
+    if points.len() < 2 || total <= 0.0 {
+        return (0.0, f64::MAX);
+    }
+    let (mut run, mut best) = (0.0f64, (0.0f64, f64::MAX));
+    for i in 0..points.len() {
+        let (a, b) = (points[i], points[(i + 1) % points.len()]);
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let length = dx.hypot(dy);
+        if length > 0.0 {
+            let t = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (length * length)).clamp(0.0, 1.0);
+            let distance = (a[0] + t * dx - p[0]).hypot(a[1] + t * dy - p[1]);
+            if distance < best.1 {
+                best = ((run + t * length) / total, distance);
+            }
+        }
+        run += length;
+    }
+    best
+}
+
+fn perimeter(points: &[[f64; 2]]) -> f64 {
+    (0..points.len())
+        .map(|i| {
+            let (a, b) = (points[i], points[(i + 1) % points.len()]);
+            (a[0] - b[0]).hypot(a[1] - b[1])
+        })
+        .sum()
+}
+
+/// Distance between two fractions of a closed loop, the short way round.
+fn cyclic_gap(a: f64, b: f64) -> f64 {
+    let d = (a - b).abs().rem_euclid(1.0);
+    d.min(1.0 - d)
 }
 
 fn area(points: &[[f64; 2]]) -> f64 {

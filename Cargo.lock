@@ -7115,6 +7115,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-cam-api"
+version = "0.10.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-kernel-cam",
+]
+
+[[package]]
 name = "vcad-chat"
 version = "0.10.0"
 dependencies = [
@@ -7434,6 +7443,7 @@ dependencies = [
  "pollster",
  "serde",
  "serde_json",
+ "vcad-cam-api",
  "vcad-ecad-pcb",
  "vcad-eval",
  "vcad-ir",
@@ -8084,6 +8094,7 @@ dependencies = [
  "serde_json",
  "ts-rs",
  "vcad-app",
+ "vcad-cam-api",
  "vcad-chat",
  "vcad-crdt",
  "vcad-design-constraints",

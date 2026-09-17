@@ -7115,6 +7115,405 @@
     }
   },
   {
+    "name": "cam_outline",
+    "title": "CAM Outline From Solid",
+    "description": "Section a document part at a Z height into the closed contours a milling job cuts: the outer boundary, every hole, the circles among them (with fitted diameters), and a verdict on whether the part is constant-section at all — a 2.5D contour job only describes a part whose shape does not change with depth. Sections the part's RAW tessellation where there is a B-rep behind it, never the repaired export mesh, which can be torn by 0.4 mm where tangent fillets meet; a solid that does not close is refused with the gap positions rather than silently smoothed. Name the contours it returns (\"outer\", \"hole:0\") in cam_fit and cam_job instead of carrying the points.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "CAD session id holding the part (open_document / create_cad_loon)."
+        },
+        "part": {
+          "type": "string",
+          "description": "Root part id or exact name. Optional when the document holds one part."
+        },
+        "z": {
+          "type": "number",
+          "description": "Height to section at, mm. Omit (or pass auto_z) to use the mid-height of the part's own Z range."
+        },
+        "auto_z": {
+          "type": "boolean",
+          "description": "Section at the part's mid-height, ignoring `z`. Default true when `z` is omitted."
+        },
+        "heal_tolerance": {
+          "type": "number",
+          "description": "Close gaps narrower than this when chaining the section, mm (default 1e-3). Raising it hides a torn solid rather than fixing one — the refusal reports where the gaps are."
+        },
+        "circle_tolerance": {
+          "type": "number",
+          "description": "How closely a hole must fit a circle to be reported as one, mm (default 1e-3)."
+        },
+        "prismatic_tolerance": {
+          "type": "number",
+          "description": "How far sections at different heights may disagree and still count as constant-section, mm (default 0.01)."
+        },
+        "segments": {
+          "type": "number",
+          "description": "Curve resolution when the B-rep is tessellated for sectioning (default 64)."
+        },
+        "detail": {
+          "type": "string",
+          "description": "'summary' (default) returns counts, areas, bounds and the detected circles. 'full' also attaches every contour's points and the raw outline document."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "cam_fit",
+    "title": "CAM Cutter Fit",
+    "description": "Ask whether a given cutter physically fits a contour: how many inside corners it cannot reach, how much metal that leaves and where the worst of it stands, plus the largest cutter that would still fit. Run it before cam_job — a cutter that does not fit does not fail, it quietly leaves wall standing in every corner, and the largest-tool number is the answer to 'so what should I use?'. Geometry only: it says nothing about deflection or chatter, so treat the verdict as necessary and not sufficient.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "CAD session id holding the part (open_document / create_cad_loon)."
+        },
+        "part": {
+          "type": "string",
+          "description": "Root part id or exact name. Optional when the document holds one part."
+        },
+        "z": {
+          "type": "number",
+          "description": "Height to section at, mm. Omit (or pass auto_z) to use the mid-height of the part's own Z range."
+        },
+        "auto_z": {
+          "type": "boolean",
+          "description": "Section at the part's mid-height, ignoring `z`. Default true when `z` is omitted."
+        },
+        "heal_tolerance": {
+          "type": "number",
+          "description": "Close gaps narrower than this when chaining the section, mm (default 1e-3). Raising it hides a torn solid rather than fixing one — the refusal reports where the gaps are."
+        },
+        "circle_tolerance": {
+          "type": "number",
+          "description": "How closely a hole must fit a circle to be reported as one, mm (default 1e-3)."
+        },
+        "prismatic_tolerance": {
+          "type": "number",
+          "description": "How far sections at different heights may disagree and still count as constant-section, mm (default 0.01)."
+        },
+        "segments": {
+          "type": "number",
+          "description": "Curve resolution when the B-rep is tessellated for sectioning (default 64)."
+        },
+        "contour": {
+          "description": "The contour to check: a closed polyline of [x, y] points, or a name from cam_outline (\"outer\", \"hole:0\", …) resolved against `document_id`."
+        },
+        "tool_diameter": {
+          "type": "number",
+          "description": "Cutting diameter, mm."
+        },
+        "side": {
+          "type": "string",
+          "description": "\"inside\" (default — the cutter works within the loop, as in a pocket or a bore) or \"outside\"."
+        },
+        "detail": {
+          "type": "string",
+          "description": "'summary' (default) or 'full' to attach every unreachable region."
+        }
+      },
+      "required": [
+        "tool_diameter"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "cam_recommend_feeds",
+    "title": "CAM Feeds And Speeds",
+    "description": "Feeds, speeds, stepdown and stepover for a material and cutter on a machine of a given rigidity — including the dial position to set by hand, because on a trim router the S word does nothing and a recommendation that only said 'rpm' would be unusable. Pass `settings` instead to have numbers you already have checked against the table, or `list: true` for the materials. These are published chiploads worked through, not measurements of your machine: confirm on a test cut before committing stock.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "material": {
+          "type": "string",
+          "description": "Material id, e.g. \"copper-c110\", \"brass-c360\", \"aluminium-6061-t6\", \"mdf\", \"fr4-copper-clad\". Call with `list: true` to see the table."
+        },
+        "list": {
+          "type": "boolean",
+          "description": "Return the material table instead of a recommendation."
+        },
+        "op": {
+          "type": "string",
+          "description": "\"slot\" (default — a profile cut right through sheet stock is buried on both sides and IS a slot), \"profile\", \"pocket\", \"drill\" or \"finish\"."
+        },
+        "tool": {
+          "type": "object",
+          "description": "{ diameter, flutes?, kind?, flute_length? } in mm.",
+          "properties": {
+            "diameter": {
+              "type": "number"
+            },
+            "flutes": {
+              "type": "number"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "flute_length": {
+              "type": "number"
+            }
+          }
+        },
+        "machine": {
+          "type": "object",
+          "description": "{ class: \"hobby\" | \"benchtop\" | \"vmc\", spindle: \"dial\" | \"controlled\", max_feed? }. A machine that does not say gets a dial router, because assuming the S word works when it does not leaves a cutter at the wrong speed with no warning."
+        },
+        "settings": {
+          "type": "object",
+          "description": "{ feed, plunge, rpm, stepdown, stepover? } — pass numbers you already have and they are checked against the material instead of a recommendation being made."
+        },
+        "detail": {
+          "type": "string",
+          "description": "'summary' (default) or 'full'."
+        }
+      },
+      "required": [
+        "material",
+        "tool"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "cam_job",
+    "title": "CAM Job (Build + Verify)",
+    "description": "Post a whole milling job — several operations, several tools, one spindle start per tool — and replay it against the part it is meant to make before handing it over. Fails closed: if any error-severity check fails (gouging the part, cutting past the stock with nothing beneath, leaving the part loose, running outside the machine's travel) the result carries `blocked: true`, the checks that objected, and NO G-code anywhere — do not cut, and there is nothing to export by accident. On a pass the G-code comes back as an artifact link with the verification summary, the operation table and a cycle-time estimate; the time and the feeds are predictions until a part is measured.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "CAD session id holding the part (open_document / create_cad_loon)."
+        },
+        "part": {
+          "type": "string",
+          "description": "Root part id or exact name. Optional when the document holds one part."
+        },
+        "z": {
+          "type": "number",
+          "description": "Height to section at, mm. Omit (or pass auto_z) to use the mid-height of the part's own Z range."
+        },
+        "auto_z": {
+          "type": "boolean",
+          "description": "Section at the part's mid-height, ignoring `z`. Default true when `z` is omitted."
+        },
+        "heal_tolerance": {
+          "type": "number",
+          "description": "Close gaps narrower than this when chaining the section, mm (default 1e-3). Raising it hides a torn solid rather than fixing one — the refusal reports where the gaps are."
+        },
+        "circle_tolerance": {
+          "type": "number",
+          "description": "How closely a hole must fit a circle to be reported as one, mm (default 1e-3)."
+        },
+        "prismatic_tolerance": {
+          "type": "number",
+          "description": "How far sections at different heights may disagree and still count as constant-section, mm (default 0.01)."
+        },
+        "segments": {
+          "type": "number",
+          "description": "Curve resolution when the B-rep is tessellated for sectioning (default 64)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Job name, carried into the program's first comment."
+        },
+        "stock": {
+          "type": "object",
+          "description": "{ thickness, margin? | bbox?, spoilboard? } in mm. The stock top is Z0 and the underside is -thickness. Any cut past the underside needs a declared `spoilboard` at least that thick, or the job is refused."
+        },
+        "machine": {
+          "type": "object",
+          "description": "{ name?, spindle: \"dial\" | \"controlled\", class?, max_feed?, max_accel?, travel: {min,max}?, work_offset? }. Give `travel` and `work_offset` and the envelope check tells you before the machine does."
+        },
+        "tools": {
+          "type": "array",
+          "description": "Tool library: [{ number, kind?, diameter, flutes?, flute_length?, stickout?, centre_cutting?, holder? }]. Every operation names one by number.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "operations": {
+          "type": "array",
+          "description": "Operations, in any order — inside features are sequenced before the profile that frees the part. Each: { name?, tool, kind, depth, stepdown, feed, plunge, rpm, ... }. `kind` is face | pocket | contour_outside | contour_inside | drill | helical_bore. `contour` takes points OR a name from cam_outline (\"outer\", \"hole:0\"). Add `tabs` + `tab_width` + `tab_height` (or `tab_positions`) to hold the part, `bottom_allowance` for an onion skin (negative = break-through into a declared spoilboard), `placement { dx, dy, rotation_deg }` for stock that is not square.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "options": {
+          "type": "object",
+          "description": "{ part?, placement?, arc_fit?, tool_change?, post?, wcs?, end?, safe_z?, park_z?, verify? }. `part` (the outline the job is checked against) defaults to the sectioned part when `document_id` is given. `verify: false` turns the oracle off and is reported as a warning — the job then carries G-code nothing has checked."
+        },
+        "verify_policy": {
+          "type": "object",
+          "description": "Per-check severity override, e.g. { \"material_left\": \"warning\" }. Downgrading a check is how a job that the oracle refuses gets run anyway, so it is recorded in the result."
+        },
+        "detail": {
+          "type": "string",
+          "description": "'summary' (default) returns the verdict, the check summary, the op table and an artifact link to the G-code. 'full' also attaches the G-code text, the full verification report and the preview polyline."
+        }
+      },
+      "required": [
+        "stock",
+        "tools",
+        "operations"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "cam_verify_gcode",
+    "title": "CAM Verify G-code",
+    "description": "Replay a G-code program you already have — off disk, out of another CAM package, edited by hand — against the part it is meant to make, and say whether it makes that part. Answers the question that cannot be asked of a file by reading it: does this cut the right side of every wall, stay out of the part, reach the right depth, leave the tabs it claims, and stay inside the machine. `blocked: true` means do not run it; a pass is a 2.5D geometric replay and does not model deflection, chatter, or a machine that is not where it says it is.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "CAD session id holding the part (open_document / create_cad_loon)."
+        },
+        "part": {
+          "type": "string",
+          "description": "Root part id or exact name to section for the part outline. Or give `part_outline` explicitly."
+        },
+        "z": {
+          "type": "number",
+          "description": "Height to section at, mm. Omit (or pass auto_z) to use the mid-height of the part's own Z range."
+        },
+        "auto_z": {
+          "type": "boolean",
+          "description": "Section at the part's mid-height, ignoring `z`. Default true when `z` is omitted."
+        },
+        "heal_tolerance": {
+          "type": "number",
+          "description": "Close gaps narrower than this when chaining the section, mm (default 1e-3). Raising it hides a torn solid rather than fixing one — the refusal reports where the gaps are."
+        },
+        "circle_tolerance": {
+          "type": "number",
+          "description": "How closely a hole must fit a circle to be reported as one, mm (default 1e-3)."
+        },
+        "prismatic_tolerance": {
+          "type": "number",
+          "description": "How far sections at different heights may disagree and still count as constant-section, mm (default 0.01)."
+        },
+        "segments": {
+          "type": "number",
+          "description": "Curve resolution when the B-rep is tessellated for sectioning (default 64)."
+        },
+        "gcode": {
+          "type": "string",
+          "description": "The program text to replay."
+        },
+        "part_outline": {
+          "type": "object",
+          "description": "{ outer: [[x,y]…], holes: [[[x,y]…]…] } — the part the program is meant to make, when it is not a document part."
+        },
+        "stock": {
+          "type": "object",
+          "description": "{ thickness, margin? | bbox?, spoilboard? }."
+        },
+        "tool_diameter": {
+          "type": "number",
+          "description": "Cutting diameter of the tool the program assumes, mm."
+        },
+        "bottom_allowance": {
+          "type": "number",
+          "description": "Onion skin left on the floor, mm. Negative means a deliberate break-through."
+        },
+        "tabs": {
+          "type": "array",
+          "description": "Tabs the program is supposed to leave: [{ width, height }], one entry per tab.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "machine": {
+          "type": "object",
+          "description": "{ travel: {min,max}, work_offset } for the envelope check."
+        },
+        "tolerance": {
+          "type": "number",
+          "description": "Replay tolerance, mm (default 0.02)."
+        },
+        "detail": {
+          "type": "string",
+          "description": "'summary' (default) or 'full'."
+        }
+      },
+      "required": [
+        "gcode",
+        "stock",
+        "tool_diameter"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "cam_gear",
+    "title": "CAM Gear Geometry",
+    "description": "Exact involute gear geometry for cutting on a mill: the tooth-space contour the named cutter actually leaves, the reachability check (a cutter too fat for the space is refused rather than cutting a different tooth), the over-pins dimension to measure, contact ratio, and planetary-train meshing. Pass `measured` with the pin diameter you used and it returns the cutter offset that reading implies for the next part — the measurement loop is how a predicted tooth thickness becomes a known one.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "gear": {
+          "type": "object",
+          "description": "{ module, teeth, pressure_angle?, profile_shift?, backlash_thinning?, internal?, face_width? }."
+        },
+        "cutter_diameter": {
+          "type": "number",
+          "description": "End mill that cuts the tooth spaces, mm. Defaults to the module."
+        },
+        "pin_diameter": {
+          "type": "number",
+          "description": "Pin to measure over, mm."
+        },
+        "measured": {
+          "type": "number",
+          "description": "An over-pins reading taken off a cut part, mm. Given with `pin_diameter`, the result carries the cutter offset that reading implies for the next part."
+        },
+        "span": {
+          "type": "boolean",
+          "description": "Add a span-over-teeth measurement."
+        },
+        "contours": {
+          "type": "boolean",
+          "description": "Return tooth-space, full-profile and tool-centre point lists (default true; they are large — combine with detail)."
+        },
+        "planetary": {
+          "type": "object",
+          "description": "{ sun, planet, ring, planets } — check a train meshes and assembles."
+        },
+        "detail": {
+          "type": "string",
+          "description": "'summary' (default) omits the contour point lists. 'full' attaches them."
+        }
+      },
+      "required": [
+        "gear"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "import_step",
     "title": "Import STEP",
     "description": "Import geometry from a STEP file (.step or .stp), keeping B-rep: the document gets one lazy `step_import` node per body, so analytic faces survive into booleans, fillets, and STEP export. Pass `as_mesh: true` for the old tessellated import (rendering / colliders only — mesh parts cannot be exported to STEP). Supports AP203/AP214 STEP files commonly exported from Fusion 360, SolidWorks, Onshape, etc.",

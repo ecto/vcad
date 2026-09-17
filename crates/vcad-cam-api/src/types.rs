@@ -6,6 +6,8 @@
 //! than zero, not 0" does not.
 
 use serde::Deserialize;
+
+use crate::placement::Placement;
 use vcad_kernel_cam::materials::{MachineClass, Spindle};
 use vcad_kernel_cam::verify2d::{PartRegion, TravelLimits};
 use vcad_kernel_cam::{
@@ -416,10 +418,20 @@ pub struct PartReq {
 impl PartReq {
     /// Validate and convert.
     pub fn build(&self) -> Result<PartRegion, String> {
-        let outer = loop_points("part.outer", &self.outer)?;
+        self.placed(&Placement::identity())
+    }
+
+    /// Validate and convert, moved onto the stock by `placement`.
+    ///
+    /// The part is stated in the part's own frame, so it travels with the
+    /// operations rather than staying where it was drawn — otherwise a job
+    /// placed on skewed stock would be checked against a part that is not
+    /// where the cutter is, and every cut would read as a gouge.
+    pub fn placed(&self, placement: &Placement) -> Result<PartRegion, String> {
+        let outer = placement.apply_loop(&loop_points("part.outer", &self.outer)?);
         let mut holes = Vec::with_capacity(self.holes.len());
         for (i, h) in self.holes.iter().enumerate() {
-            holes.push(loop_points(&format!("part.holes[{i}]"), h)?);
+            holes.push(placement.apply_loop(&loop_points(&format!("part.holes[{i}]"), h)?));
         }
         PartRegion::new(outer, holes).map_err(|e| format!("the part outline is unusable: {e}"))
     }

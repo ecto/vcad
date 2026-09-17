@@ -217,6 +217,27 @@ Number of parallel environments.
 
 **batch_reset** resets all environments in the batch to initial state.
 
+## CAM Tools
+
+The `cam` tool pack mills a part from a vcad document, and refuses to hand over
+a program that does not make it. Enable it with
+`set_tool_packs({ enable: ["cam"] })`. See [CAM Tools](/reference/mcp/cam) for
+the full contract.
+
+| Tool | Description |
+|------|-------------|
+| `cam_outline` | Section a part at a Z height into the contours a job cuts: regions, holes, fitted circle diameters, and whether the part is constant-section at all |
+| `cam_fit` | Whether a given cutter fits a contour: unreachable corners, metal left, and the largest cutter that would |
+| `cam_recommend_feeds` | Feeds, speeds, stepdown, stepover — and the router dial to set by hand |
+| `cam_job` | Post a whole job and verify it before returning it. A refused job carries `blocked: true` and no G-code at all |
+| `cam_verify_gcode` | Replay a program you already have against the part it is meant to make |
+| `cam_gear` | Involute gear geometry, over-pins measurement, and the cutter offset a measured reading implies |
+
+Three rules the pack advertises: **verify by default** (`cam_job` replays what
+it posted), **blocked means do not cut** (there is no G-code in a refusal to run
+by accident), and **physical predictions are provisional** — cycle time, feeds
+and fit are computed, not measured, until a part comes off the machine.
+
 ## Electronics Tools
 
 The MCP server also includes tools for electronic design (schematic capture, PCB layout, and fabrication export). These operate on a separate data model embedded in the vcad document.
