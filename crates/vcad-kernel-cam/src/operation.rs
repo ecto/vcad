@@ -16,7 +16,7 @@ pub use contour::{
 };
 pub use drill::{tip_length, BreakThrough, Drill, DrillCycle, DrillError, HelicalBore, Hole};
 pub use face::Face;
-pub use pocket::Pocket2D;
+pub use pocket::{Pocket2D, PocketReport, Stepover, UncutPatch};
 pub use roughing3d::Roughing3D;
 
 /// A CAM operation that can generate a toolpath.
