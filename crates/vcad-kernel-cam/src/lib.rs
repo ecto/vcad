@@ -68,8 +68,9 @@ pub use job::{
     ToolChangeStrategy, Wcs,
 };
 pub use operation::{
-    tip_length, BreakThrough, CamOperation, Contour, Contour2D, ContourSegment, Drill, DrillCycle,
-    DrillError, Face, HelicalBore, Hole, Pocket2D, Point2D, Roughing3D, Spoilboard, Tab,
+    tip_length, BreakThrough, CamOperation, CentreLineStretch, Contour, Contour2D, ContourPhase,
+    ContourReport, ContourSegment, CutDirection, Drill, DrillCycle, DrillError, EntryStyle, Face,
+    HelicalBore, Hole, Pocket2D, Point2D, Roughing3D, Spoilboard, Tab, ThinSlotStrategy,
 };
 pub use tool::{
     check_flute_length, check_slot_ratio, check_stickout, check_tool_for_cut, has_error,

@@ -9,7 +9,10 @@ mod face;
 mod pocket;
 mod roughing3d;
 
-pub use contour::{Contour2D, Tab};
+pub use contour::{
+    CentreLineStretch, Contour2D, ContourPhase, ContourReport, CutDirection, EntryStyle, Tab,
+    ThinSlotStrategy,
+};
 pub use drill::{
     tip_length, BreakThrough, Drill, DrillCycle, DrillError, HelicalBore, Hole, Spoilboard,
 };
