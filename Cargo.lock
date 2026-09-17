@@ -7601,6 +7601,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "vcad-kernel-math",
+ "vcad-receipt",
 ]
 
 [[package]]
@@ -7976,6 +7977,7 @@ dependencies = [
 name = "vcad-kernel-stocksim"
 version = "0.10.0"
 dependencies = [
+ "earcutr",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

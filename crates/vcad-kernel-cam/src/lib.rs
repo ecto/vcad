@@ -60,6 +60,7 @@ pub mod materials;
 mod operation;
 pub mod outline;
 pub mod post;
+pub mod receipt;
 mod tool;
 mod toolpath;
 pub mod verify2d;
