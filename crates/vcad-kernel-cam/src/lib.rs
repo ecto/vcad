@@ -60,9 +60,14 @@ mod toolpath;
 // Re-exports
 pub use error::CamError;
 pub use operation::{
-    CamOperation, Contour, Contour2D, ContourSegment, Face, Pocket2D, Point2D, Roughing3D, Tab,
+    tip_length, BreakThrough, CamOperation, Contour, Contour2D, ContourSegment, Drill, DrillCycle,
+    DrillError, Face, HelicalBore, Hole, Pocket2D, Point2D, Roughing3D, Spoilboard, Tab,
 };
-pub use tool::{Tool, ToolEntry, ToolHolder, ToolLibrary};
+pub use tool::{
+    check_flute_length, check_slot_ratio, check_stickout, check_tool_for_cut, has_error,
+    CheckSeverity, CutContext, Tool, ToolCheck, ToolCheckKind, ToolEntry, ToolGeometry, ToolHolder,
+    ToolLibrary,
+};
 pub use toolpath::{ArcDir, ArcPlane, CoolantMode, SpindleDir, Toolpath, ToolpathSegment};
 
 use serde::{Deserialize, Serialize};
