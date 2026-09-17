@@ -54,6 +54,7 @@ pub mod arcfit;
 pub mod dropcutter;
 mod error;
 mod job;
+pub mod materials;
 mod operation;
 pub mod post;
 mod tool;
