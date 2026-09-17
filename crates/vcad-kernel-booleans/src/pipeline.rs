@@ -1437,7 +1437,8 @@ pub(crate) fn brep_boolean(
     // stage may decide which curve a vertex belongs to by proximity, because
     // the two curves are microns apart over a tenth of a millimetre. See
     // `crate::tangency`.
-    let tangencies = crate::tangency::cylinder_tangencies(solid_a, solid_b);
+    let mut tangencies = crate::tangency::cylinder_tangencies(solid_a, solid_b);
+    tangencies.extend(crate::tangency::cylinder_plane_tangencies(solid_a, solid_b));
     debug_bool!("tangency lines between the operands: {}", tangencies.len());
 
     // Apply splits to both solids

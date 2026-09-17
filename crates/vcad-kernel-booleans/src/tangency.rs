@@ -82,6 +82,75 @@ pub(crate) fn in_tangency_zone(lines: &[TangencyLine], p: &Point3) -> bool {
     })
 }
 
+/// Every line along which a cylinder of one solid touches a PLANE of the
+/// other.
+///
+/// The second tangency family, and in a filleted part the commoner one: a
+/// fillet blending a wall into another wall is a cylinder laid against a
+/// plane, tangent by construction. The rana-60 stator has two —
+///
+///   * the stadium tab's round end (r 3.1 on the tab's centre line) against
+///     the tab cube's side planes at y = ±3.1, which leaves a 0.015 mm crack
+///     at the corner of two of the three tabs;
+///   * the lead notch's R1.05 fillet, centred on one notch wall and tangent
+///     to the other at y = 2.0.
+///
+/// A plane parallel to the axis meets the cylinder in one line when its
+/// distance from the axis equals the radius. Planes that cut across the axis
+/// meet it in an ellipse and are somebody else's problem.
+pub(crate) fn cylinder_plane_tangencies(a: &BRepSolid, b: &BRepSolid) -> Vec<TangencyLine> {
+    let cylinders = |s: &BRepSolid| -> Vec<(Point3, Vec3, f64)> {
+        s.geometry
+            .surfaces
+            .iter()
+            .filter_map(|surf| {
+                surf.as_any()
+                    .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+                    .map(|c| (c.center, c.axis.into_inner(), c.radius))
+            })
+            .collect()
+    };
+    let planes = |s: &BRepSolid| -> Vec<(Point3, Vec3)> {
+        s.geometry
+            .surfaces
+            .iter()
+            .filter_map(|surf| {
+                surf.as_any()
+                    .downcast_ref::<vcad_kernel_geom::Plane>()
+                    .map(|p| (p.origin, p.normal_dir.into_inner()))
+            })
+            .collect()
+    };
+
+    let mut out: Vec<TangencyLine> = Vec::new();
+    let mut pairs = |cyls: &[(Point3, Vec3, f64)], pls: &[(Point3, Vec3)]| {
+        for &(c, axis, r) in cyls {
+            for &(origin, n) in pls {
+                // Only a plane PARALLEL to the axis touches along a line.
+                if n.dot(axis).abs() > 1e-9 {
+                    continue;
+                }
+                let signed = (c - origin).dot(n);
+                if (signed.abs() - r).abs() > TANGENCY_EPS {
+                    continue;
+                }
+                let line = TangencyLine {
+                    point: c - n * signed,
+                    dir: axis,
+                };
+                if !out.iter().any(|t| {
+                    t.dir.cross(line.dir).norm() < 1e-9 && t.distance(&line.point) < TANGENCY_EPS
+                }) {
+                    out.push(line);
+                }
+            }
+        }
+    };
+    pairs(&cylinders(a), &planes(b));
+    pairs(&cylinders(b), &planes(a));
+    out
+}
+
 /// Every line along which a cylindrical carrier of `a` touches one of `b`.
 ///
 /// Parallel axes only — two cylinders whose axes are skew or crossing touch
