@@ -11,6 +11,7 @@
 //! cannot follow.
 
 use crate::operation::Point2D;
+use crate::stock::Spoilboard;
 use crate::ArcDir;
 use crate::{CamSettings, CutContext, Tool, ToolGeometry, Toolpath, ToolpathSegment};
 use serde::{Deserialize, Serialize};
@@ -247,22 +248,11 @@ pub enum DrillError {
     InvalidCentre(f64, f64),
 }
 
-/// A sacrificial board under the stock. Cutting past the underside of the
-/// stock is only legal into one of these.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct Spoilboard {
-    /// Thickness of the sacrificial material, in mm.
-    pub thickness: f64,
-}
-
-impl Spoilboard {
-    /// Declare a spoilboard of the given thickness.
-    pub fn new(thickness: f64) -> Self {
-        Self { thickness }
-    }
-}
-
 /// A hole that has to come out the other side.
+///
+/// The [`Spoilboard`] rule is [`crate::stock`]'s, and the sink asked for here
+/// is what [`crate::BottomAllowance`] calls a break-through — the same
+/// convention, spelled for a drill whose point adds its own length.
 ///
 /// The tool has to sink past the underside for the hole to be open at full
 /// diameter: by the drill's point length, plus whatever allowance is asked

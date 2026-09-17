@@ -12,8 +12,8 @@
 //! the part are cut before the outside profile that frees it from the stock,
 //! and the operations of one tool are kept together.
 
-use crate::operation::{CamOperation, Drill, HelicalBore};
-use crate::post::{PostProcessor, PostState};
+use crate::operation::CamOperation;
+use crate::post::{PostProcessor, ProgramOptions};
 use crate::{
     check_tool_for_cut, CamSettings, CheckSeverity, CutContext, SpindleDir, ToolCheck, ToolEntry,
     ToolLibrary, Toolpath, ToolpathSegment,
@@ -196,97 +196,47 @@ impl OpRole {
 
 /// An operation a job can run.
 ///
-/// The hole operations are kept out of [`CamOperation`] on purpose: they
-/// report refusals a machinist can act on (`DrillError`), and `CamError` —
-/// which `CamOperation::generate` returns and which this package does not own
-/// — has nowhere to put that text.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
-pub enum JobOperation {
-    /// One of the 2.5D milling operations.
-    Cam(CamOperation),
-    /// Drilling a list of holes.
-    Drill(Drill),
-    /// Boring a hole larger than the cutter.
-    Bore(HelicalBore),
-}
+/// Wave 1 had a parallel enum here — `Cam` / `Drill` / `Bore` — because the
+/// hole operations refuse in [`DrillError`](crate::DrillError)'s words and
+/// [`CamError`](crate::CamError) had nowhere to put them. It has somewhere
+/// now ([`CamError::Operation`](crate::CamError::Operation), which carries
+/// the text verbatim), so there is one enum, and this name is kept only so
+/// callers that spelled it out still compile.
+pub type JobOperation = CamOperation;
 
-impl From<CamOperation> for JobOperation {
-    fn from(op: CamOperation) -> Self {
-        JobOperation::Cam(op)
+/// The cut an operation asks of its tool, with the job's name on any refusal.
+fn cut_context(
+    operation: &CamOperation,
+    entry: &ToolEntry,
+    name: &str,
+) -> Result<CutContext, JobError> {
+    if operation.requires_height_field() {
+        return Err(JobError::NeedsHeightField { op: name.into() });
     }
-}
-
-impl From<Drill> for JobOperation {
-    fn from(op: Drill) -> Self {
-        JobOperation::Drill(op)
-    }
-}
-
-impl From<HelicalBore> for JobOperation {
-    fn from(op: HelicalBore) -> Self {
-        JobOperation::Bore(op)
-    }
-}
-
-impl JobOperation {
-    /// Where this kind of operation sits in the order by default.
-    pub fn default_role(&self) -> OpRole {
-        match self {
-            JobOperation::Cam(CamOperation::Face(_)) => OpRole::Facing,
-            // An outside contour is the cut that frees the part; everything
-            // else works inside it.
-            JobOperation::Cam(CamOperation::Contour2D(op)) if !op.inside => OpRole::OutsideProfile,
-            _ => OpRole::InsideFeature,
-        }
-    }
-
-    /// The cut this operation asks of its tool, for the tool checks.
-    fn cut_context(&self, entry: &ToolEntry, name: &str) -> Result<CutContext, JobError> {
-        Ok(match self {
-            JobOperation::Cam(CamOperation::Face(op)) => CutContext::new(op.depth),
-            JobOperation::Cam(CamOperation::Pocket2D(op)) => CutContext::new(op.depth),
-            JobOperation::Cam(CamOperation::Contour2D(op)) => CutContext::new(op.depth),
-            JobOperation::Cam(CamOperation::Roughing3D(_)) => {
-                return Err(JobError::NeedsHeightField { op: name.into() })
-            }
-            JobOperation::Drill(op) => {
-                op.cut_context(&entry.tool)
-                    .map_err(|e| JobError::OpFailed {
-                        op: name.into(),
-                        message: e.to_string(),
-                    })?
-            }
-            JobOperation::Bore(op) => op.cut_context(&entry.tool),
-        })
-    }
-
-    /// Generate this operation's toolpath.
-    fn generate(
-        &self,
-        entry: &ToolEntry,
-        settings: &CamSettings,
-        name: &str,
-    ) -> Result<Toolpath, JobError> {
-        let failed = |message: String| JobError::OpFailed {
+    operation
+        .cut_context(&entry.tool)
+        .map_err(|e| JobError::OpFailed {
             op: name.to_string(),
-            message,
-        };
-        match self {
-            JobOperation::Cam(CamOperation::Roughing3D(_)) => {
-                Err(JobError::NeedsHeightField { op: name.into() })
-            }
-            JobOperation::Cam(op) => op
-                .generate(&entry.tool, settings)
-                .map_err(|e| failed(e.to_string())),
-            JobOperation::Drill(op) => op
-                .generate(&entry.tool, &entry.geometry, settings)
-                .map_err(|e| failed(e.to_string())),
-            JobOperation::Bore(op) => op
-                .generate(&entry.tool, &entry.geometry, settings)
-                .map_err(|e| failed(e.to_string())),
-        }
+            message: e.to_string(),
+        })
+}
+
+/// Generate an operation's toolpath, with the job's name on any refusal.
+fn generate(
+    operation: &CamOperation,
+    entry: &ToolEntry,
+    settings: &CamSettings,
+    name: &str,
+) -> Result<Toolpath, JobError> {
+    if operation.requires_height_field() {
+        return Err(JobError::NeedsHeightField { op: name.into() });
     }
+    operation
+        .generate_with_geometry(&entry.tool, &entry.geometry, settings)
+        .map_err(|e| JobError::OpFailed {
+            op: name.to_string(),
+            message: e.to_string(),
+        })
 }
 
 /// One operation in a job: what to cut, with which tool, and when.
@@ -469,7 +419,7 @@ impl Job {
         for i in self.order() {
             let op = &self.ops[i];
             let entry = self.entry(op)?;
-            let cut = op.operation.cut_context(entry, &op.name)?;
+            let cut = cut_context(&op.operation, entry, &op.name)?;
             out.push((i, check_tool_for_cut(&entry.tool, &entry.geometry, &cut)));
         }
         Ok(out)
@@ -522,7 +472,7 @@ impl Job {
             let entry = self.entry(op)?;
             let settings = op.settings.as_ref().unwrap_or(&self.settings);
 
-            let cut = op.operation.cut_context(entry, &op.name)?;
+            let cut = cut_context(&op.operation, entry, &op.name)?;
             let findings = check_tool_for_cut(&entry.tool, &entry.geometry, &cut);
             let errors: Vec<String> = findings
                 .iter()
@@ -537,7 +487,7 @@ impl Job {
                 });
             }
 
-            let op_path = op.operation.generate(entry, settings, &op.name)?;
+            let op_path = generate(&op.operation, entry, settings, &op.name)?;
             if op_path.segments.iter().any(|s| {
                 matches!(
                     s,
@@ -580,11 +530,24 @@ impl Job {
                             ToolChangeStrategy::M6 => {
                                 toolpath.push(ToolpathSegment::tool_change(entry.number))
                             }
-                            ToolChangeStrategy::ManualPauseReprobe { .. } => {
-                                toolpath.push(ToolpathSegment::comment(format!(
-                                    "PAUSE (M0): fit T{}, then re-establish Z before resuming",
+                            ToolChangeStrategy::ManualPauseReprobe { probe_macro } => {
+                                // A real stop, not a comment about one: the
+                                // post writes the word, so every post writes
+                                // the word it means.
+                                toolpath.push(ToolpathSegment::pause(format!(
+                                    "fit T{}, then re-establish Z before resuming",
                                     entry.number
-                                )))
+                                )));
+                                match probe_macro {
+                                    Some(text) => toolpath
+                                        .push(ToolpathSegment::raw(text.trim_end().to_string())),
+                                    None => toolpath.push(ToolpathSegment::comment(format!(
+                                        "re-establish Z for T{}: touch off and set {} Z0 before \
+                                         resuming",
+                                        entry.number,
+                                        self.wcs.code()
+                                    ))),
+                                }
                             }
                         }
                         at = [at[0], at[1], self.park_z];
@@ -764,56 +727,29 @@ impl Program {
             .collect()
     }
 
+    /// What the post needs to know about this program that is not in the
+    /// toolpath: its name, its work offset, where it parks and how it ends.
+    pub fn options(&self) -> ProgramOptions {
+        ProgramOptions {
+            name: self.name.clone(),
+            wcs: Some(self.wcs),
+            park_z: Some(self.park_z),
+            end: self.end,
+            spindle: None,
+        }
+    }
+
     /// Post the whole program.
     ///
-    /// The header, the pause and the end word are written here rather than by
-    /// the post-processor: a post's own `header`/`footer` assume a single-tool
-    /// program with one spindle start, and `ToolpathSegment` has no way to say
-    /// "stop and wait". Everything that is motion still goes through the post,
-    /// so coordinates, arcs and modality stay machine-specific.
+    /// Thin on purpose. Until wave 2 the header, the `M0` pause and the end
+    /// word were written *here*, in one dialect, because a post's own header
+    /// assumed a single-tool program and started a spindle of its own that
+    /// fought the one the job had already started — and because
+    /// `ToolpathSegment` had no way to say "stop and wait". Both holes are
+    /// closed: the pause is a [`ToolpathSegment::Pause`] like any other
+    /// segment, and the preamble and postamble are the post's.
     pub fn to_gcode<P: PostProcessor + ?Sized>(&self, post: &P) -> String {
-        let mut out = String::new();
-        out.push_str(&format!("({})\n", self.name));
-        out.push_str("(vcad-kernel-cam: stock top Z0, XY lower-left at 0)\n");
-        out.push_str("G21\n"); // mm
-        out.push_str("G90\n"); // absolute
-        out.push_str("G94\n"); // feed per minute
-        out.push_str("G17\n"); // arcs in XY
-        out.push_str("G40\n"); // no cutter compensation
-        out.push_str("G49\n"); // no tool length compensation
-        out.push_str(&format!("{}\n", self.wcs.code()));
-        out.push_str(&format!("G0 Z{:.3}\n", self.park_z));
-
-        let mut state = PostState {
-            z: self.park_z,
-            ..PostState::default()
-        };
-        for block in &self.blocks {
-            for seg in &self.toolpath.segments[block.start..block.end] {
-                out.push_str(&post.segment(seg, &mut state));
-            }
-            let ProgramBlock::ToolChange { to, .. } = &block.block else {
-                continue;
-            };
-            let ToolChangeStrategy::ManualPauseReprobe { probe_macro } = &self.strategy else {
-                continue;
-            };
-            out.push_str("M0\n");
-            match probe_macro {
-                Some(macro_text) => {
-                    out.push_str(macro_text.trim_end());
-                    out.push('\n');
-                }
-                None => out.push_str(&format!(
-                    "(re-establish Z for T{}: touch off and set {} Z0 before resuming)\n",
-                    to,
-                    self.wcs.code()
-                )),
-            }
-        }
-
-        out.push_str(&format!("{}\n", self.end.code()));
-        out
+        post.program(&self.options(), &self.toolpath)
     }
 }
 
