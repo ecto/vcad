@@ -148,7 +148,18 @@ final class CNCWorkspace {
     var showClearance = false
     var showPart = true
     var origin = CNCVector() { didSet { setupConfirmed = false } }
-    var stockThickness = 10.0 { didSet { setupConfirmed = false } }
+    var stockThickness = 10.0 {
+        didSet {
+            setupConfirmed = false
+            // A contour imported as a through cut stays one. Without this, an
+            // outline imported before the thickness was entered kept cutting
+            // to the old depth and the job just read as blocked.
+            for i in operations.indices where operations[i].setup.isContour && operations[i].setup.depth == oldValue {
+                operations[i].setup.depth = stockThickness
+                operations[i].setup.tabHeight = min(operations[i].setup.tabHeight, stockThickness / 2)
+            }
+        }
+    }
     var jogStep = 1.0
     var jogFeed = 300.0
     var setupConfirmed = false

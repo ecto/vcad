@@ -45,6 +45,13 @@ pub enum CamError {
     #[error("pocket offset resulted in empty geometry")]
     EmptyPocketOffset,
 
+    /// The tool-compensated contour fell into separate pieces: the cutter does
+    /// not fit through a neck of the contour.
+    #[error(
+        "the cutter does not fit through the contour: its path splits into {0} separate regions"
+    )]
+    ContourSplit(usize),
+
     /// Tab position is out of range.
     #[error("tab position {0} is out of contour range")]
     InvalidTabPosition(f64),

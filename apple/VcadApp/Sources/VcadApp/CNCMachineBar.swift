@@ -47,10 +47,14 @@ struct CNCMachineBar: View {
             if let axes = zeroAxes {
                 Button("Zero \(axes)") { cnc.setupConfirmed = false; machine.zero(axes: axes); zeroAxes = nil }
             }
+            Button("Cancel", role: .cancel) {}.keyboardShortcut(.defaultAction)
         }
         .sheet(isPresented: $probeShown) { CNCProbeSheet(cnc: cnc) }
         .confirmationDialog(machine.demo ? "Run the job in the simulator?" : "Start machining this job?", isPresented: $runShown) {
             Button(machine.demo ? "Run simulated job" : "Start machining") { cnc.startJob() }
+            // Return answers Cancel: starting the spindle is a deliberate click,
+            // never the key that also commits a number field.
+            Button("Cancel", role: .cancel) {}.keyboardShortcut(.defaultAction)
         } message: {
             Text(cnc.usesImportedProgram ? "\(cnc.importedName) · G54. Verify the installed tool, program and initial travel." : "\(counted(cnc.operations.count, "operation")) · Ø \(cnc.toolDiameter.formatted()) mm tool · G54. The program starts the spindle and cuts to the configured depths.")
         }
@@ -237,7 +241,10 @@ struct CNCMachineBar: View {
                     .frame(width: 78)
             }.buttonStyle(.borderedProminent).tint(moving ? .orange : .accentColor)
                 .disabled(held ? !canResume : moving ? !machine.connected : cnc.runBlocker != nil)
-                .keyboardShortcut(.return, modifiers: [.command, .option])
+                // No Return-based key equivalent: AppKit advertises any button
+                // whose key is Return as the window's default button, modifiers
+                // or not, so accessibility clients pressed Run Job for "return".
+                .keyboardShortcut("j", modifiers: [.command, .option])
             Button {
                 machine.hold() // Request hold immediately; never leave motion running behind the reset dialog.
                 stopShown = true
@@ -315,6 +322,7 @@ struct CNCJogControls: View {
         }
         .confirmationDialog("Home the machine?", isPresented: $homeShown) {
             Button("Run homing cycle") { cnc.setupConfirmed = false; machine.home() }
+            Button("Cancel", role: .cancel) {}.keyboardShortcut(.defaultAction)
         } message: { Text("The axes will move toward the configured homing switches.") }
         .confirmationDialog("Move to \(destination ?? "")?", isPresented: Binding(get: { destination != nil }, set: { if !$0 { destination = nil } })) {
             Button("Move") {
@@ -322,6 +330,7 @@ struct CNCJogControls: View {
                 else { machine.returnToZero(xy: destination == "XY zero", clearance: cnc.setup.clearance) }
                 destination = nil
             }
+            Button("Cancel", role: .cancel) {}.keyboardShortcut(.defaultAction)
         } message: {
             Text(destination == "Park" ? "Retract to saved machine Z before XY travel, then return to saved Z. Verify the path is clear." : destination == "XY zero" ? "Retract to at least the CAM clearance height before moving to work X0 Y0." : "Move to work Z0 at 100 mm/min.")
         }
