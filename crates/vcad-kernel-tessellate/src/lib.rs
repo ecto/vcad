@@ -7542,14 +7542,22 @@ fn guarded_pass(
     if !policy.max_surface_move.is_finite() {
         return;
     }
-    let moved = crate::clearance::surface_deviation(&before, mesh);
-    if moved > policy.max_surface_move {
-        if std::env::var_os("VCAD_REPAIR_TRACE").is_some() {
-            eprintln!("repair[{label}]: DECLINED — would move the surface {moved:.5} mm");
-        }
-        outcome.declined.push((label, moved));
-        *mesh = before;
+    // A pass that changed nothing cannot have moved anything, and most
+    // passes are no-ops most of the time. Checking that first is a memcmp
+    // against a BVH build plus four nearest-point queries per triangle.
+    if mesh.indices == before.indices && mesh.vertices == before.vertices {
+        return;
     }
+    let Some(moved) =
+        crate::clearance::surface_moved_beyond(&before, mesh, policy.max_surface_move)
+    else {
+        return;
+    };
+    if std::env::var_os("VCAD_REPAIR_TRACE").is_some() {
+        eprintln!("repair[{label}]: DECLINED — would move the surface {moved:.5} mm");
+    }
+    outcome.declined.push((label, moved));
+    *mesh = before;
 }
 
 /// As [`revert_unless_it_helps`], but only under a policy that cares about

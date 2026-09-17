@@ -891,21 +891,22 @@ fn dist_sq(a: [f64; 3], b: [f64; 3]) -> f64 {
     dot(d, d)
 }
 
-/// One-sided Hausdorff from `from`'s surface to `to`'s surface, in mm.
+/// Does `from`'s surface stay within `limit` of `to`'s?
 ///
-/// Sampled at every vertex and every triangle centroid of `from` — enough to
-/// catch a face that was deleted, torn open or slid sideways, and cheap
-/// enough to run inside a repair loop (one BVH build plus 4 nearest-point
-/// queries per triangle).
-///
-/// Returns `f64::INFINITY` when `to` has no surface at all: everything moved.
-pub(crate) fn surface_deviation(from: &TriangleMesh, to: &TriangleMesh) -> f64 {
+/// Returns `Some(distance)` for the first sample that does not — the caller
+/// only needs to know whether a pass went too far, so there is no reason to
+/// finish measuring a surface that has already failed. On the answer the
+/// repair loop actually wants (a pass that behaved) this costs the same as
+/// the full scan; on one that tore, it stops at the first torn triangle.
+/// Worth the asymmetry: the full scan over every pass of every iteration put
+/// the torture corpus's `chain-13` over its 20 s budget.
+pub(crate) fn surface_moved_beyond(
+    from: &TriangleMesh,
+    to: &TriangleMesh,
+    limit: f64,
+) -> Option<f64> {
     let Some(bvh) = TriBvh::build(to) else {
-        return if from.indices.is_empty() {
-            0.0
-        } else {
-            f64::INFINITY
-        };
+        return (!from.indices.is_empty()).then_some(f64::INFINITY);
     };
     let v = |i: u32| -> [f64; 3] {
         let k = i as usize * 3;
@@ -915,7 +916,6 @@ pub(crate) fn surface_deviation(from: &TriangleMesh, to: &TriangleMesh) -> f64 {
             from.vertices[k + 2] as f64,
         ]
     };
-    let mut worst = 0.0f64;
     for t in from.indices.chunks(3) {
         let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
         let centroid = [
@@ -924,10 +924,13 @@ pub(crate) fn surface_deviation(from: &TriangleMesh, to: &TriangleMesh) -> f64 {
             (a[2] + b[2] + c[2]) / 3.0,
         ];
         for p in [a, b, c, centroid] {
-            worst = worst.max(point_mesh_closest(p, &bvh).0);
+            let d = point_mesh_closest(p, &bvh).0;
+            if d > limit {
+                return Some(d);
+            }
         }
     }
-    worst
+    None
 }
 
 /// How far `from`'s surface ended up from `to`'s, and how much of it.

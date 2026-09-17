@@ -409,7 +409,15 @@ pub fn boolean_op_reported(
     // circles, which the cap splitter cannot partition.
     let mut sphere_unrepresentable = false;
     let result = brep_boolean(solid_a, solid_b, op, segments, &mut sphere_unrepresentable)?;
-    let result_mesh = result.to_mesh(segments);
+    // Measured, not exported. Every gate below — the volume checks, the
+    // open-edge counts, the referee — asks "what is the best this result can
+    // be", so it is repaired under the permissive policy, exactly as it was
+    // before the export path became strict. Meshing it strictly instead left
+    // legitimate results reading 174 open edges, which woke the referee and
+    // flipped the twelve-post union onto the mesh fallback. The shape guard
+    // belongs at the export boundary (`repair_export_mesh`), where a mesh
+    // actually leaves the kernel and becomes a part.
+    let result_mesh = manifold_reference_mesh(&result, segments);
 
     // Sound unconditionally: a bounded solid always has positive volume.
     let inverted = validate_boolean_result(&result_mesh).is_err();
@@ -654,7 +662,16 @@ pub fn boolean_op_reported(
     {
         if let Some((mesh_a, mesh_b)) = &operands {
             if let Ok(alt) = mesh_fallback(mesh_a, mesh_b, op, &quadrics, true) {
-                let alt_mesh = alt.to_mesh(segments);
+                // The referee's question is "is there a WATERTIGHT solid that
+                // disagrees with the analytic one", so its reference is meshed
+                // under the permissive policy — the one that pursues
+                // manifoldness — not the strict export policy that would
+                // rather leave a crack than move the part. Meshing it through
+                // the strict path instead left `alt` open, failed the
+                // twenty-times-cleaner test, and flipped the verdict on the
+                // twelve-post union. The solid it returns still exports
+                // strictly, as everything does.
+                let alt_mesh = manifold_reference_mesh(&alt, segments);
                 let alt_report = crate::mesh_report(&alt_mesh);
                 let brep_vol = crate::validate::mesh_signed_volume(&result_mesh).abs();
                 let alt_vol = alt_report.signed_volume.abs();
@@ -778,6 +795,25 @@ pub fn repair_export_mesh_reported(
         QuadricCtx::collect(brep, brep).project_mesh(mesh);
     }
     outcome
+}
+
+/// Tessellate a mesh-fallback result the way a REFEREE needs it: closed if
+/// the repair can close it, whatever that costs the shape.
+///
+/// The export path is the strict one and deliberately leaves a crack rather
+/// than move a part; a referee holding that mesh cannot tell a genuinely
+/// watertight alternative from one the guard declined to close.
+fn manifold_reference_mesh(alt: &BooleanResult, segments: u32) -> TriangleMesh {
+    let BooleanResult::BRep(brep) = alt;
+    let mut mesh = tessellate_brep(brep.as_ref(), segments);
+    vcad_kernel_tessellate::repair_watertightness_with(
+        &mut mesh,
+        vcad_kernel_tessellate::RepairPolicy::manifold_at_any_cost(),
+    );
+    if crate::mesh::is_triangle_soup(brep.as_ref()) {
+        QuadricCtx::collect(brep.as_ref(), brep.as_ref()).project_mesh(&mut mesh);
+    }
+    mesh
 }
 
 /// Rail separation (mm) above which a crack counts as a genuine gap
