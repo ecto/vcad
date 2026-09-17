@@ -335,7 +335,7 @@ pub extern "C" fn vcad_scene_from_json(json: *const u8, json_len: usize) -> *mut
                 return ptr::null_mut();
             }
         };
-        match evaluate_document(&doc, &open_opts()) {
+        match evaluate_document(&doc, &EvalOptions::default()) {
             Ok(scene) => Box::into_raw(Box::new(VcadScene {
                 inner: scene,
                 doc: Some(doc),
@@ -386,7 +386,7 @@ pub extern "C" fn vcad_scene_from_json_in(
                 vcad_eval::resolve_mesh_paths(&mut doc, std::path::Path::new(dir));
             }
         }
-        match evaluate_document(&doc, &open_opts()) {
+        match evaluate_document(&doc, &EvalOptions::default()) {
             Ok(scene) => Box::into_raw(Box::new(VcadScene {
                 inner: scene,
                 doc: Some(doc),
@@ -422,7 +422,7 @@ pub extern "C" fn vcad_scene_from_loon(loon: *const u8, loon_len: usize) -> *mut
             Ok(d) => d,
             Err(_) => return ptr::null_mut(),
         };
-        match evaluate_document(&doc, &open_opts()) {
+        match evaluate_document(&doc, &EvalOptions::default()) {
             Ok(scene) => Box::into_raw(Box::new(VcadScene {
                 inner: scene,
                 doc: Some(doc),
@@ -1086,9 +1086,16 @@ pub extern "C" fn vcad_doc_gripper_slice1() -> *mut VcadDoc {
     .unwrap_or(ptr::null_mut())
 }
 
-/// Options for opening a document: the default evaluation plus the on-disk
-/// root-mesh cache, so a document any vcad tool has already solved opens
-/// without a kernel walk.
+/// Options for the background open job (`vcad_eval_begin`): the default
+/// evaluation plus the on-disk root-mesh cache, so a document any vcad tool
+/// has already solved opens without a kernel walk.
+///
+/// NOT for the synchronous `vcad_scene_open*` entry points. A cache hit is a
+/// mesh with no B-rep behind it, and their callers go on to ask for things
+/// only a solid can answer — `vcad_scene_raytrace` returned no frame and the
+/// gripper solve quoted the enclosure at 0 cents the moment an earlier run
+/// had warmed the cache (cold: pass, warm: fail — which is how it got past a
+/// local run whose every rebuild minted a new kernel id and an empty cache).
 fn open_opts() -> EvalOptions {
     EvalOptions {
         root_cache: root_mesh_cache()
@@ -1097,17 +1104,14 @@ fn open_opts() -> EvalOptions {
     }
 }
 
-/// Interactive eval options: skip the O(n^2) clash pass the native app
-/// doesn't render, and consult the on-disk root-mesh cache
-/// (`vcad_eval::cache`, `~/.cache/vcad`, `VCAD_CACHE=0` to disable) so a
-/// document any vcad tool has already solved opens without a kernel walk.
-/// Cache hits carry no BRep: ray tracing and face ids degrade to "unavailable"
-/// for those parts, feature edges (mesh-derived) are unaffected.
+/// Interactive eval options: skip the O(n^2) clash pass the native app doesn't render.
+///
+/// No root-mesh cache here, for the reason given on [`open_opts`]: the scrub,
+/// settle and solve paths hand their scene to ray tracing, face picking and
+/// the manufacturing quote, all of which need the B-rep a cache hit lacks.
 fn interactive_opts() -> EvalOptions {
     EvalOptions {
         skip_clash_detection: true,
-        root_cache: root_mesh_cache()
-            .map(|c| c as std::rc::Rc<dyn vcad_eval::cache::RootMeshCache>),
         ..Default::default()
     }
 }
