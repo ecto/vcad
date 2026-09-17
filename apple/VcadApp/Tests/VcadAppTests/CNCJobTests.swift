@@ -1,4 +1,5 @@
 import XCTest
+import RealityKit
 @testable import VcadApp
 
 /// The job pipeline, on the part that was really cut.
@@ -386,6 +387,63 @@ final class CNCJobTests: XCTestCase {
         // And the reason reads as a place on the part, not a check name.
         let blocker = try XCTUnwrap(cnc.runBlocker)
         XCTAssertTrue(blocker.contains("into the part"), "got: \(blocker)")
+    }
+
+    // MARK: - What the viewport draws
+
+    /// Item 47: the path used to be drawn in the stock frame while the part
+    /// stayed where it was modelled, so it floated beside the solid. And item
+    /// 41: the blank was drawn at the part's own extents, with nothing showing
+    /// the margin it needs or where zero sits on it.
+    func testTheOverlayPutsThePathOnThePartWithTheBlankItNeeds() async throws {
+        let cnc = try statorJob()
+        cnc.shown = true
+        await build(cnc)
+        cnc.select(.operation(cnc.operations[0].id))
+
+        // The outline's own translation is on the overlay root, so the path
+        // lands where the part was drawn rather than at the model origin.
+        let outline = try statorOutline()
+        XCTAssertEqual(cnc.origin.x, Double(outline.origin.x), accuracy: 1e-9)
+        XCTAssertEqual(cnc.origin.y, Double(outline.origin.y), accuracy: 1e-9)
+        XCTAssertNotEqual(cnc.origin.x, 0, "the stator is not modelled at the origin")
+
+        let parent = Entity()
+        syncCNCOverlay(cnc, in: parent)
+        let root = try XCTUnwrap(parent.findEntity(named: "cncRoot"))
+        XCTAssertEqual(root.position.x, Float(outline.origin.x), accuracy: 1e-4)
+
+        // The blank is the part plus its margin, not the part's own extents.
+        let margin = cnc.effectiveMargin
+        XCTAssertEqual(margin, 6, accuracy: 1e-9, "max(2 × Ø2 + 2, 5) is 6 mm")
+        let stock = try XCTUnwrap(root.findEntity(named: "cncStock"))
+        let stockSize = stock.visualBounds(relativeTo: root).extents
+        XCTAssertEqual(Double(stockSize.x), cnc.stockWidth + 2 * margin, accuracy: 0.01)
+        XCTAssertEqual(Double(stockSize.y), cnc.stockHeight + 2 * margin, accuracy: 0.01)
+
+        // The cutter's swept rectangle is the part grown by one radius.
+        let sweep = try XCTUnwrap(root.findEntity(named: "cncSweep"))
+        let sweepSize = sweep.visualBounds(relativeTo: root).extents
+        XCTAssertEqual(Double(sweepSize.x), cnc.stockWidth + cnc.toolDiameter, accuracy: 0.01)
+
+        // Work zero, and the blank corner it is measured from.
+        XCTAssertNotNil(root.findEntity(named: "cncOrigin"))
+        let corner = try XCTUnwrap(root.findEntity(named: "cncStockCorner"))
+        XCTAssertEqual(corner.position(relativeTo: root), [Float(-margin), Float(-margin), 0])
+
+        // And the tabs, drawn where the audit found them rather than where
+        // they were asked for.
+        let tabs = try XCTUnwrap(cnc.verification?.tabs)
+        XCTAssertEqual(tabs.tabCount, 3)
+        XCTAssertEqual(root.children.first?.children.filter { $0.name.hasPrefix("cncTab-") }.count,
+                       tabs.observations.count)
+        XCTAssertGreaterThan(tabs.observations.count, 0)
+        for observation in tabs.observations {
+            XCTAssertGreaterThan(observation.metalWidth, 1.5,
+                                 "a 4 mm tab cut with a Ø2 cutter leaves about 2 mm of metal")
+            XCTAssertGreaterThan(observation.topZ, cnc.verification!.depth.deepestZ,
+                                 "a tab is above the floor or it is not a tab")
+        }
     }
 
     // MARK: - Selecting a violation
