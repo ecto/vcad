@@ -104,8 +104,14 @@ fn weld_boundary_vertices(topo: &mut Topology, tolerance: f64) {
             topo.half_edges[he_id].origin = target;
         }
     }
-    for v_id in merge_map.keys() {
-        topo.vertices.remove(*v_id);
+    // Sorted, not `merge_map` order: a slotmap recycles freed slots LIFO,
+    // so the removal order decides the keys later vertices receive — and
+    // `HashMap` order is seeded per process. See the same fix (and the
+    // measured stator numbers) in `sew::merge_nearby_vertices`.
+    let mut merged: Vec<_> = merge_map.keys().copied().collect();
+    merged.sort_unstable();
+    for v_id in merged {
+        topo.vertices.remove(v_id);
     }
 }
 
