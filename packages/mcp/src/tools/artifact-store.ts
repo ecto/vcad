@@ -163,6 +163,14 @@ function guessContentType(name: string): string {
     case "drl":
     case "txt":
       return "text/plain";
+    // G-code. There is no registered type for it; senders and editors treat it
+    // as plain text, and serving it as octet-stream would make a browser
+    // download a file nobody can glance at.
+    case "nc":
+    case "gcode":
+    case "ngc":
+    case "tap":
+      return "text/plain";
     case "zip":
       return "application/zip";
     case "png":

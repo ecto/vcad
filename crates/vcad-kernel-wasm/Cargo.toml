@@ -62,7 +62,7 @@ physics = ["dep:vcad-kernel-physics"]
 # #[wasm_bindgen] items in vcad-kernel-atoms are collected into this bundle.
 atoms = ["dep:vcad-kernel-atoms", "vcad-kernel-atoms/wasm"]
 slicer = ["dep:vcad-slicer", "dep:vcad-slicer-gcode", "dep:vcad-slicer-bambu"]
-cam = ["dep:vcad-kernel-cam"]
+cam = ["dep:vcad-kernel-cam", "dep:vcad-cam-api"]
 ecad = ["dep:vcad-design-constraints", "dep:vcad-ecad-pcb", "dep:vcad-ecad-fabprep", "dep:vcad-ecad-schematic", "dep:vcad-ecad-sim", "dep:vcad-ecad-export", "dep:vcad-ecad-symbols", "dep:vcad-ecad-parts", "dep:vcad-ecad-verify"]
 embroidery = ["dep:vcad-embroidery", "dep:vcad-embroidery-pes", "dep:vcad-embroidery-dst"]
 ts-rs = ["dep:ts-rs"]
@@ -114,6 +114,12 @@ optional = true
 
 [dependencies.vcad-kernel-cam]
 path = "../vcad-kernel-cam"
+optional = true
+
+# The shared CAM request schema: the same implementation the native app
+# reaches through the C ABI and an agent reaches through MCP.
+[dependencies.vcad-cam-api]
+workspace = true
 optional = true
 
 [dependencies.vcad-design-constraints]

@@ -6235,6 +6235,234 @@ mod cam_wasm {
         let post = LinuxCncPost::default().with_program_number(program_number);
         Ok(post.generate(job_name, &tool, &toolpath, &settings))
     }
+
+    // =========================================================================
+    // The whole-job surface: one implementation, three front ends
+    // =========================================================================
+    //
+    // Everything above this line is the granular surface the web app's CAM
+    // panel drives: one operation, one tool, a toolpath handed back for the
+    // caller to post and nothing checking the result. Everything below it is
+    // `vcad-cam-api` — the same request schema the native app reaches through
+    // the C ABI and an agent reaches through MCP, so the three of them cannot
+    // disagree about whether a job is safe to run.
+    //
+    // **These return a `String`, not `Result<String, JsError>`, and never
+    // throw.** That is deliberate and is the shared contract: failure is a
+    // document, `{"error": "<a sentence a machinist can act on>"}`, so every
+    // caller has one decode path. It also matters for a case that is neither
+    // success nor failure — a section that does not close comes back as a
+    // document carrying the gap positions, which is information a thrown
+    // error would destroy.
+
+    /// A whole CAM job: operations, tools, post, verification, G-code.
+    ///
+    /// Fails closed. When verification is on and an error-severity check
+    /// fails the answer carries `"blocked": true` and **no `gcode` key at
+    /// all**, so a caller cannot export or send it by accident.
+    #[wasm_bindgen(js_name = camJob)]
+    pub fn cam_job(request_json: &str) -> String {
+        vcad_cam_api::job(request_json)
+    }
+
+    /// Verify G-code text against the part it is meant to make.
+    #[wasm_bindgen(js_name = camVerifyGcode)]
+    pub fn cam_verify_gcode(request_json: &str) -> String {
+        vcad_cam_api::verify_gcode(request_json)
+    }
+
+    /// Cutter-fit report for one contour, one tool and one side.
+    #[wasm_bindgen(js_name = camFit)]
+    pub fn cam_fit(request_json: &str) -> String {
+        vcad_cam_api::fit(request_json)
+    }
+
+    /// Section a triangle mesh handed over inline (`positions`, `indices`).
+    #[wasm_bindgen(js_name = camOutlineFromMesh)]
+    pub fn cam_outline_from_mesh(request_json: &str) -> String {
+        vcad_cam_api::outline_from_mesh(request_json)
+    }
+
+    /// Compare two outlines — a DXF against a sectioned solid, say — and say
+    /// whether they are the same part.
+    #[wasm_bindgen(js_name = camCompareOutline)]
+    pub fn cam_compare_outline(request_json: &str) -> String {
+        vcad_cam_api::compare_outline(request_json)
+    }
+
+    /// The material table, with the hazards attached to each entry.
+    #[wasm_bindgen(js_name = camMaterials)]
+    pub fn cam_materials() -> String {
+        vcad_cam_api::materials()
+    }
+
+    /// Feeds, speeds, stepdown, stepover and the router dial to set.
+    #[wasm_bindgen(js_name = camRecommendFeeds)]
+    pub fn cam_recommend_feeds(request_json: &str) -> String {
+        vcad_cam_api::recommend(request_json)
+    }
+
+    /// A second opinion on feeds and speeds the operator already has.
+    #[wasm_bindgen(js_name = camCheckFeeds)]
+    pub fn cam_check_feeds(request_json: &str) -> String {
+        vcad_cam_api::check_feeds(request_json)
+    }
+
+    /// Gear geometry: report, contours, over-pins measurement, and the
+    /// compensation a measured reading implies.
+    #[wasm_bindgen(js_name = camGear)]
+    pub fn cam_gear(request_json: &str) -> String {
+        vcad_cam_api::gear(request_json)
+    }
+
+    /// A machining contour out of a solid, sectioned at `z` — or at the
+    /// mid-height of the solid's own bounds when `auto_z` is true, in which
+    /// case `z` is ignored. `options_json` may be empty for defaults.
+    ///
+    /// # Which mesh this sections, and why it is not `to_mesh`
+    ///
+    /// [`Solid::to_mesh`](vcad_kernel::Solid::to_mesh) is the *export*
+    /// boundary: `tessellate_brep` followed by `repair_export_mesh`, which
+    /// closes what the splitters left open by moving vertices onto their
+    /// analytic carriers. That is right for printing and ray-tracing and wrong
+    /// for cutting. Measured on the stator (2026-09-17): the export mesh
+    /// sections with tears up to **0.4 mm** where tangent fillets meet, while
+    /// the raw tessellation of the same B-rep sections cleanly to **0.005
+    /// mm**. A CAM contour is a wall the cutter follows, so 0.4 mm is not a
+    /// rounding difference — it is a quarter of a slot mouth.
+    ///
+    /// So: the raw tessellation whenever there is a B-rep, and the answer says
+    /// which was used in `mesh_source`. A mesh-only solid can only be
+    /// sectioned as it stands; that is not wrong, only less exact, and it is
+    /// reported rather than letting the caller assume the better path.
+    #[wasm_bindgen(js_name = camOutlineFromSolid)]
+    pub fn cam_outline_from_solid(
+        solid: &Solid,
+        z: f64,
+        auto_z: bool,
+        options_json: &str,
+    ) -> String {
+        let segments = match vcad_cam_api::section_segments(options_json) {
+            Ok(n) => n,
+            Err(message) => return serde_json::json!({ "error": message }).to_string(),
+        };
+        let (mesh, source) = match solid.inner.as_brep() {
+            Some(brep) => (
+                vcad_kernel_tessellate::tessellate_brep(brep, segments),
+                "raw_tessellation",
+            ),
+            // No topology to build a mesh from, so there is no better mesh to
+            // reach for: this is the geometry the solid *is*.
+            None => (solid.inner.to_mesh(segments), "stored_mesh"),
+        };
+        let positions: Vec<[f64; 3]> = mesh
+            .vertices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|c| [c[0] as f64, c[1] as f64, c[2] as f64])
+            .collect();
+        section(&positions, &mesh.indices, z, auto_z, options_json, source)
+    }
+
+    /// The same, for a part of a `.vcad` document rather than a live [`Solid`]
+    /// handle.
+    ///
+    /// This is the door an agent comes through: a document is what MCP holds,
+    /// and evaluating it *here* — rather than sectioning the mesh the
+    /// evaluated scene hands to JavaScript — is what keeps the raw
+    /// tessellation reachable. That scene mesh is the export mesh, and
+    /// [`cam_outline_from_solid`] says why that is the wrong thing to cut.
+    ///
+    /// `part_index` indexes the scene's parts, in document order.
+    #[wasm_bindgen(js_name = camOutlineFromDocument)]
+    pub fn cam_outline_from_document(
+        doc_json: &str,
+        part_index: usize,
+        z: f64,
+        auto_z: bool,
+        options_json: &str,
+    ) -> String {
+        let fail = |message: String| serde_json::json!({ "error": message }).to_string();
+        let segments = match vcad_cam_api::section_segments(options_json) {
+            Ok(n) => n,
+            Err(message) => return fail(message),
+        };
+        let doc: vcad_ir::Document = match serde_json::from_str(doc_json) {
+            Ok(d) => d,
+            Err(e) => return fail(format!("the document could not be read: {e}.")),
+        };
+        let options = vcad_eval::EvalOptions {
+            skip_clash_detection: true,
+            clock: Some(Box::new(WasmClock)),
+            root_cache: None,
+            mesh_segments: 0,
+            on_root: None,
+        };
+        let scene = match vcad_eval::evaluate_document(&doc, &options) {
+            Ok(s) => s,
+            Err(e) => return fail(format!("the document could not be evaluated: {e}.")),
+        };
+        let Some(part) = scene.parts.get(part_index) else {
+            return fail(format!(
+                "this document has {} part(s), so there is no part {part_index}.",
+                scene.parts.len()
+            ));
+        };
+
+        // The raw tessellation where there is topology to build it from; the
+        // scene's own mesh otherwise.
+        if let Some(brep) = part.solid.as_ref().and_then(|solid| solid.as_brep()) {
+            let mesh = vcad_kernel_tessellate::tessellate_brep(brep, segments);
+            let positions: Vec<[f64; 3]> = mesh
+                .vertices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|c| [c[0] as f64, c[1] as f64, c[2] as f64])
+                .collect();
+            return section(
+                &positions,
+                &mesh.indices,
+                z,
+                auto_z,
+                options_json,
+                "raw_tessellation",
+            );
+        }
+        let positions: Vec<[f64; 3]> = part
+            .mesh
+            .positions
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|c| [c[0] as f64, c[1] as f64, c[2] as f64])
+            .collect();
+        section(
+            &positions,
+            &part.mesh.indices,
+            z,
+            auto_z,
+            options_json,
+            "export_mesh",
+        )
+    }
+
+    /// Hand a mesh to the shared sectioner and render whatever comes back as
+    /// the one document shape every CAM caller decodes.
+    fn section(
+        positions: &[[f64; 3]],
+        indices: &[u32],
+        z: f64,
+        auto_z: bool,
+        options_json: &str,
+        mesh_source: &str,
+    ) -> String {
+        match vcad_cam_api::section_mesh(positions, indices, z, auto_z, options_json, mesh_source) {
+            Ok(value) => value.to_string(),
+            Err(message) => serde_json::json!({ "error": message }).to_string(),
+        }
+    }
 }
 
 // Re-export CAM types at module level when feature is enabled

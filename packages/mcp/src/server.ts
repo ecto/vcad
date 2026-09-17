@@ -183,6 +183,7 @@ import { toolDefs as enclosureToolDefs } from "./tools/enclosure.js";
 import { toolDefs as simReplayToolDefs } from "./tools/sim-replay.js";
 import { toolDefs as orderFeedToolDefs } from "./tools/order-feed.js";
 import { toolDefs as animateToolDefs } from "./tools/animate.js";
+import { toolDefs as camToolDefs } from "./tools/cam.js";
 
 // Re-exported so the Vercel transport entry can drain in-flight PostHog
 // captures before a serverless instance freezes (see services/mcp/entry.ts).
@@ -376,6 +377,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...simReplayToolDefs,
   ...orderFeedToolDefs,
   ...animateToolDefs,
+  ...camToolDefs,
 ];
 
 /**
@@ -495,6 +497,13 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "sheet_metal_nest",
   "flat_pattern_from_solid",
   "simulate_strike",
+  // ── CAM (milling) ──────────────────────────────────────────
+  "cam_outline",
+  "cam_fit",
+  "cam_recommend_feeds",
+  "cam_job",
+  "cam_verify_gcode",
+  "cam_gear",
   // ── Import + share ─────────────────────────────────────────
   "import_step",
   "import_urdf",

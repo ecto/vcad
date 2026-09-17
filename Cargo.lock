@@ -8092,6 +8092,7 @@ dependencies = [
  "serde_json",
  "ts-rs",
  "vcad-app",
+ "vcad-cam-api",
  "vcad-chat",
  "vcad-crdt",
  "vcad-design-constraints",

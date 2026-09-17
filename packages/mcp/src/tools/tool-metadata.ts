@@ -194,6 +194,15 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   sheet_metal_create: { title: "Create Sheet Metal", annotations: RW },
   sheet_metal_unfold: { title: "Unfold Sheet Metal", annotations: RO },
   flat_pattern_from_solid: { title: "Flat Pattern From Solid", annotations: RO },
+  // CAM: all six read and compute. `cam_job` posts a program and stores it as
+  // an artifact, but it never touches the session document — the document is
+  // the part, and machining it is not a change to it.
+  cam_outline: { title: "CAM Outline From Solid", annotations: RO },
+  cam_fit: { title: "CAM Cutter Fit", annotations: RO },
+  cam_recommend_feeds: { title: "CAM Feeds And Speeds", annotations: RO },
+  cam_job: { title: "CAM Job (Build + Verify)", annotations: RO },
+  cam_verify_gcode: { title: "CAM Verify G-code", annotations: RO },
+  cam_gear: { title: "CAM Gear Geometry", annotations: RO },
   sheet_metal_check: { title: "Check Sheet Metal", annotations: RO },
   sheet_metal_materials: { title: "Sheet Metal Materials", annotations: RO },
   sheet_metal_bend_table: { title: "Sheet Metal Bend Table", annotations: RO },
