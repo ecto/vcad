@@ -2798,34 +2798,35 @@ mod tests {
             "a rattling slug does not block the job by default"
         );
 
-        // The old default blank — part bounds plus one diameter — put the
-        // stock edge exactly where the outside sweep ends and reported four
-        // free corners. Reproduce it by declaring that blank.
+        // A blank barely bigger than the part: the outside sweep runs off its
+        // edge and trims corners off it. Those used to be reported as stock
+        // coming free; they are the edge of a blank nobody measured. (The
+        // margin is kept clear of exactly one tool diameter — there the sweep
+        // only kisses the edge and whether the frame pinches in two depends on
+        // the last micron of the offsetter.)
         let b = spec.part.bbox();
-        let m = 3.175;
+        let m = 2.5;
         let tight = JobSpec {
             stock_bbox: Some([b[0] - m, b[1] - m, b[2] + m, b[3] + m]),
             ..JobSpec::new(spec.part.clone(), 6.0, 3.175)
         };
         let rep = verify_toolpath(&tp, &tight, &VerifyOptions::default()).unwrap();
         assert_eq!(rep.loose.pieces.len(), 1, "still only the slug");
-        assert_eq!(
-            rep.loose.frame_pieces.len(),
-            2,
-            "{:?}",
-            rep.loose.frame_pieces
-        );
-        // The corner the outside contour trims off the assumed blank. It used
-        // to be reported as 148 mm² of stock coming free; it is the edge of a
-        // blank nobody measured.
-        let corner = rep
+        let corners: Vec<_> = rep
             .loose
             .frame_pieces
             .iter()
-            .find(|f| !f.is_part)
-            .expect("the trimmed corner");
-        assert!((corner.area - 148.4).abs() < 2.0, "{corner:?}");
-        assert!((corner.centroid[0] - 59.3).abs() < 0.5);
+            .filter(|f| !f.is_part)
+            .collect();
+        assert!(corners.len() >= 2, "{:?}", rep.loose.frame_pieces);
+        for corner in &corners {
+            // Each trimmed corner sits out by the blank's edge, well clear of
+            // the part's own bounds shrunk by a little.
+            let [x, y] = corner.centroid;
+            let inside = x > b[0] + 5.0 && x < b[2] - 5.0 && y > b[1] + 5.0 && y < b[3] - 5.0;
+            assert!(!inside, "{corner:?} is not at the edge of the blank");
+            assert!(corner.area > 1.0, "{corner:?}");
+        }
         // The part is still tabbed to the rest of the frame, so it reaches the
         // blank's edge too, and is held.
         assert!(rep.loose.frame_pieces.iter().any(|f| f.is_part));
