@@ -53,6 +53,7 @@
 pub mod dropcutter;
 mod error;
 mod operation;
+pub mod outline;
 pub mod post;
 mod tool;
 mod toolpath;
@@ -61,6 +62,11 @@ mod toolpath;
 pub use error::CamError;
 pub use operation::{
     CamOperation, Contour, Contour2D, ContourSegment, Face, Pocket2D, Point2D, Roughing3D, Tab,
+};
+pub use outline::{
+    compare_outlines, is_prismatic, read_dxf, section_at_z, silhouette_from_above, write_dxf,
+    CircleFit, Gap, Outline, OutlineDiff, OutlineError, PrismaticReport, Region, SectionOptions,
+    SimplifyOptions,
 };
 pub use tool::{Tool, ToolEntry, ToolHolder, ToolLibrary};
 pub use toolpath::{ArcDir, ArcPlane, CoolantMode, SpindleDir, Toolpath, ToolpathSegment};
