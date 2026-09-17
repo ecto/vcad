@@ -2156,7 +2156,7 @@ mod frozen_chain_tests {
         }
         // Mesh open-edge audit at the boolean's native resolution, after
         // the same repair pass the pipeline runs before classification.
-        crate::repair::repair_topology(&mut cyl_solid.topology, 1e-6);
+        crate::repair::repair_topology(&mut cyl_solid.topology, 1e-6, &[]);
         let mesh = vcad_kernel_tessellate::tessellate_brep(&cyl_solid, 64);
         let quantum = 1e-5;
         let vkey = |vi: usize| -> [i64; 3] {

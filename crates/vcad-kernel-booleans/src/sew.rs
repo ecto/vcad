@@ -106,6 +106,22 @@ pub fn sew_faces(
     reverse_b: bool,
     tolerance: f64,
 ) -> BRepSolid {
+    sew_faces_with_tangencies(a, faces_a, b, faces_b, reverse_b, tolerance, &[])
+}
+
+/// As [`sew_faces`], but told where the operands' carriers touch, so the
+/// repair round does not imprint one tangent curve's vertices onto the
+/// other's edges (see [`crate::tangency`]).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sew_faces_with_tangencies(
+    a: &BRepSolid,
+    faces_a: &[FaceId],
+    b: &BRepSolid,
+    faces_b: &[FaceId],
+    reverse_b: bool,
+    tolerance: f64,
+    tangencies: &[crate::tangency::TangencyLine],
+) -> BRepSolid {
     let mut topo = Topology::new();
     let mut geom = GeometryStore::new();
 
@@ -196,7 +212,7 @@ pub fn sew_faces(
     merge_nearby_vertices(&mut topo, tolerance);
 
     // Repair topology issues after merges
-    repair::repair_topology(&mut topo, tolerance);
+    repair::repair_topology(&mut topo, tolerance, tangencies);
 
     // Build shell from all faces
     let all_faces: Vec<FaceId> = topo.faces.keys().collect();

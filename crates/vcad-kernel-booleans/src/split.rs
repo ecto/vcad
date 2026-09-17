@@ -1838,6 +1838,171 @@ struct CirclePolygonIntersection {
 ///
 /// Returns intersection points sorted by angle on the circle.
 /// Each intersection includes the edge index, parameter along edge, and angle on circle.
+/// How close two coplanar circles must be to touching before the arrangement
+/// is declared TANGENT rather than crossing.
+///
+/// Read off the geometry this exists for. The rana-60 stator's root fillet is
+/// an r 1.05 arc meant to be internally tangent to the r 24 bore; its centre
+/// is authored to four decimals, so the built distance is 22.950026 against
+/// an exact 22.95 — the arrangement misses tangency by **2.6e-5 mm** purely
+/// from rounding the coordinates. The value has to clear that.
+///
+/// It also has to stay well under the smallest separation at which two arcs
+/// are genuinely DIFFERENT features. The arc guard in
+/// `split_planar_face_by_arc` puts that at "a few µm" (~3e-3 mm) for tangent
+/// cylindrical stadium cutters, and `repair`'s seam tolerances sit at
+/// 1.5e-3 mm. 1e-4 mm is 4× above the rounding residue it must catch and 30×
+/// below the separation it must not eat — and 100× below the 1e-2 mm near
+/// miss that `a_near_miss_fillet_is_not_fused_into_a_tangency` pins.
+const TANGENCY_EPS: f64 = 1e-4;
+
+/// How far a crossing may sit from the analytic touch point and still be
+/// that touch point.
+///
+/// Generous on purpose, and only ever reachable once `TANGENCY_EPS` has
+/// already established that a tangency exists. Near an internal tangency of
+/// radii r and R the radial gap grows as s²·(1/r − 1/R)/2 with arc distance
+/// s, so a polyline carrying the usual ~1e-3 mm of chord sag first pokes
+/// through the circle a long way from the touch point: for the stator's
+/// 1.05/24 pair that is s ≈ 0.1 mm. The crossing computed there is not an
+/// approximation of anything — the quadratic is solved on a chord whose two
+/// ends differ in radius by 3e-5 mm, so its root moves the whole length of
+/// the chord under a 1e-5 mm perturbation. Observed displacement on the
+/// stator: 6.8e-3 mm. 0.02 mm keeps 3× headroom over that and stays an order
+/// of magnitude inside the 0.1 mm the sag geometry allows.
+const TANGENCY_SNAP: f64 = 0.02;
+
+/// Pin crossings that fall in a tangency's ill-conditioned neighbourhood onto
+/// the one vertex that already represents that corner.
+///
+/// A circle cutting a planar face is tangent to one of that face's boundary
+/// arcs whenever the two carriers touch — which, in a filleted part, is by
+/// construction rather than by accident: every fillet is built tangent to
+/// what it blends into. Near the touch point the boundary polyline and the
+/// circle stay within microns of each other over a tenth of a millimetre, so
+/// "where does the boundary cross the circle" has no well-conditioned answer,
+/// and the cap splitter, the fillet wall's rim and the bore wall's split each
+/// answered it differently — 6.8e-3 mm apart on the stator. Nothing paired
+/// across the corner; `repair::split_edges_at_interior_vertices` then pinched
+/// the cap's loop back through its own vertices, which covered the sliver
+/// twice with opposite winding and hid the gap from both the signed volume
+/// and the net open-edge count (642 unpaired, 95 over-used, `Analytic`, right
+/// volume — see `docs/boolean-multilump-union-diagnosis.md`).
+///
+/// So the corner is computed ONCE, analytically — `centre + R·û` towards the
+/// tangent cylinder's axis — and the crossing is moved onto the existing loop
+/// vertex that sits there. Nothing is moved and no vertex is minted: the cap
+/// ends up sharing the fillet wall's own corner vertex by id, and the bore
+/// wall's copy, 3e-5 mm away, welds in `sew`'s repair round.
+///
+/// Fires only when all three hold: the carriers are tangent to within
+/// [`TANGENCY_EPS`], a loop vertex sits on the analytic touch point to within
+/// [`TANGENCY_EPS`] (which is also what ties the tangency to THIS face rather
+/// than to some unrelated cylinder of the same solid), and a crossing lies
+/// within [`TANGENCY_SNAP`] of it.
+#[allow(clippy::too_many_arguments)]
+fn snap_tangential_crossings(
+    brep: &BRepSolid,
+    circle: &vcad_kernel_geom::Circle3d,
+    loop_verts: &[Point3],
+    poly_2d: &[(f64, f64)],
+    center_2d: (f64, f64),
+    origin_3d: Point3,
+    u_axis: vcad_kernel_math::Vec3,
+    v_axis: vcad_kernel_math::Vec3,
+    intersections: &mut Vec<CirclePolygonIntersection>,
+) {
+    if intersections.is_empty() || std::env::var_os("VCAD_NO_TANGENCY_SNAP").is_some() {
+        return;
+    }
+    let normal = circle.normal.into_inner();
+    let r_big = circle.radius;
+
+    for surface in &brep.geometry.surfaces {
+        let Some(cyl) = surface
+            .as_any()
+            .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+        else {
+            continue;
+        };
+        // Only a cylinder whose axis is perpendicular to the circle's plane
+        // meets that plane in a circle at all.
+        if cyl.axis.into_inner().cross(normal).norm() > 1e-9 {
+            continue;
+        }
+        // The cylinder's axis, in the face's 2D frame.
+        let d = cyl.center - origin_3d;
+        let axis_2d = (d.dot(u_axis), d.dot(v_axis));
+        let (ax, ay) = (axis_2d.0 - center_2d.0, axis_2d.1 - center_2d.1);
+        let sep = (ax * ax + ay * ay).sqrt();
+        if sep < 1e-12 {
+            continue; // concentric: never tangent
+        }
+        let tangent = (sep - (r_big + cyl.radius)).abs() <= TANGENCY_EPS
+            || (sep - (r_big - cyl.radius).abs()).abs() <= TANGENCY_EPS;
+        if !tangent {
+            continue;
+        }
+        // The touch point lies on the ray from the cutting circle's centre
+        // through the other axis, at the cutting radius — for an internal
+        // tangency as much as for an external one.
+        let touch = (
+            center_2d.0 + r_big * ax / sep,
+            center_2d.1 + r_big * ay / sep,
+        );
+
+        // The loop vertex that already represents this corner.
+        let Some((vi, vp)) = poly_2d
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (i, *p, (p.0 - touch.0).hypot(p.1 - touch.1)))
+            .filter(|&(_, _, dist)| dist <= TANGENCY_EPS)
+            .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|(i, p, _)| (i, p))
+        else {
+            continue;
+        };
+
+        for hit in intersections.iter_mut() {
+            let off = (hit.point_2d.0 - touch.0).hypot(hit.point_2d.1 - touch.1);
+            if off > TANGENCY_SNAP || off <= 1e-12 {
+                continue;
+            }
+            split_dbg!(
+                "tangency snap: crossing {:?} -> loop vertex {vi} {vp:?} (touch {touch:?}, moved {off:.3e})",
+                hit.point_2d
+            );
+            hit.point_2d = vp;
+            hit.point = loop_verts[vi];
+            // Sitting ON vertex `vi` is expressed as the head of the edge
+            // that leaves it: `split_planar_face_by_arc`'s boundary walks
+            // stop at `loop_verts[edge_index]` and then push the crossing,
+            // and `remove_consecutive_duplicates` drops the repeat.
+            hit.edge_index = vi;
+            hit.t_along_edge = 0.0;
+            hit.angle = {
+                let a = (vp.1 - center_2d.1).atan2(vp.0 - center_2d.0);
+                if a < 0.0 {
+                    a + 2.0 * std::f64::consts::PI
+                } else {
+                    a
+                }
+            };
+        }
+        // Two crossings pinned to the same corner are one crossing.
+        let mut kept: Vec<CirclePolygonIntersection> = Vec::with_capacity(intersections.len());
+        for hit in intersections.drain(..) {
+            if kept.iter().any(|k: &CirclePolygonIntersection| {
+                (k.point_2d.0 - hit.point_2d.0).hypot(k.point_2d.1 - hit.point_2d.1) < 1e-12
+            }) {
+                continue;
+            }
+            kept.push(hit);
+        }
+        *intersections = kept;
+    }
+}
+
 fn find_circle_polygon_intersections(
     _polygon_3d: &[Point3],
     polygon_2d: &[(f64, f64)],
@@ -2034,7 +2199,7 @@ pub fn split_planar_face_by_arc(
     let center_2d = project(&circle.center);
 
     // Find circle-polygon intersections
-    let intersections = find_circle_polygon_intersections(
+    let mut intersections = find_circle_polygon_intersections(
         &loop_verts,
         &poly_2d,
         center_2d,
@@ -2042,6 +2207,21 @@ pub fn split_planar_face_by_arc(
         origin,
         u_axis,
         v_axis,
+    );
+
+    // Where this circle is TANGENT to a circular boundary arc of the face,
+    // the crossing it just computed is meaningless — pin it to the analytic
+    // touch point instead. See `snap_tangential_crossings`.
+    snap_tangential_crossings(
+        brep,
+        circle,
+        &loop_verts,
+        &poly_2d,
+        center_2d,
+        origin,
+        u_axis,
+        v_axis,
+        &mut intersections,
     );
 
     // Fewer than 2 crossings: the circle doesn't cross the boundary at all

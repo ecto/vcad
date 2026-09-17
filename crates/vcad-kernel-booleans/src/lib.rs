@@ -27,6 +27,7 @@ mod repair;
 pub mod sew;
 pub mod split;
 pub mod ssi;
+mod tangency;
 pub mod trim;
 mod unrepresentable;
 mod validate;

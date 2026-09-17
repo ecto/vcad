@@ -26,7 +26,7 @@ pub mod probe;
 pub mod query;
 mod render_bake;
 
-pub use clearance::{mesh_clearance, ClearanceResult};
+pub use clearance::{mesh_clearance, ClearanceResult, MeshDistance};
 pub use creased_normals::{
     apply_creased_normals, apply_default_creased_normals, DEFAULT_CREASE_ANGLE_RAD,
 };

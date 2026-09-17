@@ -35,7 +35,9 @@
 //! disagrees with the mesh referee, and `twelve_filleted_posts_stay_analytic`
 //! falls to soup. The pinch is load-bearing until the corner is unified.
 
-use vcad_kernel_booleans::{boolean_op, mesh_report, BooleanOp, BooleanResult};
+use vcad_kernel_booleans::{
+    boolean_op, boolean_op_reported, mesh_report, BooleanOp, BooleanResult,
+};
 use vcad_kernel_math::Transform;
 use vcad_kernel_primitives::{make_cube, make_cylinder, BRepSolid};
 use vcad_kernel_tessellate::tessellate_brep;
@@ -244,4 +246,57 @@ fn a_fillet_clear_of_the_bore_is_closed() {
             "fillet pulled {d} mm off the bore: doubled coverage"
         );
     }
+}
+
+/// The near miss that must not be fused into a tangency — and must not be
+/// silently wrong either.
+///
+/// Sliding the fillet block 0.01 mm OUTWARD breaks the tangency: the centre
+/// distance misses `R − r` by 9.9e-3 mm, a hundred times the 1e-4 mm at which
+/// `tangency::TANGENCY_EPS` declares two carriers to be touching, so nothing
+/// in the tangency machinery may fire here. Good.
+///
+/// What is NOT good is the answer. The union comes back `Analytic` at
+/// 4734.78 mm³ against a closed form of 4727.01 — **+0.16 %** — with 6
+/// unpaired edges, and nothing catches it:
+///
+///   * the union volume bound (`max(A,B) ≤ vol ≤ A+B`) is far too loose;
+///   * the mesh referee never overrules, because the mesh fallback it would
+///     compare against is itself repaired under `manifold_at_any_cost` and,
+///     on this arrangement, that repair moves more volume than the error.
+///
+/// A wrong solid that reports `Analytic` is the exact failure this crate's
+/// comment headers keep warning about, so it is pinned here rather than left
+/// as a footnote. Fixing it means either a tighter bound for near-tangent
+/// arrangements or failing closed on them; either way this test should then
+/// assert the volume rather than document the error.
+#[test]
+#[ignore = "passes only with VCAD_BURIED_FACE_CHECK=1, which still false-positives on six coplanar-contact results — see the doc comment"]
+fn a_near_miss_fillet_is_not_silently_wrong() {
+    let r = ring();
+    let d = 0.01;
+    let cube = transformed(
+        make_cube(1.35, 1.5124, H),
+        &Transform::translation(22.6738 + d, 2.2, Z0),
+    );
+    let cutter = transformed(
+        make_cylinder(1.05, H + 0.02, 32),
+        &Transform::translation(22.6738 + d, 3.55, Z0 - 0.01),
+    );
+    let block = brep(boolean_op(&cube, &cutter, BooleanOp::Difference, SEGMENTS).expect("block"));
+
+    // The lens the block shares with the ring, 0.01 mm further out.
+    let expected = volume(&r) + volume(&block)
+        - H * integrate(2.2, 3.7124, |y| 24.0338 - (24.0 * 24.0 - y * y).sqrt());
+
+    let (result, report) = boolean_op_reported(&r, &block, BooleanOp::Union, SEGMENTS).expect("u");
+    let got = volume(&brep(result));
+    let rel = (got - expected).abs() / expected;
+    assert!(
+        rel < 1e-3,
+        "ring ∪ near-miss block: {got:.4} mm³ against {expected:.4} ({:.3}% out), \
+         reported {:?} — a wrong solid that calls itself Analytic",
+        rel * 100.0,
+        report.reason
+    );
 }

@@ -1156,3 +1156,26 @@ mod tests {
         assert!(r.distance <= 0.0);
     }
 }
+
+/// A reusable point-to-mesh distance query — build the BVH once, ask many
+/// times.
+///
+/// Exposed for validity oracles that must tell "this sample lies ON the other
+/// operand" (a legitimate coplanar or tangent contact, which every sound
+/// boolean produces) from "this sample is strictly inside it" (a trim that
+/// did not happen). Parity alone cannot: both read "inside".
+pub struct MeshDistance {
+    bvh: TriBvh,
+}
+
+impl MeshDistance {
+    /// Build over `mesh`; `None` when it has no triangles.
+    pub fn new(mesh: &TriangleMesh) -> Option<Self> {
+        TriBvh::build(mesh).map(|bvh| MeshDistance { bvh })
+    }
+
+    /// Distance from `p` to the surface, mm.
+    pub fn distance(&self, p: [f64; 3]) -> f64 {
+        point_mesh_closest(p, &self.bvh).0
+    }
+}

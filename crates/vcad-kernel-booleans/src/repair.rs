@@ -12,23 +12,41 @@ use vcad_kernel_math::Point3;
 use vcad_kernel_topo::{HalfEdgeId, Topology};
 
 /// Repair common topology issues in-place.
-pub fn repair_topology(topo: &mut Topology, tolerance: f64) {
-    repair_topology_impl(topo, tolerance, true)
+///
+/// `tangencies` are the lines along which the two operands' carriers TOUCH.
+/// Inside such a neighbourhood "which curve is this vertex on" cannot be
+/// answered by proximity, so the T-junction heal below must not try — see
+/// [`crate::tangency`]. Pass `&[]` when there is no second operand.
+pub(crate) fn repair_topology(
+    topo: &mut Topology,
+    tolerance: f64,
+    tangencies: &[crate::tangency::TangencyLine],
+) {
+    repair_topology_impl(topo, tolerance, true, tangencies)
 }
 
 /// Repair without the coarse seam-snap round. Used before classification,
 /// where the split solids are almost entirely unpaired — the coarse round's
 /// unpaired-only guard is vacuous there and snapping through the vertices
 /// of tangent-but-distinct features fuses them.
-pub fn repair_topology_fine(topo: &mut Topology, tolerance: f64) {
-    repair_topology_impl(topo, tolerance, false)
+pub(crate) fn repair_topology_fine(
+    topo: &mut Topology,
+    tolerance: f64,
+    tangencies: &[crate::tangency::TangencyLine],
+) {
+    repair_topology_impl(topo, tolerance, false, tangencies)
 }
 
-fn repair_topology_impl(topo: &mut Topology, tolerance: f64, coarse: bool) {
+fn repair_topology_impl(
+    topo: &mut Topology,
+    tolerance: f64,
+    coarse: bool,
+    tangencies: &[crate::tangency::TangencyLine],
+) {
     collapse_degenerate_half_edges(topo, tolerance);
     cleanup_loop_spikes(topo, tolerance);
     collapse_degenerate_half_edges(topo, tolerance);
-    split_edges_at_interior_vertices(topo, tolerance);
+    split_edges_at_interior_vertices(topo, tolerance, tangencies);
     pair_half_edges(topo, tolerance);
     // Coarse split-only round: split-curve discretization can leave one
     // face's seam vertex up to chord-sag off its neighbor's edge (a
@@ -43,7 +61,7 @@ fn repair_topology_impl(topo: &mut Topology, tolerance: f64, coarse: bool) {
     // above the grazing chord-vs-circle offset at SAG=1e-3 grids.
     const SEAM_WELD_TOL: f64 = 1.5e-3;
     if coarse && tolerance < SEAM_SNAP_TOL && std::env::var("VCAD_NO_WELD").is_err() {
-        split_edges_at_interior_vertices_boundary(topo, SEAM_SNAP_TOL);
+        split_edges_at_interior_vertices_boundary(topo, SEAM_SNAP_TOL, tangencies);
         pair_half_edges(topo, tolerance);
         // Endpoint-vs-endpoint mismatches (e.g. the wall splitter's exact
         // line×circle corner vs the cap splitter's line×chord crossing)
@@ -55,7 +73,7 @@ fn repair_topology_impl(topo: &mut Topology, tolerance: f64, coarse: bool) {
         }
         collapse_degenerate_half_edges(topo, tolerance);
         cleanup_loop_spikes(topo, tolerance);
-        split_edges_at_interior_vertices(topo, tolerance);
+        split_edges_at_interior_vertices(topo, tolerance, tangencies);
         pair_half_edges(topo, tolerance);
     }
 }
@@ -126,17 +144,30 @@ fn weld_boundary_vertices(topo: &mut Topology, tolerance: f64) {
 /// whole edge at the interior vertex (reusing the existing `VertexId`, so
 /// `pair_half_edges` can pair the pieces by id) restores a conforming,
 /// closed shell.
-fn split_edges_at_interior_vertices(topo: &mut Topology, tolerance: f64) {
-    split_edges_at_interior_vertices_impl(topo, tolerance, false)
+fn split_edges_at_interior_vertices(
+    topo: &mut Topology,
+    tolerance: f64,
+    tangencies: &[crate::tangency::TangencyLine],
+) {
+    split_edges_at_interior_vertices_impl(topo, tolerance, false, tangencies)
 }
 
 /// Like `split_edges_at_interior_vertices`, but only considers vertices
 /// that touch an unpaired half-edge (see `boundary_only` below).
-fn split_edges_at_interior_vertices_boundary(topo: &mut Topology, tolerance: f64) {
-    split_edges_at_interior_vertices_impl(topo, tolerance, true)
+fn split_edges_at_interior_vertices_boundary(
+    topo: &mut Topology,
+    tolerance: f64,
+    tangencies: &[crate::tangency::TangencyLine],
+) {
+    split_edges_at_interior_vertices_impl(topo, tolerance, true, tangencies)
 }
 
-fn split_edges_at_interior_vertices_impl(topo: &mut Topology, tolerance: f64, boundary_only: bool) {
+fn split_edges_at_interior_vertices_impl(
+    topo: &mut Topology,
+    tolerance: f64,
+    boundary_only: bool,
+    tangencies: &[crate::tangency::TangencyLine],
+) {
     // Snapshot loop vertices (id + position). Only vertices that appear in
     // loops matter; isolated vertices can't be a neighbor's endpoint. In
     // `boundary_only` mode (the coarse seam-snap round) only vertices that
@@ -266,6 +297,38 @@ fn split_edges_at_interior_vertices_impl(topo: &mut Topology, tolerance: f64, bo
         // Rechain: he keeps the first sub-segment (origin v0); each hit
         // starts a new half-edge, the last one ending at the original dest.
         let loop_id = topo.half_edges[he_id].loop_id;
+
+        // Inside a tangency's neighbourhood, nothing may be imprinted except
+        // the touch line itself.
+        //
+        // Where a face's boundary arc is TANGENT to the circle that cut it —
+        // every fillet in a filleted part, by construction — the seam chord
+        // the split leaves behind runs within a MICRON of the arc for a tenth
+        // of a millimetre. Proximity then says the arc's vertices lie on the
+        // chord, which is true and useless: they belong to the other curve.
+        // Imprinting them made the cap's loop come back through points it had
+        // already visited (`… v77 v78 v79 v175 v79 v78 v77 …`) and forced the
+        // ring's cap to match a chain that stops halfway. Triangulated, that
+        // covers the sliver twice with opposite winding — invisible to the
+        // signed volume and to the NET open-edge count, which is why the
+        // rana-60 stator measured right while carrying 642 unpaired and 95
+        // over-used edges.
+        //
+        // The gate is analytic (`crate::tangency`), not a proximity heuristic,
+        // so geometry that merely happens to have two rails a few microns
+        // apart — a cutting plane meeting a cap polygon and the exact circle
+        // it approximates — is untouched and still heals as before.
+        // All or nothing: a PARTIAL subdivision is the worst outcome, because
+        // it is exactly what leaves the two rails disagreeing about which
+        // vertices they carry. If any hit falls in the zone, the edge is left
+        // whole and the rails stay as the splitters built them.
+        if !tangencies.is_empty()
+            && hits.iter().any(|&(_, vid)| {
+                crate::tangency::in_tangency_zone(tangencies, &topo.vertices[vid].point)
+            })
+        {
+            continue;
+        }
         let mut prev = he_id;
         for &(_, vid) in &hits {
             let he_new = topo.add_half_edge(vid);
@@ -539,7 +602,7 @@ mod tests {
         let loop_id = topo.add_loop(&[he0, he1, he2]);
         topo.add_face(loop_id, 0, vcad_kernel_topo::Orientation::Forward);
 
-        repair_topology(&mut topo, 1e-6);
+        repair_topology(&mut topo, 1e-6, &[]);
 
         assert!(topo.half_edges[he1].loop_id.is_none());
         assert_eq!(topo.half_edges[he0].next, Some(he2));
@@ -562,7 +625,7 @@ mod tests {
         let loop_b = topo.add_loop(&[he2, he3]);
         topo.add_face(loop_b, 1, vcad_kernel_topo::Orientation::Forward);
 
-        repair_topology(&mut topo, 1e-6);
+        repair_topology(&mut topo, 1e-6, &[]);
 
         let twin = topo.half_edges[he0].twin.expect("expected paired twin");
         let dest = topo.half_edge_dest(he0);

@@ -312,13 +312,14 @@ enum Class {
 /// it; it takes cracks on two of three mutually perpendicular lines through
 /// the same probe to fool the vote. On a closed mesh all three agree, so the
 /// answer is the single-ray answer.
-struct Membership {
+pub(crate) struct Membership {
     /// The operand with coordinates cyclically shifted 0, 1 and 2 places.
     views: [TriangleMesh; 3],
 }
 
 impl Membership {
-    fn new(mesh: &TriangleMesh) -> Self {
+    #[allow(dead_code)]
+    pub(crate) fn new(mesh: &TriangleMesh) -> Self {
         let shifted = |k: usize| {
             let mut m = mesh.clone();
             for v in m.vertices.as_chunks_mut::<3>().0 {
@@ -331,7 +332,7 @@ impl Membership {
         }
     }
 
-    fn index(&self) -> [MeshRayIndex<'_>; 3] {
+    pub(crate) fn index(&self) -> [MeshRayIndex<'_>; 3] {
         [
             MeshRayIndex::new(&self.views[0]),
             MeshRayIndex::new(&self.views[1]),
@@ -341,7 +342,7 @@ impl Membership {
 }
 
 /// Majority vote of the three rays for `p`.
-fn contains(index: &[MeshRayIndex<'_>; 3], p: &Point3) -> bool {
+pub(crate) fn contains(index: &[MeshRayIndex<'_>; 3], p: &Point3) -> bool {
     let votes = [
         index[0].contains(p),
         index[1].contains(&Point3::new(p.y, p.z, p.x)),
