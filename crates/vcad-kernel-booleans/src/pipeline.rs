@@ -1432,6 +1432,14 @@ pub(crate) fn brep_boolean(
         return Ok(non_overlapping_boolean(solid_a, solid_b, op, segments));
     }
 
+    // Where the two operands' carriers TOUCH rather than cross. Found once,
+    // here, before anything is split: inside such a neighbourhood no later
+    // stage may decide which curve a vertex belongs to by proximity, because
+    // the two curves are microns apart over a tenth of a millimetre. See
+    // `crate::tangency`.
+    let tangencies = crate::tangency::cylinder_tangencies(solid_a, solid_b);
+    debug_bool!("tangency lines between the operands: {}", tangencies.len());
+
     // Apply splits to both solids
     apply_splits_to_solid(&mut a, splits_a, segments, "A", &b);
     // Heal the T-junctions splitting leaves behind (stacked band pieces
@@ -1439,12 +1447,12 @@ pub(crate) fn brep_boolean(
     // tangency stops one side's rim where the other continues). The
     // classification stage ray-casts against these post-split meshes, and
     // rays escaping through pre-repair cracks misclassify whole faces.
-    crate::repair::repair_topology_fine(&mut a.topology, 1e-6);
+    crate::repair::repair_topology_fine(&mut a.topology, 1e-6, &tangencies);
     debug_bool!("\n--- Stage 2.5: After splits applied to A ---");
     debug_bool!("A now has {} faces", a.topology.faces.len());
 
     apply_splits_to_solid(&mut b, splits_b, segments, "B", &a);
-    crate::repair::repair_topology_fine(&mut b.topology, 1e-6);
+    crate::repair::repair_topology_fine(&mut b.topology, 1e-6, &tangencies);
 
     // 3. Classify all faces (including split sub-faces)
     debug_bool!("\n--- Stage 3: Classification ---");
@@ -1653,7 +1661,8 @@ pub(crate) fn brep_boolean(
         );
     }
 
-    let result = sew::sew_faces(&a, &keep_a, &b, &keep_b, reverse_b, 1e-6);
+    let result =
+        sew::sew_faces_with_tangencies(&a, &keep_a, &b, &keep_b, reverse_b, 1e-6, &tangencies);
 
     debug_bool!("\n--- Stage 5: Result ---");
     debug_bool!("Result solid has {} faces", result.topology.faces.len());
