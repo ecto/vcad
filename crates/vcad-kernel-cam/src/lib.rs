@@ -53,6 +53,7 @@
 pub mod arcfit;
 pub mod dropcutter;
 mod error;
+pub mod fit;
 pub mod gear;
 mod job;
 pub mod materials;
@@ -61,10 +62,12 @@ pub mod outline;
 pub mod post;
 mod tool;
 mod toolpath;
+pub mod verify2d;
 
 // Re-exports
 pub use arcfit::{fit_arcs, fit_arcs_reported, ArcFitOptions, ArcFitReport};
 pub use error::CamError;
+pub use fit::{fit_contour, offset_loop, ContourSide, FitOptions, FitReport, OffsetOptions};
 pub use gear::{GearError, GearPair, GearReport, PlanetaryTrain, SpurGear, ToothSpace};
 pub use job::{
     BlockRange, Job, JobError, JobOp, JobOperation, OpRole, Program, ProgramBlock, ProgramEnd,
@@ -86,6 +89,9 @@ pub use tool::{
     ToolLibrary,
 };
 pub use toolpath::{ArcDir, ArcPlane, CoolantMode, SpindleDir, Toolpath, ToolpathSegment};
+pub use verify2d::{
+    verify_gcode, verify_toolpath, JobSpec, JobVerification, PartRegion, VerifyOptions,
+};
 
 use serde::{Deserialize, Serialize};
 
