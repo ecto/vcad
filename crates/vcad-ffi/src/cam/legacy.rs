@@ -1,8 +1,13 @@
 //! Bounded CAM jobs for the native CNC workspace: rectangular face / pocket /
 //! profile, plus contour profiles (outside or inside) along an imported
 //! closed polyline, with optional holding tabs.
+//!
+//! This is the *first* CAM surface — one operation, one tool, a header
+//! assembled here by hand — and the native app still calls it. It is kept
+//! working unchanged while wave 3 moves over to [`super::job`], which posts a
+//! whole multi-tool job through `vcad_kernel_cam::Job` and refuses to hand
+//! back G-code the verification oracle rejects.
 use serde::{Deserialize, Serialize};
-use std::ffi::{c_char, CStr, CString};
 use vcad_kernel_cam::{
     CamSettings, Contour, Contour2D, Face, Pocket2D, Point2D, Tool, ToolpathSegment,
 };
@@ -66,7 +71,7 @@ struct Move {
     feed: f64,
 }
 
-fn generate(input: &str) -> Result<String, String> {
+pub(super) fn generate(input: &str) -> Result<String, String> {
     let r: Request = serde_json::from_str(input).map_err(|e| e.to_string())?;
     let values = [
         r.width,
@@ -217,41 +222,6 @@ fn generate(input: &str) -> Result<String, String> {
         .map_err(|e| e.to_string())
 }
 
-/// UTF-8 JSON in; owned, NUL-terminated JSON out. Free with vcad_cam_free.
-#[no_mangle]
-pub extern "C" fn vcad_cam_generate(input: *const c_char) -> *mut c_char {
-    crate::err::clear_error();
-    let result = std::panic::catch_unwind(|| {
-        if input.is_null() {
-            return Err("Missing CAM request".to_string());
-        }
-        let input = unsafe { CStr::from_ptr(input) }
-            .to_str()
-            .map_err(|e| e.to_string())?;
-        generate(input)
-    });
-    match result {
-        Ok(Ok(json)) => CString::new(json).unwrap().into_raw(),
-        Ok(Err(e)) => {
-            crate::err::set_error(e);
-            std::ptr::null_mut()
-        }
-        Err(_) => {
-            crate::err::set_error("CAM generation failed");
-            std::ptr::null_mut()
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn vcad_cam_free(value: *mut c_char) {
-    if !value.is_null() {
-        unsafe {
-            drop(CString::from_raw(value));
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,7 +253,7 @@ mod tests {
                 let to = m["to"].as_array().unwrap();
                 let (x, y) = (to[0].as_f64().unwrap(), to[1].as_f64().unwrap());
                 assert!(
-                    x >= -1.6 && x <= 41.6 && y >= -1.6 && y <= 31.6,
+                    (-1.6..=41.6).contains(&x) && (-1.6..=31.6).contains(&y),
                     "{op}: {x},{y}"
                 );
             }
