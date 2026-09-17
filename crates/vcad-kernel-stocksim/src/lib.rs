@@ -29,12 +29,17 @@
 //! ```
 
 mod collision;
+mod job;
 mod marching_cubes;
 mod octree;
 mod subtract;
 mod verify;
 
 pub use collision::{CollisionResult, CollisionType};
+pub use job::{
+    verify_toolpath_against_mesh, HolderHit, HolderReport, JobError, JobOptions, MaterialLeft,
+    RapidHit, RapidsReport, ResolutionReport, SimOp, StockJobVerification, Verdict,
+};
 pub use marching_cubes::MarchingCubes;
 pub use octree::{OctreeNode, Stock};
 pub use subtract::SweptVolume;

@@ -55,6 +55,7 @@ pub mod materials;
 mod operation;
 pub mod outline;
 pub mod post;
+pub mod receipt;
 pub mod stock;
 mod tool;
 mod toolpath;
