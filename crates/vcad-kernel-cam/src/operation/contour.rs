@@ -848,7 +848,6 @@ impl Contour2D {
         report: &mut ContourReport,
     ) {
         let raised = self.raised_intervals(lp, plan.cut_z, tool.diameter());
-        let seam_z = height_at(&raised, plan.cut_z, 0.0);
 
         // A pass whose waste is already cleared may go down beside the wall,
         // best of all on an arc that meets the wall tangentially.
@@ -857,12 +856,14 @@ impl Contour2D {
                 .lead_radius
                 .unwrap_or_else(|| tool.radius())
                 .min(tool.radius() + self.stock_to_leave);
-            self.lead_arcs(lp, wall, radius, tool.radius())
+            straight_point(lp, &raised, radius)
+                .and_then(|s| Some((s, self.lead_arcs(lp, wall, s, radius)?)))
         } else {
             None
         };
 
-        if let Some((arc_in, arc_out)) = lead {
+        if let Some((lead_s, (arc_in, arc_out))) = lead {
+            let seam_z = height_at(&raised, plan.cut_z, lead_s);
             report.lead_entries += 1;
             toolpath.push(ToolpathSegment::comment("lead-in arc"));
             toolpath.push(ToolpathSegment::rapid(
@@ -880,7 +881,7 @@ impl Contour2D {
                 toolpath.push(ToolpathSegment::linear(p.x, p.y, seam_z, plan.feed));
             }
             toolpath.push(ToolpathSegment::comment("profile"));
-            self.emit_loop(toolpath, lp, 0.0, plan.cut_z, &raised, plan.feed, settings);
+            self.emit_loop(toolpath, lp, lead_s, plan.cut_z, &raised, plan.feed, settings);
             toolpath.push(ToolpathSegment::comment("lead-out arc"));
             let mut last = arc_out[0];
             for p in &arc_out {
@@ -902,22 +903,25 @@ impl Contour2D {
             None => 0.0,
         };
         let start = lp.at(start_s);
+        toolpath.push(ToolpathSegment::comment("approach"));
         toolpath.push(ToolpathSegment::rapid(start.x, start.y, settings.safe_z));
 
         let end_s = match ramp {
             Some(RampPlan { start_s, legs }) => {
                 report.ramp_entries += 1;
-                toolpath.push(ToolpathSegment::comment(format!(
-                    "ramp entry: {:.1} deg, {} leg(s)",
-                    self.ramp_angle,
-                    legs.len()
-                )));
+                // Down to where the last pass finished — air, all of it — and
+                // only then into the metal along the ramp.
                 toolpath.push(ToolpathSegment::linear(
                     start.x,
                     start.y,
                     plan.entry_z,
                     settings.plunge_rate,
                 ));
+                toolpath.push(ToolpathSegment::comment(format!(
+                    "ramp entry: {:.1} deg, {} leg(s)",
+                    self.ramp_angle,
+                    legs.len()
+                )));
                 let mut s = start_s;
                 let mut z = plan.entry_z;
                 for (to_s, to_z) in legs {
@@ -929,6 +933,7 @@ impl Contour2D {
             }
             None => {
                 report.plunge_entries += 1;
+                toolpath.push(ToolpathSegment::comment("plunge entry"));
                 toolpath.push(ToolpathSegment::linear(
                     start.x,
                     start.y,
@@ -1085,14 +1090,14 @@ impl Contour2D {
         &self,
         lp: &Loop,
         wall: &Wall,
+        at_s: f64,
         radius: f64,
-        tool_radius: f64,
     ) -> Option<(Vec<Point2D>, Vec<Point2D>)> {
         if radius <= 1e-6 {
             return None;
         }
-        let p0 = lp.at(0.0);
-        let t = lp.tangent(0.0);
+        let p0 = lp.at(at_s);
+        let t = lp.tangent(at_s);
         let clearance0 = wall.clearance(p0);
         // The waste is whichever side of the path leaves the wall behind.
         let probe = 1e-3;
@@ -1131,9 +1136,13 @@ impl Contour2D {
                 point_at_angle(a_end + sigma * quarter * f)
             })
             .collect();
+        // The gate is the path's own clearance, not the tool radius: the
+        // offsetter's own arc tolerance puts the path a whisker inside the
+        // nominal radius, and an absolute gate would refuse every lead. What
+        // matters is that the arc never comes nearer the wall than the cut it
+        // is leading into.
         for p in arc_in.iter().chain(arc_out.iter()) {
-            let c = wall.clearance(*p);
-            if c < clearance0 - 1e-6 || c < tool_radius - 1e-6 {
+            if wall.clearance(*p) < clearance0 - 1e-6 {
                 return None;
             }
         }
@@ -1319,6 +1328,30 @@ fn dedup_closing(mut points: Vec<Point2D>) -> Vec<Point2D> {
         }
     }
     points
+}
+
+/// Where a lead arc can meet the path: the first point, from the seam
+/// onwards, with a straight run of `reach` either side of it and no tab over
+/// it. An arc tangent to a corner would swing into the wall the corner turns
+/// around, so the lead starts the lap somewhere else instead.
+fn straight_point(lp: &Loop, raised: &[(f64, f64, f64)], reach: f64) -> Option<f64> {
+    let total = lp.total();
+    let step = (total / 256.0).max(0.25);
+    let mut s = 0.0;
+    while s < total {
+        let covered = raised
+            .iter()
+            .any(|(from, to, _)| s >= from - reach && s <= to + reach);
+        if !covered {
+            let a = lp.at(s - reach);
+            let b = lp.at(s + reach);
+            if a.distance_to(&b) >= 2.0 * reach * 0.999 {
+                return Some(s);
+            }
+        }
+        s += step;
+    }
+    None
 }
 
 /// Reverse the direction of travel while keeping the same seam, so tab
@@ -1937,6 +1970,474 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Roughing has to stay off the wall by exactly the stock it was told to
+    /// leave, and the finish pass has to be on the wall — otherwise "stock to
+    /// leave" is a number that changes nothing.
+    #[test]
+    fn test_roughing_leaves_stock_and_the_finish_pass_cuts_the_wall() {
+        let settings = CamSettings {
+            stepdown: 1.5,
+            ..CamSettings::default()
+        };
+        let op = Contour2D::outside(Contour::rectangle(0.0, 0.0, 30.0, 20.0), 4.0)
+            .with_stock_to_leave(0.4);
+        let (toolpath, report) = op.generate_reported(&mill(6.0), &settings).unwrap();
+        assert_eq!(report.rough_passes, 3, "{report:?}");
+        assert_eq!(report.finish_passes, 1, "{report:?}");
+
+        let laps = runs(&toolpath, "profile");
+        assert_eq!(laps.len(), 4);
+        for (i, lap) in laps.iter().enumerate() {
+            let want = if i < 3 { 3.4 } else { 3.0 };
+            for m in lap {
+                let d = outside_dist(m.to, 0.0, 0.0, 30.0, 20.0);
+                assert!(
+                    (d - want).abs() < 0.02,
+                    "lap {i} runs {d:.3} mm off the part, wanted {want}"
+                );
+            }
+        }
+        // Both phases go all the way down; the roughing steps there.
+        let deepest = laps
+            .iter()
+            .flatten()
+            .map(|m| m.to[2])
+            .fold(f64::INFINITY, f64::min);
+        assert!((deepest + 4.0).abs() < 1e-12, "deepest {deepest}");
+        let rough_depths: Vec<f64> = laps[..3]
+            .iter()
+            .map(|lap| lap.iter().map(|m| m.to[2]).fold(f64::INFINITY, f64::min))
+            .collect();
+        for (k, z) in rough_depths.iter().enumerate() {
+            let want = -4.0 * (k + 1) as f64 / 3.0;
+            assert!((z - want).abs() < 1e-9, "rough pass {k} at {z}, wanted {want}");
+        }
+    }
+
+    /// The finish phase can be taken in steps, repeated, and run at its own
+    /// feed. Each of those has to show up in the path, not just in the struct.
+    #[test]
+    fn test_finish_stepdowns_spring_pass_and_finish_feed() {
+        let settings = CamSettings {
+            stepdown: 2.0,
+            feed_rate: 1000.0,
+            ..CamSettings::default()
+        };
+        let op = Contour2D::outside(Contour::rectangle(0.0, 0.0, 40.0, 30.0), 4.0)
+            .with_stock_to_leave(0.3)
+            .with_finish_stepdowns(2)
+            .with_spring_pass(true)
+            .with_finish_feed(400.0);
+        let (toolpath, report) = op.generate_reported(&mill(6.0), &settings).unwrap();
+        assert_eq!((report.rough_passes, report.finish_passes), (2, 2));
+        assert!(report.spring_pass);
+
+        let laps = runs(&toolpath, "profile");
+        assert_eq!(laps.len(), 5, "2 rough + 2 finish + spring");
+        // The roughing cleared the waste, so the finish passes lead in on an
+        // arc instead of ramping all the way down again.
+        assert_eq!(report.lead_entries, 3, "{report:?}");
+        assert_eq!(report.ramp_entries, 2, "{report:?}");
+        let depths: Vec<f64> = laps
+            .iter()
+            .map(|lap| lap.iter().map(|m| m.to[2]).fold(f64::INFINITY, f64::min))
+            .collect();
+        for (got, want) in depths.iter().zip([-2.0, -4.0, -2.0, -4.0, -4.0]) {
+            assert!((got - want).abs() < 1e-12, "{depths:?}");
+        }
+        for (i, lap) in laps.iter().enumerate() {
+            let want = if i < 2 { 1000.0 } else { 400.0 };
+            for m in lap {
+                assert!((m.feed - want).abs() < 1e-9, "lap {i} feeds {}", m.feed);
+            }
+        }
+        // The spring pass is the finish pass again: same path, same depth.
+        let finish: Vec<[f64; 3]> = laps[3].iter().map(|m| m.to).collect();
+        let spring: Vec<[f64; 3]> = laps[4].iter().map(|m| m.to).collect();
+        assert_eq!(finish.len(), spring.len());
+        for (a, b) in finish.iter().zip(&spring) {
+            assert!(
+                (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9 && (a[2] - b[2]).abs() < 1e-9,
+                "spring pass wandered: {a:?} vs {b:?}"
+            );
+        }
+    }
+
+    /// Climb or conventional is the caller's choice, not an accident of how
+    /// the contour was drawn. With an M3 spindle climb runs counter-clockwise
+    /// around a hole and clockwise around a part.
+    #[test]
+    fn test_direction_is_chosen_not_inherited_from_the_winding() {
+        let ccw = [(0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0)];
+        let cw = [(0.0, 0.0), (0.0, 30.0), (40.0, 30.0), (40.0, 0.0)];
+        for points in [ccw, cw] {
+            for inside in [false, true] {
+                for direction in [CutDirection::Climb, CutDirection::Conventional] {
+                    let contour = polyline(&points);
+                    let op = if inside {
+                        Contour2D::inside(contour, 2.0)
+                    } else {
+                        Contour2D::outside(contour, 2.0)
+                    }
+                    .with_direction(direction);
+                    let toolpath = op.generate(&mill(6.0), &CamSettings::default()).unwrap();
+                    let lap = &runs(&toolpath, "profile")[0];
+                    let area = run_signed_area(lap);
+                    let ccw_travel = area > 0.0;
+                    let want_ccw = (direction == CutDirection::Climb) == inside;
+                    assert_eq!(
+                        ccw_travel, want_ccw,
+                        "{direction:?} {} ran {} (signed area {area:.1})",
+                        if inside { "inside" } else { "outside" },
+                        if ccw_travel { "CCW" } else { "CW" }
+                    );
+                }
+            }
+        }
+    }
+
+    /// A ramp entry has to be a ramp: down at no more than the angle asked
+    /// for, never climbing, and on the path the pass is going to cut — a ramp
+    /// that wanders off the offset cuts somewhere nothing checked.
+    #[test]
+    fn test_ramp_entry_descends_at_the_configured_angle_and_stays_on_the_path() {
+        let settings = CamSettings {
+            stepdown: 1.0,
+            ..CamSettings::default()
+        };
+        for angle in [1.5, 3.0, 8.0] {
+            let op = Contour2D::outside(Contour::rectangle(0.0, 0.0, 40.0, 30.0), 3.0)
+                .with_ramp_angle(angle);
+            let (toolpath, report) = op.generate_reported(&mill(6.0), &settings).unwrap();
+            let ramps = runs(&toolpath, "ramp entry");
+            assert_eq!(ramps.len(), 3, "one ramp per pass");
+            assert_eq!(report.ramp_entries, 3);
+            let limit = angle.to_radians().tan();
+            for (k, ramp) in ramps.iter().enumerate() {
+                let mut total_xy = 0.0;
+                for m in ramp {
+                    let xy = (m.to[0] - m.from[0]).hypot(m.to[1] - m.from[1]);
+                    let drop = m.from[2] - m.to[2];
+                    assert!(drop >= -1e-9, "ramp {k} climbs by {drop} at {:?}", m.to);
+                    assert!(
+                        drop <= xy * limit + 1e-9,
+                        "ramp {k} drops {drop:.4} over {xy:.4} mm, steeper than {angle} deg"
+                    );
+                    assert!(
+                        (outside_dist(m.to, 0.0, 0.0, 40.0, 30.0) - 3.0).abs() < 0.02,
+                        "ramp {k} leaves the offset path at {:?}",
+                        m.to
+                    );
+                    total_xy += xy;
+                }
+                // It starts at the previous depth and ends at this one.
+                let start_z = ramp[0].from[2];
+                let end_z = ramp[ramp.len() - 1].to[2];
+                assert!((start_z + k as f64).abs() < 1e-9, "ramp {k} starts at {start_z}");
+                assert!(
+                    (end_z + (k + 1) as f64).abs() < 1e-9,
+                    "ramp {k} ends at {end_z}"
+                );
+                // Shallower angle, longer ramp: the length is the drop over
+                // the tangent, to within one leg of the zig-zag.
+                assert!(
+                    total_xy >= 1.0 / limit - 1e-6,
+                    "ramp {k} is {total_xy:.2} mm for a 1 mm drop at {angle} deg"
+                );
+            }
+        }
+    }
+
+    /// Tabs are the only thing holding the part, and a ramp is the one move
+    /// that descends while travelling: it may not descend through one.
+    #[test]
+    fn test_ramp_never_descends_through_a_tab() {
+        let settings = CamSettings {
+            stepdown: 1.0,
+            ..CamSettings::default()
+        };
+        let op = Contour2D::outside(Contour::rectangle(0.0, 0.0, 60.0, 40.0), 4.0)
+            .with_tabs(3, 5.0, 1.5);
+        let toolpath = op.generate(&mill(6.0), &settings).unwrap();
+        let top = -2.5;
+
+        // Where the tabs are: the stretches the profile rides over, taken
+        // from the deepest pass and trimmed so the vertical step at each end
+        // is not counted as being "on" the tab.
+        let mut tabs: Vec<([f64; 2], [f64; 2])> = Vec::new();
+        let mut open: Option<([f64; 2], [f64; 2])> = None;
+        for m in runs(&toolpath, "profile").into_iter().flatten() {
+            let lifted = (m.from[2] - top).abs() < 1e-9 && (m.to[2] - top).abs() < 1e-9;
+            match (&mut open, lifted) {
+                (None, true) => open = Some(([m.from[0], m.from[1]], [m.to[0], m.to[1]])),
+                (Some(run), true) => run.1 = [m.to[0], m.to[1]],
+                (Some(run), false) => {
+                    tabs.push(*run);
+                    open = None;
+                }
+                (None, false) => {}
+            }
+        }
+        if let Some(run) = open {
+            tabs.push(run);
+        }
+        assert!(tabs.len() >= 3, "expected the three tabs, got {}", tabs.len());
+
+        for m in runs(&toolpath, "ramp entry").into_iter().flatten() {
+            for (a, b) in &tabs {
+                let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+                let len2 = dx * dx + dy * dy;
+                if len2 < 1e-12 {
+                    continue;
+                }
+                // Sample the ramp move; anything landing on the tab stretch,
+                // clear of its two ends, must still be at or above the top.
+                for i in 0..=20 {
+                    let f = i as f64 / 20.0;
+                    let p = [
+                        m.from[0] + (m.to[0] - m.from[0]) * f,
+                        m.from[1] + (m.to[1] - m.from[1]) * f,
+                        m.from[2] + (m.to[2] - m.from[2]) * f,
+                    ];
+                    let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
+                    if !(0.05..=0.95).contains(&t) {
+                        continue;
+                    }
+                    let off = (p[0] - (a[0] + dx * t)).hypot(p[1] - (a[1] + dy * t));
+                    assert!(
+                        off > 1e-6 || p[2] >= top - 1e-9,
+                        "the ramp cuts the tab at {p:?} (top {top})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A lead-in exists to meet the wall tangentially. It must do that from
+    /// the waste side — an arc swung the other way is a bite out of the part,
+    /// and the side is not something the contour's winding gets to decide.
+    #[test]
+    fn test_lead_arcs_stay_on_the_waste_side() {
+        let settings = CamSettings {
+            stepdown: 2.0,
+            ..CamSettings::default()
+        };
+        let ccw = [(0.0, 0.0), (40.0, 0.0), (40.0, 30.0), (0.0, 30.0)];
+        let cw = [(0.0, 0.0), (0.0, 30.0), (40.0, 30.0), (40.0, 0.0)];
+        for points in [ccw, cw] {
+            for inside in [false, true] {
+                for direction in [CutDirection::Climb, CutDirection::Conventional] {
+                    let contour = polyline(&points);
+                    let op = if inside {
+                        Contour2D::inside(contour, 2.0)
+                    } else {
+                        Contour2D::outside(contour, 2.0)
+                    }
+                    .with_direction(direction)
+                    .with_stock_to_leave(0.4);
+                    let (toolpath, report) = op.generate_reported(&mill(6.0), &settings).unwrap();
+                    assert_eq!(
+                        report.lead_entries, 1,
+                        "no lead on the finish pass ({points:?} inside={inside} {direction:?})"
+                    );
+
+                    let leads: Vec<Move> = runs(&toolpath, "lead-in arc")
+                        .into_iter()
+                        .chain(runs(&toolpath, "lead-out arc"))
+                        .flatten()
+                        .collect();
+                    assert!(leads.len() >= 20, "{} lead moves", leads.len());
+                    for m in &leads {
+                        if inside {
+                            assert!(
+                                within(m.to, 0.0, 0.0, 40.0, 30.0) >= 3.0 - 0.02,
+                                "lead at {:?} cuts the wall of the opening",
+                                m.to
+                            );
+                        } else {
+                            assert!(
+                                within(m.to, 0.0, 0.0, 40.0, 30.0) <= 0.0
+                                    && outside_dist(m.to, 0.0, 0.0, 40.0, 30.0) >= 3.0 - 0.02,
+                                "lead at {:?} cuts into the part",
+                                m.to
+                            );
+                        }
+                    }
+                    // The lead-in hands over to the profile where the cut
+                    // starts, at the same point and the same depth.
+                    let lap = &runs(&toolpath, "profile")[1];
+                    let hand_over = runs(&toolpath, "lead-in arc")[0].last().unwrap().to;
+                    assert!(
+                        (hand_over[0] - lap[0].from[0]).abs() < 1e-9
+                            && (hand_over[1] - lap[0].from[1]).abs() < 1e-9
+                            && (hand_over[2] - lap[0].from[2]).abs() < 1e-9,
+                        "lead-in ends at {hand_over:?}, the cut starts at {:?}",
+                        lap[0].from
+                    );
+                }
+            }
+        }
+    }
+
+    /// In a slot barely wider than the cutter there is no room to swing a
+    /// lead-in. The pass goes straight down instead — the one thing it may
+    /// not do is swing the arc anyway.
+    #[test]
+    fn test_lead_in_falls_back_when_the_waste_has_no_room() {
+        let settings = CamSettings {
+            stepdown: 2.0,
+            ..CamSettings::default()
+        };
+        // An 8 mm slot with a 6 mm cutter: the tool-centre path is a 2 mm
+        // wide corridor, and a 3 mm lead arc does not fit in it.
+        let op = Contour2D::inside(Contour::rectangle(0.0, 0.0, 8.0, 40.0), 2.0)
+            .with_stock_to_leave(0.4);
+        let (toolpath, report) = op.generate_reported(&mill(6.0), &settings).unwrap();
+        assert_eq!(report.lead_entries, 0, "swung a lead-in with no room");
+        assert!(report.plunge_entries >= 1, "{report:?}");
+        assert!(runs(&toolpath, "lead-in arc").is_empty());
+        for m in runs(&toolpath, "profile").into_iter().flatten() {
+            assert!(
+                within(m.to, 0.0, 0.0, 8.0, 40.0) >= 3.0 - 0.02,
+                "cut at {:?} gouges the slot wall",
+                m.to
+            );
+        }
+    }
+
+    /// A slug cut free next to the cutter is as dangerous as a part cut free.
+    /// Tabs have to work on an inside contour too — same width of metal, on
+    /// every pass that reaches them, whichever way round the cut runs.
+    #[test]
+    fn test_tabs_on_an_inside_contour_leave_their_stated_width() {
+        let settings = CamSettings {
+            stepdown: 1.0,
+            ..CamSettings::default()
+        };
+        let ccw = [(0.0, 0.0), (50.0, 0.0), (50.0, 40.0), (0.0, 40.0)];
+        let cw = [(0.0, 0.0), (0.0, 40.0), (50.0, 40.0), (50.0, 0.0)];
+        for points in [ccw, cw] {
+            for direction in [CutDirection::Climb, CutDirection::Conventional] {
+                let op = Contour2D::inside(polyline(&points), 4.0)
+                    .with_direction(direction)
+                    .with_tabs(3, 5.0, 1.5);
+                let toolpath = op.generate(&mill(6.0), &settings).unwrap();
+                let passes = tab_metal_per_pass(&toolpath, -2.5, 6.0);
+                assert_eq!(passes.len(), 2, "{direction:?}: {passes:?}");
+                for pass in &passes {
+                    assert_eq!(pass.len(), 3, "{pass:?}");
+                    for metal in pass {
+                        assert!(
+                            (metal - 5.0).abs() < 1e-6,
+                            "{direction:?}: tab leaves {metal} mm, asked for 5"
+                        );
+                    }
+                }
+                for m in runs(&toolpath, "profile").into_iter().flatten() {
+                    assert!(
+                        within(m.to, 0.0, 0.0, 50.0, 40.0) >= 3.0 - 0.02,
+                        "cut at {:?} gouges the wall of the opening",
+                        m.to
+                    );
+                }
+            }
+        }
+    }
+
+    /// A skin left on the bottom is the whole of what keeps the part in the
+    /// stock; it has to be exactly as thick as asked. Tab tops are measured
+    /// from the underside of the stock, not from the shortened cut.
+    #[test]
+    fn test_onion_skin_stops_exactly_above_the_bottom() {
+        let settings = CamSettings {
+            stepdown: 2.0,
+            ..CamSettings::default()
+        };
+        let op = Contour2D::outside(Contour::rectangle(0.0, 0.0, 50.0, 40.0), 6.0)
+            .with_bottom_allowance(0.15)
+            .with_tabs(3, 5.0, 1.0);
+        let (toolpath, report) = op.generate_reported(&mill(6.0), &settings).unwrap();
+        assert!((report.final_depth - 5.85).abs() < 1e-12);
+
+        let deepest = runs(&toolpath, "profile")
+            .into_iter()
+            .flatten()
+            .map(|m| m.to[2])
+            .fold(f64::INFINITY, f64::min);
+        assert!((deepest + 5.85).abs() < 1e-12, "cut to {deepest}, wanted -5.85");
+
+        // The tab top is 1 mm off the underside of the stock at -6, so -5.0 —
+        // not 1 mm off the shortened depth, which would be -4.85.
+        let passes = tab_metal_per_pass(&toolpath, -5.0, 6.0);
+        assert_eq!(passes.len(), 1, "{passes:?}");
+        assert_eq!(passes[0].len(), 3);
+        for metal in &passes[0] {
+            assert!((metal - 5.0).abs() < 1e-6, "tab leaves {metal} mm");
+        }
+        assert!(
+            !toolpath
+                .segments
+                .iter()
+                .filter_map(|s| s.target())
+                .any(|t| (t[2] + 4.85).abs() < 1e-9),
+            "a tab was measured from the shortened depth"
+        );
+    }
+
+    /// Cutting past the bottom of the stock is only safe if something under it
+    /// can take the cut. Without that declared, refuse — quietly cutting the
+    /// machine bed is not an option, and neither is quietly stopping short.
+    #[test]
+    fn test_break_through_needs_a_declared_spoilboard() {
+        let settings = CamSettings {
+            stepdown: 1.0,
+            ..CamSettings::default()
+        };
+        let base = || Contour2D::outside(Contour::rectangle(0.0, 0.0, 30.0, 20.0), 1.0);
+
+        let bare = base()
+            .with_bottom_allowance(-0.3)
+            .generate(&mill(6.0), &settings);
+        assert!(
+            matches!(
+                bare,
+                Err(CamError::BreakThroughWithoutSpoilboard { overcut, spoilboard })
+                    if (overcut - 0.3).abs() < 1e-9 && spoilboard == 0.0
+            ),
+            "{bare:?}"
+        );
+
+        let thin = base()
+            .with_bottom_allowance(-0.3)
+            .with_spoilboard(0.2)
+            .generate(&mill(6.0), &settings);
+        assert!(
+            matches!(thin, Err(CamError::BreakThroughWithoutSpoilboard { .. })),
+            "{thin:?}"
+        );
+
+        let (toolpath, report) = base()
+            .with_bottom_allowance(-0.3)
+            .with_spoilboard(3.0)
+            .generate_reported(&mill(6.0), &settings)
+            .unwrap();
+        assert!((report.final_depth - 1.3).abs() < 1e-12);
+        let deepest = runs(&toolpath, "profile")
+            .into_iter()
+            .flatten()
+            .map(|m| m.to[2])
+            .fold(f64::INFINITY, f64::min);
+        assert!((deepest + 1.3).abs() < 1e-12, "cut to {deepest}, wanted -1.3");
+
+        let nothing = base()
+            .with_bottom_allowance(1.0)
+            .generate(&mill(6.0), &settings);
+        assert!(
+            matches!(nothing, Err(CamError::BottomAllowanceExceedsDepth { .. })),
+            "{nothing:?}"
+        );
     }
 
     #[test]
