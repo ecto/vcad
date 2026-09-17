@@ -53,6 +53,7 @@
 pub mod arcfit;
 pub mod dropcutter;
 mod error;
+mod job;
 mod operation;
 pub mod post;
 mod tool;
@@ -61,10 +62,19 @@ mod toolpath;
 // Re-exports
 pub use arcfit::{fit_arcs, fit_arcs_reported, ArcFitOptions, ArcFitReport};
 pub use error::CamError;
-pub use operation::{
-    CamOperation, Contour, Contour2D, ContourSegment, Face, Pocket2D, Point2D, Roughing3D, Tab,
+pub use job::{
+    BlockRange, Job, JobError, JobOp, JobOperation, OpRole, Program, ProgramBlock, ProgramEnd,
+    ToolChangeStrategy, Wcs,
 };
-pub use tool::{Tool, ToolEntry, ToolHolder, ToolLibrary};
+pub use operation::{
+    tip_length, BreakThrough, CamOperation, Contour, Contour2D, ContourSegment, Drill, DrillCycle,
+    DrillError, Face, HelicalBore, Hole, Pocket2D, Point2D, Roughing3D, Spoilboard, Tab,
+};
+pub use tool::{
+    check_flute_length, check_slot_ratio, check_stickout, check_tool_for_cut, has_error,
+    CheckSeverity, CutContext, Tool, ToolCheck, ToolCheckKind, ToolEntry, ToolGeometry, ToolHolder,
+    ToolLibrary,
+};
 pub use toolpath::{ArcDir, ArcPlane, CoolantMode, SpindleDir, Toolpath, ToolpathSegment};
 
 use serde::{Deserialize, Serialize};

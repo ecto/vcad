@@ -4,11 +4,15 @@ use crate::{CamError, CamSettings, Tool, Toolpath};
 use serde::{Deserialize, Serialize};
 
 mod contour;
+mod drill;
 mod face;
 mod pocket;
 mod roughing3d;
 
 pub use contour::{Contour2D, Tab};
+pub use drill::{
+    tip_length, BreakThrough, Drill, DrillCycle, DrillError, HelicalBore, Hole, Spoilboard,
+};
 pub use face::Face;
 pub use pocket::Pocket2D;
 pub use roughing3d::Roughing3D;
