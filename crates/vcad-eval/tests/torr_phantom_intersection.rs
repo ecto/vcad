@@ -37,6 +37,7 @@ fn inspect(src: &str) -> Inspection {
             clock: None,
             root_cache: None,
             mesh_segments: 0,
+            on_root: None,
         },
     )
     .expect("evaluate_document");

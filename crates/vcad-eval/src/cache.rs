@@ -786,3 +786,102 @@ mod tests {
         assert!(third.parts[1].solid.is_some());
     }
 }
+
+// MARK: mesh bundles — a document's solved roots, shipped with the file
+
+/// Magic prefix of a mesh bundle file.
+pub const BUNDLE_MAGIC: &[u8] = b"VCADMESH1\n";
+
+/// Write `entries` (root key + mesh) as a portable bundle: the slice of the
+/// cache a document needs to open without a kernel walk. Keys carry the
+/// kernel id, so a bundle from another kernel build simply never hits.
+pub fn write_bundle(
+    path: &std::path::Path,
+    entries: &[(&RootKey, &EvaluatedMesh)],
+) -> std::io::Result<()> {
+    let mut out = Vec::with_capacity(BUNDLE_MAGIC.len() + 8);
+    out.extend_from_slice(BUNDLE_MAGIC);
+    out.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+    for (key, mesh) in entries {
+        let k = key.0.as_bytes();
+        out.extend_from_slice(&(k.len() as u32).to_le_bytes());
+        out.extend_from_slice(k);
+        let m = encode_mesh(mesh);
+        out.extend_from_slice(&(m.len() as u64).to_le_bytes());
+        out.extend_from_slice(&m);
+    }
+    let tmp = path.with_extension("vcadmesh.tmp");
+    std::fs::write(&tmp, &out)?;
+    std::fs::rename(&tmp, path)
+}
+
+/// Read a bundle back. Malformed input is an error, never a panic.
+pub fn read_bundle(path: &std::path::Path) -> std::io::Result<Vec<(RootKey, EvaluatedMesh)>> {
+    use std::io::{Error, ErrorKind};
+    let bytes = std::fs::read(path)?;
+    let bad = || Error::new(ErrorKind::InvalidData, "not a vcad mesh bundle");
+    if !bytes.starts_with(BUNDLE_MAGIC) {
+        return Err(bad());
+    }
+    let mut at = BUNDLE_MAGIC.len();
+    let take = |at: &mut usize, n: usize| -> std::io::Result<&[u8]> {
+        let end = at.checked_add(n).ok_or_else(bad)?;
+        let s = bytes.get(*at..end).ok_or_else(bad)?;
+        *at = end;
+        Ok(s)
+    };
+    let count = u32::from_le_bytes(take(&mut at, 4)?.try_into().unwrap()) as usize;
+    let mut out = Vec::with_capacity(count.min(4096));
+    for _ in 0..count {
+        let klen = u32::from_le_bytes(take(&mut at, 4)?.try_into().unwrap()) as usize;
+        let key = std::str::from_utf8(take(&mut at, klen)?)
+            .map_err(|_| bad())?
+            .to_string();
+        let mlen = u64::from_le_bytes(take(&mut at, 8)?.try_into().unwrap()) as usize;
+        let mesh = decode_mesh(take(&mut at, mlen)?).ok_or_else(bad)?;
+        out.push((RootKey(key), mesh));
+    }
+    Ok(out)
+}
+
+/// Import a bundle into `cache`. Returns how many entries were stored.
+pub fn import_bundle(path: &std::path::Path, cache: &dyn RootMeshCache) -> std::io::Result<usize> {
+    let entries = read_bundle(path)?;
+    for (k, m) in &entries {
+        if !m.indices.is_empty() {
+            cache.put(k, m);
+        }
+    }
+    Ok(entries.len())
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    use super::*;
+
+    #[test]
+    fn bundle_round_trips_through_a_memory_cache() {
+        let mesh = EvaluatedMesh {
+            positions: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            indices: vec![0, 1, 2],
+            normals: None,
+            face_kinds: None,
+            face_ids: None,
+        };
+        let key = RootKey("abc123".into());
+        let dir = std::env::temp_dir().join(format!("vcad-bundle-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("part.vcadmesh");
+        write_bundle(&path, &[(&key, &mesh)]).unwrap();
+        let back = read_bundle(&path).unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].0, key);
+        assert_eq!(back[0].1.indices, mesh.indices);
+        let cache = MemoryMeshCache::new();
+        assert_eq!(import_bundle(&path, &cache).unwrap(), 1);
+        assert!(cache.get(&key).is_some());
+        std::fs::write(&path, b"garbage").unwrap();
+        assert!(read_bundle(&path).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

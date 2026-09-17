@@ -26,7 +26,7 @@
 // not-unsafe-ptr-arg lint doesn't apply here.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use std::ffi::{c_char, CStr};
+use std::ffi::{c_char, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
@@ -335,7 +335,7 @@ pub extern "C" fn vcad_scene_from_json(json: *const u8, json_len: usize) -> *mut
                 return ptr::null_mut();
             }
         };
-        match evaluate_document(&doc, &EvalOptions::default()) {
+        match evaluate_document(&doc, &open_opts()) {
             Ok(scene) => Box::into_raw(Box::new(VcadScene {
                 inner: scene,
                 doc: Some(doc),
@@ -386,7 +386,7 @@ pub extern "C" fn vcad_scene_from_json_in(
                 vcad_eval::resolve_mesh_paths(&mut doc, std::path::Path::new(dir));
             }
         }
-        match evaluate_document(&doc, &EvalOptions::default()) {
+        match evaluate_document(&doc, &open_opts()) {
             Ok(scene) => Box::into_raw(Box::new(VcadScene {
                 inner: scene,
                 doc: Some(doc),
@@ -422,7 +422,7 @@ pub extern "C" fn vcad_scene_from_loon(loon: *const u8, loon_len: usize) -> *mut
             Ok(d) => d,
             Err(_) => return ptr::null_mut(),
         };
-        match evaluate_document(&doc, &EvalOptions::default()) {
+        match evaluate_document(&doc, &open_opts()) {
             Ok(scene) => Box::into_raw(Box::new(VcadScene {
                 inner: scene,
                 doc: Some(doc),
@@ -1086,12 +1086,42 @@ pub extern "C" fn vcad_doc_gripper_slice1() -> *mut VcadDoc {
     .unwrap_or(ptr::null_mut())
 }
 
-/// Interactive eval options: skip the O(n^2) clash pass the native app doesn't render.
+/// Options for opening a document: the default evaluation plus the on-disk
+/// root-mesh cache, so a document any vcad tool has already solved opens
+/// without a kernel walk.
+fn open_opts() -> EvalOptions {
+    EvalOptions {
+        root_cache: root_mesh_cache()
+            .map(|c| c as std::rc::Rc<dyn vcad_eval::cache::RootMeshCache>),
+        ..Default::default()
+    }
+}
+
+/// Interactive eval options: skip the O(n^2) clash pass the native app
+/// doesn't render, and consult the on-disk root-mesh cache
+/// (`vcad_eval::cache`, `~/.cache/vcad`, `VCAD_CACHE=0` to disable) so a
+/// document any vcad tool has already solved opens without a kernel walk.
+/// Cache hits carry no BRep: ray tracing and face ids degrade to "unavailable"
+/// for those parts, feature edges (mesh-derived) are unaffected.
 fn interactive_opts() -> EvalOptions {
     EvalOptions {
         skip_clash_detection: true,
+        root_cache: root_mesh_cache()
+            .map(|c| c as std::rc::Rc<dyn vcad_eval::cache::RootMeshCache>),
         ..Default::default()
     }
+}
+
+thread_local! {
+    /// One disk cache handle per thread (the eval API is single-threaded per
+    /// call; the native app evaluates on a background thread).
+    static ROOT_CACHE: std::rc::Rc<Option<std::rc::Rc<vcad_eval::cache::DiskMeshCache>>> =
+        std::rc::Rc::new(vcad_eval::cache::DiskMeshCache::from_env().map(std::rc::Rc::new));
+}
+
+/// The process-wide root-mesh cache, if enabled and the kernel id is hashed.
+fn root_mesh_cache() -> Option<std::rc::Rc<vcad_eval::cache::DiskMeshCache>> {
+    ROOT_CACHE.with(|c| (**c).clone())
 }
 
 /// Set a parameter on a resident document and re-evaluate to a fresh scene.
@@ -2459,6 +2489,7 @@ mod tests {
                 clock: None,
                 root_cache: None,
                 mesh_segments: 0,
+                on_root: None,
             };
             let scene = evaluate_document(doc, &opts).unwrap();
             // roots in order: enclosure (4), board (9), bracket (12).
@@ -3035,5 +3066,309 @@ mod tests {
         )
         .is_null());
         vcad_scene_free(scene);
+    }
+}
+
+// MARK: - Progressive evaluation + mesh bundles
+
+/// A document evaluation running on its own thread.
+///
+/// `vcad_eval_begin` parses and starts the kernel walk; `vcad_eval_progress`
+/// reports how many visible roots have landed; `vcad_eval_part_mesh` borrows a
+/// landed root's mesh so a viewport can draw parts while the rest solve;
+/// `vcad_eval_finish` joins and hands back the complete scene (or null, with
+/// `vcad_last_error` set). `vcad_eval_abandon` frees the job without waiting —
+/// the kernel keeps running to completion on its thread and the result is
+/// dropped. Not thread-safe: one caller drives a job.
+pub struct VcadEvalJob {
+    progress: std::sync::Arc<std::sync::Mutex<EvalProgress>>,
+    handle: Option<std::thread::JoinHandle<Result<VcadScene, String>>>,
+}
+
+#[derive(Default)]
+struct EvalProgress {
+    done: usize,
+    total: usize,
+    finished: bool,
+    parts: Vec<Option<vcad_eval::EvaluatedMesh>>,
+}
+
+/// Parse `json` (mesh paths resolved against `base_dir`, may be null) and
+/// evaluate it on a background thread. Null when the document fails to
+/// parse; a kernel failure surfaces from `vcad_eval_finish`.
+#[no_mangle]
+pub extern "C" fn vcad_eval_begin(
+    json: *const u8,
+    json_len: usize,
+    base_dir: *const u8,
+    base_dir_len: usize,
+) -> *mut VcadEvalJob {
+    if json.is_null() {
+        return ptr::null_mut();
+    }
+    err::clear_error();
+    let bytes = unsafe { std::slice::from_raw_parts(json, json_len) };
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        err::set_error("document is not UTF-8");
+        return ptr::null_mut();
+    };
+    let mut doc = match Document::from_json(text) {
+        Ok(d) => d,
+        Err(e) => {
+            err::set_error(format!("parse: {e}"));
+            return ptr::null_mut();
+        }
+    };
+    if !base_dir.is_null() && base_dir_len > 0 {
+        let db = unsafe { std::slice::from_raw_parts(base_dir, base_dir_len) };
+        if let Ok(dir) = std::str::from_utf8(db) {
+            vcad_eval::resolve_mesh_paths(&mut doc, std::path::Path::new(dir));
+        }
+    }
+    let progress = std::sync::Arc::new(std::sync::Mutex::new(EvalProgress::default()));
+    let shared = progress.clone();
+    let handle = std::thread::Builder::new()
+        .name("vcad-eval".into())
+        .spawn(move || {
+            let reporter = shared.clone();
+            let mut opts = open_opts();
+            opts.on_root = Some(Box::new(move |index, total, mesh| {
+                if let Ok(mut p) = reporter.lock() {
+                    if p.parts.len() != total {
+                        p.parts.resize_with(total, || None);
+                    }
+                    p.total = total;
+                    if index < total {
+                        p.parts[index] = Some(mesh.clone());
+                    }
+                    p.done = p.done.max(index + 1);
+                }
+            }));
+            let result = catch_unwind(AssertUnwindSafe(|| evaluate_document(&doc, &opts)));
+            let out = match result {
+                Ok(Ok(scene)) => Ok(VcadScene {
+                    inner: scene,
+                    doc: Some(doc),
+                }),
+                Ok(Err(e)) => Err(format!("evaluate: {e}")),
+                Err(_) => Err("evaluate: kernel panic".to_string()),
+            };
+            if let Ok(mut p) = shared.lock() {
+                p.finished = true;
+            }
+            out
+        });
+    match handle {
+        Ok(handle) => Box::into_raw(Box::new(VcadEvalJob {
+            progress,
+            handle: Some(handle),
+        })),
+        Err(e) => {
+            err::set_error(format!("could not start evaluation: {e}"));
+            ptr::null_mut()
+        }
+    }
+}
+
+/// How far the job is: visible roots landed / total. Returns true once the
+/// kernel walk has finished (successfully or not).
+#[no_mangle]
+pub extern "C" fn vcad_eval_progress(
+    job: *const VcadEvalJob,
+    done: *mut usize,
+    total: *mut usize,
+) -> bool {
+    if job.is_null() {
+        return true;
+    }
+    let j: &VcadEvalJob = unsafe { &*job };
+    let Ok(p) = j.progress.lock() else {
+        return true;
+    };
+    if !done.is_null() {
+        unsafe { *done = p.done };
+    }
+    if !total.is_null() {
+        unsafe { *total = p.total };
+    }
+    p.finished
+}
+
+/// Borrow the mesh of root `index` if it has landed (empty view otherwise).
+/// Valid until the job is finished or abandoned.
+#[no_mangle]
+pub extern "C" fn vcad_eval_part_mesh(job: *const VcadEvalJob, index: usize) -> VcadMeshView {
+    if job.is_null() {
+        return VcadMeshView::empty();
+    }
+    let j: &VcadEvalJob = unsafe { &*job };
+    let Ok(p) = j.progress.lock() else {
+        return VcadMeshView::empty();
+    };
+    match p.parts.get(index) {
+        // The slot is written once and the outer Vec never reallocates after
+        // it is sized, so the buffers behind this view stay put while other
+        // slots land.
+        Some(Some(mesh)) => eval_mesh_view(mesh),
+        _ => VcadMeshView::empty(),
+    }
+}
+
+/// Wait for the job and take its scene. Frees the job either way; null with
+/// `vcad_last_error` set when evaluation failed.
+#[no_mangle]
+pub extern "C" fn vcad_eval_finish(job: *mut VcadEvalJob) -> *mut VcadScene {
+    if job.is_null() {
+        return ptr::null_mut();
+    }
+    err::clear_error();
+    let mut j = unsafe { Box::from_raw(job) };
+    let Some(handle) = j.handle.take() else {
+        return ptr::null_mut();
+    };
+    match handle.join() {
+        Ok(Ok(scene)) => Box::into_raw(Box::new(scene)),
+        Ok(Err(msg)) => {
+            err::set_error(msg);
+            ptr::null_mut()
+        }
+        Err(_) => {
+            err::set_error("evaluate: kernel panic");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Free the job without waiting for it.
+#[no_mangle]
+pub extern "C" fn vcad_eval_abandon(job: *mut VcadEvalJob) {
+    if job.is_null() {
+        return;
+    }
+    let j = unsafe { Box::from_raw(job) };
+    drop(j); // the JoinHandle detaches; the thread finishes on its own
+}
+
+/// Write the scene's solved root meshes as a mesh bundle at `path` (UTF-8,
+/// `path_len` bytes), keyed as the root cache keys them. A document shipped
+/// with its bundle opens on another machine without a kernel walk (same
+/// kernel build). Returns the number of roots written; 0 when nothing was
+/// cacheable.
+#[no_mangle]
+pub extern "C" fn vcad_scene_write_mesh_bundle(
+    scene: *const VcadScene,
+    path: *const u8,
+    path_len: usize,
+) -> usize {
+    if scene.is_null() || path.is_null() {
+        return 0;
+    }
+    let s: &VcadScene = unsafe { &*scene };
+    let Ok(path) = std::str::from_utf8(unsafe { std::slice::from_raw_parts(path, path_len) })
+    else {
+        return 0;
+    };
+    let keys: Vec<vcad_eval::cache::RootKey> = s
+        .inner
+        .root_keys
+        .iter()
+        .map(|k| vcad_eval::cache::RootKey(k.clone().unwrap_or_default()))
+        .collect();
+    let entries: Vec<(&vcad_eval::cache::RootKey, &vcad_eval::EvaluatedMesh)> = keys
+        .iter()
+        .zip(s.inner.parts.iter())
+        .filter(|(k, p)| !k.0.is_empty() && !p.mesh.indices.is_empty())
+        .map(|(k, p)| (k, &p.mesh))
+        .collect();
+    if entries.is_empty() {
+        return 0;
+    }
+    match vcad_eval::cache::write_bundle(std::path::Path::new(path), &entries) {
+        Ok(()) => entries.len(),
+        Err(e) => {
+            err::set_error(format!("mesh bundle: {e}"));
+            0
+        }
+    }
+}
+
+/// Import a mesh bundle into the root cache so the next open of its document
+/// hits. Returns the number of entries imported (0 if the file is missing,
+/// malformed, or the cache is disabled).
+#[no_mangle]
+pub extern "C" fn vcad_mesh_bundle_import(path: *const u8, path_len: usize) -> usize {
+    if path.is_null() {
+        return 0;
+    }
+    let Ok(path) = std::str::from_utf8(unsafe { std::slice::from_raw_parts(path, path_len) })
+    else {
+        return 0;
+    };
+    let Some(cache) = root_mesh_cache() else {
+        return 0;
+    };
+    vcad_eval::cache::import_bundle(std::path::Path::new(path), &*cache).unwrap_or(0)
+}
+
+/// The root-cache key of part `index` (owned C string, free with
+/// `vcad_cam_free`), or null when that part is not cacheable. Keys are what
+/// `vcad_mesh_bundle_write` takes, so a saved document can ship its solved
+/// meshes without holding the scene open.
+#[no_mangle]
+pub extern "C" fn vcad_scene_root_key(scene: *const VcadScene, index: usize) -> *mut c_char {
+    if scene.is_null() {
+        return ptr::null_mut();
+    }
+    let s: &VcadScene = unsafe { &*scene };
+    match s.inner.root_keys.get(index) {
+        Some(Some(k)) => CString::new(k.as_str())
+            .map(|c| c.into_raw())
+            .unwrap_or(ptr::null_mut()),
+        _ => ptr::null_mut(),
+    }
+}
+
+/// Write a mesh bundle at `path` for `keys` (UTF-8, newline-separated root
+/// cache keys), pulling each mesh from the root cache. Keys the cache does
+/// not hold are skipped. Returns the number of entries written.
+#[no_mangle]
+pub extern "C" fn vcad_mesh_bundle_write(
+    keys: *const u8,
+    keys_len: usize,
+    path: *const u8,
+    path_len: usize,
+) -> usize {
+    if keys.is_null() || path.is_null() {
+        return 0;
+    }
+    let (Ok(keys), Ok(path)) = (
+        std::str::from_utf8(unsafe { std::slice::from_raw_parts(keys, keys_len) }),
+        std::str::from_utf8(unsafe { std::slice::from_raw_parts(path, path_len) }),
+    ) else {
+        return 0;
+    };
+    let Some(cache) = root_mesh_cache() else {
+        return 0;
+    };
+    let owned: Vec<(vcad_eval::cache::RootKey, vcad_eval::EvaluatedMesh)> = keys
+        .lines()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        .filter_map(|k| {
+            let key = vcad_eval::cache::RootKey(k.to_string());
+            vcad_eval::cache::RootMeshCache::get(&*cache, &key).map(|m| (key, m))
+        })
+        .collect();
+    if owned.is_empty() {
+        return 0;
+    }
+    let entries: Vec<(&vcad_eval::cache::RootKey, &vcad_eval::EvaluatedMesh)> =
+        owned.iter().map(|(k, m)| (k, m)).collect();
+    match vcad_eval::cache::write_bundle(std::path::Path::new(path), &entries) {
+        Ok(()) => entries.len(),
+        Err(e) => {
+            err::set_error(format!("mesh bundle: {e}"));
+            0
+        }
     }
 }

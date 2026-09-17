@@ -120,8 +120,21 @@ pub fn evaluate_document(
     };
 
     // Evaluate visible roots
-    let mut parts = Vec::new();
+    let mut parts: Vec<EvaluatedPart> = Vec::new();
     let mut solids = Vec::new();
+    let mut root_keys: Vec<Option<String>> = Vec::new();
+    let total_visible = doc
+        .roots
+        .iter()
+        .filter(|e| e.visible != Some(false))
+        .count();
+    let landed =
+        |parts: &Vec<EvaluatedPart>, root_keys: &mut Vec<Option<String>>, key: Option<String>| {
+            root_keys.push(key);
+            if let (Some(f), Some(part)) = (options.on_root.as_ref(), parts.last()) {
+                f(parts.len() - 1, total_visible, &part.mesh);
+            }
+        };
 
     for (idx, entry) in doc.roots.iter().enumerate() {
         if entry.visible == Some(false) {
@@ -137,6 +150,7 @@ pub fn evaluate_document(
                 solid: None,
             });
             solids.push(None);
+            landed(&parts, &mut root_keys, None);
             continue;
         }
 
@@ -148,6 +162,11 @@ pub fn evaluate_document(
                 solid: None,
             });
             solids.push(None);
+            landed(
+                &parts,
+                &mut root_keys,
+                cache_key.as_ref().map(|k| k.0.clone()),
+            );
             continue;
         }
 
@@ -185,12 +204,16 @@ pub fn evaluate_document(
         match eval_outcome {
             Ok(Ok((mesh, solid))) => {
                 store(&cache_key, &mesh);
+                let key = (!mesh.indices.is_empty())
+                    .then(|| cache_key.as_ref().map(|k| k.0.clone()))
+                    .flatten();
                 parts.push(EvaluatedPart {
                     mesh,
                     material: entry.material.clone(),
                     solid: solid.clone(),
                 });
                 solids.push(solid);
+                landed(&parts, &mut root_keys, key);
             }
             Ok(Err(err)) => {
                 failures.push(RootFailure {
@@ -204,6 +227,7 @@ pub fn evaluate_document(
                     solid: None,
                 });
                 solids.push(None);
+                landed(&parts, &mut root_keys, None);
             }
             Err(panic_payload) => {
                 failures.push(RootFailure {
@@ -217,6 +241,7 @@ pub fn evaluate_document(
                     solid: None,
                 });
                 solids.push(None);
+                landed(&parts, &mut root_keys, None);
             }
         }
     }
@@ -412,6 +437,7 @@ pub fn evaluate_document(
         clashes,
         failures,
         timing,
+        root_keys,
     })
 }
 
@@ -603,6 +629,73 @@ fn evaluate_op_timed(
         CsgOp::Empty => Ok(Some(Solid::empty())),
 
         CsgOp::Union { left, right } => {
+            // A left-leaning chain `((a ∪ b) ∪ c) ∪ … ∪ n` — what every
+            // `[pipe … [union x] [union y] …]` compiles to — is kept in
+            // its authored order while that stays analytic, and reassociated
+            // only when it does not. See `union_solids` for why.
+            let operand_ids = collect_union_chain(*left, *right, nodes);
+            if operand_ids.len() > 2 {
+                // 1. As authored. If every union stays analytic this IS the
+                //    result, bit for bit what the chain always produced.
+                let mut authored = Vec::with_capacity(operand_ids.len());
+                for id in &operand_ids {
+                    if let Some(s) = eval_child(*id, cache)? {
+                        authored.push(s);
+                    }
+                }
+                if authored.len() < 2 {
+                    return Ok(authored.pop());
+                }
+                let failed_at = match union_fold_analytic(&authored) {
+                    Ok(clean) => return Ok(Some(clean)),
+                    Err(i) => i,
+                };
+                // 2. The authored order went non-analytic at `failed_at`, and
+                //    every union after it would be a mesh boolean. If that
+                //    tail is long, search for an association that stays
+                //    clean: same-rotation operands fused in their own frame,
+                //    then smallest-first pairing. A short tail is left alone —
+                //    there is little to save, and the mesh path's result for
+                //    such documents is calibrated (`tests/shell_ring_manifold.rs`).
+                let tail = authored.len().saturating_sub(failed_at);
+                if tail > UNION_SEARCH_MIN_TAIL && std::env::var_os("VCAD_NO_UNION_TREE").is_none()
+                {
+                    let mut grouped = Vec::with_capacity(operand_ids.len());
+                    for group in group_by_rotation(&operand_ids, nodes) {
+                        match group {
+                            UnionOperand::Single(id) => {
+                                if let Some(s) = eval_child(id, cache)? {
+                                    grouped.push(s);
+                                }
+                            }
+                            // R(a) ∪ R(b) = R(a ∪ b): fuse the group in its own
+                            // unrotated frame, then rotate once.
+                            UnionOperand::Rotated { angles, children } => {
+                                let mut inner = Vec::with_capacity(children.len());
+                                for c in &children {
+                                    if let Some(s) = eval_child(*c, cache)? {
+                                        inner.push(s);
+                                    }
+                                }
+                                let fused = match inner.len() {
+                                    0 => None,
+                                    1 => inner.pop(),
+                                    _ => Some(union_group(inner)),
+                                };
+                                if let Some(f) = fused {
+                                    grouped.push(f.apply_transform(&rotation_transform(&angles)));
+                                }
+                            }
+                        }
+                    }
+                    if let Some(found) = union_tree(&grouped, Instant::now() + batch_budget()) {
+                        return Ok(Some(found));
+                    }
+                }
+                // 3. Nothing clean exists within budget: the authored fold, to
+                //    completion, exactly as before.
+                return Ok(Some(union_fold(authored)));
+            }
             let l = eval_child(*left, cache)?;
             let r = eval_child(*right, cache)?;
             match (l, r) {
@@ -2001,6 +2094,317 @@ fn collect_difference_chain(
 ///
 /// A batched result that is not a true B-rep is discarded and the chain cut
 /// one tool at a time — the check that was already here, unchanged.
+/// Walk a left-leaning union chain `((a ∪ b) ∪ c) ∪ …` down to its operands,
+/// in authored order. Only the LEFT operand is followed: the chain a pipe
+/// produces nests on the left, and a right operand that is itself a union
+/// is a deliberately grouped sub-assembly whose node other roots may share.
+fn collect_union_chain(
+    left: NodeId,
+    right: NodeId,
+    nodes: &HashMap<NodeId, vcad_ir::Node>,
+) -> Vec<NodeId> {
+    let mut operands = vec![right];
+    let mut base = left;
+    while let Some(node) = nodes.get(&base) {
+        match &node.op {
+            CsgOp::Union { left: l, right: r } => {
+                operands.push(*r);
+                base = *l;
+            }
+            _ => break,
+        }
+    }
+    operands.push(base);
+    operands.reverse();
+    operands
+}
+
+/// One operand of a union chain after rotation hoisting.
+enum UnionOperand {
+    /// Evaluate this node as authored.
+    Single(NodeId),
+    /// Several operands that were each wrapped in the SAME `Rotate`: their
+    /// unrotated children, to be fused first and rotated once.
+    Rotated {
+        angles: vcad_ir::Vec3,
+        children: Vec<NodeId>,
+    },
+}
+
+/// Group a union chain's operands by their outermost rotation.
+///
+/// A generator that places a feature around an axis emits each piece of the
+/// feature separately rotated — `[rotate 0 0 30 post]`, `[rotate 0 0 30
+/// fillet-block]` — so faces that are exactly coplanar in the feature's own
+/// frame reach the boolean as two independently rotated, *almost* coplanar
+/// faces. Near-coincident planes are the worst input a boolean can get: the
+/// stator that prompted this went from an analytic 3 s solve to a 210 s mesh
+/// fallback on the first rotated fillet block. Rotation distributes over
+/// union, so fusing same-rotation operands in their shared unrotated frame
+/// and rotating the result once is exactly the same solid with the coplanar
+/// contacts still exact. `VCAD_NO_UNION_HOIST=1` turns it off (a kernel knob,
+/// so it is part of the cache key).
+fn group_by_rotation(
+    operand_ids: &[NodeId],
+    nodes: &HashMap<NodeId, vcad_ir::Node>,
+) -> Vec<UnionOperand> {
+    if std::env::var_os("VCAD_NO_UNION_HOIST").is_some() {
+        return operand_ids
+            .iter()
+            .map(|id| UnionOperand::Single(*id))
+            .collect();
+    }
+    // (rotation bits) -> index into `out`, first-occurrence order preserved.
+    let mut slot: HashMap<(u64, u64, u64), usize> = HashMap::new();
+    let mut out: Vec<(Option<vcad_ir::Vec3>, Vec<NodeId>, NodeId)> = Vec::new();
+    for id in operand_ids {
+        let rotated = match nodes.get(id).map(|n| &n.op) {
+            Some(CsgOp::Rotate { child, angles })
+                if angles.x != 0.0 || angles.y != 0.0 || angles.z != 0.0 =>
+            {
+                Some((*child, *angles))
+            }
+            _ => None,
+        };
+        match rotated {
+            Some((child, angles)) => {
+                let key = (angles.x.to_bits(), angles.y.to_bits(), angles.z.to_bits());
+                match slot.get(&key) {
+                    Some(i) => out[*i].1.push(child),
+                    None => {
+                        slot.insert(key, out.len());
+                        out.push((Some(angles), vec![child], *id));
+                    }
+                }
+            }
+            None => out.push((None, Vec::new(), *id)),
+        }
+    }
+    out.into_iter()
+        .map(|(angles, children, id)| match angles {
+            // A rotation only one operand uses gains nothing from hoisting.
+            Some(angles) if children.len() > 1 => UnionOperand::Rotated { angles, children },
+            _ => UnionOperand::Single(id),
+        })
+        .collect()
+}
+
+/// The transform a `Rotate { angles }` node applies (degrees, X then Y then Z),
+/// matching `collect_transform_chain`.
+fn rotation_transform(angles: &vcad_ir::Vec3) -> Transform {
+    let rx = Transform::rotation_x(angles.x.to_radians());
+    let ry = Transform::rotation_y(angles.y.to_radians());
+    let rz = Transform::rotation_z(angles.z.to_radians());
+    rx.then(&ry).then(&rz)
+}
+
+/// How many operands must remain after the authored fold's first
+/// non-analytic union before an alternative association is searched for.
+const UNION_SEARCH_MIN_TAIL: usize = 8;
+
+/// Fuse the members of a hoisted rotation group. Only reached once the search
+/// has been triggered for the enclosing chain, so it always searches: a group
+/// left as soup would disqualify the whole tree.
+///
+/// # Why the authored order comes first, everywhere
+///
+/// Reassociating a union is mathematically free and numerically anything
+/// but, and **`Analytic` fidelity does not mean the solid is right**. Two
+/// documents calibrate this:
+///
+/// * The rana-60 **stator** — a ring with fillet blocks unioned one at a time,
+///   each a cube minus a cylinder tangent to the body's face. The second block
+///   of a pair meets a face the first already trimmed along that tangent
+///   line, and the union then either collapses to triangle soup or returns a
+///   grossly wrong solid that still reports `Analytic`. An earlier revision
+///   of this search chased fidelity alone and produced an all-analytic stator
+///   in 52 s that was a third of the part's volume. The kernel now bounds
+///   every union's volume (`union_volume_out_of_bounds`), so a wrong pair
+///   reaches this code as a non-analytic one.
+/// * The **shell-ring** tool pipe goes to soup at its third of four operands,
+///   and the mesh path's result for it is clean and calibrated; an
+///   all-analytic reassociation of the same four operands leaves the
+///   downstream difference with non-manifold edges.
+///
+/// So the authored order is kept whenever it is clean (bit-identical
+/// results), and an alternative is searched for only when the authored order
+/// has failed AND a long tail of mesh booleans would follow — chained mesh
+/// booleans re-split each other's coplanar caps without bound.
+fn union_group(operands: Vec<Solid>) -> Solid {
+    if let Ok(clean) = union_fold_analytic(&operands) {
+        return clean;
+    }
+    if let Some(found) = union_tree(&operands, Instant::now() + batch_budget()) {
+        return found;
+    }
+    union_fold(operands)
+}
+
+/// The authored left fold, abandoned at the first union that is not analytic
+/// (a failing union is cheap to detect; everything after it is not). `Err`
+/// carries the index of the operand at which it failed.
+fn union_fold_analytic(operands: &[Solid]) -> Result<Solid, usize> {
+    let trace = std::env::var_os("VCAD_UNION_TRACE").is_some();
+    let Some((first, rest)) = operands.split_first() else {
+        return Err(0);
+    };
+    if first.fidelity() != SolidFidelity::Analytic {
+        if trace {
+            eprintln!("[union-fold] operand 0 is already {:?}", first.fidelity());
+        }
+        return Err(0);
+    }
+    let mut acc = first.clone();
+    for (i, s) in rest.iter().enumerate() {
+        if s.fidelity() != SolidFidelity::Analytic {
+            if trace {
+                eprintln!(
+                    "[union-fold] operand {} is already {:?}",
+                    i + 1,
+                    s.fidelity()
+                );
+            }
+            return Err(i + 1);
+        }
+        acc = acc.union(s);
+        if acc.fidelity() != SolidFidelity::Analytic {
+            if trace {
+                eprintln!(
+                    "[union-fold] union with operand {} of {} -> {:?} ({:?})",
+                    i + 1,
+                    operands.len(),
+                    acc.fidelity(),
+                    acc.degradations().last()
+                );
+            }
+            return Err(i + 1);
+        }
+    }
+    Ok(acc)
+}
+
+/// The authored left fold, to completion.
+fn union_fold(operands: Vec<Solid>) -> Solid {
+    let mut it = operands.into_iter();
+    let mut acc = it.next().expect("union_fold needs at least one operand");
+    for s in it {
+        acc = acc.union(&s);
+    }
+    acc
+}
+
+/// Pairwise halving reduction, smallest operands first, with the deadline
+/// checked before every union.
+///
+/// Two things make this more than a plain halving:
+///
+/// * **Small first.** Operands are ordered by bounding-box volume, so detail
+///   pieces fuse with each other before any of them meets the body. That is
+///   not just cheaper: `body ∪ (a ∪ b)` stays analytic where `(body ∪ a) ∪ b`
+///   collapses when `a` and `b` are fillet blocks whose cut cylinder is
+///   tangent to the body's face — the second block then meets a face the first
+///   one already trimmed along the same tangent line.
+/// * **A bad pair is not the end.** A non-analytic union costs milliseconds to
+///   discover, so the pair is left unfused, the level is rotated by one so
+///   everything meets a different partner, and the reduction carries on.
+/// * **A stall finishes here, not in the authored fold.** When a whole level
+///   fuses nothing (or the budget runs out), what is left genuinely needs the
+///   mesh boolean — so the few remaining groups are mesh-unioned. Going back
+///   to the authored order instead would chain a mesh boolean per operand, and
+///   chained mesh booleans re-split each other's coplanar caps without bound
+///   (the rana-60 stator reached 16 GB before it was stopped).
+fn union_tree(operands: &[Solid], deadline: Instant) -> Option<Solid> {
+    if operands
+        .iter()
+        .any(|s| s.fidelity() != SolidFidelity::Analytic)
+    {
+        return None;
+    }
+    // `VCAD_UNION_TRACE=1`: one stderr line per pairwise union — how long it
+    // took, what it touched, and whether it stayed analytic — so a document
+    // that falls off the fast path says which contact did it.
+    let trace = std::env::var_os("VCAD_UNION_TRACE").is_some();
+    let size = |s: &Solid| {
+        let (lo, hi) = s.bounding_box();
+        (hi[0] - lo[0]).max(0.0) * (hi[1] - lo[1]).max(0.0) * (hi[2] - lo[2]).max(0.0)
+    };
+    let mut level: Vec<Solid> = operands.to_vec();
+    level.sort_by(|a, b| {
+        size(a)
+            .partial_cmp(&size(b))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut depth = 0usize;
+    while level.len() > 1 {
+        depth += 1;
+        let mut next = Vec::with_capacity(level.len().div_ceil(2));
+        let mut fused = 0usize;
+        let mut refused = 0usize;
+        // The last pair's mesh-boolean result, kept so a stall on the final
+        // two groups does not pay for the same (expensive) union twice.
+        let mut last_refused: Option<Solid> = None;
+        let mut it = level.into_iter();
+        while let Some(a) = it.next() {
+            let Some(b) = it.next() else {
+                next.push(a);
+                break;
+            };
+            if Instant::now() >= deadline {
+                if trace {
+                    eprintln!("[union-tree] budget exhausted at level {depth}");
+                }
+                next.push(a);
+                next.push(b);
+                next.extend(it);
+                return Some(union_fold(next));
+            }
+            let t0 = Instant::now();
+            let u = a.union(&b);
+            let clean = u.fidelity() == SolidFidelity::Analytic;
+            if trace {
+                let (alo, ahi) = a.bounding_box();
+                let (blo, bhi) = b.bounding_box();
+                eprintln!(
+                    "[union-tree] L{depth} {:?} in {:.0} ms  vol {:.1} ∪ {:.1} = {:.1}  a=[{:.1},{:.1}]..[{:.1},{:.1}] b=[{:.1},{:.1}]..[{:.1},{:.1}]",
+                    u.fidelity(),
+                    t0.elapsed().as_secs_f64() * 1000.0,
+                    a.volume(),
+                    b.volume(),
+                    u.volume(),
+                    alo[0], alo[1], ahi[0], ahi[1], blo[0], blo[1], bhi[0], bhi[1]
+                );
+            }
+            if clean {
+                next.push(u);
+                fused += 1;
+            } else {
+                // Leave the pair unfused; both get new partners next level.
+                next.push(a);
+                next.push(b);
+                refused += 1;
+                last_refused = Some(u);
+            }
+        }
+        if fused == 0 {
+            if trace {
+                eprintln!(
+                    "[union-tree] stalled at level {depth}: mesh-unioning the last {} groups",
+                    next.len()
+                );
+            }
+            return match last_refused {
+                Some(u) if next.len() == 2 => Some(u),
+                _ => Some(union_fold(next)),
+            };
+        }
+        if refused > 0 {
+            next.rotate_left(1);
+        }
+        level = next;
+    }
+    level.pop()
+}
+
 fn cut_chain(base: Solid, tools: &[Solid]) -> Solid {
     let deadline = Instant::now() + batch_budget();
 
@@ -2810,6 +3214,199 @@ mod tests {
             model_3d: None,
             properties: Default::default(),
         }
+    }
+
+    fn cube_at(id: NodeId, x: f64, nodes: &mut HashMap<NodeId, vcad_ir::Node>) -> NodeId {
+        nodes.insert(
+            id,
+            vcad_ir::Node {
+                id,
+                name: None,
+                op: CsgOp::Cube {
+                    size: vcad_ir::Vec3::new(10.0, 10.0, 10.0),
+                },
+            },
+        );
+        nodes.insert(
+            id + 100,
+            vcad_ir::Node {
+                id: id + 100,
+                name: None,
+                op: CsgOp::Translate {
+                    child: id,
+                    offset: vcad_ir::Vec3::new(x, 0.0, 0.0),
+                },
+            },
+        );
+        id + 100
+    }
+
+    /// A left-leaning union chain fuses as a balanced tree with the same
+    /// geometry the authored one-at-a-time chain produces.
+    #[test]
+    fn union_chain_matches_the_folded_chain() {
+        let mut nodes: HashMap<NodeId, vcad_ir::Node> = HashMap::new();
+        // Five overlapping cubes along X: ((((a ∪ b) ∪ c) ∪ d) ∪ e).
+        let leaves: Vec<NodeId> = (0..5)
+            .map(|i| cube_at(i, i as f64 * 7.0, &mut nodes))
+            .collect();
+        let mut acc = leaves[0];
+        for (k, leaf) in leaves.iter().enumerate().skip(1) {
+            let id = 500 + k as NodeId;
+            nodes.insert(
+                id,
+                vcad_ir::Node {
+                    id,
+                    name: None,
+                    op: CsgOp::Union {
+                        left: acc,
+                        right: *leaf,
+                    },
+                },
+            );
+            acc = id;
+        }
+        assert_eq!(collect_union_chain(503, leaves[4], &nodes), leaves);
+        let mut cache = HashMap::new();
+        let fused = evaluate_node(acc, &nodes, &mut cache).unwrap().unwrap();
+        // Same fold by hand.
+        let mut manual = Solid::cube(10.0, 10.0, 10.0);
+        for i in 1..5 {
+            manual =
+                manual.union(&Solid::cube(10.0, 10.0, 10.0).translate(i as f64 * 7.0, 0.0, 0.0));
+        }
+        let expect = 10.0 * 10.0 * (10.0 + 4.0 * 7.0);
+        assert!(
+            (fused.volume() - expect).abs() < 1e-6 * expect,
+            "tree volume {}",
+            fused.volume()
+        );
+        assert!(
+            (manual.volume() - expect).abs() < 1e-6 * expect,
+            "fold volume {}",
+            manual.volume()
+        );
+        assert_eq!(fused.bounding_box(), manual.bounding_box());
+    }
+
+    /// Operands that share a rotation are fused unrotated and rotated once;
+    /// the solid is the same one the separately rotated pieces make.
+    #[test]
+    fn union_chain_hoists_a_shared_rotation() {
+        let mut nodes: HashMap<NodeId, vcad_ir::Node> = HashMap::new();
+        let base = cube_at(0, 100.0, &mut nodes); // far away, unrotated
+        let a = cube_at(1, 0.0, &mut nodes);
+        let b = cube_at(2, 10.0, &mut nodes); // shares a face with `a`
+        let rot =
+            |id: NodeId, child: NodeId, deg: f64, nodes: &mut HashMap<NodeId, vcad_ir::Node>| {
+                nodes.insert(
+                    id,
+                    vcad_ir::Node {
+                        id,
+                        name: None,
+                        op: CsgOp::Rotate {
+                            child,
+                            angles: vcad_ir::Vec3::new(0.0, 0.0, deg),
+                        },
+                    },
+                );
+                id
+            };
+        let ra = rot(300, a, 30.0, &mut nodes);
+        let rb = rot(301, b, 30.0, &mut nodes);
+        let rc = rot(302, base, 75.0, &mut nodes); // a rotation nobody shares
+        let groups = group_by_rotation(&[base, ra, rb, rc], &nodes);
+        assert_eq!(groups.len(), 3);
+        assert!(matches!(&groups[0], UnionOperand::Single(id) if *id == base));
+        assert!(
+            matches!(&groups[1], UnionOperand::Rotated { children, .. } if children == &vec![a, b])
+        );
+        assert!(matches!(&groups[2], UnionOperand::Single(id) if *id == rc));
+
+        // ((base ∪ ra) ∪ rb): two face-sharing cubes rotated 30° plus a far cube.
+        nodes.insert(
+            400,
+            vcad_ir::Node {
+                id: 400,
+                name: None,
+                op: CsgOp::Union {
+                    left: base,
+                    right: ra,
+                },
+            },
+        );
+        nodes.insert(
+            401,
+            vcad_ir::Node {
+                id: 401,
+                name: None,
+                op: CsgOp::Union {
+                    left: 400,
+                    right: rb,
+                },
+            },
+        );
+        let mut cache = HashMap::new();
+        let fused = evaluate_node(401, &nodes, &mut cache).unwrap().unwrap();
+        let expect = 3.0 * 1000.0;
+        assert!(
+            (fused.volume() - expect).abs() < 1e-6 * expect,
+            "volume {}",
+            fused.volume()
+        );
+        assert_eq!(fused.fidelity(), SolidFidelity::Analytic);
+    }
+
+    /// `on_root` fires once per visible root with the landed mesh, and the
+    /// scene reports a cache key per part when a cache is configured.
+    #[test]
+    fn on_root_reports_every_visible_root_in_order() {
+        let mut nodes: HashMap<NodeId, vcad_ir::Node> = HashMap::new();
+        let a = cube_at(0, 0.0, &mut nodes);
+        let b = cube_at(1, 30.0, &mut nodes);
+        let doc = Document {
+            roots: vec![
+                vcad_ir::SceneEntry {
+                    root: a,
+                    material: "m".into(),
+                    visible: None,
+                },
+                vcad_ir::SceneEntry {
+                    root: b,
+                    material: "m".into(),
+                    visible: Some(false),
+                },
+                vcad_ir::SceneEntry {
+                    root: a,
+                    material: "m".into(),
+                    visible: None,
+                },
+            ],
+            nodes,
+            ..Default::default()
+        };
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = seen.clone();
+        let opts = EvalOptions {
+            skip_clash_detection: true,
+            on_root: Some(Box::new(move |i, total, mesh| {
+                sink.borrow_mut().push((i, total, mesh.indices.len()))
+            })),
+            root_cache: Some(std::rc::Rc::new(crate::cache::MemoryMeshCache::new())),
+            ..Default::default()
+        };
+        let scene = evaluate_document(&doc, &opts).unwrap();
+        let seen = seen.borrow();
+        assert_eq!(
+            seen.iter().map(|s| (s.0, s.1)).collect::<Vec<_>>(),
+            vec![(0, 2), (1, 2)]
+        );
+        assert!(seen.iter().all(|s| s.2 > 0));
+        assert_eq!(scene.root_keys.len(), 2);
+        assert_eq!(
+            scene.root_keys[0], scene.root_keys[1],
+            "same subgraph, same key"
+        );
     }
 
     /// End-to-end: an EdgeBlend node evaluates through the IR pipeline

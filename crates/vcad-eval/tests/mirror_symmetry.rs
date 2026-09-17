@@ -23,6 +23,7 @@ fn inspect(src: &str) -> (f64, [f64; 3]) {
             clock: None,
             root_cache: None,
             mesh_segments: 0,
+            on_root: None,
         },
     )
     .expect("evaluate_document");

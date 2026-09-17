@@ -7291,6 +7291,7 @@ pub fn evaluate_document(doc_json: &str, skip_clash_detection: bool) -> Result<J
         clock: Some(Box::new(WasmClock)),
         root_cache: None,
         mesh_segments: 0,
+        on_root: None,
     };
 
     let mut scene = vcad_eval::evaluate_document(&doc, &options)
