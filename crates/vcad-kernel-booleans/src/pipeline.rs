@@ -157,7 +157,8 @@ fn evaluate_curve(curve: &ssi::IntersectionCurve, t: f64) -> Point3 {
 }
 
 /// Would splitting planar `face` along its intersection with planar
-/// `cutter` accomplish nothing but fragmentation?
+/// `cutter` accomplish nothing but fragmentation? Only meaningful for a
+/// UNION — see the call site.
 ///
 /// True when two conditions hold together:
 ///
@@ -1148,8 +1149,16 @@ pub(crate) fn brep_boolean(
                 // coplanar pair is settled by the OnSame/OnSameInner
                 // tie-break, and the larger of the two is the one kept whole
                 // — so cutting it is not just useless, it is destructive.
-                let phantom_a = line_curve && flush_wall_phantom_cut(&a, face_a, &b, face_b);
-                let phantom_b = line_curve && flush_wall_phantom_cut(&b, face_b, &a, face_a);
+                // Unions only. The gate's premise is that the larger coplanar
+                // face survives WHOLE — true of a union, where the region under
+                // the smaller face is material either way. A difference has to
+                // cut that region out and an intersection keeps nothing else,
+                // so there the chords are the cut itself: a flush through-hole
+                // (a 64-gon bore prism out of a 64-gon disc, both caps
+                // coplanar) kept its caps and read 1120.79 mm³ against 1053.88.
+                let gate = line_curve && op == BooleanOp::Union;
+                let phantom_a = gate && flush_wall_phantom_cut(&a, face_a, &b, face_b);
+                let phantom_b = gate && flush_wall_phantom_cut(&b, face_b, &a, face_a);
                 let clipped_a: Option<Vec<(f64, f64)>> = (line_curve
                     && split::is_conical_face(&a, face_a))
                 .then(|| clip_to(&segs_a, &segs_b));

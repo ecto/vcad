@@ -332,3 +332,37 @@ fn twelve_filleted_posts_into_the_ring() {
         assert_volume_within(volume(&brep(result)), expected, 0.005, label);
     }
 }
+
+/// The phantom-chord gate belongs to unions alone. A difference whose tool
+/// ends flush on both of the target's caps — a through-bore the same height
+/// as the plate — has to cut the bore's footprint OUT of those caps; with the
+/// gate applied to every operation the caps stayed whole and a faceted donut
+/// read 1120.79 mm³ against 1053.88.
+#[test]
+fn a_flush_through_bore_still_cuts_the_caps() {
+    // A square plate minus a square bar of the same height, both z 0..4:
+    // every wall of the bar ends flush on the plate's top and bottom planes,
+    // and the bar's caps are coplanar with, contained in, and facing the same
+    // way as the plate's.
+    let plate = make_cube(20.0, 20.0, 4.0);
+    let bar = transformed(
+        make_cube(6.0, 6.0, 4.0),
+        &Transform::translation(7.0, 7.0, 0.0),
+    );
+    let cut = brep(boolean_op(&plate, &bar, BooleanOp::Difference, 32).expect("difference"));
+    let mesh = tessellate_brep(&cut, 32);
+    assert_volume_within(
+        mesh_signed_volume(&mesh),
+        (20.0 * 20.0 - 6.0 * 6.0) * 4.0,
+        0.001,
+        "plate − flush bar",
+    );
+    assert_eq!(
+        mesh_report(&mesh).open_edges,
+        0,
+        "plate − flush bar is not closed"
+    );
+
+    let common = brep(boolean_op(&plate, &bar, BooleanOp::Intersection, 32).expect("intersection"));
+    assert_volume_within(volume(&common), 6.0 * 6.0 * 4.0, 0.001, "plate ∩ flush bar");
+}
