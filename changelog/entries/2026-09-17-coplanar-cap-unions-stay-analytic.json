@@ -1,0 +1,13 @@
+{
+  "id": "2026-09-17-coplanar-cap-unions-stay-analytic",
+  "version": "0.10.0",
+  "date": "2026-09-17",
+  "category": "fix",
+  "title": "Unions of flush prismatic parts stay analytic",
+  "summary": "Posts, tabs and bosses unioned into a body with shared top and bottom faces no longer double or drop the caps over their overlap; operand order no longer changes the result.",
+  "details": "A small coplanar face lying inside a larger one was judged coincident from one side only, so `post ∪ ring` kept both copies of the overlap while `ring ∪ post` was exact; the larger face now wins. Planar faces are no longer cut by full-width chords from faces that merely end flush on them, which scrambled classification once two such chords crossed (twelve posts into a ring lost 9% of their volume). A line crossing a notched face in several spans now cuts the span it was recorded on rather than always the first. The rana-60 stator goes from 105k triangles of mesh fallback to 11.7k analytic triangles at +0.06% of its reference volume, in under half the time.",
+  "features": [
+    "kernel",
+    "booleans"
+  ]
+}

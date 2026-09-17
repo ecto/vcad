@@ -587,6 +587,83 @@ mod tests {
         );
     }
 
+    /// A flange off the MIDDLE segment of a split edge, with and without
+    /// relief notches — the fold union over a *notched* parent panel.
+    ///
+    /// The notches are the only difference between the two solids, and they
+    /// sit outside the bend's span, so the union must treat the bend zone
+    /// identically in both: the delta is exactly the two notch prisms.
+    /// It wasn't. The bend's inner cylinder is tangent to the plate, so the
+    /// sector's radial end face cuts an 80 × 0.0267 mm membrane out of the
+    /// plate's top face; on the un-notched plate that chord split cleanly and
+    /// the membrane was dropped, but on the notched one the same line crosses
+    /// the outline in three spans and `split_planar_face` cut the first one
+    /// three times — so the membrane survived and the delta read 160.9333
+    /// instead of 162, short by the 1.0667 mm³ that membrane is worth.
+    #[test]
+    fn relief_notches_are_the_only_delta_across_a_split_edge() {
+        use vcad_kernel_sheet::relief::{apply_bend_relief, ReliefParams};
+        const TT: f64 = 3.0;
+
+        let fold = |relieved: bool| -> f64 {
+            // 200 × 120 plate whose y = 0 edge is split at x = 60 and 140:
+            // the flange takes the middle segment, leaving parent material
+            // at both bend ends — which is what relief notches exist for.
+            let outline = vec![
+                Point2::new(0.0, 0.0),
+                Point2::new(60.0, 0.0),
+                Point2::new(140.0, 0.0),
+                Point2::new(200.0, 0.0),
+                Point2::new(200.0, 120.0),
+                Point2::new(0.0, 120.0),
+            ];
+            let mut m = base_flange_polygon_with_holes(outline, Vec::new(), TT).unwrap();
+            m.material = "al-soft".to_string();
+            add_edge_flange(
+                &mut m,
+                &BendTable::builtin(),
+                EdgeFlangeParams {
+                    panel: 0,
+                    edge_index: 1,
+                    length: 40.0,
+                    angle: FRAC_PI_2,
+                    radius: TT,
+                    direction: BendDirection::Up,
+                    position: FlangePosition::MaterialInside,
+                    material: "al-soft".to_string(),
+                    manual_k: None,
+                },
+            )
+            .unwrap();
+            if relieved {
+                let n = apply_bend_relief(&mut m, &ReliefParams::default()).unwrap();
+                assert_eq!(n, 2, "both bend ends need relief");
+            }
+            folded_sheet_solid(&m, 8).unwrap().volume().abs()
+        };
+
+        let plain = fold(false);
+        // Slabs + bend sector (mid-surface arc length × thickness), as in
+        // `expected_l_bracket_volume`. The ~0.02 % surplus is the ε lip the
+        // sector is oversized by so the unions stay transversal.
+        let rho = TT + TT / 2.0;
+        let expected = TT * (200.0 * 120.0 + 80.0 * 40.0) + FRAC_PI_2 * rho * TT * 80.0;
+        let rel = (plain - expected).abs() / expected;
+        assert!(
+            rel < 0.005,
+            "folded volume {plain:.4} vs expected {expected:.4} (rel err {rel:.5})"
+        );
+
+        // Default sizing for t = r = 3: max(1.5t, 1) = 4.5 wide × (r + t) = 6
+        // deep, through 3 mm of plate, at each of the two bend ends.
+        let cut = plain - fold(true);
+        let nominal = 2.0 * 4.5 * 6.0 * TT;
+        assert!(
+            (cut - nominal).abs() < 0.01,
+            "relief removed {cut} mm^3, expected {nominal}"
+        );
+    }
+
     #[test]
     fn hem_angle_is_rejected() {
         let mut m = base_flange_rect(60.0, 40.0, T).unwrap();

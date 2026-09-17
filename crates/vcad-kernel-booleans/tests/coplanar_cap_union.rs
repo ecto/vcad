@@ -3,7 +3,7 @@
 //! reaching it from the inside, and at every post root two fillet blocks (a
 //! cube minus a cylinder tangent to both the post's side and the ring's bore).
 //!
-//! The part solved to 6600 mm³ against a true 7850 mm³, and four separate
+//! The part solved to 6600 mm³ against a true 7850 mm³, and six separate
 //! defects were behind it. Each gets its smallest reproducer here. As
 //! everywhere in this crate the assertions are on VOLUME against a closed
 //! form: every one of these failures was a plausible-looking mesh of the
@@ -25,6 +25,16 @@
 //! 4. A union's volume bound is loose from below; a twelve-lump operand lost
 //!    the cap over every overlap region (−1.2%) inside it. A cracked union is
 //!    now refereed by the mesh boolean of the same operands.
+//! 5. A coplanar patch CONTAINED in a larger face read `OnSame` and won the
+//!    union's "operand A keeps the copy" tie-break, while the larger face,
+//!    which is not coincident with anything, was kept as `Outside` — so the
+//!    overlap was covered twice whenever the small one sat on the A side.
+//!    The tie-break now goes to the larger face (`OnSameInner`).
+//! 6. That larger face was then cut by a full-width chord for every wall of
+//!    the other solid that merely ENDS on its plane. Those chords partition
+//!    nothing the tie-break has not already settled, and enough of them
+//!    crossing inside one face fragment it past the point where the pieces
+//!    classify coherently.
 
 use vcad_kernel_booleans::mesh::csg::mesh_csg;
 use vcad_kernel_booleans::{
@@ -227,6 +237,73 @@ fn bore_circle_cuts_a_cap_whose_fillet_is_tangent_to_it() {
         "ring ∪ tangent fillet block: {got:.3} mm³, closed form {expected:.3} — \
          the bore circle did not split the block's caps"
     );
+}
+
+/// Defect 5. Operand order. `ring ∪ post` was exact and closed while
+/// `post ∪ ring` came out 4951.99 mm³ against 4946.55 with 30 open and 24
+/// over-used edges. The excess is exactly the flux of one doubled cap pair —
+/// 2.717 mm² of overlap at z = 11.1 and z = 17.1 integrate to 5.44 mm³ —
+/// because the post's cap patch is contained in the ring's annular cap but
+/// not the other way round: the patch read `OnSame` and won the union's
+/// "operand A keeps the coplanar copy" tie-break, while the annulus, which
+/// covers the same ground and more, read `Outside` and was kept too. The
+/// tie-break now goes to the LARGER face (`OnSameInner`), which is what made
+/// the other order right.
+#[test]
+fn a_contained_coplanar_patch_does_not_double_the_larger_face() {
+    let (ring, post) = (ring(), post());
+    let expected = volume(&ring) + volume(&post) - post_ring_overlap();
+    for (label, x, y) in [("ring ∪ post", &ring, &post), ("post ∪ ring", &post, &ring)] {
+        let (result, report) =
+            boolean_op_reported(x, y, BooleanOp::Union, SEGMENTS).expect("union");
+        assert_eq!(report.reason, None, "{label} left the analytic path");
+        let mesh = tessellate_brep(&brep(result), SEGMENTS);
+        assert_volume_within(mesh_signed_volume(&mesh), expected, 0.001, label);
+        assert_eq!(
+            mesh_report(&mesh).open_edges,
+            0,
+            "{label} is not closed — the overlap cap is covered twice"
+        );
+    }
+}
+
+/// Defect 6. The same twelve-lump operand as defect 4, but held to the
+/// ANALYTIC result — `reason == None` says the mesh referee never had to
+/// overrule, so this stands whether or not `VCAD_NO_UNION_REFEREE` is set.
+///
+/// A post's side and end planes each offered the ring's cap a chord spanning
+/// its full width, though the post reaches only 0.5 mm into a 4.75 mm wall.
+/// Two posts 30° apart are enough — their end planes cross at r 25.36, inside
+/// the cap — and twelve of them fragmented the cap and the bore wall past the
+/// point where the pieces classify coherently: the union lost 1.17% and kept
+/// 1358 open edges. Those chords partition nothing that matters (the coplanar
+/// tie-break already settles the caps) and are no longer recorded.
+#[test]
+fn twelve_filleted_posts_stay_analytic() {
+    let ring = ring();
+    let (a, b) = (fillet_block(1.0), fillet_block(-1.0));
+    let filleted = union(&union(&post(), &a), &b);
+    let per_post = volume(&filleted) - post_ring_overlap() - 2.0 * block_ring_overlap();
+
+    let mut posts = filleted.clone();
+    for k in 1..12 {
+        let t = Transform::rotation_z((30.0 * k as f64).to_radians());
+        posts = union(&posts, &transformed(filleted.clone(), &t));
+    }
+    let expected = volume(&ring) + 12.0 * per_post;
+
+    for (label, x, y) in [
+        ("ring ∪ posts", &ring, &posts),
+        ("posts ∪ ring", &posts, &ring),
+    ] {
+        let (result, report) =
+            boolean_op_reported(x, y, BooleanOp::Union, SEGMENTS).expect("union");
+        assert_eq!(
+            report.reason, None,
+            "{label} fell off the analytic path onto the mesh fallback"
+        );
+        assert_volume_within(volume(&brep(result)), expected, 0.005, label);
+    }
 }
 
 /// Defect 4. Twelve filleted posts as ONE operand. The analytic union kept

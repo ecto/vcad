@@ -179,21 +179,13 @@ fn bend_relief_cuts_notches_at_the_bend_ends() {
 
     // Two notches, each at the kernel's default sizing for t = 3, r = 3:
     // max(1.5t, 1) = 4.5 wide x (r + t) = 6 deep, through 3 mm of plate.
-    //
-    // 1.5 mm³ of slack, not 1.0: the un-relieved fold now reads 1.07 mm³
-    // lighter (83 311.40 against 83 312.47, 0.0013%). The plate's top face
-    // opens with three collinear vertices (0, 60, 140 along the flange edge),
-    // and `find_line_polygon_crossings` used to call that a degenerate
-    // polygon and skip the bend-line split altogether; it now makes the split
-    // the pipeline always intended, and classification then gives up an
-    // 80 × 0.027 × 0.49 sliver along the bend's tangent line — inside the
-    // bend's own chord sag. The relieved solid is bit-identical. The slack
-    // still sits far under what this test exists to catch (a lost notch is
-    // 81 mm³; the projection bug it was written for lost 46).
+    // The notches are the only difference between the two solids, so the cut
+    // is exact to well under a mm³ (see the kernel-side twin,
+    // `vcad_kernel::sheet_fold::tests::relief_notches_are_the_only_delta_across_a_split_edge`).
     let cut = without - with;
     let nominal = 2.0 * 4.5 * 6.0 * 3.0;
     assert!(
-        (cut - nominal).abs() < 1.5,
+        (cut - nominal).abs() < 1.0,
         "relief removed {cut} mm^3, expected {nominal}"
     );
 }
