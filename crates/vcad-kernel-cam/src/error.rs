@@ -104,6 +104,25 @@ pub enum CamError {
 
     /// This build has no polygon offsetter, so the centre-line fallback cannot
     /// be computed.
+    ///
+    /// No longer produced: since wave 2 every target offsets with
+    /// [`fit::offset_loop`](crate::fit::offset_loop). Kept so callers that
+    /// match on it still compile.
     #[error("the centre-line fallback needs the native polygon offsetter, which this build lacks")]
     CentreLineUnavailable,
+
+    /// An operation refused, in its own words.
+    ///
+    /// Hole making ([`DrillError`](crate::DrillError)) says things no variant
+    /// here could say — which tool cannot plunge, which hole is past its
+    /// flutes — and the message a machinist has to act on must survive being
+    /// carried. It is carried verbatim: nothing is prefixed or reworded.
+    #[error("{0}")]
+    Operation(String),
+}
+
+impl From<crate::DrillError> for CamError {
+    fn from(err: crate::DrillError) -> Self {
+        CamError::Operation(err.to_string())
+    }
 }

@@ -24,13 +24,7 @@
 //! };
 //!
 //! // Create a facing operation
-//! let face = Face {
-//!     min_x: 0.0,
-//!     min_y: 0.0,
-//!     max_x: 100.0,
-//!     max_y: 50.0,
-//!     depth: 1.0,
-//! };
+//! let face = Face::new(0.0, 0.0, 100.0, 50.0, 1.0);
 //!
 //! let settings = CamSettings {
 //!     stepover: 4.0,
@@ -55,11 +49,14 @@ pub mod dropcutter;
 mod error;
 pub mod fit;
 pub mod gear;
+pub mod geom2d;
 mod job;
 pub mod materials;
 mod operation;
 pub mod outline;
 pub mod post;
+pub mod receipt;
+pub mod stock;
 mod tool;
 mod toolpath;
 pub mod verify2d;
@@ -76,19 +73,23 @@ pub use job::{
 pub use operation::{
     tip_length, BreakThrough, CamOperation, CentreLineStretch, Contour, Contour2D, ContourPhase,
     ContourReport, ContourSegment, CutDirection, Drill, DrillCycle, DrillError, EntryStyle, Face,
-    HelicalBore, Hole, Pocket2D, Point2D, Roughing3D, Spoilboard, Tab, ThinSlotStrategy,
+    HelicalBore, Hole, Pocket2D, PocketReport, Point2D, Roughing3D, Spoilboard, Stepover, Tab,
+    ThinSlotStrategy, UncutPatch,
 };
 pub use outline::{
     compare_outlines, is_prismatic, read_dxf, section_at_z, silhouette_from_above, write_dxf,
     CircleFit, Gap, Outline, OutlineDiff, OutlineError, PrismaticReport, Region, SectionOptions,
     SimplifyOptions,
 };
+pub use stock::{AllowanceRefusal, BottomAllowance, Stock};
 pub use tool::{
     check_flute_length, check_slot_ratio, check_stickout, check_tool_for_cut, has_error,
     CheckSeverity, CutContext, Tool, ToolCheck, ToolCheckKind, ToolEntry, ToolGeometry, ToolHolder,
     ToolLibrary,
 };
-pub use toolpath::{ArcDir, ArcPlane, CoolantMode, SpindleDir, Toolpath, ToolpathSegment};
+pub use toolpath::{
+    ArcDir, ArcPlane, CoolantMode, MachineLimits, SpindleDir, Toolpath, ToolpathSegment,
+};
 pub use verify2d::{
     verify_gcode, verify_toolpath, JobSpec, JobVerification, PartRegion, VerifyOptions,
 };

@@ -1,0 +1,9 @@
+{
+  "id": "2026-09-17-browser-contours-follow-the-part",
+  "version": "0.10.0",
+  "date": "2026-09-17",
+  "category": "fix",
+  "title": "Browser contours follow the part, not its bounding box",
+  "summary": "In the web app and the MCP server, a contour toolpath for any part that was not a rectangle or a circle was cut around its bounding box. Thin-slot contours were refused there too, and arc time and length now read true.",
+  "features": ["cam", "manufacture", "mcp"]
+}

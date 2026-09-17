@@ -16,3 +16,8 @@ vcad-kernel-cam = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+# Cap triangulation for the test targets: a target mesh has to be closed,
+# and ear-clipping a polygon with holes is the simplest correct way there.
+earcutr = "0.4"

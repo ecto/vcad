@@ -12,6 +12,7 @@ repository.workspace = true
 
 [dependencies]
 vcad-kernel-math = { workspace = true }
+vcad-receipt = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
@@ -22,5 +23,3 @@ geo-clipper = "0.8"
 
 [features]
 default = []
-# Use native geo-clipper when available (non-WASM)
-native-offset = []

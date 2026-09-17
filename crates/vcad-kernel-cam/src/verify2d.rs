@@ -231,9 +231,13 @@ impl Poly {
     fn index(loops: Vec<Loop2>, edges: Vec<([f64; 2], [f64; 2])>, bbox: [f64; 4]) -> Self {
         let n = edges.len().max(1) as f64;
         let (w, h) = ((bbox[2] - bbox[0]).max(1e-9), (bbox[3] - bbox[1]).max(1e-9));
-        // About one edge per cell, capped so a pathological aspect ratio or a
-        // huge loop cannot blow up the allocation.
-        let mut cell = (w * h / n).sqrt().max(1e-9);
+        // About one edge per cell. The area rule alone collapses when the
+        // segments are collinear — a set of tab stretches along one straight
+        // wall has zero height, which made the cells microscopic and the ring
+        // search effectively endless — so the longer span and the span itself
+        // both put a floor under it.
+        let span = w.max(h);
+        let mut cell = (w * h / n).sqrt().max(span / n).max(span * 1e-4).max(1e-9);
         let mut nx = ((w / cell).ceil() as usize).max(1);
         let mut ny = ((h / cell).ceil() as usize).max(1);
         while nx.saturating_mul(ny) > 1 << 22 {
@@ -292,7 +296,9 @@ impl Poly {
         ];
         let outside = (p[0] - clamped[0]).hypot(p[1] - clamped[1]);
         let mut best = f64::INFINITY;
-        let max_ring = self.nx + self.ny + 2;
+        // Past this every ring is entirely out of bounds, wherever the anchor
+        // sits.
+        let max_ring = self.nx.max(self.ny);
         for k in 0..=max_ring {
             let ring_min = ((k as f64 - 1.0).max(0.0) * self.cell).hypot(outside);
             if ring_min > best {
@@ -417,6 +423,12 @@ pub(crate) struct FieldRegion {
     pub peak_aux: f64,
     /// Where that peak sits.
     pub peak_at: [f64; 2],
+    /// Largest second auxiliary value, for a question the first channel is
+    /// already answering — "does this region reach the stock edge" and "does
+    /// it carry part material" are both needed, and neither can be settled
+    /// from a centroid: the centroid of a frame that rings the part sits in
+    /// the middle of the part.
+    pub peak_aux2: f64,
     /// The region reaches the border of the sampled box.
     pub touches_border: bool,
 }
@@ -431,6 +443,17 @@ pub(crate) struct FieldRegion {
 pub(crate) fn march<F>(bbox: [f64; 4], h: f64, f: F) -> Vec<FieldRegion>
 where
     F: Fn([f64; 2]) -> (f64, f64),
+{
+    march2(bbox, h, |p| {
+        let (phi, aux) = f(p);
+        (phi, aux, f64::NEG_INFINITY)
+    })
+}
+
+/// [`march`], with a second auxiliary channel.
+pub(crate) fn march2<F>(bbox: [f64; 4], h: f64, f: F) -> Vec<FieldRegion>
+where
+    F: Fn([f64; 2]) -> (f64, f64, f64),
 {
     const BIG: f64 = 1.0e9;
     let nx = (((bbox[2] - bbox[0]) / h).ceil() as usize).max(1);
@@ -450,7 +473,7 @@ where
                 bbox[0] + (cx as f64 + 0.5) * c_size,
                 bbox[1] + (cy as f64 + 0.5) * c_size,
             ];
-            let (phi, _) = f(centre);
+            let (phi, _, _) = f(centre);
             coarse[cy * cnx + cx] = if phi > half_diag {
                 1
             } else if phi < -half_diag {
@@ -463,6 +486,7 @@ where
 
     let mut phi = vec![f64::NAN; mx * my];
     let mut aux = vec![f64::NEG_INFINITY; mx * my];
+    let mut aux2 = vec![f64::NEG_INFINITY; mx * my];
     for iy in 0..my {
         for ix in 0..mx {
             // The coarse cells this node belongs to (a node on a block edge
@@ -481,8 +505,9 @@ where
             }
             let v = if mixed {
                 let p = at(ix, iy);
-                let (a, b) = f(p);
+                let (a, b, c) = f(p);
                 aux[iy * mx + ix] = b;
+                aux2[iy * mx + ix] = c;
                 a
             } else if decided > 0 {
                 BIG
@@ -536,6 +561,7 @@ where
             centroid: [0.0, 0.0],
             peak_aux: f64::NEG_INFINITY,
             peak_at: [0.0, 0.0],
+            peak_aux2: f64::NEG_INFINITY,
             touches_border: false,
         });
         e.area += area;
@@ -623,8 +649,8 @@ where
         }
     }
 
-    // Peak auxiliary value per region, from the evaluated positive nodes.
-    let mut peaks: HashMap<u32, (f64, [f64; 2])> = HashMap::new();
+    // Peak auxiliary values per region, from the evaluated positive nodes.
+    let mut peaks: HashMap<u32, (f64, [f64; 2], f64)> = HashMap::new();
     for iy in 0..my {
         for ix in 0..mx {
             let i = iy * mx + ix;
@@ -632,10 +658,14 @@ where
                 continue;
             }
             let root = find(&mut parent, i as u32);
-            let e = peaks.entry(root).or_insert((f64::NEG_INFINITY, [0.0, 0.0]));
+            let e = peaks
+                .entry(root)
+                .or_insert((f64::NEG_INFINITY, [0.0, 0.0], f64::NEG_INFINITY));
             if aux[i] > e.0 {
-                *e = (aux[i], at(ix, iy));
+                e.0 = aux[i];
+                e.1 = at(ix, iy);
             }
+            e.2 = e.2.max(aux2[i]);
         }
     }
     let mut out: Vec<FieldRegion> = acc
@@ -645,9 +675,10 @@ where
                 r.centroid[0] /= r.area;
                 r.centroid[1] /= r.area;
             }
-            if let Some((p, at)) = peaks.get(&root) {
+            if let Some((p, at, p2)) = peaks.get(&root) {
                 r.peak_aux = *p;
                 r.peak_at = *at;
+                r.peak_aux2 = *p2;
             }
             r
         })
@@ -827,12 +858,25 @@ impl JobSpec {
         -(self.stock_thickness - self.bottom_allowance)
     }
 
-    fn stock(&self) -> [f64; 4] {
+    /// The blank, `[min_x, min_y, max_x, max_y]`.
+    ///
+    /// Defaulting this to the part bounds plus one tool diameter put the stock
+    /// edge exactly where an outside contour's sweep ends, so the job appeared
+    /// to cut its own frame into four free corners. The default margin is
+    /// three diameters, which leaves two of connected frame all the way round
+    /// — enough to tell a real freed piece from the edge of a made-up blank.
+    /// Set `stock_bbox` for a real job: this is a stand-in, not a measurement.
+    pub fn stock(&self) -> [f64; 4] {
         self.stock_bbox.unwrap_or_else(|| {
             let b = self.part.bbox();
-            let m = self.tool_diameter;
+            let m = 3.0 * self.tool_diameter;
             [b[0] - m, b[1] - m, b[2] + m, b[3] + m]
         })
+    }
+
+    /// True when `stock_bbox` was given rather than assumed.
+    pub fn stock_is_declared(&self) -> bool {
+        self.stock_bbox.is_some()
     }
 }
 
@@ -858,6 +902,17 @@ pub struct VerifyOptions {
     pub depth_tolerance: f64,
     /// Regions smaller than this are grid noise, not metal (mm²).
     pub min_area: f64,
+    /// How close a pass has to come to a tab's lifted stretch before it counts
+    /// as running through that tab, as a multiple of the tool radius. A pass
+    /// that goes below a tab's top somewhere else on the job never touched it.
+    pub tab_reach: f64,
+    /// Severity of a freed region that carries part material: the part itself
+    /// coming loose with nothing holding it.
+    pub loose_part_severity: Severity,
+    /// Severity of a freed region of waste — an inside slug, a slot wedge.
+    /// It will rattle and it can be thrown, but the part survives it, so
+    /// whether that blocks a job is the shop's call.
+    pub loose_waste_severity: Severity,
 }
 
 impl Default for VerifyOptions {
@@ -872,6 +927,9 @@ impl Default for VerifyOptions {
             grid: 0.05,
             depth_tolerance: 0.01,
             min_area: 0.01,
+            tab_reach: 1.0,
+            loose_part_severity: Severity::Error,
+            loose_waste_severity: Severity::Warning,
         }
     }
 }
@@ -967,6 +1025,9 @@ pub struct MaterialLeftReport {
     pub untouched_walls: usize,
     /// Walls the part has that a cutter this size could follow at all.
     pub walls: usize,
+    /// Metal left under the observed tabs (mm²). Excluded from
+    /// `unswept_area`: a tab is metal the job meant to leave.
+    pub tab_area: f64,
 }
 
 /// Depth against the stock.
@@ -990,6 +1051,14 @@ pub struct DepthReport {
 pub struct TabObservation {
     /// Middle of the lifted stretch (stock frame, mm).
     pub xy: [f64; 2],
+    /// Where the cutter left the floor (mm).
+    pub start: [f64; 2],
+    /// Where it came back down (mm).
+    pub end: [f64; 2],
+    /// The lifted stretch itself, in order. The metal a tab leaves sits under
+    /// this, and on a curved wall a chord from `start` to `end` misses it by
+    /// the sagitta — enough to leave a sliver of phantom "uncut wall" behind.
+    pub path: Vec<[f64; 2]>,
     /// Z the cutter was held at (mm).
     pub top_z: f64,
     /// Z the pass was cutting at (mm).
@@ -1017,7 +1086,9 @@ pub struct TabAudit {
     pub observations: Vec<TabObservation>,
     /// Distinct tab positions (clustered across passes).
     pub tab_count: usize,
-    /// Passes that cut below the tab tops and so had to step over them.
+    /// Passes that had to step over a tab: they go below its top *and* their
+    /// path runs through it. A pass that dives deeper somewhere else on the
+    /// job — another operation, another feature — is not one of these.
     pub passes_below_tabs: usize,
 }
 
@@ -1045,6 +1116,8 @@ pub struct FreedPiece {
     pub area: f64,
     /// Centroid in the stock frame (mm).
     pub centroid: [f64; 2],
+    /// The piece carries part material, rather than being waste.
+    pub is_part: bool,
 }
 
 /// Stock the job frees: slugs, wedges, and the part itself when nothing holds
@@ -1055,6 +1128,9 @@ pub struct LoosePiecesReport {
     pub check: CheckReport,
     /// Each freed region, largest first.
     pub pieces: Vec<FreedPiece>,
+    /// Waste that still reaches the edge of the blank: the frame the clamps
+    /// hold. Reported, never counted as loose.
+    pub frame_pieces: Vec<FreedPiece>,
     /// True when the job never breaks through, so nothing can come free.
     pub skin_holds: bool,
 }
@@ -1524,7 +1600,7 @@ pub fn verify_moves(
     let tabs = check_tabs(moves, spec, opts);
     let envelope = check_envelope(moves, spec, opts);
     let plunges = check_plunges(moves, spec, opts);
-    let material_left = check_material_left(moves, spec, opts)?;
+    let material_left = check_material_left(moves, spec, &tabs.observations, opts)?;
     let loose = check_loose(moves, spec, opts)?;
 
     let pass = !gouge.blocks()
@@ -1818,8 +1894,32 @@ struct LiftedRun {
     len: f64,
     start: [f64; 2],
     end: [f64; 2],
-    mid: [f64; 2],
     top: f64,
+    path: Vec<[f64; 2]>,
+    /// The pass had not yet been down to its depth when this began: the
+    /// cutter is arriving, not stepping over something.
+    entry: bool,
+}
+
+/// The point half-way along a polyline, by length.
+fn path_midpoint(path: &[[f64; 2]]) -> [f64; 2] {
+    let total: f64 = path
+        .windows(2)
+        .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+        .sum();
+    let mut left = total / 2.0;
+    for w in path.windows(2) {
+        let len = (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]);
+        if len >= left && len > 0.0 {
+            let t = left / len;
+            return [
+                w[0][0] + (w[1][0] - w[0][0]) * t,
+                w[0][1] + (w[1][1] - w[0][1]) * t,
+            ];
+        }
+        left -= len;
+    }
+    path.last().copied().unwrap_or([0.0, 0.0])
 }
 
 /// 5. Tabs, as the moves actually cut them.
@@ -1850,31 +1950,14 @@ fn check_tabs(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> TabAudit 
         }
         // A lifted stretch: level XY motion held above this pass's depth, and
         // still inside the stock.
+        // A tab is a lift FROM depth and a return to it. Level motion above
+        // the pass depth before the pass has been down there is the entry — a
+        // ramp starts with a stub at the previous pass's floor — unless it
+        // joins a lifted stretch at the end of the lap, which is one tab
+        // sitting across the seam.
+        let mut runs: Vec<LiftedRun> = Vec::new();
         let mut run: Option<LiftedRun> = None;
-        let flush = |run: &mut Option<LiftedRun>, obs: &mut Vec<TabObservation>| {
-            if let Some(LiftedRun {
-                len,
-                start,
-                end,
-                mid,
-                top,
-            }) = run.take()
-            {
-                let chord = (end[0] - start[0]).hypot(end[1] - start[1]);
-                let straightness = if len > 0.0 { chord / len } else { 1.0 };
-                obs.push(TabObservation {
-                    xy: mid,
-                    top_z: top,
-                    pass_z: 0.0,
-                    lifted_run: len,
-                    metal_width: len - d,
-                    height: 0.0,
-                    straightness,
-                    straight: straightness >= 0.98,
-                    pass_index: 0,
-                });
-            }
-        };
+        let mut reached = false;
         for &i in g {
             let m = &moves[i];
             let level = (m.to[2] - m.from[2]).abs() < 1e-9;
@@ -1884,23 +1967,64 @@ fn check_tabs(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> TabAudit 
                     Some(r) => {
                         r.len += m.xy_len();
                         r.end = m.b();
-                        r.mid = [(r.start[0] + m.to[0]) / 2.0, (r.start[1] + m.to[1]) / 2.0];
+                        r.path.push(m.b());
                     }
                     None => {
                         run = Some(LiftedRun {
                             len: m.xy_len(),
                             start: m.a(),
                             end: m.b(),
-                            mid: [(m.from[0] + m.to[0]) / 2.0, (m.from[1] + m.to[1]) / 2.0],
                             top: m.to[2],
+                            path: vec![m.a(), m.b()],
+                            entry: !reached,
                         })
                     }
                 }
             } else if m.xy_len() > 1e-12 {
-                flush(&mut run, &mut obs);
+                runs.extend(run.take());
+            }
+            reached |= m.min_z() <= depth + 1e-9;
+        }
+        runs.extend(run.take());
+        if runs.first().is_some_and(|r| r.entry) {
+            let lead = runs.remove(0);
+            let joins = runs.last().is_some_and(|last| {
+                (last.end[0] - lead.start[0]).hypot(last.end[1] - lead.start[1]) < 1e-6
+                    && (last.top - lead.top).abs() < 1e-9
+            });
+            if joins {
+                let last = runs.last_mut().expect("checked above");
+                last.len += lead.len;
+                last.end = lead.end;
+                last.path.extend(lead.path.into_iter().skip(1));
             }
         }
-        flush(&mut run, &mut obs);
+        for LiftedRun {
+            len,
+            start,
+            end,
+            top,
+            path,
+            ..
+        } in runs
+        {
+            let chord = (end[0] - start[0]).hypot(end[1] - start[1]);
+            let straightness = if len > 0.0 { chord / len } else { 1.0 };
+            obs.push(TabObservation {
+                xy: path_midpoint(&path),
+                start,
+                end,
+                path,
+                top_z: top,
+                pass_z: 0.0,
+                lifted_run: len,
+                metal_width: len - d,
+                height: 0.0,
+                straightness,
+                straight: straightness >= 0.98,
+                pass_index: 0,
+            });
+        }
         for o in obs.iter_mut().filter(|o| o.pass_z == 0.0) {
             o.pass_z = depth;
             o.pass_index = pi;
@@ -1920,20 +2044,34 @@ fn check_tabs(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> TabAudit 
         }
     }
 
-    let tab_top = obs
-        .iter()
-        .map(|o| o.top_z)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let passes_below_tabs = pass_depth
-        .iter()
-        .filter(|z| **z < 0.0 && **z < tab_top - 1e-9)
-        .count();
+    // A pass matters to a tab only if its path actually runs through that
+    // tab's stretch. Depth alone attributed every deep pass of every other
+    // operation to every tab: on the copper stator that was 3 tabs x 12
+    // foreign passes of false alarms on a job that cut a good part.
+    let reach = opts.tab_reach * spec.tool_diameter / 2.0;
+    let runs_through = |pi: usize, o: &TabObservation| {
+        groups[pi].iter().any(|&i| {
+            let m = &moves[i];
+            m.min_z() < 0.0
+                && o.path
+                    .windows(2)
+                    .any(|w| segment_segment_distance(m.a(), m.b(), w[0], w[1]) <= reach)
+        })
+    };
 
+    let mut stepped_over: Vec<bool> = vec![false; groups.len()];
     for c in &clusters {
         let top = obs[c[0]].top_z;
         let seen: Vec<usize> = c.iter().map(|&i| obs[i].pass_index).collect();
         for (pi, depth) in pass_depth.iter().enumerate() {
-            if *depth < top - 1e-9 && *depth < 0.0 && !seen.contains(&pi) {
+            if *depth >= top - 1e-9 || *depth >= 0.0 {
+                continue;
+            }
+            if !runs_through(pi, &obs[c[0]]) {
+                continue;
+            }
+            stepped_over[pi] = true;
+            if !seen.contains(&pi) {
                 let o = &obs[c[0]];
                 rep.hit(
                     Violation {
@@ -1971,6 +2109,8 @@ fn check_tabs(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> TabAudit 
             }
         }
     }
+
+    let passes_below_tabs = stepped_over.iter().filter(|b| **b).count();
 
     if !spec.declared_tabs.is_empty() && clusters.len() != spec.declared_tabs.len() {
         rep.hit(
@@ -2165,6 +2305,7 @@ fn swept_segments(moves: &[Move], z_at_most: f64, tol: f64) -> Vec<([f64; 2], [f
 fn check_material_left(
     moves: &[Move],
     spec: &JobSpec,
+    tabs: &[TabObservation],
     opts: &VerifyOptions,
 ) -> Result<MaterialLeftReport, VerifyError> {
     let r = spec.tool_diameter / 2.0;
@@ -2172,6 +2313,21 @@ fn check_material_left(
     let floor = spec.floor_z();
     let segs = swept_segments(moves, floor, opts.depth_tolerance);
     let swept = Poly::from_segments(segs.clone());
+    // Metal under a tab is metal the job meant to leave. The footprint is the
+    // stretch the cutter rode over, grown by its radius (plus a couple of grid
+    // cells, so the fringe the grid leaves round it does not come back as a
+    // sliver of its own).
+    let tab_reach = r + 2.0 * opts.grid;
+    let tab_segments: Vec<([f64; 2], [f64; 2])> = tabs
+        .iter()
+        .flat_map(|t| t.path.windows(2).map(|w| (w[0], w[1])))
+        .collect();
+    let tab_paths = (!tab_segments.is_empty()).then(|| Poly::from_segments(tab_segments));
+    let not_a_tab = |p: [f64; 2]| match &tab_paths {
+        Some(t) => t.distance(p) - tab_reach,
+        None => f64::INFINITY,
+    };
+    let mut tab_area = 0.0;
     let mut rep = CheckReport::new(
         "material_left",
         Severity::Error,
@@ -2218,9 +2374,13 @@ fn check_material_left(
             let de = -e.signed_distance(p); // distance outside the centre region
             (dh.min(d - dh).min(r - de), dh)
         };
-        for region in march(bbox, opts.grid, |p| {
+        let unswept = |p: [f64; 2]| {
             let (b, aux) = band(p);
             (b.min(swept.distance(p) - r), aux)
+        };
+        for region in march(bbox, opts.grid, |p| {
+            let (b, aux) = unswept(p);
+            (b.min(not_a_tab(p)), aux)
         }) {
             if region.area < opts.min_area {
                 continue;
@@ -2240,6 +2400,15 @@ fn check_material_left(
                 },
                 opts.max_examples,
             );
+        }
+        if tab_paths.is_some() {
+            tab_area += march(bbox, opts.grid, |p| {
+                let (b, aux) = unswept(p);
+                (b.min(-not_a_tab(p)), aux)
+            })
+            .iter()
+            .map(|c| c.area)
+            .sum::<f64>();
         }
         band_area += march(bbox, opts.grid, band)
             .iter()
@@ -2266,9 +2435,13 @@ fn check_material_left(
                 let dg = grown.signed_distance(p); // positive inside the grown outline
                 (dp.min(d - dp).min(r - dg).min(stock.signed_distance(p)), dp)
             };
-            for region in march(bbox, opts.grid, |p| {
+            let unswept = |p: [f64; 2]| {
                 let (b, aux) = band(p);
                 (b.min(swept.distance(p) - r), aux)
+            };
+            for region in march(bbox, opts.grid, |p| {
+                let (b, aux) = unswept(p);
+                (b.min(not_a_tab(p)), aux)
             }) {
                 if region.area < opts.min_area {
                     continue;
@@ -2289,6 +2462,15 @@ fn check_material_left(
                     opts.max_examples,
                 );
             }
+            if tab_paths.is_some() {
+                tab_area += march(bbox, opts.grid, |p| {
+                    let (b, aux) = unswept(p);
+                    (b.min(-not_a_tab(p)), aux)
+                })
+                .iter()
+                .map(|c| c.area)
+                .sum::<f64>();
+            }
             band_area += march(bbox, opts.grid, band)
                 .iter()
                 .map(|c| c.area)
@@ -2299,9 +2481,17 @@ fn check_material_left(
     }
 
     rep.note = format!(
-        "{} of {walls} walls machined; wall left standing is measured against what the cutter \
-         could reach, so corners it cannot enter are fit's answer, not a violation",
-        walls - untouched
+        "{} of {walls} walls machined; measured against what the cutter could reach, so a \
+         corner it cannot enter is fit's answer, not a violation{}",
+        walls - untouched,
+        if tab_paths.is_some() {
+            format!(
+                "; {tab_area:.2} mm\u{b2} under {} tab stretches left on purpose",
+                tabs.len()
+            )
+        } else {
+            String::new()
+        }
     );
     Ok(MaterialLeftReport {
         check: rep,
@@ -2310,10 +2500,18 @@ fn check_material_left(
         reachable_band_area: band_area,
         untouched_walls: untouched,
         walls,
+        tab_area,
     })
 }
 
 /// 7. Stock the job frees completely.
+///
+/// Two things are not loose pieces. The frame is whatever still reaches the
+/// edge of the blank: it is what the clamps hold, and a job that trims all
+/// four sides of its stock is not thereby throwing four corners across the
+/// shop. And a piece that carries no part material is waste — an inside slug,
+/// a slot wedge — which rattles and can be thrown but leaves the part whole,
+/// so whether it blocks the job is the shop's policy, not the oracle's.
 fn check_loose(
     moves: &[Move],
     spec: &JobSpec,
@@ -2322,7 +2520,7 @@ fn check_loose(
     let r = spec.tool_diameter / 2.0;
     let mut rep = CheckReport::new(
         "loose_pieces",
-        Severity::Error,
+        opts.loose_waste_severity,
         "stock the job cuts free with no tab and no skin holding it".to_string(),
     );
     // A positive bottom allowance means nothing is ever cut through.
@@ -2331,9 +2529,19 @@ fn check_loose(
         .iter()
         .any(|m| !m.rapid && m.min_z() <= through_z + opts.depth_tolerance);
     if !breaks_through {
+        rep.note = format!(
+            "nothing is cut through: the deepest pass stops {:.3} mm above the stock underside",
+            spec.stock_thickness
+                + moves
+                    .iter()
+                    .filter(|m| !m.rapid)
+                    .map(|m| m.min_z())
+                    .fold(0.0f64, f64::min)
+        );
         return Ok(LoosePiecesReport {
             check: rep,
             pieces: Vec::new(),
+            frame_pieces: Vec::new(),
             skin_holds: true,
         });
     }
@@ -2346,30 +2554,42 @@ fn check_loose(
         [s[2], s[3]],
         [s[0], s[3]],
     ]])?;
+    let part = spec.part.poly()?;
     let bbox = [
         s[0] - opts.grid * 2.0,
         s[1] - opts.grid * 2.0,
         s[2] + opts.grid * 2.0,
         s[3] + opts.grid * 2.0,
     ];
+    // `aux` carries how close the region gets to the edge of the blank, so a
+    // piece that reaches it can be told from one that floats inside.
     let phi = |p: [f64; 2]| {
         let ds = stock.signed_distance(p);
-        (ds.min(swept.distance(p) - r), 0.0)
+        (ds.min(swept.distance(p) - r), -ds, part.signed_distance(p))
     };
-    // `march` returns regions largest first. What the clamps hold is the
-    // frame — the largest piece of stock left — and everything else the job
-    // has cut free. Clamps themselves are not modelled, so a job that cuts the
-    // frame in half reports the smaller half as loose, which is the safe way
-    // round to be wrong.
-    let regions = march(bbox, opts.grid, phi);
+    let edge = 1.5 * opts.grid;
     let mut pieces = Vec::new();
-    for c in regions.iter().skip(1) {
+    let mut frame_pieces = Vec::new();
+    for c in march2(bbox, opts.grid, phi) {
         if c.area < opts.min_area {
+            continue;
+        }
+        // Some point of the region lies inside the part.
+        let is_part = c.peak_aux2 > 0.0;
+        // Reaches the edge of the blank: that is the frame, whatever it
+        // carries. A part still joined to it by a tab is held, not loose.
+        if c.peak_aux > -edge {
+            frame_pieces.push(FreedPiece {
+                area: c.area,
+                centroid: c.centroid,
+                is_part,
+            });
             continue;
         }
         pieces.push(FreedPiece {
             area: c.area,
             centroid: c.centroid,
+            is_part,
         });
         rep.hit(
             Violation {
@@ -2378,16 +2598,35 @@ fn check_loose(
                 z: through_z,
                 value: c.area,
                 what: format!(
-                    "{:.2} mm² of stock at ({:.2}, {:.2}) comes free: no tab, no skin",
-                    c.area, c.centroid[0], c.centroid[1]
+                    "{:.2} mm\u{b2} of {} at ({:.2}, {:.2}) comes free: no tab, no skin",
+                    c.area,
+                    if is_part { "the part" } else { "waste" },
+                    c.centroid[0],
+                    c.centroid[1]
                 ),
             },
             opts.max_examples,
         );
     }
+    if pieces.iter().any(|p| p.is_part) {
+        rep.severity = opts.loose_part_severity;
+    }
+    rep.note = format!(
+        "{} freed piece(s), {} of them carrying part material; {} frame piece(s) still reaching \
+         the edge of the {} blank",
+        pieces.len(),
+        pieces.iter().filter(|p| p.is_part).count(),
+        frame_pieces.len(),
+        if spec.stock_is_declared() {
+            "declared"
+        } else {
+            "assumed"
+        }
+    );
     Ok(LoosePiecesReport {
         check: rep,
         pieces,
+        frame_pieces,
         skin_holds: false,
     })
 }
@@ -2412,6 +2651,403 @@ mod tests {
             diameter: d,
             flute_length: 25.0,
             flutes: 2,
+        }
+    }
+
+    /// The part region the fixture DXF describes, in the stock frame, and the
+    /// job that actually cut it in copper on 2026-09-17.
+    fn copper_job() -> (PartRegion, String) {
+        let loops = stator_in_stock_frame();
+        let part = PartRegion::new(loops[0].clone(), loops[1..].to_vec()).unwrap();
+        let nc = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/cam-fixtures/stator-copper-d2.nc"
+        ));
+        (part, nc.to_string())
+    }
+
+    /// The whole point of the package, in one test: the job that came off the
+    /// machine with a good part must come back clean. Five operations, three
+    /// tabs, a 0.15 mm skin. Before the passes were attributed to tabs
+    /// geometrically this failed 36 times over, and the tab metal itself was
+    /// reported three times as wall left standing.
+    #[test]
+    fn the_copper_stator_job_that_worked_passes() {
+        let (part, nc) = copper_job();
+        let spec = JobSpec {
+            bottom_allowance: 0.15,
+            ..JobSpec::new(part, 1.0, 2.0)
+        };
+        let rep = verify_gcode(&nc, &spec, &VerifyOptions::default()).unwrap();
+        assert!(
+            rep.pass,
+            "gouge {:?}\nmaterial_left {:?}\ntabs {:?}\nrapids {:?}\ndepth {:?}\nloose {:?}",
+            rep.gouge.examples,
+            rep.material_left.check.examples,
+            rep.tabs.check.examples,
+            rep.rapids.examples,
+            rep.depth.check.examples,
+            rep.loose.check.examples,
+        );
+        assert_eq!(rep.tabs.tab_count, 3);
+        assert_eq!(rep.tabs.passes_below_tabs, 3, "only the outside op's own");
+        for o in &rep.tabs.observations {
+            assert!(
+                (o.metal_width - 4.0).abs() < 0.05,
+                "tab metal {:.3} mm, the job asked for 4",
+                o.metal_width
+            );
+            assert!(
+                (o.height - 0.425).abs() < 0.01,
+                "tab height {:.3} mm",
+                o.height
+            );
+        }
+        assert!(
+            rep.material_left.tab_area > 20.0,
+            "tab metal excluded: {:.2} mm²",
+            rep.material_left.tab_area
+        );
+        assert_eq!(rep.material_left.untouched_walls, 0, "all five walls cut");
+        assert!(rep.loose.skin_holds, "0.15 mm of skin under everything");
+        assert!((rep.depth.deepest_z + 0.85).abs() < 1e-6);
+    }
+
+    /// Multi-operation jobs put passes of one feature below the tabs of
+    /// another. A pass only cuts a tab away if it goes through it.
+    #[test]
+    fn a_deep_pass_elsewhere_on_the_job_is_not_a_cut_tab() {
+        let (part, nc) = copper_job();
+        let spec = JobSpec {
+            bottom_allowance: 0.15,
+            ..JobSpec::new(part, 1.0, 2.0)
+        };
+        let rep = verify_gcode(&nc, &spec, &VerifyOptions::default()).unwrap();
+        assert!(rep.tabs.check.pass);
+
+        // Widen the reach until every pass on the job counts as running
+        // through every tab, and the false alarms come back: 3 tabs x the 12
+        // passes of the other four operations.
+        let wide = VerifyOptions {
+            tab_reach: 200.0,
+            ..VerifyOptions::default()
+        };
+        let rep = verify_gcode(&nc, &spec, &wide).unwrap();
+        assert_eq!(rep.tabs.check.violation_count, 36, "{:?}", rep.tabs.check);
+    }
+
+    /// The ramped, tabbed, two-operation job the kernel generates today: entry
+    /// is a ramp along the contour, not a plunge, so a pass no longer begins
+    /// with a vertical move. The tabs must still be found on every pass that
+    /// reaches them — the Python prototype read zero here.
+    fn ramped_job() -> (PartRegion, Toolpath) {
+        let loops = stator_in_stock_frame();
+        let part = PartRegion::new(loops[0].clone(), vec![loops[1].clone()]).unwrap();
+        let tool = mill(3.175);
+        let settings = CamSettings {
+            stepdown: 0.5,
+            ..CamSettings::default()
+        };
+        let mut tp = Contour2D::inside(contour_of(&loops[1]), 6.0)
+            .generate(&tool, &settings)
+            .unwrap();
+        let outside = Contour2D::outside(contour_of(&loops[0]), 6.0)
+            .with_tabs(3, 4.0, 1.0)
+            .generate(&tool, &settings)
+            .unwrap();
+        tp.segments.extend(outside.segments);
+        (part, tp)
+    }
+
+    /// A 40 mm square cut round the outside with a Ø2 cutter: the tool centre
+    /// runs the 42 mm square from (-1,-1). `lap` is the G-code for one pass.
+    fn square_job(lap: &str) -> TabAudit {
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [40.0, 0.0], [40.0, 40.0], [0.0, 40.0]],
+            vec![],
+        )
+        .unwrap();
+        let spec = JobSpec::new(part, 3.0, 2.0);
+        let gcode = format!("G21 G90 G94 G17 G54\nM3 S10000\nG0 Z5\n{lap}G0 Z5\nM5\nM2\n");
+        verify_gcode(&gcode, &spec, &VerifyOptions::default())
+            .unwrap()
+            .tabs
+    }
+
+    /// A ramp begins with a level stub at the previous pass's floor. The
+    /// cutter is arriving there, not stepping over anything.
+    #[test]
+    fn the_stub_a_ramp_starts_from_is_not_a_tab() {
+        let tabs = square_job(
+            "G0 X-1 Y-1\nG1 Z-1 F100\nG1 X-0.998 Y-1 F400\nG1 X9 Y-1 Z-2\n\
+             G1 X41 Y-1\nG1 X41 Y41\nG1 X-1 Y41\nG1 X-1 Y-1\nG1 X9 Y-1\n",
+        );
+        assert_eq!(tabs.tab_count, 0, "{:?}", tabs.observations);
+        assert!(tabs.check.pass);
+    }
+
+    /// A tab sitting across the seam is met twice in one lap — at its start and
+    /// again at its end — and is one tab with its whole width.
+    #[test]
+    fn a_tab_across_the_seam_is_one_whole_tab() {
+        // Lifted from X14 round to X26 through the seam at X20: 12 mm of lift,
+        // 10 mm of metal with a Ø2 cutter.
+        let tabs = square_job(
+            "G0 X20 Y-1\nG1 Z-2 F100\nG1 X26 Y-1 F400\nG1 Z-3 F100\nG1 X41 Y-1 F400\n\
+             G1 X41 Y41\nG1 X-1 Y41\nG1 X-1 Y-1\nG1 X14 Y-1\nG1 Z-2\nG1 X20 Y-1\n",
+        );
+        assert_eq!(tabs.tab_count, 1, "{:?}", tabs.observations);
+        let tab = &tabs.observations[0];
+        assert!((tab.lifted_run - 12.0).abs() < 1e-9, "{tab:?}");
+        assert!((tab.metal_width - 10.0).abs() < 1e-9, "{tab:?}");
+        assert!((tab.xy[0] - 20.0).abs() < 1e-9 && (tab.xy[1] + 1.0).abs() < 1e-9);
+        assert!(tabs.check.pass);
+    }
+
+    #[test]
+    fn ramp_entries_do_not_hide_the_tabs() {
+        let (part, tp) = ramped_job();
+        let spec = JobSpec::new(part, 6.0, 3.175);
+        let rep = verify_toolpath(&tp, &spec, &VerifyOptions::default()).unwrap();
+
+        // No pass starts with a vertical plunge: the entry ramps.
+        let moves = replay_toolpath(&tp, &VerifyOptions::default()).unwrap();
+        let groups = passes(&moves);
+        // The pass drops vertically only as far as the last pass's floor —
+        // air — and reaches its own depth along the contour.
+        let depth = groups[1]
+            .iter()
+            .map(|&i| moves[i].min_z())
+            .fold(0.0f64, f64::min);
+        let entry = &moves[groups[1][0]];
+        assert!(
+            entry.xy_len() < 1e-9 && (entry.to[2] + 0.5).abs() < 1e-9,
+            "the entry should stop at the last pass's floor: {entry:?}"
+        );
+        let reaches_depth = groups[1]
+            .iter()
+            .map(|&i| &moves[i])
+            .find(|m| (m.to[2] - depth).abs() < 1e-9)
+            .unwrap();
+        assert!(
+            reaches_depth.xy_len() > 0.01 && reaches_depth.to[2] < reaches_depth.from[2],
+            "depth should be reached on a ramp, not a plunge: {reaches_depth:?}"
+        );
+
+        assert_eq!(rep.tabs.tab_count, 3);
+        assert_eq!(
+            rep.tabs.observations.len(),
+            6,
+            "3 tabs on each of the 2 passes that reach them"
+        );
+        assert_eq!(rep.tabs.passes_below_tabs, 2);
+        for o in &rep.tabs.observations {
+            assert!(
+                (o.metal_width - 4.0).abs() < 1e-6,
+                "metal {:.4} mm",
+                o.metal_width
+            );
+            assert!((o.lifted_run - 7.175).abs() < 1e-6);
+            assert!(o.straight, "straightness {:.4}", o.straightness);
+        }
+        assert!(rep.tabs.check.pass, "{:?}", rep.tabs.check.examples);
+        assert!(
+            rep.material_left.check.pass,
+            "{:?}",
+            rep.material_left.check.examples
+        );
+    }
+
+    /// The same job's loose pieces: the bore slug really does come free, and
+    /// the corners of the assumed blank really do not.
+    #[test]
+    fn the_frame_is_not_a_loose_piece_but_the_slug_is() {
+        let (part, tp) = ramped_job();
+        let spec = JobSpec::new(part, 6.0, 3.175);
+        let rep = verify_toolpath(&tp, &spec, &VerifyOptions::default()).unwrap();
+        assert_eq!(
+            rep.loose.pieces.len(),
+            1,
+            "{:?}",
+            rep.loose.pieces.iter().map(|p| p.area).collect::<Vec<_>>()
+        );
+        let slug = &rep.loose.pieces[0];
+        assert!((slug.area - 607.0).abs() < 5.0, "slug {:.2} mm²", slug.area);
+        assert!(!slug.is_part, "the bore slug is waste, not part");
+        assert_eq!(
+            rep.loose.check.severity,
+            Severity::Warning,
+            "loose waste warns by default"
+        );
+        assert!(
+            rep.pass,
+            "a rattling slug does not block the job by default"
+        );
+
+        // A blank barely bigger than the part: the outside sweep runs off its
+        // edge and trims corners off it. Those used to be reported as stock
+        // coming free; they are the edge of a blank nobody measured. (The
+        // margin is kept clear of exactly one tool diameter — there the sweep
+        // only kisses the edge and whether the frame pinches in two depends on
+        // the last micron of the offsetter.)
+        let b = spec.part.bbox();
+        let m = 2.5;
+        let tight = JobSpec {
+            stock_bbox: Some([b[0] - m, b[1] - m, b[2] + m, b[3] + m]),
+            ..JobSpec::new(spec.part.clone(), 6.0, 3.175)
+        };
+        let rep = verify_toolpath(&tp, &tight, &VerifyOptions::default()).unwrap();
+        assert_eq!(rep.loose.pieces.len(), 1, "still only the slug");
+        let corners: Vec<_> = rep
+            .loose
+            .frame_pieces
+            .iter()
+            .filter(|f| !f.is_part)
+            .collect();
+        assert!(corners.len() >= 2, "{:?}", rep.loose.frame_pieces);
+        for corner in &corners {
+            // Each trimmed corner sits out by the blank's edge, well clear of
+            // the part's own bounds shrunk by a little.
+            let [x, y] = corner.centroid;
+            let inside = x > b[0] + 5.0 && x < b[2] - 5.0 && y > b[1] + 5.0 && y < b[3] - 5.0;
+            assert!(!inside, "{corner:?} is not at the edge of the blank");
+            assert!(corner.area > 1.0, "{corner:?}");
+        }
+        // The part is still tabbed to the rest of the frame, so it reaches the
+        // blank's edge too, and is held.
+        assert!(rep.loose.frame_pieces.iter().any(|f| f.is_part));
+    }
+
+    /// A part with nothing holding it is a different matter from a slug.
+    #[test]
+    fn a_part_cut_free_with_no_tab_is_an_error() {
+        let part = PartRegion::new(
+            vec![[10.0, 10.0], [40.0, 10.0], [40.0, 30.0], [10.0, 30.0]],
+            vec![],
+        )
+        .unwrap();
+        let tool = mill(3.0);
+        let tp = Contour2D::outside(
+            contour_of(&[[10.0, 10.0], [40.0, 10.0], [40.0, 30.0], [10.0, 30.0]]),
+            6.0,
+        )
+        .generate(
+            &tool,
+            &CamSettings {
+                stepdown: 3.0,
+                ..CamSettings::default()
+            },
+        )
+        .unwrap();
+        let spec = JobSpec::new(part, 6.0, 3.0);
+        let rep = verify_toolpath(&tp, &spec, &VerifyOptions::default()).unwrap();
+        assert_eq!(rep.loose.pieces.len(), 1, "{:?}", rep.loose.pieces);
+        assert!(rep.loose.pieces[0].is_part);
+        assert!((rep.loose.pieces[0].area - 600.0).abs() < 4.0);
+        assert_eq!(rep.loose.check.severity, Severity::Error);
+        assert!(!rep.pass, "a part with no tabs and no skin blocks the job");
+        assert!(rep.loose.check.examples[0].what.contains("the part"));
+    }
+
+    /// Helical entries and arc-fitted paths are arcs with a Z change and arcs
+    /// in plan. Both have to replay as the circles they are: wave 2 routes the
+    /// pilots through `HelicalBore`.
+    #[test]
+    fn helical_and_planar_arcs_replay_as_the_circles_they_are() {
+        use crate::arcfit::{fit_arcs, ArcFitOptions};
+        use crate::operation::HelicalBore;
+        use crate::ToolGeometry;
+
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [60.0, 0.0], [60.0, 60.0], [0.0, 60.0]],
+            vec![
+                // The Ø2.5 pilot the bore is meant to leave behind.
+                (0..64)
+                    .map(|i| {
+                        let a = std::f64::consts::TAU * i as f64 / 64.0;
+                        [30.0 + 1.25 * a.cos(), 30.0 + 1.25 * a.sin()]
+                    })
+                    .collect(),
+            ],
+        )
+        .unwrap();
+        let tool = mill(2.0);
+        let settings = CamSettings {
+            stepdown: 1.0,
+            plunge_rate: 100.0,
+            ..CamSettings::default()
+        };
+        let bore = HelicalBore::new(30.0, 30.0, 2.5, 6.0, 0.3);
+        let tp = bore
+            .generate(&tool, &ToolGeometry::default(), &settings)
+            .unwrap();
+        assert!(
+            tp.segments
+                .iter()
+                .any(|s| matches!(s, ToolpathSegment::Arc { .. })),
+            "a helical bore is made of arcs"
+        );
+        let opts = VerifyOptions::default();
+        let moves = replay_toolpath(&tp, &opts).unwrap();
+        // Every cutting move sits on the helix: radius (2.5 - 2.0)/2 = 0.25.
+        let cutting: Vec<&Move> = moves
+            .iter()
+            .filter(|m| !m.rapid && m.min_z() < 0.0 && m.xy_len() > 1e-9)
+            .collect();
+        assert!(cutting.len() > 50, "{} sampled moves", cutting.len());
+        for m in &cutting {
+            let r = (m.to[0] - 30.0).hypot(m.to[1] - 30.0);
+            assert!(r <= 0.25 + 1e-6, "tool centre at radius {r:.4}");
+        }
+        // The wall it leaves is the hole it was asked for, and it does not
+        // touch the part around it.
+        let wall = 2.0
+            * (cutting
+                .iter()
+                .map(|m| (m.to[0] - 30.0).hypot(m.to[1] - 30.0))
+                .fold(0.0f64, f64::max)
+                + 1.0);
+        assert!((wall - 2.5).abs() < 0.01, "bore leaves Ø{wall:.4}");
+        let spec = JobSpec {
+            bottom_allowance: 0.0,
+            ..JobSpec::new(part.clone(), 6.0, 2.0)
+        };
+        let rep = verify_toolpath(&tp, &spec, &opts).unwrap();
+        assert!(rep.gouge.pass, "{:?}", rep.gouge.examples);
+
+        // Arc fitting a contour must not move the cut: same gouge answer,
+        // same envelope, through the same replay.
+        let (part2, _) = copper_job();
+        let loops = stator_in_stock_frame();
+        let linear = Contour2D::inside(contour_of(&loops[1]), 1.0)
+            .generate(&mill(2.0), &settings)
+            .unwrap();
+        let fitted = fit_arcs(&linear, &ArcFitOptions::default());
+        assert!(
+            fitted
+                .segments
+                .iter()
+                .any(|s| matches!(s, ToolpathSegment::Arc { .. })),
+            "the fitter found no arcs to fit"
+        );
+        let spec2 = JobSpec::new(part2, 1.0, 2.0);
+        let a = verify_toolpath(&linear, &spec2, &opts).unwrap();
+        let b = verify_toolpath(&fitted, &spec2, &opts).unwrap();
+        assert_eq!(a.gouge.pass, b.gouge.pass);
+        assert!(
+            (a.gouge.worst - b.gouge.worst).abs() < 0.01,
+            "{} vs {}",
+            a.gouge.worst,
+            b.gouge.worst
+        );
+        for k in 0..3 {
+            assert!(
+                (a.envelope.work_min[k] - b.envelope.work_min[k]).abs() < 0.01
+                    && (a.envelope.work_max[k] - b.envelope.work_max[k]).abs() < 0.01,
+                "axis {k}: {:?} vs {:?}",
+                a.envelope.work_min,
+                b.envelope.work_min
+            );
         }
     }
 

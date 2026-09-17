@@ -73,6 +73,13 @@ export).
 
 ## Wave 4 — reach
 
+Prerequisite before any 3D or indexed work: `verify2d::parse_gcode` refuses
+`G18`/`G19` (fail closed — a 2D oracle cannot vouch for an out-of-plane arc,
+and `job.rs` pins the refusal). The posts already emit the plane word when an
+arc leaves XY; the reader, or the 3D oracle in `vcad-kernel-stocksim`, has to
+learn to replay them first.
+
+
 3D finishing in the app (kernel roughing/drop-cutter exist) · gear measurement
 loop (pins → compensation → re-cut) · indexed 4th axis (design first).
 
@@ -80,3 +87,23 @@ loop (pins → compensation → re-cut) · indexed 4th axis (design first).
 
 20T module-1.0 planet from C360 plate, Ø1 cutter, verified in-app, measured
 over pins within tolerance.
+
+## Status (2026-09-17)
+
+- **Wave 1 — merged:** contour strategies, arc fitting, drill/helical bore +
+  tool checks + job assembly, 2D verify oracle + cutter fit (+ multi-op
+  follow-up), contours from the solid, materials/feeds, gears (+ flank-deviation
+  grading), union diagnosis.
+- **Wave 2 — merged:** consolidation (pure-Rust offsetting everywhere, one
+  stock model, `Pause`, honest arc lengths, accel-aware time), FFI job schema
+  (fail closed: a blocked job has no G-code), pocketing, `vcad.cam-claims/1` +
+  3D job verification. **Open:** export-repair shape guard + tangent seam fix
+  (`cam/w2a-union-shape`, `cam/w2b-union-seam`).
+- **Wave 3 — running:** app job pipeline + verify gate; shared `vcad-cam-api`
+  crate + WASM + MCP `cam` tools. Queued behind them: materials/from-solid/
+  stock-and-zero UI, machine profile + trace/probe/skew, ncSender + camera,
+  menus/accessibility/status dump, receipts through MCP `build_receipt`.
+- Found along the way, by running real jobs rather than package tests: a
+  simplifier whose tolerance was not a bound, a 77k-move stator job, phantom
+  tabs at ramp starts, an oracle that failed the job that was actually cut, an
+  export repair that tore the stator by 0.68 mm under a 1 % volume check.

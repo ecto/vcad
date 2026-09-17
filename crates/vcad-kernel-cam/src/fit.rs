@@ -57,25 +57,37 @@ impl Default for OffsetOptions {
     }
 }
 
-/// Drop points that sit within `eps` of the line through their surviving
-/// neighbours.
+/// Drop points so that every dropped point stays within `eps` of the chord
+/// that replaced it.
+///
+/// Every point skipped since the last kept one is re-checked against each
+/// longer chord. Checking only the newest one is not a bound at all: on a
+/// finely sampled arc the point just before the chord's end is always close to
+/// it, so the chord grows without limit (at `eps` = 1 µm that flattened the
+/// stator's offset by 4 mm).
 fn decimate(points: &[[f64; 2]], eps: f64) -> Loop2 {
     if eps <= 0.0 || points.len() < 4 {
         return points.to_vec();
     }
     let mut out: Loop2 = Vec::with_capacity(points.len());
-    let mut anchor = points[0];
-    out.push(anchor);
+    let mut anchor = 0usize;
+    out.push(points[anchor]);
     let mut i = 1;
     while i + 1 < points.len() {
-        let (mid, next) = (points[i], points[i + 1]);
-        if crate::verify2d::point_segment_distance(mid, anchor, next) < eps {
-            i += 1; // `mid` adds nothing between `anchor` and `next`
-        } else {
-            out.push(mid);
-            anchor = mid;
-            i += 1;
+        let next = points[i + 1];
+        // A chord is never stretched over more than `MAX_RUN` points, which
+        // keeps the re-check linear on long straight runs and costs a vertex
+        // every few hundred samples.
+        const MAX_RUN: usize = 256;
+        let fits = i - anchor < MAX_RUN
+            && (anchor + 1..=i).all(|k| {
+                crate::verify2d::point_segment_distance(points[k], points[anchor], next) < eps
+            });
+        if !fits {
+            out.push(points[i]);
+            anchor = i;
         }
+        i += 1;
     }
     out.push(points[points.len() - 1]);
     out
@@ -895,5 +907,45 @@ mod tests {
         );
         let fat = fit_contour(&loops[1], 3.9, ContourSide::Inside, &FitOptions::default()).unwrap();
         assert!(fat.centre_pieces > 1, "D3.9 should not pass the mouths");
+    }
+}
+
+#[cfg(test)]
+mod decimate_tests {
+    use super::*;
+
+    /// The tolerance is a guarantee: no input point ends up further than `eps`
+    /// from the thinned path, however finely the curve was sampled.
+    #[test]
+    fn decimate_keeps_every_dropped_point_within_tolerance() {
+        let arc: Loop2 = (0..=20_000)
+            .map(|k| {
+                let t = std::f64::consts::PI * k as f64 / 20_000.0;
+                [10.0 * t.cos(), 10.0 * t.sin()]
+            })
+            .collect();
+        for eps in [1e-4, 1e-3, 1e-2] {
+            let thin = decimate(&arc, eps);
+            assert!(
+                thin.len() < arc.len() / 10,
+                "{} of {}",
+                thin.len(),
+                arc.len()
+            );
+            let worst = arc
+                .iter()
+                .map(|p| {
+                    thin.windows(2)
+                        .map(|w| crate::verify2d::point_segment_distance(*p, w[0], w[1]))
+                        .fold(f64::MAX, f64::min)
+                })
+                .fold(0.0, f64::max);
+            assert!(
+                worst < eps,
+                "eps {eps}: a point is {worst} from the thinned path"
+            );
+            // Not vacuous: the bound is used, not merely respected.
+            assert!(worst > eps * 0.2, "eps {eps}: only {worst} used");
+        }
     }
 }
