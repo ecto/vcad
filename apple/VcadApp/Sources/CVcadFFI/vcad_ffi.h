@@ -25,6 +25,70 @@ typedef struct VcadSolid VcadSolid;
 typedef struct VcadMesh VcadMesh;
 typedef struct VcadScene VcadScene;
 
+/* ---------------------------------------------------------------------------
+ * CAM (wave 2). Units are mm, feeds mm/min, Z up, stock top Z0, stock frame
+ * XY lower-left at 0. Every one of these takes NUL-terminated UTF-8 JSON and
+ * returns an owned NUL-terminated UTF-8 JSON document — NEVER null, not even
+ * for a null/garbage request. Failure is {"error": "<sentence>"}; the same
+ * text also lands in vcad_last_error. Free every result with vcad_cam_free.
+ * Schemas live in crates/vcad-ffi/src/cam/.
+ * -------------------------------------------------------------------------*/
+
+/* A whole job: several operations, several tools, one spindle start per tool,
+ * replayed against the part before it is handed over. Response carries gcode,
+ * moves (the preview polyline), op_ranges, duration, tool_checks,
+ * verification, policy, fit, report and notes.
+ *
+ * FAILS CLOSED: when an error-severity check fails the response has
+ * "blocked": true and NO "gcode" key at all, so the app cannot export or send
+ * it by accident. policy.blocked_by names the checks; verify_policy in the
+ * request can move a check between error and warning. */
+char *vcad_cam_job(const char *request_json);
+
+/* Replay arbitrary G-code text against a part + stock + tool + allowance
+ * (+ optional travel and work offset). Same report as vcad_cam_job's. */
+char *vcad_cam_verify_gcode(const char *request_json);
+
+/* Cutter fit for one contour, one tool and one side, plus the largest tool
+ * that still passes. */
+char *vcad_cam_fit(const char *request_json);
+
+/* Section a triangle mesh handed over inline as positions + indices. */
+char *vcad_cam_outline_from_mesh(const char *request_json);
+
+/* Section one part of an evaluated scene: regions, holes, circles,
+ * plane_nudge, healed gaps, prismatic report and the part's Z range (hence a
+ * suggested stock thickness).
+ *
+ * z is used when auto_z is 0; when auto_z is non-zero the mid-height of the
+ * part's own bounds is used and z is ignored. options_json may be NULL.
+ *
+ * Sections the RAW kernel tessellation when the part still has a B-rep behind
+ * it, not the export mesh, which repair can shift by up to 0.4 mm on tangent
+ * fillets. The response says which in "mesh_source": "raw_tessellation",
+ * "export_mesh" or "cached_root_mesh" (a root-mesh cache hit has no B-rep). */
+char *vcad_cam_outline_from_scene(const VcadScene *scene, size_t part_index,
+                                  double z, uint8_t auto_z,
+                                  const char *options_json);
+
+/* DXF text (or loops) against an outline from the two calls above: the check
+ * that catches a stale outline before it machines the wrong part. */
+char *vcad_cam_compare_outline(const char *request_json);
+
+/* The material table. Takes no request. */
+char *vcad_cam_materials(void);
+
+/* Feeds, speeds, stepdown, stepover — and, on a router with a manual speed
+ * dial, which dial position to set by hand. */
+char *vcad_cam_recommend(const char *request_json);
+
+/* Second opinion on feeds the operator already has. */
+char *vcad_cam_check_feeds(const char *request_json);
+
+/* Gear geometry: report, tooth-space and full-profile contours, tool-centre
+ * path, over-pins dimension, and the tool offset a measured reading implies. */
+char *vcad_cam_gear(const char *request_json);
+
 typedef struct VcadMeshView {
   const float *vertices;
   size_t vertices_len; /* number of f32s (3 per vertex) */
