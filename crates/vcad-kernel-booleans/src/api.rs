@@ -950,7 +950,16 @@ fn mesh_fallback(
     quadrics: &QuadricCtx,
     refine: bool,
 ) -> Result<BooleanResult, BooleanError> {
-    let mut out = crate::mesh::csg::mesh_csg(mesh_a, mesh_b, op);
+    // `refine == false` is the chained case: an operand was already a
+    // triangle soup, so this result's debris is the accumulation of every
+    // fallback before it. That — and only that — gets the coplanar
+    // re-merge, which puts the split fragments of a shared cap back
+    // together so the NEXT boolean in the chain does not re-split them.
+    let mut out = if refine {
+        crate::mesh::csg::mesh_csg(mesh_a, mesh_b, op)
+    } else {
+        crate::mesh::csg::mesh_csg_remerged(mesh_a, mesh_b, op)
+    };
     // First projection runs on the pristine topology: the constraint each
     // vertex lives under is read off its incident triangle normals, so it
     // must be decided before any repair deletes or moves anything.

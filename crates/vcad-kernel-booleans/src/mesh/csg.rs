@@ -758,9 +758,625 @@ fn fill_small_holes(mesh: &mut TriangleMesh, reps: &[Point3], open: &[(u32, u32)
     }
 }
 
+/// Smallest coplanar region worth re-merging.
+///
+/// Below this the split debris is negligible and the merge only risks
+/// perturbing a well-formed patch. Sixty-four is about what one cap
+/// triangle reaches after a couple of silhouettes have crossed it; the
+/// debris this pass exists for runs to thousands on a single cap.
+const MERGE_MIN_REGION_TRIS: usize = 64;
+
+/// How far a fragment's vertices may sit off the region's seed plane and
+/// still count as lying in it (mm). Matches [`EPS`], the tolerance the
+/// splitter itself used to decide which side of a carrier a vertex was on
+/// — anything it treated as coplanar is coplanar here. Vertices are stored
+/// as `f32`, so the floor is ~2e-6 mm at part scale; 1e-5 clears that
+/// without reaching any feature.
+const MERGE_PLANE_EPS: f64 = EPS;
+
+/// Re-merge and re-triangulate coplanar regions left by splitting.
+///
+/// [`split_by_other`] cuts every operand triangle by the carrier planes of
+/// the other operand's triangles and never puts the pieces back, so a cap
+/// the two operands share comes out as a fan of slivers. That is merely
+/// untidy for one boolean and fatal for a chain: the next boolean re-splits
+/// the debris and the one after that re-splits *that*. The rana-60 stator's
+/// authored 50-step fold (every operand spanning z 11.1..17.1) had not
+/// finished after nine minutes, at 2.5 GB and climbing; with the merge it
+/// finishes in 66 s at 122 587 triangles. Folding the stator's twelve posts
+/// into its ring one at a time goes from 6 146 triangles (and rising with
+/// every step) to 2 740 (falling), and the one-shot union of the same
+/// twelve from 10 160 to 2 922, with the volume unchanged at 7 406.98 mm³
+/// against a closed form of 7 407.22.
+///
+/// Every boundary vertex survives: a region-boundary edge is shared with a
+/// triangle on some other plane, and dropping one of its endpoints would
+/// open a t-junction there. Only vertices interior to the region — used by
+/// no triangle outside it — disappear, and with them nothing the quadric
+/// projector could have pinned (`mesh_fallback` reads each vertex's
+/// constraint from its incident triangle normals, and a planar
+/// re-triangulation leaves every surviving vertex's incident normal SET
+/// unchanged).
+///
+/// Fail-closed per region: the replacement is taken only when it reproduces
+/// the region's SIGNED area in the plane — which is what fixes its
+/// contribution to the volume — leaves exactly the region's own unpaired
+/// directed edges, changes no edge the rest of the mesh shares, and mints
+/// no triangle the rest of the mesh already has. Anything else (a doubled
+/// cover, a pinched boundary, an earcut failure) keeps that region's
+/// original triangles.
+fn merge_coplanar_regions(mesh: &mut TriangleMesh) {
+    let before = mesh.clone();
+    merge_coplanar_regions_unchecked(mesh);
+    if mesh.indices.len() == before.indices.len() {
+        return;
+    }
+    // Whole-mesh backstop. Every region is checked on its own above, but
+    // the checks are read against the ORIGINAL mesh, and two regions that
+    // meet along a branching edge each judge the other's triangles to be
+    // "outside" and immovable — so a pair of individually-sound merges can
+    // still interact. Re-merging must not move the enclosed volume (it
+    // re-cuts flat patches, nothing else) nor add a defect, and when it
+    // does, the un-merged result is simply kept: this is an optimisation,
+    // not a repair.
+    let v0 = crate::validate::mesh_signed_volume(&before);
+    let v1 = crate::validate::mesh_signed_volume(mesh);
+    let moved = (v1 - v0).abs() > 1e-6 * v0.abs().max(1.0);
+    if moved
+        || mesh.boundary_edges().len() > before.boundary_edges().len()
+        || mesh.non_manifold_edges().len() > before.non_manifold_edges().len()
+    {
+        *mesh = before;
+    }
+}
+
+fn merge_coplanar_regions_unchecked(mesh: &mut TriangleMesh) {
+    let ntri = mesh.indices.len() / 3;
+    if ntri < MERGE_MIN_REGION_TRIS {
+        return;
+    }
+    // Per-triangle tags would have to be carried through a merge that
+    // replaces a whole region with new triangles; the only caller
+    // (`mesh_csg`) produces an untagged mesh, so decline rather than
+    // invent a provenance.
+    if !mesh.face_kinds.is_empty() || !mesh.face_ids.is_empty() || !mesh.normals.is_empty() {
+        return;
+    }
+    let corners = |mesh: &TriangleMesh, t: usize| -> [u32; 3] {
+        [
+            mesh.indices[t * 3],
+            mesh.indices[t * 3 + 1],
+            mesh.indices[t * 3 + 2],
+        ]
+    };
+    let mut normal: Vec<Option<Vec3>> = Vec::with_capacity(ntri);
+    for t in 0..ntri {
+        let c = corners(mesh, t);
+        let (a, b, d) = (vertex(mesh, c[0]), vertex(mesh, c[1]), vertex(mesh, c[2]));
+        let n = (b - a).cross(d - a);
+        let l = n.norm();
+        normal.push((l > 1e-18).then(|| n / l));
+    }
+
+    // Undirected edge → triangles. Only an edge used by exactly two
+    // triangles joins a region: a branching edge's neighbourhood is not a
+    // surface patch, and merging across it would guess which sheet the
+    // patch continues on.
+    let mut edge_tris: std::collections::HashMap<(u32, u32), Vec<usize>> =
+        std::collections::HashMap::new();
+    for t in 0..ntri {
+        let c = corners(mesh, t);
+        for k in 0..3 {
+            let (a, b) = (c[k], c[(k + 1) % 3]);
+            if a != b {
+                edge_tris.entry((a.min(b), a.max(b))).or_default().push(t);
+            }
+        }
+    }
+
+    // Every triangle by sorted vertex triple. A replacement must not mint
+    // a triple that already exists elsewhere in the mesh: `make_manifold`
+    // cancels a same-triple pair (opposed ones outright), so an accidental
+    // collision deletes BOTH and leaves a hole.
+    let mut tri_keys: std::collections::HashMap<[u32; 3], usize> = std::collections::HashMap::new();
+    for t in 0..ntri {
+        let mut k = corners(mesh, t);
+        k.sort_unstable();
+        *tri_keys.entry(k).or_default() += 1;
+    }
+
+    // Flood-fill regions. Membership is tested against the SEED's plane,
+    // not the neighbour's, so a long patch cannot drift off-plane one
+    // triangle at a time. Winding is deliberately NOT part of the test: an
+    // opposed sliver in the middle of a patch is part of the same planar
+    // mess, and excluding it punched a hole the re-triangulation then
+    // refused — 38 of the 42 refusals on the twelve-post ring union, which
+    // is why that union came out at 10 160 triangles instead of 2 922.
+    let mut region = vec![usize::MAX; ntri];
+    let mut members: Vec<usize> = Vec::new();
+    let mut stack: Vec<usize> = Vec::new();
+    let mut replaced: Vec<Option<Vec<[u32; 3]>>> = vec![None; ntri];
+    for seed in 0..ntri {
+        let Some(n0) = normal[seed] else { continue };
+        if region[seed] != usize::MAX {
+            continue;
+        }
+        let p0 = vertex(mesh, corners(mesh, seed)[0]);
+        let on_plane = |mesh: &TriangleMesh, t: usize| -> bool {
+            corners(mesh, t)
+                .iter()
+                .all(|&v| (vertex(mesh, v) - p0).dot(n0).abs() <= MERGE_PLANE_EPS)
+        };
+        region[seed] = seed;
+        members.clear();
+        stack.clear();
+        stack.push(seed);
+        while let Some(u) = stack.pop() {
+            members.push(u);
+            let c = corners(mesh, u);
+            for k in 0..3 {
+                let (a, b) = (c[k], c[(k + 1) % 3]);
+                if a == b {
+                    continue;
+                }
+                let Some(nb) = edge_tris.get(&(a.min(b), a.max(b))) else {
+                    continue;
+                };
+                if nb.len() != 2 {
+                    continue;
+                }
+                for &v in nb {
+                    if v == u || region[v] != usize::MAX || normal[v].is_none() {
+                        continue;
+                    }
+                    if on_plane(mesh, v) {
+                        region[v] = seed;
+                        stack.push(v);
+                    }
+                }
+            }
+        }
+        if members.len() < MERGE_MIN_REGION_TRIS {
+            continue;
+        }
+        members.sort_unstable();
+        if let Some(tris) = retriangulate_region(mesh, &members, &n0, &edge_tris, &tri_keys) {
+            replaced[members[0]] = Some(tris);
+            for &t in &members[1..] {
+                replaced[t] = Some(Vec::new());
+            }
+        }
+    }
+    if replaced.iter().all(|r| r.is_none()) {
+        return;
+    }
+    let mut indices: Vec<u32> = Vec::with_capacity(mesh.indices.len());
+    for (t, slot) in replaced.iter().enumerate() {
+        match slot {
+            Some(tris) => {
+                for tri in tris {
+                    indices.extend_from_slice(tri);
+                }
+            }
+            None => indices.extend_from_slice(&mesh.indices[t * 3..t * 3 + 3]),
+        }
+    }
+    mesh.indices = indices;
+    compact_vertices(mesh);
+}
+
+fn vertex(mesh: &TriangleMesh, i: u32) -> Point3 {
+    let k = i as usize * 3;
+    Point3::new(
+        mesh.vertices[k] as f64,
+        mesh.vertices[k + 1] as f64,
+        mesh.vertices[k + 2] as f64,
+    )
+}
+
+/// Drop vertices no triangle references any more (the interiors the merge
+/// dissolved), renumbering the survivors in their existing order.
+fn compact_vertices(mesh: &mut TriangleMesh) {
+    let nv = mesh.vertices.len() / 3;
+    let mut used = vec![false; nv];
+    for &i in &mesh.indices {
+        used[i as usize] = true;
+    }
+    if used.iter().all(|&u| u) {
+        return;
+    }
+    let mut remap = vec![u32::MAX; nv];
+    let mut verts: Vec<f32> = Vec::with_capacity(mesh.vertices.len());
+    for (v, &u) in used.iter().enumerate() {
+        if u {
+            remap[v] = (verts.len() / 3) as u32;
+            verts.extend_from_slice(&mesh.vertices[v * 3..v * 3 + 3]);
+        }
+    }
+    mesh.vertices = verts;
+    for i in &mut mesh.indices {
+        *i = remap[*i as usize];
+    }
+}
+
+/// Smallest triangle area (mm²) the merge may emit.
+///
+/// `make_manifold` DROPS a triangle at or below `DEFAULT_WELD_EPS²`, and a
+/// dropped triangle is a hole. Ear clipping mints exactly such triangles
+/// wherever the region's boundary runs through collinear points — which it
+/// routinely does, because a t-junction vertex imprinted by a neighbouring
+/// face is collinear with the edge it was imprinted on. Matching the
+/// threshold means anything the merge emits survives that pass.
+const MERGE_MIN_TRI_AREA: f64 = 1e-8;
+
+/// Fold away the zero-area ears ear clipping leaves on collinear boundary
+/// runs.
+///
+/// For a degenerate triangle `(p, r, q)` whose middle vertex `r` sits on
+/// `pq`, the neighbour across `q→p` is some `(p, q, d)`; together they
+/// cover the same area as `(p, r, d)` + `(r, q, d)`, which keeps every
+/// directed edge of the pair and gives both triangles real area. Returns
+/// `false` when an ear cannot be folded — its long edge is on the region
+/// boundary, or the fold would be degenerate as well — and the caller then
+/// declines the region rather than shipping a hole.
+fn fold_degenerate_ears(out: &mut [[u32; 3]], to_2d: &dyn Fn(u32) -> (f64, f64)) -> bool {
+    let area = |t: &[u32; 3]| {
+        let (a, b, c) = (to_2d(t[0]), to_2d(t[1]), to_2d(t[2]));
+        0.5 * ((b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0))
+    };
+    let len2 = |a: u32, b: u32| {
+        let (p, q) = (to_2d(a), to_2d(b));
+        (p.0 - q.0).powi(2) + (p.1 - q.1).powi(2)
+    };
+    let flat = |t: &[u32; 3]| area(t).abs() <= MERGE_MIN_TRI_AREA;
+    let mut remaining = out.iter().filter(|t| flat(t)).count();
+    // Each accepted fold must remove at least one ear, so the loop cannot
+    // cycle; the counter is belt and braces.
+    for _ in 0..out.len() + 8 {
+        if remaining == 0 {
+            return true;
+        }
+        let Some(t) = out.iter().position(flat) else {
+            return true;
+        };
+        let tri = out[t];
+        // The middle vertex is the one opposite the longest edge, so the
+        // edge to fold across is the one that does not touch it.
+        let k = (0..3)
+            .max_by(|&i, &j| {
+                len2(tri[i], tri[(i + 1) % 3]).total_cmp(&len2(tri[j], tri[(j + 1) % 3]))
+            })
+            .unwrap_or(0);
+        let (x, y, r) = (tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]);
+        // Neighbour across the long edge, found by its reverse. None means
+        // the long edge is on the region's own boundary — nothing to fold
+        // into.
+        let Some(n) = (0..out.len())
+            .find(|&i| i != t && (0..3).any(|j| out[i][j] == y && out[i][(j + 1) % 3] == x))
+        else {
+            return false;
+        };
+        let nb = out[n];
+        let Some(d) = nb.iter().copied().find(|&v| v != x && v != y) else {
+            return false;
+        };
+        if d == r {
+            return false;
+        }
+        out[t] = [y, r, d];
+        out[n] = [r, x, d];
+        // A run of collinear boundary points gives ears that only unfold
+        // one at a time, so a fold that leaves its own replacement flat is
+        // still progress — as long as the total drops.
+        let now = out.iter().filter(|t| flat(t)).count();
+        if now >= remaining {
+            out[t] = tri;
+            out[n] = nb;
+            return false;
+        }
+        remaining = now;
+    }
+    false
+}
+
+/// Re-triangulate one coplanar region from its boundary loops, or `None`
+/// when the region does not admit a clean replacement.
+fn retriangulate_region(
+    mesh: &TriangleMesh,
+    members: &[usize],
+    n0: &Vec3,
+    edge_tris: &std::collections::HashMap<(u32, u32), Vec<usize>>,
+    tri_keys: &std::collections::HashMap<[u32; 3], usize>,
+) -> Option<Vec<[u32; 3]>> {
+    // Net directed edge use inside the region. A boundary edge is one
+    // whose reverse the region does not supply. `uses` is the same tally
+    // undirected, needed to keep edges the rest of the mesh also touches
+    // at exactly their old use count.
+    let mut net: std::collections::HashMap<(u32, u32), i32> = std::collections::HashMap::new();
+    let mut uses: std::collections::HashMap<(u32, u32), usize> = std::collections::HashMap::new();
+    for &t in members {
+        let c = [
+            mesh.indices[t * 3],
+            mesh.indices[t * 3 + 1],
+            mesh.indices[t * 3 + 2],
+        ];
+        for k in 0..3 {
+            let (a, b) = (c[k], c[(k + 1) % 3]);
+            if a == b {
+                return None;
+            }
+            let (key, s) = if a < b { ((a, b), 1) } else { ((b, a), -1) };
+            *net.entry(key).or_default() += s;
+            *uses.entry(key).or_default() += 1;
+        }
+    }
+    // Chain the boundary. A vertex with two outgoing boundary edges means
+    // the region pinches (two sub-patches meeting at a point) and its
+    // loops are ambiguous — leave it alone.
+    let mut succ: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+    let mut boundary: Vec<(u32, u32)> = Vec::new();
+    for (&(a, b), &n) in &net {
+        let (from, to) = match n {
+            0 => continue,
+            1 => (a, b),
+            -1 => (b, a),
+            _ => return None, // a doubled cover, not a patch
+        };
+        if succ.insert(from, to).is_some() {
+            return None;
+        }
+        boundary.push((from, to));
+    }
+    if boundary.len() < 3 {
+        return None;
+    }
+    // Deterministic walk order: `net` is a HashMap, and which loop a chain
+    // is entered from would otherwise decide the vertex order earcut sees.
+    boundary.sort_unstable();
+    let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    let mut loops: Vec<Vec<u32>> = Vec::new();
+    for &(start, _) in &boundary {
+        if seen.contains(&start) {
+            continue;
+        }
+        let mut lp = vec![start];
+        seen.insert(start);
+        let mut cur = start;
+        loop {
+            let next = *succ.get(&cur)?;
+            if next == start {
+                break;
+            }
+            if !seen.insert(next) {
+                return None; // the chain runs into another loop
+            }
+            lp.push(next);
+            cur = next;
+            if lp.len() > boundary.len() {
+                return None;
+            }
+        }
+        if lp.len() < 3 {
+            return None;
+        }
+        loops.push(lp);
+    }
+
+    // Project onto the region's plane with a right-handed basis, so a
+    // counter-clockwise 2D winding is a +n0-facing triangle.
+    let up = if n0.x.abs() < 0.9 {
+        Vec3::new(1.0, 0.0, 0.0)
+    } else {
+        Vec3::new(0.0, 1.0, 0.0)
+    };
+    let u = (up - *n0 * up.dot(*n0)).normalize();
+    let v = n0.cross(u);
+    let to_2d = |i: u32| -> (f64, f64) {
+        let p = vertex(mesh, i).to_vec();
+        (p.dot(u), p.dot(v))
+    };
+    let signed_area = |r: &[(f64, f64)]| -> f64 {
+        let mut s = 0.0;
+        for i in 0..r.len() {
+            let (x0, y0) = r[i];
+            let (x1, y1) = r[(i + 1) % r.len()];
+            s += x0 * y1 - x1 * y0;
+        }
+        0.5 * s
+    };
+    let tri_area = |t: &[u32; 3]| -> f64 {
+        let (a, b, c) = (to_2d(t[0]), to_2d(t[1]), to_2d(t[2]));
+        0.5 * ((b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0))
+    };
+    let rings: Vec<Vec<(f64, f64)>> = loops
+        .iter()
+        .map(|lp| lp.iter().map(|&i| to_2d(i)).collect())
+        .collect();
+    let areas: Vec<f64> = rings.iter().map(|r| signed_area(r)).collect();
+    let outer = (0..rings.len()).max_by(|&i, &j| areas[i].abs().total_cmp(&areas[j].abs()))?;
+    if areas[outer] <= 0.0 {
+        return None;
+    }
+    // Every other loop must be a hole. The gate is on MAGNITUDE, not sign:
+    // a near-degenerate loop around a sliver comes out with either sign and
+    // encloses nothing, while a loop enclosing real area the wrong way
+    // round means this is two patches, not one patch with holes.
+    if (0..rings.len()).any(|i| i != outer && areas[i] > 1e-6 * areas[outer]) {
+        return None;
+    }
+    // Signed, not unsigned: the volume a planar patch contributes is
+    // (n·p₀)/3 times its signed area, so reproducing the signed area in
+    // this plane reproduces the patch's contribution exactly — and a fold,
+    // a double cover or a dropped sliver shows up as a mismatch. All three
+    // areas are measured in THIS 2D frame, and the shoelace of the
+    // boundary equals the sum of the triangles it bounds exactly, so the
+    // tolerance is f64 rounding over the region (1e-9 relative leaves two
+    // orders of magnitude of headroom at 100k triangles) — not a physical
+    // slack. Loosening it to 1e-6 let earcut drop a zero-area ear at a
+    // t-junction and opened a three-edge hole in the rana-60 shell.
+    let members_area: f64 = members
+        .iter()
+        .map(|&t| {
+            tri_area(&[
+                mesh.indices[t * 3],
+                mesh.indices[t * 3 + 1],
+                mesh.indices[t * 3 + 2],
+            ])
+        })
+        .sum();
+    let loop_area: f64 = areas.iter().sum();
+    let area_eps = 1e-9 * loop_area.abs() + 1e-12;
+    if (loop_area - members_area).abs() > area_eps {
+        return None;
+    }
+
+    let holes: Vec<Vec<(f64, f64)>> = (0..rings.len())
+        .filter(|&i| i != outer)
+        .map(|i| rings[i].clone())
+        .collect();
+    let tris = vcad_kernel_tessellate::triangulate_polygon_2d(&rings[outer], &holes)?;
+    // Combined index space earcut reports into: the outer ring, then the
+    // holes in the order they were handed over.
+    let mut flat: Vec<u32> = loops[outer].clone();
+    for i in (0..rings.len()).filter(|&i| i != outer) {
+        flat.extend_from_slice(&loops[i]);
+    }
+    let mut out: Vec<[u32; 3]> = Vec::with_capacity(tris.len());
+    for t in &tris {
+        let tri = [
+            *flat.get(t[0] as usize)?,
+            *flat.get(t[1] as usize)?,
+            *flat.get(t[2] as usize)?,
+        ];
+        if tri[0] == tri[1] || tri[1] == tri[2] || tri[0] == tri[2] {
+            continue;
+        }
+        out.push(tri);
+    }
+    if out.is_empty() || !fold_degenerate_ears(&mut out, &to_2d) {
+        return None;
+    }
+    let mut check: std::collections::HashMap<(u32, u32), i32> = std::collections::HashMap::new();
+    let mut new_uses: std::collections::HashMap<(u32, u32), usize> =
+        std::collections::HashMap::new();
+    let mut new_area = 0.0;
+    for tri in &out {
+        new_area += tri_area(tri);
+        for k in 0..3 {
+            let (x, y) = (tri[k], tri[(k + 1) % 3]);
+            let (key, s) = if x < y { ((x, y), 1) } else { ((y, x), -1) };
+            *check.entry(key).or_default() += s;
+            *new_uses.entry(key).or_default() += 1;
+        }
+    }
+    if (new_area - members_area).abs() > area_eps {
+        return None;
+    }
+    // Watertightness is preserved exactly when the replacement leaves the
+    // same unpaired directed edges the region did — no more, no fewer. The
+    // interior edges differ (that is the point), so only the unpaired ones
+    // are compared, through a sorted map so the comparison is order-free.
+    let unpaired = |m: &std::collections::HashMap<(u32, u32), i32>| {
+        m.iter()
+            .filter(|&(_, &n)| n != 0)
+            .map(|(&k, &v)| (k, v))
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    if unpaired(&check) != unpaired(&net) {
+        return None;
+    }
+    // …and manifoldness is preserved only if the replacement leaves every
+    // edge the REST of the mesh also touches in the state it found it.
+    // Earcut is free to run a diagonal between two boundary vertices, and
+    // on a chained soup that diagonal can already exist on a neighbouring
+    // plane: it would then be used by four triangles, which a slicer reads
+    // as an interior crack. The test is on the edge's TOTAL use count,
+    // counting the triangles outside the region that do not change:
+    // a healthy edge must stay at two users, and no edge may be left with
+    // exactly one (a hole) that did not already have one. An edge that is
+    // already over-used may drop back towards two — that is an
+    // improvement, and refusing it cost the twelve-post ring union its
+    // whole merge (19 regions declined, 10 160 triangles instead of
+    // 2 922).
+    let mut touched: std::collections::BTreeSet<(u32, u32)> = uses.keys().copied().collect();
+    touched.extend(new_uses.keys().copied());
+    for e in touched {
+        let inside_old = uses.get(&e).copied().unwrap_or(0);
+        let inside_new = new_uses.get(&e).copied().unwrap_or(0);
+        let outside = edge_tris
+            .get(&e)
+            .map(|t| t.len())
+            .unwrap_or(inside_old)
+            .saturating_sub(inside_old);
+        let (old_total, new_total) = (outside + inside_old, outside + inside_new);
+        // `outside > 0`: an edge only the region touches is ours to
+        // re-cut — dropping it is the whole point of the merge.
+        if (outside > 0 && old_total == 2 && new_total != 2) || (new_total == 1 && old_total != 1) {
+            return None;
+        }
+    }
+    // Finally, no new triangle may repeat a vertex triple that survives
+    // outside the region. `make_manifold` cancels same-triple pairs — an
+    // opposed pair outright — so minting a collision would delete the
+    // outside copy along with ours and tear a hole. Nothing in the checks
+    // above sees it: the triple's three edges can each keep their old use
+    // counts.
+    let mut own: std::collections::HashMap<[u32; 3], usize> = std::collections::HashMap::new();
+    for &t in members {
+        let mut k = [
+            mesh.indices[t * 3],
+            mesh.indices[t * 3 + 1],
+            mesh.indices[t * 3 + 2],
+        ];
+        k.sort_unstable();
+        *own.entry(k).or_default() += 1;
+    }
+    for tri in &out {
+        let mut k = *tri;
+        k.sort_unstable();
+        if tri_keys.get(&k).copied().unwrap_or(0) > own.get(&k).copied().unwrap_or(0) {
+            return None;
+        }
+    }
+    Some(out)
+}
+
 /// Boolean of two closed triangle meshes. Returns the result surface as a
 /// triangle mesh; empty results give an empty mesh.
 pub fn mesh_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> TriangleMesh {
+    orient_outward(mesh_csg_split(mesh_a, mesh_b, op))
+}
+
+/// [`mesh_csg`] with the split debris put back together
+/// ([`merge_coplanar_regions`]).
+///
+/// For CHAINED booleans only — the ones whose operands are themselves
+/// fallback results. Their debris compounds: every boolean re-splits what
+/// the last one left, and the rana-60 stator's authored 50-step fold (each
+/// operand spanning z 11.1..17.1) had not finished after nine minutes at
+/// 2.5 GB and climbing.
+///
+/// A FIRST-generation boolean does not get this, on purpose. The merge is
+/// sound on its own terms — it re-cuts flat patches, moves no vertex and
+/// preserves the signed area, the unpaired edges and the volume — but it
+/// hands downstream passes a coarser mesh, and those carry tolerances of
+/// their own: a sheet-metal U-channel came out 1.29% light and the
+/// shell-ring reproducer lost its edge-manifoldness, with nothing wrong in
+/// the merged mesh itself. Those parts have no debris problem to trade
+/// against, so they keep the fine triangulation they were built with.
+pub fn mesh_csg_remerged(
+    mesh_a: &TriangleMesh,
+    mesh_b: &TriangleMesh,
+    op: BooleanOp,
+) -> TriangleMesh {
+    let mut mesh = mesh_csg_split(mesh_a, mesh_b, op);
+    merge_coplanar_regions(&mut mesh);
+    orient_outward(mesh)
+}
+
+/// [`mesh_csg`] up to (but not including) the orientation pin, shared with
+/// [`mesh_csg_remerged`].
+fn mesh_csg_split(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> TriangleMesh {
     let pa = mesh_polygons(mesh_a);
     let pb = mesh_polygons(mesh_b);
     let frags_a = split_by_other(pa.clone(), &pb);
@@ -806,7 +1422,7 @@ pub fn mesh_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> 
     // it flips pinning decisions and strands seam vertices off their
     // carriers (measured 0.36 mm off a R25 sphere). `mesh_fallback` runs
     // the repair pipeline between two projection passes instead.
-    orient_outward(polygons_to_mesh(&out))
+    polygons_to_mesh(&out)
 }
 
 /// Boolean of two closed triangle meshes, repaired into a manifold shell.
