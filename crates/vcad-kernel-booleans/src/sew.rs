@@ -444,9 +444,20 @@ fn merge_nearby_vertices(topo: &mut Topology, tolerance: f64) {
         }
     }
 
-    // Remove merged vertices
-    for v_id in merge_map.keys() {
-        topo.vertices.remove(*v_id);
+    // Remove merged vertices — in SORTED id order, not `merge_map` order.
+    // A slotmap recycles freed slots LIFO, so the removal order decides
+    // which keys the next `add_vertex` calls hand out, and with them the
+    // order `topology.vertices` iterates in and every later tie-break that
+    // compares ids. `HashMap` iteration order is seeded per process, so
+    // this one line made the same document tessellate to a different
+    // (equally valid) mesh on every run: measured on the rana-60 stator,
+    // the same 378-face union came back with 4067, 4075 or 4083 triangles
+    // depending on the run, and the mesh fallback downstream then returned
+    // 8118.6 mm³ or 8150.6 mm³ from what should have been one input.
+    let mut merged: Vec<_> = merge_map.keys().copied().collect();
+    merged.sort_unstable();
+    for v_id in merged {
+        topo.vertices.remove(v_id);
     }
 }
 
