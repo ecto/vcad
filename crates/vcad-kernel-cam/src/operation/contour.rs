@@ -66,10 +66,11 @@ pub enum EntryStyle {
 
 /// What to do when the cutter is about as wide as the opening, so the offset
 /// path collapses or falls into separate pieces.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 pub enum ThinSlotStrategy {
     /// Refuse the job ([`CamError::ContourSplit`]). The default: a slot the
     /// cutter does not fit is the caller's problem to solve, not the CAM's.
+    #[default]
     Refuse,
     /// Follow the centre line of the reachable region where the offset
     /// collapses, accepting that the cutter cuts past the wall there.
@@ -78,12 +79,6 @@ pub enum ThinSlotStrategy {
         /// Largest wall overcut that may be accepted, in mm.
         tolerance: f64,
     },
-}
-
-impl Default for ThinSlotStrategy {
-    fn default() -> Self {
-        Self::Refuse
-    }
 }
 
 /// Which phase of the operation a report entry belongs to.
@@ -448,7 +443,10 @@ impl Contour2D {
         };
 
         let rough_levels: Vec<f64> = match &rough_loop {
-            Some(_) => levels(final_depth, (final_depth / settings.stepdown).ceil() as usize),
+            Some(_) => levels(
+                final_depth,
+                (final_depth / settings.stepdown).ceil() as usize,
+            ),
             None => Vec::new(),
         };
         let finish_count = self.finish_stepdowns.unwrap_or(if roughing {
@@ -492,6 +490,11 @@ impl Contour2D {
         }
 
         let finish_feed = self.finish_feed.unwrap_or(settings.feed_rate);
+        let ctx = Ctx {
+            wall: &wall,
+            tool,
+            settings,
+        };
 
         if let Some(lp) = &rough_loop {
             toolpath.push(ToolpathSegment::comment(format!(
@@ -504,9 +507,7 @@ impl Contour2D {
                 self.emit_pass(
                     &mut toolpath,
                     lp,
-                    &wall,
-                    tool,
-                    settings,
+                    &ctx,
                     PassPlan {
                         cut_z: *z,
                         entry_z,
@@ -529,9 +530,7 @@ impl Contour2D {
             self.emit_pass(
                 &mut toolpath,
                 &finish_loop,
-                &wall,
-                tool,
-                settings,
+                &ctx,
                 PassPlan {
                     cut_z: *z,
                     entry_z,
@@ -548,9 +547,7 @@ impl Contour2D {
             self.emit_pass(
                 &mut toolpath,
                 &finish_loop,
-                &wall,
-                tool,
-                settings,
+                &ctx,
                 PassPlan {
                     cut_z: -final_depth,
                     entry_z: -final_depth,
@@ -754,12 +751,7 @@ impl Contour2D {
     /// Stretches of the closed loop where a pass at `cut_z` must ride over a
     /// tab: `(from, to, top_z)` in path length from the loop's first point.
     /// A tab across the seam comes back as two stretches.
-    fn raised_intervals(
-        &self,
-        lp: &Loop,
-        cut_z: f64,
-        tool_diameter: f64,
-    ) -> Vec<(f64, f64, f64)> {
+    fn raised_intervals(&self, lp: &Loop, cut_z: f64, tool_diameter: f64) -> Vec<(f64, f64, f64)> {
         let total = lp.total();
         let mut out = Vec::new();
         if total <= 0.0 {
@@ -819,6 +811,13 @@ impl Contour2D {
     }
 }
 
+/// What every pass of the operation shares.
+struct Ctx<'a> {
+    wall: &'a Wall,
+    tool: &'a Tool,
+    settings: &'a CamSettings,
+}
+
 /// What one pass has to do.
 struct PassPlan {
     cut_z: f64,
@@ -841,12 +840,15 @@ impl Contour2D {
         &self,
         toolpath: &mut Toolpath,
         lp: &Loop,
-        wall: &Wall,
-        tool: &Tool,
-        settings: &CamSettings,
+        ctx: &Ctx,
         plan: PassPlan,
         report: &mut ContourReport,
     ) {
+        let Ctx {
+            wall,
+            tool,
+            settings,
+        } = *ctx;
         let raised = self.raised_intervals(lp, plan.cut_z, tool.diameter());
 
         // A pass whose waste is already cleared may go down beside the wall,
@@ -881,7 +883,7 @@ impl Contour2D {
                 toolpath.push(ToolpathSegment::linear(p.x, p.y, seam_z, plan.feed));
             }
             toolpath.push(ToolpathSegment::comment("profile"));
-            self.emit_loop(toolpath, lp, lead_s, plan.cut_z, &raised, plan.feed, settings);
+            self.emit_loop(toolpath, lp, lead_s, &raised, &plan, settings);
             toolpath.push(ToolpathSegment::comment("lead-out arc"));
             let mut last = arc_out[0];
             for p in &arc_out {
@@ -925,7 +927,7 @@ impl Contour2D {
                 let mut s = start_s;
                 let mut z = plan.entry_z;
                 for (to_s, to_z) in legs {
-                    self.emit_run(toolpath, lp, s, to_s, z, to_z, plan.feed);
+                    emit_run(toolpath, lp, (s, to_s), (z, to_z), plan.feed);
                     s = to_s;
                     z = to_z;
                 }
@@ -945,7 +947,7 @@ impl Contour2D {
         };
 
         toolpath.push(ToolpathSegment::comment("profile"));
-        self.emit_loop(toolpath, lp, end_s, plan.cut_z, &raised, plan.feed, settings);
+        self.emit_loop(toolpath, lp, end_s, &raised, &plan, settings);
         // Straight up out of the cut, after the last pass too: the final
         // rapid below would otherwise travel in XY.
         let end = lp.at(end_s);
@@ -996,38 +998,6 @@ impl Contour2D {
         Some(RampPlan { start_s, legs })
     }
 
-    /// One leg of a ramp: from `s0` to `s1` along the loop (either way round),
-    /// descending in step with the distance travelled.
-    fn emit_run(
-        &self,
-        toolpath: &mut Toolpath,
-        lp: &Loop,
-        s0: f64,
-        s1: f64,
-        z0: f64,
-        z1: f64,
-        feed: f64,
-    ) {
-        let span = (s1 - s0).abs();
-        if span <= 1e-12 {
-            return;
-        }
-        let mut marks = lp.vertices_between(s0.min(s1), s0.max(s1));
-        if s1 < s0 {
-            marks.reverse();
-        }
-        for s in marks.into_iter().chain(std::iter::once(s1)) {
-            let t = ((s - s0).abs() / span).clamp(0.0, 1.0);
-            let p = lp.at(s);
-            toolpath.push(ToolpathSegment::linear(
-                p.x,
-                p.y,
-                z0 + (z1 - z0) * t,
-                feed,
-            ));
-        }
-    }
-
     /// One lap of the closed loop from `s_start` at `cut_z`, stepping over
     /// each raised stretch with a vertical lift at its start and a vertical
     /// plunge at its end, so a tab keeps square ends at exactly the stretch it
@@ -1037,11 +1007,11 @@ impl Contour2D {
         toolpath: &mut Toolpath,
         lp: &Loop,
         s_start: f64,
-        cut_z: f64,
         raised: &[(f64, f64, f64)],
-        feed: f64,
+        plan: &PassPlan,
         settings: &CamSettings,
     ) {
+        let (cut_z, feed) = (plan.cut_z, plan.feed);
         let total = lp.total();
         let end = s_start + total;
         let mut marks = lp.vertices_between(s_start, end);
@@ -1068,11 +1038,7 @@ impl Contour2D {
             let want = height_at(raised, cut_z, ((from + to) / 2.0).rem_euclid(total));
             if (want - z).abs() > 1e-9 {
                 let p = lp.at(from);
-                let rate = if want < z {
-                    settings.plunge_rate
-                } else {
-                    feed
-                };
+                let rate = if want < z { settings.plunge_rate } else { feed };
                 toolpath.push(ToolpathSegment::linear(p.x, p.y, want, rate));
                 z = want;
             }
@@ -1081,7 +1047,35 @@ impl Contour2D {
             from = to;
         }
     }
+}
 
+/// One leg of a ramp: from `s0` to `s1` along the loop (either way round),
+/// descending in step with the distance travelled.
+fn emit_run(
+    toolpath: &mut Toolpath,
+    lp: &Loop,
+    (s0, s1): (f64, f64),
+    (z0, z1): (f64, f64),
+    feed: f64,
+) {
+    {
+        let span = (s1 - s0).abs();
+        if span <= 1e-12 {
+            return;
+        }
+        let mut marks = lp.vertices_between(s0.min(s1), s0.max(s1));
+        if s1 < s0 {
+            marks.reverse();
+        }
+        for s in marks.into_iter().chain(std::iter::once(s1)) {
+            let t = ((s - s0).abs() / span).clamp(0.0, 1.0);
+            let p = lp.at(s);
+            toolpath.push(ToolpathSegment::linear(p.x, p.y, z0 + (z1 - z0) * t, feed));
+        }
+    }
+}
+
+impl Contour2D {
     /// A quarter-circle lead-in arriving tangentially at the seam and a
     /// lead-out leaving it the same way, both on the waste side. `None` when
     /// either arc would come nearer the wall than the path itself does — a
@@ -1103,7 +1097,8 @@ impl Contour2D {
         let probe = 1e-3;
         let left = (-t.1, t.0);
         let right = (t.1, -t.0);
-        let toward = |n: (f64, f64)| wall.clearance(Point2D::new(p0.x + n.0 * probe, p0.y + n.1 * probe));
+        let toward =
+            |n: (f64, f64)| wall.clearance(Point2D::new(p0.x + n.0 * probe, p0.y + n.1 * probe));
         let n_w = if toward(left) >= toward(right) {
             left
         } else {
@@ -1121,9 +1116,8 @@ impl Contour2D {
         let a_end = u_end.1.atan2(u_end.0);
         let steps = 12;
         let quarter = std::f64::consts::FRAC_PI_2;
-        let point_at_angle = |a: f64| {
-            Point2D::new(centre.x + radius * a.cos(), centre.y + radius * a.sin())
-        };
+        let point_at_angle =
+            |a: f64| Point2D::new(centre.x + radius * a.cos(), centre.y + radius * a.sin());
         let arc_in: Vec<Point2D> = (0..=steps)
             .map(|i| {
                 let f = i as f64 / steps as f64;
@@ -1276,8 +1270,9 @@ fn first_free(raised: &[(f64, f64, f64)], total: f64) -> Option<f64> {
             .iter()
             .filter(|(from, to, _)| s >= *from - 1e-9 && s <= *to + 1e-9)
             .map(|(_, to, _)| *to)
-            .fold(None::<f64>, |acc, to| Some(acc.map_or(to, |a: f64| a.max(to))))
-        {
+            .fold(None::<f64>, |acc, to| {
+                Some(acc.map_or(to, |a: f64| a.max(to)))
+            }) {
             None => return Some(s),
             Some(to) => s = to + 1e-6,
         }
@@ -1890,8 +1885,8 @@ mod tests {
         };
         // Depth 4 in 1 mm passes, tabs 1.5 tall: the passes at -3 and -4 both
         // reach below the tab top at -2.5.
-        let op =
-            Contour2D::outside(Contour::rectangle(0.0, 0.0, 50.0, 40.0), 4.0).with_tabs(3, 5.0, 1.5);
+        let op = Contour2D::outside(Contour::rectangle(0.0, 0.0, 50.0, 40.0), 4.0)
+            .with_tabs(3, 5.0, 1.5);
         let toolpath = op.generate(&mill(6.0), &settings).unwrap();
         let passes = tab_metal_per_pass(&toolpath, -2.5, 6.0);
         assert_eq!(passes.len(), 2, "{passes:?}");
@@ -2012,7 +2007,10 @@ mod tests {
             .collect();
         for (k, z) in rough_depths.iter().enumerate() {
             let want = -4.0 * (k + 1) as f64 / 3.0;
-            assert!((z - want).abs() < 1e-9, "rough pass {k} at {z}, wanted {want}");
+            assert!(
+                (z - want).abs() < 1e-9,
+                "rough pass {k} at {z}, wanted {want}"
+            );
         }
     }
 
@@ -2059,7 +2057,9 @@ mod tests {
         assert_eq!(finish.len(), spring.len());
         for (a, b) in finish.iter().zip(&spring) {
             assert!(
-                (a[0] - b[0]).abs() < 1e-9 && (a[1] - b[1]).abs() < 1e-9 && (a[2] - b[2]).abs() < 1e-9,
+                (a[0] - b[0]).abs() < 1e-9
+                    && (a[1] - b[1]).abs() < 1e-9
+                    && (a[2] - b[2]).abs() < 1e-9,
                 "spring pass wandered: {a:?} vs {b:?}"
             );
         }
@@ -2088,7 +2088,8 @@ mod tests {
                     let ccw_travel = area > 0.0;
                     let want_ccw = (direction == CutDirection::Climb) == inside;
                     assert_eq!(
-                        ccw_travel, want_ccw,
+                        ccw_travel,
+                        want_ccw,
                         "{direction:?} {} ran {} (signed area {area:.1})",
                         if inside { "inside" } else { "outside" },
                         if ccw_travel { "CCW" } else { "CW" }
@@ -2135,7 +2136,10 @@ mod tests {
                 // It starts at the previous depth and ends at this one.
                 let start_z = ramp[0].from[2];
                 let end_z = ramp[ramp.len() - 1].to[2];
-                assert!((start_z + k as f64).abs() < 1e-9, "ramp {k} starts at {start_z}");
+                assert!(
+                    (start_z + k as f64).abs() < 1e-9,
+                    "ramp {k} starts at {start_z}"
+                );
                 assert!(
                     (end_z + (k + 1) as f64).abs() < 1e-9,
                     "ramp {k} ends at {end_z}"
@@ -2183,7 +2187,11 @@ mod tests {
         if let Some(run) = open {
             tabs.push(run);
         }
-        assert!(tabs.len() >= 3, "expected the three tabs, got {}", tabs.len());
+        assert!(
+            tabs.len() >= 3,
+            "expected the three tabs, got {}",
+            tabs.len()
+        );
 
         for m in runs(&toolpath, "ramp entry").into_iter().flatten() {
             for (a, b) in &tabs {
@@ -2366,7 +2374,10 @@ mod tests {
             .flatten()
             .map(|m| m.to[2])
             .fold(f64::INFINITY, f64::min);
-        assert!((deepest + 5.85).abs() < 1e-12, "cut to {deepest}, wanted -5.85");
+        assert!(
+            (deepest + 5.85).abs() < 1e-12,
+            "cut to {deepest}, wanted -5.85"
+        );
 
         // The tab top is 1 mm off the underside of the stock at -6, so -5.0 —
         // not 1 mm off the shortened depth, which would be -4.85.
@@ -2429,7 +2440,10 @@ mod tests {
             .flatten()
             .map(|m| m.to[2])
             .fold(f64::INFINITY, f64::min);
-        assert!((deepest + 1.3).abs() < 1e-12, "cut to {deepest}, wanted -1.3");
+        assert!(
+            (deepest + 1.3).abs() < 1e-12,
+            "cut to {deepest}, wanted -1.3"
+        );
 
         let nothing = base()
             .with_bottom_allowance(1.0)
@@ -2438,6 +2452,135 @@ mod tests {
             matches!(nothing, Err(CamError::BottomAllowanceExceedsDepth { .. })),
             "{nothing:?}"
         );
+    }
+
+    /// Deepest the cutter reaches past the contour anywhere on the path,
+    /// measured off the toolpath itself rather than believed from the report.
+    fn worst_overcut(op: &Contour2D, toolpath: &Toolpath, tool_radius: f64) -> f64 {
+        let wall = Wall::new(op.contour.to_geo_polygon(), op.inside);
+        let mut worst: f64 = 0.0;
+        for m in runs(toolpath, "profile").into_iter().flatten() {
+            for i in 0..=8 {
+                let f = i as f64 / 8.0;
+                let p = Point2D::new(
+                    m.from[0] + (m.to[0] - m.from[0]) * f,
+                    m.from[1] + (m.to[1] - m.from[1]) * f,
+                );
+                worst = worst.max(tool_radius - wall.clearance(p));
+            }
+        }
+        worst
+    }
+
+    /// The centre-line fallback is opt-in, and opting in does not mean
+    /// accepting anything: the cut it builds is measured against the contour
+    /// and refused if it takes more off the wall than the caller allowed.
+    #[test]
+    fn test_centre_line_fallback_is_opt_in_and_bounded() {
+        let settings = CamSettings {
+            stepdown: 2.0,
+            ..CamSettings::default()
+        };
+        // The neck is 4 mm and the cutter 6: on the centre line it cuts
+        // exactly 1 mm into each wall of the neck.
+        let refused = Contour2D::inside(dumbbell(), 2.0)
+            .with_centre_line_fallback(0.05)
+            .generate(&mill(6.0), &settings);
+        assert!(
+            matches!(
+                refused,
+                Err(CamError::CentreLineOvercut { overcut, tolerance })
+                    if (overcut - 1.0).abs() < 0.05 && tolerance == 0.05
+            ),
+            "{refused:?}"
+        );
+
+        let op = Contour2D::inside(dumbbell(), 2.0).with_centre_line_fallback(1.1);
+        let (toolpath, report) = op.generate_reported(&mill(6.0), &settings).unwrap();
+        assert!(
+            (report.max_wall_error - 1.0).abs() < 0.05,
+            "reported {:.3} mm of wall error",
+            report.max_wall_error
+        );
+        assert!(!report.centre_line.is_empty(), "no stretch reported");
+        for stretch in &report.centre_line {
+            assert!(stretch.to > stretch.from);
+            assert!(stretch.max_wall_error <= report.max_wall_error + 1e-9);
+            assert_eq!(stretch.phase, ContourPhase::Finish);
+        }
+        // What the path actually does, measured: no worse than reported, and
+        // the wide lobes still get cut to the full offset.
+        let measured = worst_overcut(&op, &toolpath, 3.0);
+        assert!(
+            measured <= report.max_wall_error + 1e-6,
+            "path cuts {measured:.3} mm past the wall, report says {:.3}",
+            report.max_wall_error
+        );
+        let wall = Wall::new(op.contour.to_geo_polygon(), true);
+        let on_the_offset = runs(&toolpath, "profile")
+            .into_iter()
+            .flatten()
+            .filter(|m| (wall.clearance(Point2D::new(m.to[0], m.to[1])) - 3.0).abs() < 0.02)
+            .count();
+        assert!(
+            on_the_offset > 20,
+            "only {on_the_offset} moves reach the true offset in the lobes"
+        );
+        assert!(
+            toolpath.segments.iter().any(|s| matches!(
+                s,
+                ToolpathSegment::Comment { text } if text.starts_with("centre-line cut")
+            )),
+            "the G-code does not say which stretches were centre-line cut"
+        );
+    }
+
+    /// The gear case: a root space narrower than the cutter. The offset does
+    /// not split, it vanishes — and the wall error is the half width the
+    /// cutter cannot fit into, which is arithmetic a test can check exactly.
+    #[test]
+    fn test_centre_line_in_a_slot_narrower_than_the_cutter() {
+        let settings = CamSettings {
+            stepdown: 1.0,
+            ..CamSettings::default()
+        };
+        // 0.44 mm wide, as narrow as the roots of gears-60-cnc.json, cut with
+        // the same 1 mm end mill: 0.5 - 0.22 = 0.28 mm into each flank.
+        let slot = || Contour::rectangle(0.0, 0.0, 0.44, 4.0);
+
+        let refused = Contour2D::inside(slot(), 1.0).generate(&mill(1.0), &settings);
+        assert!(
+            matches!(refused, Err(CamError::EmptyContour)),
+            "a slot the cutter cannot enter must be refused by default: {refused:?}"
+        );
+
+        let tight = Contour2D::inside(slot(), 1.0)
+            .with_centre_line_fallback(0.05)
+            .generate(&mill(1.0), &settings);
+        assert!(
+            matches!(
+                tight,
+                Err(CamError::CentreLineOvercut { overcut, .. }) if (overcut - 0.28).abs() < 0.01
+            ),
+            "{tight:?}"
+        );
+
+        let op = Contour2D::inside(slot(), 1.0).with_centre_line_fallback(0.3);
+        let (toolpath, report) = op.generate_reported(&mill(1.0), &settings).unwrap();
+        assert!(
+            (report.max_wall_error - 0.28).abs() < 0.01,
+            "reported {:.3} mm, expected 0.28",
+            report.max_wall_error
+        );
+        assert!(worst_overcut(&op, &toolpath, 0.5) <= report.max_wall_error + 1e-6);
+        // It runs down the middle of the slot, not along one wall.
+        for m in runs(&toolpath, "profile").into_iter().flatten() {
+            assert!(
+                (m.to[0] - 0.22).abs() < 0.01,
+                "off the centre line at {:?}",
+                m.to
+            );
+        }
     }
 
     #[test]
