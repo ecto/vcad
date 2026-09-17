@@ -2154,71 +2154,82 @@ mod tests {
         }
     }
 
+    /// Path length of the point on the loop nearest `p`, so a move can be
+    /// placed against the tab stretches the generator computed.
+    fn s_of(lp: &Loop, p: [f64; 3]) -> f64 {
+        let p = Point2D::new(p[0], p[1]);
+        let n = lp.points.len();
+        let mut best = (f64::INFINITY, 0.0);
+        for k in 0..n {
+            let (a, b) = (lp.points[k], lp.points[(k + 1) % n]);
+            let q = nearest_on_segment(p, a, b);
+            let d = p.distance_to(&q);
+            if d < best.0 {
+                best = (d, lp.cum[k] + a.distance_to(&q));
+            }
+        }
+        best.1
+    }
+
     /// Tabs are the only thing holding the part, and a ramp is the one move
     /// that descends while travelling: it may not descend through one.
     #[test]
     fn test_ramp_never_descends_through_a_tab() {
+        // The whole 4 mm depth in one pass, so the ramp is 76 mm long at 3
+        // degrees: long enough to reach the tab 57 mm along the loop, and by
+        // then deep enough to cut it away if it kept descending.
         let settings = CamSettings {
-            stepdown: 1.0,
+            stepdown: 4.0,
             ..CamSettings::default()
         };
         let op = Contour2D::outside(Contour::rectangle(0.0, 0.0, 60.0, 40.0), 4.0)
-            .with_tabs(3, 5.0, 1.5);
+            .with_tab(Tab::new(0.26, 5.0, 1.5))
+            .with_tab(Tab::new(0.6, 5.0, 1.5));
         let toolpath = op.generate(&mill(6.0), &settings).unwrap();
-        let top = -2.5;
 
-        // Where the tabs are: the stretches the profile rides over, taken
-        // from the deepest pass and trimmed so the vertical step at each end
-        // is not counted as being "on" the tab.
-        let mut tabs: Vec<([f64; 2], [f64; 2])> = Vec::new();
-        let mut open: Option<([f64; 2], [f64; 2])> = None;
-        for m in runs(&toolpath, "profile").into_iter().flatten() {
-            let lifted = (m.from[2] - top).abs() < 1e-9 && (m.to[2] - top).abs() < 1e-9;
-            match (&mut open, lifted) {
-                (None, true) => open = Some(([m.from[0], m.from[1]], [m.to[0], m.to[1]])),
-                (Some(run), true) => run.1 = [m.to[0], m.to[1]],
-                (Some(run), false) => {
-                    tabs.push(*run);
-                    open = None;
-                }
-                (None, false) => {}
-            }
-        }
-        if let Some(run) = open {
-            tabs.push(run);
-        }
+        // The stretches the generator will ride over, in path length along
+        // the same loop the toolpath was built on.
+        let wall = Wall::new(op.contour.to_geo_polygon(), false);
+        let mut scratch = ContourReport::default();
+        let lp = op
+            .loop_for(3.0, 3.0, ContourPhase::Finish, &wall, &mut scratch)
+            .unwrap();
+        let raised = op.raised_intervals(&lp, -4.0, 6.0);
+        assert_eq!(raised.len(), 2, "expected the two tabs: {raised:?}");
+
+        let ramp: Vec<Move> = runs(&toolpath, "ramp entry")
+            .into_iter()
+            .flatten()
+            .collect();
+        let length: f64 = ramp
+            .iter()
+            .map(|m| (m.to[0] - m.from[0]).hypot(m.to[1] - m.from[1]))
+            .sum();
+        // The fixture has to be able to fail: a ramp that never runs as far
+        // as a tab, or never gets below one, would prove nothing.
         assert!(
-            tabs.len() >= 3,
-            "expected the three tabs, got {}",
-            tabs.len()
+            length > 70.0 && ramp.iter().any(|m| m.to[2] < -2.5),
+            "the ramp is {length:.1} mm long and never gets below a tab top"
+        );
+        assert!(
+            raised.iter().any(|(from, to, _)| *from < 70.0 && *to > 5.0),
+            "no tab lies within reach of the ramp: {raised:?}"
         );
 
-        for m in runs(&toolpath, "ramp entry").into_iter().flatten() {
-            for (a, b) in &tabs {
-                let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
-                let len2 = dx * dx + dy * dy;
-                if len2 < 1e-12 {
-                    continue;
-                }
-                // Sample the ramp move; anything landing on the tab stretch,
-                // clear of its two ends, must still be at or above the top.
-                for i in 0..=20 {
-                    let f = i as f64 / 20.0;
-                    let p = [
-                        m.from[0] + (m.to[0] - m.from[0]) * f,
-                        m.from[1] + (m.to[1] - m.from[1]) * f,
-                        m.from[2] + (m.to[2] - m.from[2]) * f,
-                    ];
-                    let t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2;
-                    if !(0.05..=0.95).contains(&t) {
-                        continue;
-                    }
-                    let off = (p[0] - (a[0] + dx * t)).hypot(p[1] - (a[1] + dy * t));
-                    assert!(
-                        off > 1e-6 || p[2] >= top - 1e-9,
-                        "the ramp cuts the tab at {p:?} (top {top})"
-                    );
-                }
+        for m in &ramp {
+            for i in 0..=40 {
+                let f = i as f64 / 40.0;
+                let p = [
+                    m.from[0] + (m.to[0] - m.from[0]) * f,
+                    m.from[1] + (m.to[1] - m.from[1]) * f,
+                    m.from[2] + (m.to[2] - m.from[2]) * f,
+                ];
+                let top = height_at(&raised, f64::NEG_INFINITY, s_of(&lp, p));
+                assert!(
+                    top.is_infinite() || p[2] >= top - 1e-9,
+                    "the ramp is at {:.3} over a tab whose top is {top:.3}, at {p:?}",
+                    p[2]
+                );
             }
         }
     }
