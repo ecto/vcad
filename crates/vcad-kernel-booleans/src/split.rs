@@ -7,7 +7,7 @@
 //! For Phase 2, we focus on planar face splitting by lines/segments.
 //! Curved face splitting extends naturally once the planar case works.
 
-use vcad_kernel_math::{Point2, Point3};
+use vcad_kernel_math::{Point2, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, HalfEdgeId, Orientation};
 
@@ -736,17 +736,37 @@ fn find_line_polygon_crossings(polygon: &[Point3], line: &vcad_kernel_geom::Line
         return Vec::new();
     }
 
-    // Compute the polygon's plane normal from the first 3 vertices
-    let e1 = polygon[1] - polygon[0];
-    let e2 = polygon[2] - polygon[0];
-    let plane_normal = e1.cross(e2);
+    // The polygon's plane normal, by Newell's method over the whole loop.
+    //
+    // NOT from the first three vertices: splitting a neighbouring face
+    // imprints vertices onto the shared edge, so a loop routinely opens with
+    // three collinear points. Reading that as a "degenerate polygon" refused
+    // the cut without a word, and the uncut face stayed behind as an interior
+    // membrane — on the rana-60 stator, the side of every post where its
+    // second fillet block attaches (`(post ∪ A) ∪ B` came out 6.75 mm³ heavy
+    // with open edges, while `post ∪ A` and `post ∪ (A ∪ B)` were exact).
+    let mut plane_normal = Vec3::new(0.0, 0.0, 0.0);
+    for i in 0..n {
+        let a = polygon[i];
+        let b = polygon[(i + 1) % n];
+        plane_normal.x += (a.y - b.y) * (a.z + b.z);
+        plane_normal.y += (a.z - b.z) * (a.x + b.x);
+        plane_normal.z += (a.x - b.x) * (a.y + b.y);
+    }
     let plane_normal_len = plane_normal.norm();
     if plane_normal_len < 1e-12 {
         return Vec::new(); // Degenerate polygon
     }
     let plane_normal = plane_normal / plane_normal_len;
 
-    // Build a 2D coordinate system on the plane
+    // Build a 2D coordinate system on the plane, from the first edge with
+    // any length to it.
+    let Some(e1) = (0..n)
+        .map(|i| polygon[(i + 1) % n] - polygon[i])
+        .find(|e| e.norm() > 1e-9)
+    else {
+        return Vec::new();
+    };
     let x_axis = e1.normalize();
     let y_axis = plane_normal.cross(x_axis);
 

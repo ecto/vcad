@@ -321,6 +321,20 @@ pub fn boolean_op(
     boolean_op_reported(solid_a, solid_b, op, segments).map(|(result, _)| result)
 }
 
+/// How far (as a fraction of the volume) a cracked analytic union may sit
+/// from its watertight mesh referee before it is judged wrong.
+///
+/// The two are tessellated on different schedules — the referee from the
+/// operands' inscribed polygons, the analytic result with re-sampled rims — so
+/// they legitimately differ by up to the inscribed-polygon deficit of a fully
+/// round body, `1 − sin(2π/n)/(2π/n)`: 0.64% at 32 segments, 0.01% at 256.
+/// Twice that, floored at 0.2%, stays clear of schedule noise at every
+/// segment count and under the failures this exists for (0.7–2% measured).
+fn union_referee_slack(segments: u32) -> f64 {
+    let step = 2.0 * std::f64::consts::PI / f64::from(segments.max(8));
+    (2.0 * (1.0 - step.sin() / step)).max(0.002)
+}
+
 /// [`boolean_op`], plus a [`BooleanReport`] describing what the operation
 /// did to the representation.
 ///
@@ -415,11 +429,16 @@ pub fn boolean_op_reported(
     // later difference is often exactly such a union, and keeping its
     // broken analytic result poisons everything downstream.
     let wide_cracks = max_open_edge_gap(&result_mesh) > WIDE_CRACK_GAP;
+    //
+    // Union pays for them too: its volume bound (`union_volume_out_of_bounds`)
+    // is the one sound post-hoc check a union has, and the failure it catches
+    // is silent — a grossly wrong solid that still reports `Analytic`.
     let operands = (flagged
         || sphere_unrepresentable
         || inverted
         || wide_cracks
-        || op == BooleanOp::Difference)
+        || op == BooleanOp::Difference
+        || op == BooleanOp::Union)
         .then(|| {
             let mut a = tessellate_brep(solid_a, segments);
             let mut b = tessellate_brep(solid_b, segments);
@@ -455,6 +474,14 @@ pub fn boolean_op_reported(
             _ => None,
         }
     };
+    // A union outside its volume bound is the wrong solid, flagged or not.
+    if broken_reason.is_none() && op == BooleanOp::Union {
+        if let Some((mesh_a, mesh_b)) = &operands {
+            if crate::validate::union_volume_out_of_bounds(&result_mesh, mesh_a, mesh_b) {
+                broken_reason = Some(DegradeReason::VolumeDisagreement);
+            }
+        }
+    }
     let mut broken = broken_reason.is_some();
 
     // Fail closed on a Difference that removed nothing at all from a
@@ -609,6 +636,57 @@ pub fn boolean_op_reported(
             max_open_edge_gap(&result_mesh),
             result_structure.overused_edges
         );
+    }
+    // A cracked UNION gets a referee. Its volume bound is loose from below
+    // (a union that drops a whole operand still passes it), and the failure
+    // it misses is real: unioning a twelve-lump operand into a ring with
+    // coplanar caps kept an "analytic" result with 1358 open edges that had
+    // lost the cap over every overlap region — 1.2% of the volume, no flag
+    // raised. The mesh boolean of the same operands is the referee: when it
+    // comes back WATERTIGHT it is a valid solid with an exact volume for
+    // these tessellations, so an analytic result that is open AND more than
+    // `union_referee_slack` away from it is the one that is wrong. Agreement
+    // keeps the analytic surfaces, as everywhere else in this function.
+    if op == BooleanOp::Union
+        && result_open_edges > 0
+        && !(flagged || sphere_unrepresentable || inverted || wide_cracks)
+        && std::env::var_os("VCAD_NO_UNION_REFEREE").is_none()
+    {
+        if let Some((mesh_a, mesh_b)) = &operands {
+            if let Ok(alt) = mesh_fallback(mesh_a, mesh_b, op, &quadrics, true) {
+                let alt_mesh = alt.to_mesh(segments);
+                let alt_report = crate::mesh_report(&alt_mesh);
+                let brep_vol = crate::validate::mesh_signed_volume(&result_mesh).abs();
+                let alt_vol = alt_report.signed_volume.abs();
+                // "Watertight" here means at least twenty times cleaner than
+                // the result it overrules, not perfectly closed: the same
+                // stator union comes back from the mesh boolean with 0 open
+                // edges on most runs and 12 on some (against the analytic
+                // result's 1309), and demanding exactly zero made the verdict
+                // — and with it the part's fidelity and volume — flip from
+                // run to run.
+                let watertight = alt_report.triangles > 0
+                    && alt_report.open_edges.saturating_mul(20) <= result_open_edges
+                    && alt_mesh.boundary_edges().len().saturating_mul(20) <= result_open_edges;
+                if std::env::var_os("VCAD_BOOLEAN_WARN").is_some() {
+                    eprintln!(
+                        "vcad boolean: union referee: analytic {brep_vol:.1} (open {result_open_edges}) \
+                         vs mesh {alt_vol:.1} (open {}, raw boundary {})",
+                        alt_report.open_edges,
+                        alt_mesh.boundary_edges().len()
+                    );
+                }
+                if watertight
+                    && (alt_vol - brep_vol).abs() > union_referee_slack(segments) * alt_vol
+                    && !crate::validate::union_volume_out_of_bounds(&alt_mesh, mesh_a, mesh_b)
+                {
+                    let mut report = BooleanReport::degraded(op, DegradeReason::VolumeDisagreement)
+                        .with_result(&alt);
+                    report.overused_edges = alt_report.overused_edges;
+                    return Ok((alt, report));
+                }
+            }
+        }
     }
     if !(flagged
         || sphere_unrepresentable

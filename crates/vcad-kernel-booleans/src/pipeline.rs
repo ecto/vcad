@@ -714,16 +714,27 @@ pub(crate) fn brep_boolean(
                             continue;
                         }
                         let sq = disc.sqrt();
+                        // Closed at both ends, with slack: a circle that
+                        // enters or leaves the face exactly THROUGH A VERTEX
+                        // solves to t = 1 on one edge and t = −1e-13 on the
+                        // next, and a half-open [0, 1) dropped both — the
+                        // crossing was lost, the circle was never offered as
+                        // a split, and the cap kept an unsplit doubled
+                        // region. Designed tangencies put vertices exactly
+                        // there (the rana-60 stator's fillet blocks end on
+                        // the bore they blend into). The vertex is then seen
+                        // from both edges; the dedup below folds the pair.
                         for t in [(-bb - sq) / (2.0 * aa), (-bb + sq) / (2.0 * aa)] {
-                            if (0.0..1.0).contains(&t) {
+                            if (-1e-9..=1.0 + 1e-9).contains(&t) {
                                 angles.push((y1 + t * dy).atan2(x1 + t * dx));
                             }
                         }
                     }
+                    angles.sort_by(|p, q| p.partial_cmp(q).unwrap_or(std::cmp::Ordering::Equal));
+                    angles.dedup_by(|p, q| (*p - *q).abs() < 1e-9);
                     if angles.len() < 2 {
                         return false;
                     }
-                    angles.sort_by(|p, q| p.partial_cmp(q).unwrap_or(std::cmp::Ordering::Equal));
                     for i in 0..angles.len() {
                         let (t0, t1) = (angles[i], angles[(i + 1) % angles.len()]);
                         let mid = if i + 1 == angles.len() {
@@ -774,10 +785,22 @@ pub(crate) fn brep_boolean(
                 // exactly on their circle, and a circle that genuinely crosses
                 // a polygon touches it at no more than two points, so ≥3
                 // on-circle vertices means "this circle is one of my arcs".
+                //
+                // …unless those vertices belong to a DIFFERENT, tangent arc. A
+                // fillet that blends into this circle samples its own rim
+                // densely (sag-adaptive: ~0.02 mm apart on r 1.05), and near
+                // the tangent point a whole run of those samples sits inside
+                // the radius tolerance — the gap only opens as s²·|1/r − 1/R|/2.
+                // Reading them as "my own arc" skipped the split the face
+                // genuinely needed (the rana-60 stator: the bore circle never
+                // cut the fillet blocks' caps, and every post root kept a
+                // hole in the top and bottom faces). Three points fix a
+                // circle, so ask them: samples of THIS circle have its
+                // radius as their circumradius; a tangent arc's do not.
                 let circle_is_own_boundary = |solid: &BRepSolid, fid: FaceId| -> bool {
                     let face = &solid.topology.faces[fid];
                     let radius_tol = (circle.radius * 1e-4).max(1e-4);
-                    let mut on_circle = 0u32;
+                    let mut on_circle: Vec<Point3> = Vec::new();
                     let loops =
                         std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied());
                     for loop_id in loops {
@@ -785,14 +808,26 @@ pub(crate) fn brep_boolean(
                             let v =
                                 solid.topology.vertices[solid.topology.half_edges[he].origin].point;
                             if ((v - circle.center).norm() - circle.radius).abs() <= radius_tol {
-                                on_circle += 1;
-                                if on_circle >= 3 {
-                                    return true;
-                                }
+                                on_circle.push(v);
                             }
                         }
                     }
-                    false
+                    if on_circle.len() < 3 {
+                        return false;
+                    }
+                    let (p0, p1, p2) = (
+                        on_circle[0],
+                        on_circle[on_circle.len() / 2],
+                        on_circle[on_circle.len() - 1],
+                    );
+                    let (e0, e1, e2) = ((p1 - p0).norm(), (p2 - p1).norm(), (p0 - p2).norm());
+                    let area = 0.5 * (p1 - p0).cross(p2 - p0).norm();
+                    if area < 1e-14 {
+                        // Collinear or coincident: no circle to read off.
+                        return true;
+                    }
+                    let circumradius = e0 * e1 * e2 / (4.0 * area);
+                    (circumradius - circle.radius).abs() <= 0.1 * circle.radius
                 };
 
                 if split::is_planar_face(&a, face_a) && !circle_is_own_boundary(&a, face_a) {

@@ -31,7 +31,7 @@
   "coincident-face/plane-plane/union": "analytic",
   "generic-overlap/cone-cylinder/difference": "triangle-soup",
   "generic-overlap/cone-cylinder/intersection": "analytic",
-  "generic-overlap/cone-cylinder/union": "analytic",
+  "generic-overlap/cone-cylinder/union": "triangle-soup",
   "generic-overlap/cylinder-sphere/difference": "triangle-soup",
   "generic-overlap/cylinder-sphere/intersection": "triangle-soup",
   "generic-overlap/cylinder-sphere/union": "analytic",
@@ -100,5 +100,5 @@
   "through-cut-breakout/sphere-cylinder/union": "analytic",
   "through-cut-breakout/torus-cylinder/difference": "analytic",
   "through-cut-breakout/torus-cylinder/intersection": "analytic",
-  "through-cut-breakout/torus-cylinder/union": "analytic"
+  "through-cut-breakout/torus-cylinder/union": "triangle-soup"
 }
