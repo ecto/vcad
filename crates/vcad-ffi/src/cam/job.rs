@@ -474,9 +474,9 @@ fn build(req: JobRequest) -> Result<Value, String> {
     let gcode = program.to_gcode(post.as_ref());
 
     // ---- preview polyline and block ranges ------------------------------
-    let (moves, ranges) = flatten(&program);
-
     let limits = req.machine.limits()?;
+    let (moves, ranges) = flatten(&program, &limits);
+
     let duration = json!({
         "naive_s": program.toolpath.estimated_time(),
         "accel_aware_s": program.toolpath.estimated_time_with(&limits),
@@ -1108,14 +1108,13 @@ const PREVIEW_TOLERANCE: f64 = 0.02;
 
 /// Walk the program once: the preview polyline, and the move range each block
 /// occupies. The ranges partition `moves` — every move is in exactly one.
-fn flatten(program: &Program) -> (Vec<Move>, Vec<RangeOut>) {
+fn flatten(program: &Program, limits: &MachineLimits) -> (Vec<Move>, Vec<RangeOut>) {
     let mut moves: Vec<Move> = Vec::new();
     let mut ranges = Vec::with_capacity(program.blocks.len());
     let mut at = [0.0f64, 0.0, program.park_z];
     let mut started = false;
     for block in &program.blocks {
         let start = moves.len();
-        let entry_at = at;
         let mut slice = Toolpath::new();
         slice.push(ToolpathSegment::rapid(at[0], at[1], at[2]));
         for seg in &program.toolpath.segments[block.start..block.end] {
@@ -1169,7 +1168,6 @@ fn flatten(program: &Program) -> (Vec<Move>, Vec<RangeOut>) {
                 _ => {}
             }
         }
-        let _ = entry_at;
         let (block_name, name, op_index) = match &block.block {
             ProgramBlock::Preamble => ("preamble", None, None),
             ProgramBlock::ToolStart { tool } => {
@@ -1190,7 +1188,7 @@ fn flatten(program: &Program) -> (Vec<Move>, Vec<RangeOut>) {
             tool: block.tool_number,
             start,
             end: moves.len(),
-            seconds: slice.estimated_time_with(&MachineLimits::anolex_ultra_2()),
+            seconds: slice.estimated_time_with(limits),
         });
     }
     (moves, ranges)
