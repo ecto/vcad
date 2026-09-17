@@ -1402,6 +1402,7 @@ pub fn evaluate_document_timed(
             .clone()
             .map(|c| c as std::rc::Rc<dyn vcad_eval::cache::RootMeshCache>),
         mesh_segments: 0,
+        on_root: None,
     };
     let scene = vcad_eval::evaluate_document_with_sheet_metal(doc, &opts)
         .map_err(|e| anyhow::anyhow!("{}", e))?;

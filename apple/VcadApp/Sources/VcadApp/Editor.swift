@@ -21,7 +21,59 @@ enum Motion {
     static let pop = Animation.spring(response: 0.32, dampingFraction: 0.7)
 }
 
-private let kSamplesDir = "/Users/cam/Developer/vcad"
+/// The app's workspaces — one exclusive mode at a time, each with its own
+/// panels and its own remembered camera.
+enum Workspace: String, CaseIterable, Identifiable, Codable {
+    case design, electronics, manufacture
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .design: return "Design"
+        case .electronics: return "Electronics"
+        case .manufacture: return "Manufacture"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .design: return "cube"
+        case .electronics: return "cpu"
+        case .manufacture: return "wrench.and.screwdriver"
+        }
+    }
+    var keyEquivalent: KeyEquivalent {
+        switch self {
+        case .design: return "1"
+        case .electronics: return "2"
+        case .manufacture: return "3"
+        }
+    }
+}
+
+/// The standard camera views.
+enum CameraPreset {
+    case isometric, front, right, top
+    var azimuth: Float {
+        switch self {
+        case .isometric: return .pi / 5
+        case .front, .top: return 0
+        case .right: return .pi / 2
+        }
+    }
+    var elevation: Float {
+        switch self {
+        case .isometric: return .pi / 7
+        case .front, .right: return 0
+        case .top: return 1.45
+        }
+    }
+}
+
+/// One undo step: the document before the edit, and what the edit was called
+/// so the Edit menu can say "Undo Extrude" rather than "Undo".
+struct UndoEntry: Equatable {
+    let data: Data
+    let name: String
+}
 
 enum GeometrySource: Hashable, Identifiable {
     case sandbox
@@ -79,14 +131,6 @@ enum Modifier: String, CaseIterable {
         }
     }
     var paramLabel: String { self == .chamfer ? "Distance" : "Radius" }
-}
-
-/// Where the tool palette docks. Prototyping two looks: a Borland-style header
-/// strip vs a footer bar below the composer.
-enum ToolPlacement: String, CaseIterable, Identifiable {
-    case header, footer
-    var id: String { rawValue }
-    var label: String { rawValue.capitalized }
 }
 
 /// A tab in the tool palette (the native reinterpretation of the web app's
@@ -207,9 +251,11 @@ struct GenStats {
 @Observable
 final class EditorModel {
     let cnc = CNCWorkspace()
-    var isWindowed = false
+    var isWindowed = false { didSet { saveLayout() } }
     init() {
         bridgeSimulationToRenderer()
+        restoreLayout()
+        cnc.onLayoutChange = { [weak self] in self?.saveLayout() }
     }
 
     // Orbit camera (radians / scene meters).
@@ -217,8 +263,61 @@ final class EditorModel {
     var elevation: Float = .pi / 7
     var distance: Float = 1.5
 
-    var electronicsShown = false
     let electronics = ElectronicsWorkspace()
+
+    // MARK: workspaces
+
+    /// The active workspace. Switching saves the outgoing workspace's camera
+    /// and restores the incoming one's, so Manufacture's auto-fit never moves
+    /// the camera you were designing with.
+    var workspace: Workspace = .design {
+        didSet {
+            guard workspace != oldValue else { return }
+            savedCameras[oldValue] = CameraState(azimuth: azimuth, elevation: elevation,
+                                                 distance: distance, pan: panOffset)
+            electronicsShown = workspace == .electronics
+            cnc.shown = workspace == .manufacture
+            if let c = savedCameras[workspace] {
+                stopSpin()
+                azimuth = c.azimuth; elevation = c.elevation
+                distance = c.distance; pinchBaseline = c.distance; panOffset = c.pan
+            }
+            saveLayout()
+        }
+    }
+    /// The workspace flags the renderer and panels read. Derived from
+    /// `workspace`; kept as stored properties because the CNC controller owns
+    /// `cnc.shown` and pauses its preview on it.
+    private(set) var electronicsShown = false
+    struct CameraState { var azimuth: Float; var elevation: Float; var distance: Float; var pan: SIMD3<Float> }
+    @ObservationIgnored private var savedCameras: [Workspace: CameraState] = [:]
+
+    // MARK: layout memory
+
+    @ObservationIgnored private var restoringLayout = false
+    /// Remember which panels are open and which workspace is active.
+    func saveLayout() {
+        guard !restoringLayout else { return }
+        LayoutMemory(workspace: workspace.rawValue, showsTree: showsTree, showsInspector: showsInspector,
+                     cncLeft: cnc.leftPanelShown, cncRight: cnc.rightPanelShown, cncBottom: cnc.bottomPanelShown,
+                     measurementsShown: measurementsShown, windowed: isWindowed).save()
+    }
+    private func restoreLayout() {
+        let m = LayoutMemory.load()
+        restoringLayout = true
+        defer { restoringLayout = false }
+        showsTree = m.showsTree
+        showsInspector = m.showsInspector
+        cnc.leftPanelShown = m.cncLeft
+        cnc.rightPanelShown = m.cncRight
+        cnc.bottomPanelShown = m.cncBottom
+        measurementsShown = m.measurementsShown
+        if let ws = Workspace(rawValue: m.workspace) { workspace = ws }
+    }
+    /// Whether the last session ran in a window (the presentation to restore).
+    var remembersWindowed: Bool { LayoutMemory.load().windowed }
+    /// The inspector's Measurements disclosure, remembered across launches.
+    var measurementsShown = false { didSet { saveLayout() } }
 
     var source: GeometrySource = .sandbox {
         didSet {
@@ -236,20 +335,21 @@ final class EditorModel {
     var modifierValue: Double = 3.0 {
         didSet {
             if source.isSandbox { parameterDirty = true }
-            #if os(macOS)
-            if Int(modifierValue.rounded()) != Int(oldValue.rounded()) {
-                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
-            }
-            #endif
+            if Int(modifierValue.rounded()) != Int(oldValue.rounded()) { hapticDetent() }
         }
     }
 
-    var toolTab: ToolTab = .create
-    /// Footer (single-row shelf below the composer) vs a Borland-style header.
-    var toolPlacement: ToolPlacement = .footer
-    func cycleToolPlacement() {
-        toolPlacement = toolPlacement == .header ? .footer : .header
+    /// A haptic detent on the trackpad — only when the user has them on.
+    func hapticDetent(_ pattern: HapticPattern = .alignment) {
+        #if os(macOS)
+        guard Prefs.haptics else { return }
+        let p: NSHapticFeedbackManager.FeedbackPattern = pattern == .alignment ? .alignment : .levelChange
+        NSHapticFeedbackManager.defaultPerformer.perform(p, performanceTime: .default)
+        #endif
     }
+    enum HapticPattern { case alignment, levelChange }
+
+    var toolTab: ToolTab = .create
 
     // Selection binds tree -> inspector AND rolls history (selecting "base"
     // shows the modifier's input).
@@ -329,21 +429,13 @@ final class EditorModel {
     /// so stripe continuity reveals curvature/tangency defects.
     var zebraMode = false { didSet { if zebraMode != oldValue { zebraDirty = true } } }
     var zebraDirty = false
-    /// Release-to-desktop: the window goes transparent + chromeless and the
-    /// parts float over the desktop (environment kept for lighting only).
-    /// Release-to-desktop is the app's only mode — the parts always float over
-    /// the desktop in the borderless overlay. Kept as a constant so the scene
-    /// code that dresses the studio (floor, grid, ambient blob) keeps reading a
-    /// single source of truth instead of hard-coding the answer at each site.
-    let releaseMode = true
-    /// Panels the released overlay can close (BCB-style) and re-open from View.
-    var showsPalette = true
-    var showsTree = true
-    var showsInspector = true
+    /// Panels the shell can close and re-open from the View menu.
+    var showsTree = true { didSet { saveLayout() } }
+    var showsInspector = true { didSet { saveLayout() } }
+    var anyPanelShown: Bool { showsTree || showsInspector }
 
     /// Show or hide every floating panel at once.
     func setPanels(shown: Bool) {
-        showsPalette = shown
         showsTree = shown
         showsInspector = shown
     }
@@ -664,6 +756,7 @@ final class EditorModel {
         undoStack.removeAll(); redoStack.removeAll()
         renamingFeatureID = nil
         documentDirty = false
+        savedSnapshot = nil
         if case let .document(path, _) = source,
            let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
            let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
@@ -671,6 +764,7 @@ final class EditorModel {
             documentJSON = dict
             documentGraph = g
             featureNodes = g.featureRoots()
+            savedSnapshot = DocEdit.serialize(dict)
             // Auto-expand a single-root doc so its history reads at a glance.
             if featureNodes.count == 1, let only = featureNodes.first {
                 expandedFeatureIDs.insert(only.id)
@@ -910,7 +1004,9 @@ final class EditorModel {
     /// Assign a material to a part — recolors live (no geometry rebuild).
     func setPartMaterial(_ partIndex: Int, _ key: String) {
         guard documentJSON != nil else { return }
-        applyEdit(snapshot: true, reeval: .none) { DocEdit.setRootMaterial(&$0, partIndex: partIndex, key: key) }
+        applyEdit(snapshot: true, reeval: .none, name: "Change Material") {
+            DocEdit.setRootMaterial(&$0, partIndex: partIndex, key: key)
+        }
         selectionDirty = true
     }
 
@@ -929,9 +1025,22 @@ final class EditorModel {
     // / geometry are re-derived after each edit. Undo/redo are JSON snapshots.
 
     @ObservationIgnored var documentJSON: [String: Any]?
-    var undoStack: [Data] = []
-    var redoStack: [Data] = []
+    var undoStack: [UndoEntry] = []
+    var redoStack: [UndoEntry] = []
     var documentDirty = false
+    /// The document as last saved (or loaded), so undoing back to it clears
+    /// the edited state instead of leaving a phantom dot in the title bar.
+    @ObservationIgnored private var savedSnapshot: Data?
+    /// The source the intent bar replaced, so a generation can be undone as a
+    /// whole even though the generated program has no document JSON.
+    @ObservationIgnored private var generationUndo: (source: GeometrySource, json: [String: Any]?,
+                                                     undo: [UndoEntry], redo: [UndoEntry], dirty: Bool)?
+    /// What ⌘Z would undo, for the Edit menu.
+    var undoActionName: String? {
+        if let last = undoStack.last { return last.name }
+        return generationUndo != nil ? "Generate" : nil
+    }
+    var redoActionName: String? { redoStack.last?.name }
     /// One scrub gesture = one undo entry; skip the materialize-pop on edits.
     @ObservationIgnored var suppressMaterializePop = false
     /// In-place re-eval of a parameter edit (mesh swap, no full rebuild / pop).
@@ -939,7 +1048,7 @@ final class EditorModel {
     /// The feature row currently being renamed inline, if any.
     var renamingFeatureID: String?
 
-    var canUndo: Bool { !undoStack.isEmpty }
+    var canUndo: Bool { !undoStack.isEmpty || generationUndo != nil }
     var canRedo: Bool { !redoStack.isEmpty }
     /// Export is available for anything with exportable geometry (not the gripper).
     var canExport: Bool { if case .gripper = source { return false }; return true }
@@ -949,7 +1058,9 @@ final class EditorModel {
     /// Add a fresh primitive as a new part in the loaded document.
     func addPrimitive(_ shape: BaseShape) {
         guard documentJSON != nil else { return }
-        applyEdit(snapshot: true, reeval: .rebuild) { DocEdit.addPrimitiveRoot(&$0, shape: shape) }
+        applyEdit(snapshot: true, reeval: .rebuild, name: "Add \(shape.label)") {
+            DocEdit.addPrimitiveRoot(&$0, shape: shape)
+        }
         selectedFeatureID = featureNodes.last?.id        // focus the new part
     }
 
@@ -988,7 +1099,7 @@ final class EditorModel {
     func combineSelected(_ op: BooleanOp) {
         guard documentJSON != nil, multiSelectedParts.count == 2 else { return }
         let a = multiSelectedParts[0], b = multiSelectedParts[1]
-        applyEdit(snapshot: true, reeval: .rebuild) { DocEdit.combineRoots(&$0, a, b, op: op.opType) }
+        applyEdit(snapshot: true, reeval: .rebuild, name: op.label) { DocEdit.combineRoots(&$0, a, b, op: op.opType) }
         multiSelectedParts = []
         hiddenParts.removeAll(); isolatedPart = nil       // indices collapsed
         selectedFeatureID = featureNodes.last?.id          // the new combined part
@@ -1001,7 +1112,7 @@ final class EditorModel {
     func applyModifierToSelected(_ mod: Modifier) {
         guard documentJSON != nil, mod != .none, let pi = selectedPartIndex else { return }
         let selBefore = selectedPartIndex
-        applyEdit(snapshot: true, reeval: .rebuild) {
+        applyEdit(snapshot: true, reeval: .rebuild, name: mod.label) {
             DocEdit.wrapRootWithModifier(&$0, partIndex: pi, fillet: mod == .fillet)
         }
         // Keep the same part selected (its root node id changed → select its row).
@@ -1134,7 +1245,7 @@ final class EditorModel {
         let n = sketchPlane.normal
         let dir = (n.0 * sketchExtrudeDepth, n.1 * sketchExtrudeDepth, n.2 * sketchExtrudeDepth)
         let plane = sketchPlane
-        applyEdit(snapshot: true, reeval: .rebuild) {
+        applyEdit(snapshot: true, reeval: .rebuild, name: "Extrude Sketch") {
             DocEdit.addExtrudedProfile(&$0, verts: verts, origin: (0, 0, 0),
                                        xDir: plane.xDir, yDir: plane.yDir, direction: dir)
         }
@@ -1227,7 +1338,7 @@ final class EditorModel {
     func beginGizmoDrag(handle name: String, ray: (o: SIMD3<Float>, d: SIMD3<Float>)) {
         guard let pi = selectedPartIndex, let json = documentJSON,
               let c = gizmoCenterKernel(), let h = gizmoHandle(for: name) else { return }
-        pushUndo()
+        if case .rotate = h { pushUndo(name: "Rotate Part") } else { pushUndo(name: "Move Part") }
         gizmoPart = pi
         gizmoActive = h
         gizmoStartCenter = c
@@ -1332,20 +1443,45 @@ final class EditorModel {
 
     func saveDocument() {
         if source.isSandbox, documentJSON != nil {
-            let panel = NSSavePanel(); panel.nameFieldStringValue = "Untitled.vcad"
-            if panel.runModal() == .OK, let url = panel.url { saveDocumentAs(url) }
+            #if os(macOS)
+            saveAsPanel(self)
+            #endif
             return
         }
         guard case let .document(path, _) = source,
               let json = documentJSON, let data = DocEdit.serializePretty(json) else { return }
-        if (try? data.write(to: URL(fileURLWithPath: path))) != nil { documentDirty = false }
+        // Atomic: the file on disk is never half-written if the app dies mid-save.
+        if (try? data.write(to: URL(fileURLWithPath: path), options: .atomic)) != nil {
+            documentDirty = false
+            savedSnapshot = DocEdit.serialize(json)
+            writeMeshBundle(for: URL(fileURLWithPath: path))
+        }
     }
 
+    /// Save to a new location and keep editing it there — the undo history
+    /// survives, the same as Save As in any Mac app.
     func saveDocumentAs(_ url: URL) {
         guard let json = documentJSON, let data = DocEdit.serializePretty(json) else { return }
-        guard (try? data.write(to: url)) != nil else { return }
-        openDocument(url)        // re-open from the saved file (resets dirty/undo)
+        guard (try? data.write(to: url, options: .atomic)) != nil else { return }
+        let keptUndo = undoStack, keptRedo = redoStack
+        source = .document(path: url.path, label: url.deletingPathExtension().lastPathComponent)
+        undoStack = keptUndo; redoStack = keptRedo
+        writeMeshBundle(for: url)
+        rememberRecent(url)
     }
+
+    /// The document's file, when it has one.
+    var documentURL: URL? {
+        if case let .document(path, _) = source { return URL(fileURLWithPath: path) }
+        return nil
+    }
+
+    #if os(macOS)
+    func showInFinder() {
+        guard let url = documentURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+    #endif
 
     /// Discard edits and reload the document from disk.
     func revertDocument() {
@@ -1357,16 +1493,17 @@ final class EditorModel {
 
     private enum Reeval { case inPlace, rebuild, none }
 
-    private func pushUndo() {
+    private func pushUndo(name: String) {
         guard let json = documentJSON, let data = DocEdit.serialize(json) else { return }
-        undoStack.append(data)
+        undoStack.append(UndoEntry(data: data, name: name))
         if undoStack.count > 64 { undoStack.removeFirst() }
         redoStack.removeAll()
     }
 
-    private func applyEdit(snapshot: Bool, reeval: Reeval, _ mutate: (inout [String: Any]) -> Void) {
+    private func applyEdit(snapshot: Bool, reeval: Reeval, name: String = "Edit",
+                           _ mutate: (inout [String: Any]) -> Void) {
         guard var json = documentJSON else { return }
-        if snapshot { pushUndo() }
+        if snapshot { pushUndo(name: name) }
         mutate(&json)
         documentJSON = json
         documentDirty = true
@@ -1401,35 +1538,35 @@ final class EditorModel {
         var v = value
         if let lo = p.min { v = Swift.max(lo, v) }
         if let hi = p.max { v = Swift.min(hi, v) }
-        applyEdit(snapshot: snapshot, reeval: .inPlace) {
+        applyEdit(snapshot: snapshot, reeval: .inPlace, name: "Change \(name)") {
             DocEdit.setParameter(&$0, name: name, value: v)
         }
     }
 
-    func editScalar(nodeId: Int, key: String, value: Double, snapshot: Bool) {
-        applyEdit(snapshot: snapshot, reeval: .inPlace) {
+    func editScalar(nodeId: Int, key: String, value: Double, snapshot: Bool, name: String = "Change Value") {
+        applyEdit(snapshot: snapshot, reeval: .inPlace, name: name) {
             DocEdit.setScalar(&$0, nodeId: nodeId, key: key, value: value)
         }
     }
-    func editVec(nodeId: Int, key: String, axis: String, value: Double, snapshot: Bool) {
-        applyEdit(snapshot: snapshot, reeval: .inPlace) {
+    func editVec(nodeId: Int, key: String, axis: String, value: Double, snapshot: Bool, name: String = "Change Value") {
+        applyEdit(snapshot: snapshot, reeval: .inPlace, name: name) {
             DocEdit.setVecComponent(&$0, nodeId: nodeId, key: key, axis: axis, value: value)
         }
     }
-    func editInt(nodeId: Int, key: String, value: Int, snapshot: Bool) {
-        applyEdit(snapshot: snapshot, reeval: .inPlace) {
+    func editInt(nodeId: Int, key: String, value: Int, snapshot: Bool, name: String = "Change Value") {
+        applyEdit(snapshot: snapshot, reeval: .inPlace, name: name) {
             DocEdit.setInt(&$0, nodeId: nodeId, key: key, value: value)
         }
     }
     func renameFeature(_ nodeId: Int, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        applyEdit(snapshot: true, reeval: .none) {
+        applyEdit(snapshot: true, reeval: .none, name: "Rename") {
             DocEdit.setName(&$0, nodeId: nodeId, name: trimmed)
         }
     }
     func deletePart(_ partIndex: Int) {
-        applyEdit(snapshot: true, reeval: .rebuild) {
+        applyEdit(snapshot: true, reeval: .rebuild, name: "Delete Part") {
             DocEdit.removeRoot(&$0, partIndex: partIndex)
         }
         // Indices shifted; clear visibility/multi-select and re-anchor selection.
@@ -1437,20 +1574,69 @@ final class EditorModel {
         if selectedFeatureNode == nil { selectedFeatureID = featureNodes.first?.id }
     }
 
+    // MARK: selection commands (the Edit menu)
+
+    /// Every visible part.
+    func selectAllParts() {
+        guard usesDocumentTree else { return }
+        selectParts((0..<partCount).filter { isPartVisible($0) })
+    }
+    var hasDeletableSelection: Bool { usesDocumentTree && !highlightedParts.isEmpty }
+    /// Delete every highlighted part as one undo step. Highest index first so
+    /// the remaining indices stay valid while removing.
+    func deleteSelectedParts() {
+        let parts = highlightedParts.sorted(by: >)
+        guard !parts.isEmpty, documentJSON != nil else { return }
+        applyEdit(snapshot: true, reeval: .rebuild,
+                  name: parts.count == 1 ? "Delete Part" : "Delete \(parts.count) Parts") {
+            for pi in parts { DocEdit.removeRoot(&$0, partIndex: pi) }
+        }
+        hiddenParts.removeAll(); isolatedPart = nil; multiSelectedParts = []
+        selectedFeatureID = featureNodes.first?.id
+    }
+    func beginRenamingSelection() {
+        renamingFeatureID = selectedFeatureNode?.id
+    }
+    func toggleSelectedVisibility() {
+        guard let pi = selectedPartIndex else { return }
+        toggleVisibility(part: pi)
+    }
+    func toggleSelectedIsolate() {
+        guard let pi = selectedPartIndex else { return }
+        isolate(part: pi)
+    }
+
     func undo() {
-        guard let data = undoStack.popLast() else { return }
-        if let cur = documentJSON, let curData = DocEdit.serialize(cur) { redoStack.append(curData) }
-        restore(data)
+        guard let entry = undoStack.popLast() else { undoGeneration(); return }
+        if let cur = documentJSON, let curData = DocEdit.serialize(cur) {
+            redoStack.append(UndoEntry(data: curData, name: entry.name))
+        }
+        restore(entry.data)
     }
     func redo() {
-        guard let data = redoStack.popLast() else { return }
-        if let cur = documentJSON, let curData = DocEdit.serialize(cur) { undoStack.append(curData) }
-        restore(data)
+        guard let entry = redoStack.popLast() else { return }
+        if let cur = documentJSON, let curData = DocEdit.serialize(cur) {
+            undoStack.append(UndoEntry(data: curData, name: entry.name))
+        }
+        restore(entry.data)
+    }
+    /// Put back whatever the intent bar replaced.
+    private func undoGeneration() {
+        guard let g = generationUndo else { return }
+        generationUndo = nil
+        source = g.source
+        if let json = g.json {
+            documentJSON = json
+            if let graph = DocumentGraph.parse(json) { documentGraph = graph; featureNodes = graph.featureRoots() }
+            geometryDirty = true
+        }
+        undoStack = g.undo; redoStack = g.redo
+        documentDirty = g.dirty
     }
     private func restore(_ data: Data) {
         guard let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
         documentJSON = dict
-        documentDirty = true
+        documentDirty = savedSnapshot != data
         if let g = DocumentGraph.parse(dict) { documentGraph = g; featureNodes = g.featureRoots() }
         hiddenParts.removeAll(); isolatedPart = nil
         suppressMaterializePop = true
@@ -1624,13 +1810,34 @@ final class EditorModel {
 
     /// Frame the geometry at a clean 3/4 view. Parts auto-fit to a constant
     /// display size, so fixed camera params frame any part well.
-    func resetCamera() {
-        azimuth = .pi / 5
-        elevation = .pi / 7
-        distance = 1.5
+    func resetCamera(animated: Bool = false) {
+        stopSpin()
+        let apply = {
+            self.azimuth = .pi / 5
+            self.elevation = .pi / 7
+            self.distance = 1.5
+            self.panOffset = .zero
+        }
+        if animated { withAnimation(Motion.smooth) { apply() } } else { apply() }
         pinchBaseline = 1.5
-        panOffset = .zero
     }
+
+    /// Turn the camera to a standard view, animated.
+    func animateCamera(to preset: CameraPreset) {
+        stopSpin()
+        withAnimation(Motion.smooth) {
+            azimuth = preset.azimuth
+            elevation = preset.elevation
+        }
+    }
+
+    #if os(macOS)
+    /// Switch the ray-traced still on or off (the View menu's toggle).
+    func setRaytrace(_ on: Bool) {
+        raytraceEnabled = on
+        if !on { raytraceImage = nil }
+    }
+    #endif
 
     /// Pan the look-at target in the camera's screen plane (⇧-drag).
     func panBy(dx: Float, dy: Float) {
@@ -1711,14 +1918,8 @@ final class EditorModel {
                         self.deselectAll()
                     }
                 }
-                // R (no modifiers, not typing) toggles the ray-traced still.
-                if event.charactersIgnoringModifiers == "r",
-                   event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
-                   self.renamingFeatureID == nil, !self.sketching,
-                   !(NSApp.keyWindow?.firstResponder is NSTextView) {
-                    self.raytraceEnabled.toggle()
-                    if !self.raytraceEnabled { self.raytraceImage = nil }
-                }
+                // The ray-traced still lives in View ▸ Ray-Traced Preview
+                // (⌥⌘R) — a bare letter must never be a global shortcut.
             }
             return event
         }
@@ -1822,17 +2023,13 @@ final class EditorModel {
         let tick = Int(clamped.rounded())
         if tick != lastConnectorTick {
             lastConnectorTick = tick
-            #if os(macOS)
-            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
-            #endif
+            hapticDetent()
         }
         let ok = connectorOK
         if ok != lastConnectorOK {
             lastConnectorOK = ok
             if !ok {
-                #if os(macOS)
-                NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .default)
-                #endif
+                hapticDetent(.levelChange)
                 chime.play(.warning)
             } else {
                 chime.play(.solved)
@@ -1994,24 +2191,53 @@ final class EditorModel {
         return segs
     }
 
-    let examples: [(name: String, path: String)] = [
-        ("Pulley", "\(kSamplesDir)/mecheval/tasks/a6-pulley-01.vcad"),
-        ("Counterbore", "\(kSamplesDir)/mecheval/tasks/a4-counterbore-plate-01.vcad"),
-        ("Ribbed plate", "\(kSamplesDir)/mecheval/tasks/a5-ribbed-plate-01.vcad"),
-        ("Robot arm", "\(kSamplesDir)/examples/robot-arm-2dof.vcad"),
-        // The flagship simulation sample: a 22-DOF floating-base humanoid with
-        // its meshes vendored under third_party/booster-k1, so it both renders
-        // and stands (briefly) before it falls.
-        ("Booster K1", "\(kSamplesDir)/examples/k1-floating.vcad"),
-        // A floating-base robot: the sample that has something to simulate.
-        // Imported from robot-arm-2dof.urdf, which is genuinely primitives-only,
-        // so its geometry resolves with no vendored meshes.
-        ("Floating arm", "\(kSamplesDir)/examples/floating-arm.vcad"),
-        ("Sensor mast", "\(kSamplesDir)/examples/sensor-mast.vcad"),
-    ]
+    /// Sample documents from the vcad repository, when one can be found: the
+    /// `VCAD_EXAMPLES` environment variable, the bundle's `Resources/examples`,
+    /// or a checkout above the running binary. Only files that exist are
+    /// offered, so the menu is never a list of dead paths on another machine.
+    let examples: [(name: String, path: String)] = {
+        let candidates: [(String, String)] = [
+            ("Pulley", "mecheval/tasks/a6-pulley-01.vcad"),
+            ("Counterbore", "mecheval/tasks/a4-counterbore-plate-01.vcad"),
+            ("Ribbed plate", "mecheval/tasks/a5-ribbed-plate-01.vcad"),
+            ("Robot arm", "examples/robot-arm-2dof.vcad"),
+            // The flagship simulation sample: a 22-DOF floating-base humanoid
+            // with its meshes vendored under third_party/booster-k1.
+            ("Booster K1", "examples/k1-floating.vcad"),
+            // A floating-base robot with something to simulate; primitives
+            // only, so its geometry resolves with no vendored meshes.
+            ("Floating arm", "examples/floating-arm.vcad"),
+            ("Sensor mast", "examples/sensor-mast.vcad"),
+        ]
+        var roots: [URL] = []
+        if let env = ProcessInfo.processInfo.environment["VCAD_EXAMPLES"], !env.isEmpty {
+            roots.append(URL(fileURLWithPath: env))
+        }
+        roots.append(Bundle.main.resourceURL ?? Bundle.main.bundleURL)
+        var dir = Bundle.main.bundleURL
+        for _ in 0..<8 {
+            dir = dir.deletingLastPathComponent()
+            roots.append(dir)
+        }
+        let fm = FileManager.default
+        guard let root = roots.first(where: { fm.fileExists(atPath: $0.appendingPathComponent("examples").path) })
+        else { return [] }
+        return candidates.compactMap { name, rel in
+            let p = root.appendingPathComponent(rel).path
+            return fm.fileExists(atPath: p) ? (name, p) : nil
+        }
+    }()
 
     var recents: [URL] = (UserDefaults.standard.array(forKey: "vcad.recents") as? [String] ?? [])
         .map { URL(fileURLWithPath: $0) }
+
+    func clearRecents() {
+        recents = []
+        UserDefaults.standard.removeObject(forKey: "vcad.recents")
+        #if os(macOS)
+        NSDocumentController.shared.clearRecentDocuments(nil)
+        #endif
+    }
 
     var documentName: String { source.label }
 
@@ -2026,7 +2252,29 @@ final class EditorModel {
     }
 
     func openDocument(_ url: URL) {
-        source = .document(path: url.path, label: url.deletingPathExtension().lastPathComponent)
+        let label = url.deletingPathExtension().lastPathComponent
+        // A DXF is an outline to machine, not a document: it lands in
+        // Manufacture as contour operations on the current part.
+        if url.pathExtension.lowercased() == "dxf" {
+            workspace = .manufacture
+            do {
+                try cnc.importOutline(try CNCOutline.parseDXF(String(contentsOf: url, encoding: .utf8), name: url.lastPathComponent))
+            } catch { cnc.error = error.localizedDescription }
+            return
+        }
+        // A loon program opens the way the intent bar's output does: compiled
+        // by the kernel, shown as generated geometry. It has no node DAG to
+        // edit, so it is not a `.document`.
+        if url.pathExtension.lowercased() == "loon",
+           let text = try? String(contentsOf: url, encoding: .utf8) {
+            if applyGenerated(loon: text, label: label) == nil {
+                loadError = "\(label).loon did not evaluate to geometry."
+            }
+            rememberRecent(url)
+            return
+        }
+        importMeshBundle(for: url)          // instant open when the file shipped with its meshes
+        source = .document(path: url.path, label: label)
         rememberRecent(url)
     }
 
@@ -2047,6 +2295,11 @@ final class EditorModel {
         if merged.count > 8 { merged = Array(merged.prefix(8)) }
         recents = merged
         UserDefaults.standard.set(merged.map { $0.path }, forKey: "vcad.recents")
+        #if os(macOS)
+        // The system list too: the Dock menu, Apple ▸ Recent Items, and the
+        // Open panel's sidebar all read from it.
+        NSDocumentController.shared.noteNewRecentDocumentURL(url)
+        #endif
     }
 
     /// Pick up recents opened by other instances since this one launched.
@@ -2196,6 +2449,9 @@ final class EditorModel {
             return GenStats(parts: real, size: hi - lo, triangles: tris)
         }
         guard let stats else { return nil }
+        // A generation replaces the document; remember what it replaced so
+        // ⌘Z brings it back — the intent bar must never be a one-way door.
+        generationUndo = (source, documentJSON, undoStack, redoStack, documentDirty)
         source = .generated(loon: loon, label: label)
         return stats
     }
@@ -2342,6 +2598,143 @@ final class EditorModel {
         return (PickMesh(positions: positions, indices: indices, lo: lo, hi: hi), segs, lo, hi)
     }
 
+    /// Evaluate on a background thread — set by the live window; headless
+    /// smoke hooks and tests keep the synchronous path.
+    var evaluatesOffMainThread = false
+    /// True while the kernel is evaluating the document off the main thread.
+    var solving = false
+    /// Progress of the background solve: visible roots landed / total.
+    var solveProgress: (done: Int, total: Int) = (0, 0)
+    /// The last background evaluation, waiting for the viewport to adopt it.
+    @ObservationIgnored private var preparedScene: (data: Data, handle: OpaquePointer)?
+    @ObservationIgnored private var evaluating: Data?
+    /// The in-flight kernel job and the poll that watches it.
+    @ObservationIgnored private var evalJob: OpaquePointer?
+    @ObservationIgnored private var evalPoll: Task<Void, Never>?
+    /// Parts that have landed so far, drawn while the rest of the document
+    /// is still solving.
+    @ObservationIgnored private var partialMeshes: [(MeshResource, NSColor)] = []
+    @ObservationIgnored private var partialBounds: (lo: SIMD3<Float>, hi: SIMD3<Float>)?
+    /// Root-cache keys of the last full evaluation, index-aligned with the
+    /// parts — what a saved document's mesh bundle is written from.
+    @ObservationIgnored private var lastRootKeys: [String] = []
+
+    /// What the viewport draws while solving: whatever has landed.
+    private func partialScene() -> RenderScene {
+        var s = RenderScene.pending
+        guard let b = partialBounds, !partialMeshes.isEmpty else { return s }
+        s.meshes = partialMeshes
+        s.center = (b.lo + b.hi) / 2
+        s.size = Self.extent(b.lo, b.hi)
+        s.partCount = partialMeshes.count
+        return s
+    }
+
+    nonisolated private static func evaluateScene(data: Data, dir: [UInt8]) -> OpaquePointer? {
+        data.withUnsafeBytes { raw in
+            dir.withUnsafeBufferPointer { d in
+                vcad_scene_from_json_in(raw.bindMemory(to: UInt8.self).baseAddress, data.count,
+                                        d.baseAddress, d.count)
+            }
+        }
+    }
+
+    /// Evaluate on the kernel's own thread, drawing parts as they land.
+    private func startBackgroundEvaluation(data: Data, dir: [UInt8]) {
+        guard evaluating != data else { return }          // already in flight
+        if let old = evalJob { vcad_eval_abandon(old); evalJob = nil }   // superseded
+        evalPoll?.cancel()
+        evaluating = data
+        solving = true
+        solveProgress = (0, 0)
+        partialMeshes = []; partialBounds = nil
+        let started = Date()
+        let job: OpaquePointer? = data.withUnsafeBytes { raw in
+            dir.withUnsafeBufferPointer { d in
+                vcad_eval_begin(raw.bindMemory(to: UInt8.self).baseAddress, data.count, d.baseAddress, d.count)
+            }
+        }
+        guard let job else {
+            solving = false; evaluating = nil
+            loadError = SimError.pending() ?? "The kernel could not read this document"
+            return
+        }
+        evalJob = job
+        evalPoll = Task { @MainActor [weak self] in
+            var landed = 0
+            while !Task.isCancelled {
+                guard let self, self.evalJob == job else { return }
+                var done = 0, total = 0
+                let finished = vcad_eval_progress(job, &done, &total)
+                if total > 0, done != self.solveProgress.done || total != self.solveProgress.total {
+                    self.solveProgress = (done, total)
+                }
+                // Draw newly landed parts now rather than after the last one.
+                var newParts = false
+                while landed < done {
+                    let km = KernelMesh.fromView(vcad_eval_part_mesh(job, landed))
+                    if !km.isEmpty {
+                        self.partialMeshes.append((km.resource(name: "part\(landed)"),
+                                                   Self.partColors[landed % Self.partColors.count]))
+                        var b = self.partialBounds ?? (km.minBound, km.maxBound)
+                        b.lo = simd_min(b.lo, km.minBound); b.hi = simd_max(b.hi, km.maxBound)
+                        self.partialBounds = b
+                        newParts = true
+                    }
+                    landed += 1
+                }
+                if finished {
+                    self.evalJob = nil
+                    let handle = vcad_eval_finish(job)
+                    self.evaluating = nil
+                    self.solving = false
+                    self.partialMeshes = []; self.partialBounds = nil
+                    if let handle {
+                        self.preparedScene = (data, handle)
+                    } else {
+                        self.loadError = SimError.pending() ?? "The kernel could not evaluate this document"
+                    }
+                    self.solveMillis = Date().timeIntervalSince(started) * 1000
+                    self.geometryDirty = true                // the viewport adopts it
+                    return
+                }
+                if newParts { self.geometryDirty = true }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+
+    // MARK: mesh bundles — a document ships with its solved geometry
+
+    /// `<doc>.vcadmesh` next to `<doc>.vcad`.
+    static func meshBundleURL(for document: URL) -> URL {
+        document.deletingPathExtension().appendingPathExtension("vcadmesh")
+    }
+
+    /// Feed a document's shipped meshes to the root cache so opening it is a
+    /// cache hit instead of a kernel walk. Returns how many roots it covered.
+    @discardableResult
+    func importMeshBundle(for document: URL) -> Int {
+        let bundle = Self.meshBundleURL(for: document)
+        guard FileManager.default.fileExists(atPath: bundle.path) else { return 0 }
+        let path = Array(bundle.path.utf8)
+        return path.withUnsafeBufferPointer { vcad_mesh_bundle_import($0.baseAddress, $0.count) }
+    }
+
+    /// Write the bundle for the document at `url` from the last evaluation's
+    /// root keys. Returns how many roots it holds (0 = nothing cacheable yet).
+    @discardableResult
+    func writeMeshBundle(for document: URL) -> Int {
+        guard !lastRootKeys.isEmpty else { return 0 }
+        let keys = Array(lastRootKeys.joined(separator: "\n").utf8)
+        let path = Array(Self.meshBundleURL(for: document).path.utf8)
+        return keys.withUnsafeBufferPointer { k in
+            path.withUnsafeBufferPointer { p in
+                vcad_mesh_bundle_write(k.baseAddress, k.count, p.baseAddress, p.count)
+            }
+        }
+    }
+
     private func documentScene(path: String) -> RenderScene {
         let start = Date()
         // Prefer the live (possibly edited) doc; fall back to the file on disk
@@ -2357,11 +2750,21 @@ final class EditorModel {
         // and the whole assembly evaluates to empty meshes, which presents as
         // "the file didn't load" rather than "the meshes weren't found".
         let dir = Array((documentDirectory ?? "").utf8)
-        let scene: OpaquePointer? = data.withUnsafeBytes { raw in
-            dir.withUnsafeBufferPointer { d in
-                vcad_scene_from_json_in(raw.bindMemory(to: UInt8.self).baseAddress, data.count,
-                                        d.baseAddress, d.count)
+        let scene: OpaquePointer?
+        if evaluatesOffMainThread {
+            // A slow document must never beachball the app: the kernel runs
+            // on a background thread and the viewport shows "Solving…" (or the
+            // previous geometry) until the handle is ready, then rebuilds.
+            if let p = preparedScene, p.data == data {
+                preparedScene = nil
+                scene = p.handle
+            } else {
+                if let p = preparedScene { vcad_scene_free(p.handle); preparedScene = nil }
+                startBackgroundEvaluation(data: data, dir: dir)
+                return partialScene()
             }
+        } else {
+            scene = Self.evaluateScene(data: data, dir: dir)
         }
         guard let scene else {
             // The kernel refused the document. Returning `.empty` here left the
@@ -2541,6 +2944,11 @@ final class EditorModel {
         docPartMeshes = picks
         docPartEdges = edges
         docPartInstancing = instancing
+        lastRootKeys = (0..<count).compactMap { i in
+            guard let c = vcad_scene_root_key(scene, i) else { return nil }
+            defer { vcad_cam_free(c) }
+            return String(cString: c)
+        }
 
         solveMillis = Date().timeIntervalSince(start) * 1000
         triangleCount = tris
@@ -2570,10 +2978,10 @@ final class EditorModel {
 }
 
 extension EditorModel {
-    func editElectronics(_ mutate: (inout ECObject) -> Void) {
+    func editElectronics(name: String = "Edit Circuit", _ mutate: (inout ECObject) -> Void) {
         if documentJSON == nil {
             documentJSON = ["version": "0.1", "nodes": ECObject(), "materials": ECObject(), "part_materials": ECObject(), "roots": [ECObject]()]
         }
-        applyEdit(snapshot: true, reeval: .rebuild, mutate)
+        applyEdit(snapshot: true, reeval: .rebuild, name: name, mutate)
     }
 }

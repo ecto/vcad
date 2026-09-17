@@ -83,6 +83,9 @@ pub struct EvalTiming {
     pub nodes: HashMap<String, NodeTiming>,
 }
 
+/// Callback fired as each visible root lands: `(index, total, mesh)`.
+pub type OnRoot = Box<dyn Fn(usize, usize, &EvaluatedMesh)>;
+
 /// Options for document evaluation.
 #[derive(Default)]
 pub struct EvalOptions {
@@ -100,6 +103,11 @@ pub struct EvalOptions {
     /// renderer that draws curved faces at 64 or 128 asks for that here, so
     /// the cached mesh it gets back matches what it would have tessellated.
     pub mesh_segments: u32,
+    /// Called as each visible root lands — evaluated, imported, or a cache
+    /// hit — with its index among `parts`, the number of visible roots, and
+    /// its mesh. A progressive viewport draws parts from here while the rest
+    /// of the document is still solving; a failed root reports an empty mesh.
+    pub on_root: Option<OnRoot>,
 }
 
 /// The tessellation segment count `evaluate_document` uses by default.
@@ -344,6 +352,10 @@ pub struct EvaluatedScene {
     pub failures: Vec<RootFailure>,
     /// Timing breakdown (populated when a `Clock` is provided in `EvalOptions`).
     pub timing: Option<EvalTiming>,
+    /// The root-cache key of each part, index-aligned with `parts`; `None`
+    /// for a part the cache would never hold (imported mesh, failed root, or
+    /// no cache configured). What a mesh bundle is written from.
+    pub root_keys: Vec<Option<String>>,
 }
 
 #[cfg(test)]

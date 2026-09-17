@@ -15,13 +15,13 @@ struct CNCOverrideControl: View {
                 Text(machine.status.isFresh ? "\((spindle ? machine.status.rpm : machine.status.feed).formatted()) \(spindle ? "rpm" : "mm/min")" : "—").monospacedDigit()
             }.font(.caption)
             HStack {
-                Text(reported.map { "\($0)%" } ?? "—").font(.system(size: 10, design: .monospaced)).foregroundStyle(Color.accentColor).frame(width: 38, alignment: .leading)
+                Text(reported.map { "\($0)%" } ?? "—").font(.caption.monospaced()).foregroundStyle(Color.accentColor).frame(width: 38, alignment: .leading)
                 Slider(value: $draft, in: 10...200, step: 1) { changing in
                     editing = changing
                     if !changing { machine.setOverride(spindle: spindle, percent: Int(draft)) }
                 }.accessibilityLabel(spindle ? "Spindle override" : "Feed override")
             }
-            if reported == nil { Text("Waiting for controller override report").font(.system(size: 9)).foregroundStyle(.secondary) }
+            if reported == nil { Text("Waiting for controller override report").font(.caption2).foregroundStyle(.secondary) }
         }.disabled(!machine.canOverride || reported == nil || machine.changingOverride)
             .onAppear { draft = Double(reported ?? 100) }
             .onChange(of: reported) { _, value in if !editing { draft = Double(value ?? 100) } }

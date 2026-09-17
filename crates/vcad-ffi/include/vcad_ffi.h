@@ -6,6 +6,7 @@
 #define VCAD_FFI_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -16,6 +17,7 @@ extern "C" {
  * Null on failure; read vcad_last_error. Free only with vcad_cam_free. */
 char *vcad_cam_generate(const char *request_json);
 void vcad_cam_free(char *json);
+
 
 typedef struct VcadSolid VcadSolid;
 typedef struct VcadMesh VcadMesh;
@@ -76,6 +78,34 @@ VcadScene *vcad_scene_from_json_in(const uint8_t *json, size_t json_len,
 VcadScene *vcad_scene_from_loon(const uint8_t *loon, size_t loon_len);
 size_t vcad_scene_part_count(const VcadScene *scene);
 VcadMeshView vcad_scene_part_mesh(const VcadScene *scene, size_t index);
+
+/* Progressive evaluation. vcad_eval_begin parses `json` (mesh paths resolved
+ * against base_dir, may be NULL) and starts the kernel walk on its own
+ * thread; NULL if the document fails to parse (read vcad_last_error).
+ * vcad_eval_progress writes visible roots landed / total and returns true
+ * once the walk has finished. vcad_eval_part_mesh borrows a landed root's mesh
+ * (empty view until it lands; valid until finish/abandon). vcad_eval_finish
+ * joins and returns the scene (NULL + vcad_last_error on failure), freeing the
+ * job. vcad_eval_abandon frees the job without waiting. One caller per job. */
+typedef struct VcadEvalJob VcadEvalJob;
+VcadEvalJob *vcad_eval_begin(const uint8_t *json, size_t json_len,
+                             const uint8_t *base_dir, size_t base_dir_len);
+bool vcad_eval_progress(const VcadEvalJob *job, size_t *done, size_t *total);
+VcadMeshView vcad_eval_part_mesh(const VcadEvalJob *job, size_t index);
+VcadScene *vcad_eval_finish(VcadEvalJob *job);
+void vcad_eval_abandon(VcadEvalJob *job);
+
+/* Mesh bundles: a document's solved root meshes, keyed as the root cache keys
+ * them, so a file ships with its geometry and opens without a kernel walk.
+ * Keys are per-part root-cache keys (owned string, free with vcad_cam_free;
+ * NULL when the part is not cacheable). vcad_mesh_bundle_write takes
+ * newline-separated keys and pulls the meshes from the cache; import feeds a
+ * bundle into the cache. Both return the number of entries handled. */
+char *vcad_scene_root_key(const VcadScene *scene, size_t index);
+size_t vcad_scene_write_mesh_bundle(const VcadScene *scene, const uint8_t *path, size_t path_len);
+size_t vcad_mesh_bundle_write(const uint8_t *keys, size_t keys_len,
+                              const uint8_t *path, size_t path_len);
+size_t vcad_mesh_bundle_import(const uint8_t *path, size_t path_len);
 void vcad_scene_free(VcadScene *scene);
 
 /* Assembly instances + kinematic joint playback. Assembly documents place

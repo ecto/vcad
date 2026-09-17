@@ -28,14 +28,14 @@ struct SimBar: View {
                     model.enableSimulation()
                 } label: {
                     Label("Simulate", systemImage: "atom")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.subheadline.weight(.semibold))
                 }
                 .buttonStyle(.plain)
                 .help("Build a physics simulation for this assembly")
             } else {
                 Button { sim.toggleRun() } label: {
                     Image(systemName: sim.isRunning ? "pause.fill" : "play.fill")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
@@ -43,19 +43,19 @@ struct SimBar: View {
                 .help(sim.isRunning ? "Pause simulation" : "Run simulation")
 
                 Button { sim.stepOnce() } label: {
-                    Image(systemName: "forward.frame.fill").font(.system(size: 12))
+                    Image(systemName: "forward.frame.fill").font(.callout)
                         .frame(width: 20, height: 22).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).help("Step one control tick")
 
                 Button { sim.reset() } label: {
-                    Image(systemName: "arrow.counterclockwise").font(.system(size: 12))
+                    Image(systemName: "arrow.counterclockwise").font(.callout)
                         .frame(width: 20, height: 22).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).help("Reset the episode")
 
                 Button { sim.shove() } label: {
-                    Image(systemName: "hand.point.right.fill").font(.system(size: 12))
+                    Image(systemName: "hand.point.right.fill").font(.callout)
                         .frame(width: 20, height: 22).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).help("Shove the robot (disturbance test)")
@@ -67,7 +67,7 @@ struct SimBar: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .glassCard(22)
+        .pillSurface()
     }
 }
 
@@ -91,7 +91,7 @@ private struct SimReadout: View {
                     .foregroundStyle(sim.realTimeFactor < 0.9 ? .orange : .secondary)
             }
         }
-        .font(.system(size: 10, weight: .medium, design: .monospaced))
+        .font(.caption.weight(.medium).monospaced())
         .foregroundStyle(.secondary)
     }
 
@@ -99,7 +99,7 @@ private struct SimReadout: View {
     private func metric(_ label: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(label.uppercased())
-                .font(.system(size: 8, weight: .semibold))
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(.tertiary)
             Text(value)
         }
@@ -137,26 +137,24 @@ struct SimInspector: View {
     // MARK: sections
 
     private var unavailable: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label("No simulation", systemImage: "atom")
-                .font(.system(size: 12, weight: .semibold))
-            Text(model.canSimulate
-                 ? "Build a physics simulation for this assembly."
-                 : "Open an assembly document with joints to simulate it.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+        VStack(spacing: Theme.Space.s) {
+            EmptyPanelState(title: "No simulation", systemImage: "atom",
+                            detail: model.canSimulate
+                                ? "Build a physics simulation for this assembly."
+                                : "Open an assembly document with joints to simulate it.")
             if model.canSimulate {
                 Button("Simulate") { model.enableSimulation() }
                     .controlSize(.small)
             }
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var driverSection: some View {
         section("Driver") {
             HStack(spacing: 8) {
                 Text(sim.driver.label)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.subheadline.weight(.medium))
                 Spacer()
                 Button("Load policy…") { loadPolicy() }
                     .controlSize(.small)
@@ -213,7 +211,7 @@ struct SimInspector: View {
             }
             Toggle("Auto-reset on episode end", isOn: Binding(
                 get: { sim.autoReset }, set: { sim.autoReset = $0 }))
-                .font(.system(size: 11))
+                .font(.subheadline)
                 .controlSize(.small)
         }
     }
@@ -242,13 +240,13 @@ struct SimInspector: View {
                 trainingProgress(p)
             } else {
                 Text("Search for a balance policy with ARS, in-process.")
-                    .font(.system(size: 11))
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
                 HStack {
                     Button("Train") { sim.startTraining() }
                         .controlSize(.small)
                     Text("\(sim.trainSpec.ars.iterations) iterations · \(sim.trainSpec.policy)")
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.caption.monospaced())
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -308,7 +306,7 @@ struct SimInspector: View {
 
             if p.cancelled {
                 Text("Cancelled at iteration \(p.iteration).")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -343,20 +341,14 @@ struct SimInspector: View {
     @ViewBuilder
     private func section(_ title: String, @ViewBuilder content: () -> some View) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title.uppercased())
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(.tertiary)
+            Eyebrow(title)
             content()
         }
     }
 
     @ViewBuilder
     private func keyValue(_ k: String, _ v: String) -> some View {
-        HStack {
-            Text(k).font(.system(size: 11)).foregroundStyle(.secondary)
-            Spacer(minLength: 8)
-            Text(v).font(.system(size: 11, design: .monospaced))
-        }
+        KeyValueRow(k, v)
     }
 
     @ViewBuilder
@@ -364,12 +356,10 @@ struct SimInspector: View {
                       emphasis: Bool = false, dim: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(label.uppercased())
-                .font(.system(size: 8, weight: .semibold))
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(.tertiary)
             Text(value)
-                .font(.system(size: emphasis ? 13 : 10,
-                              weight: emphasis ? .semibold : .regular,
-                              design: .monospaced))
+                .font((emphasis ? Font.body.weight(.semibold) : Font.caption).monospaced())
                 .foregroundStyle(dim ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.primary))
         }
     }
@@ -385,13 +375,13 @@ private struct Banner: View {
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: tone == .error ? "exclamationmark.triangle.fill" : "clock.badge.exclamationmark")
-                .font(.system(size: 10))
-            Text(text).font(.system(size: 10)).fixedSize(horizontal: false, vertical: true)
+                .font(.caption)
+            Text(text).font(.caption).fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(tone == .error ? Color.red : Color.orange)
-        .padding(8)
+        .padding(Theme.Space.s)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background((tone == .error ? Color.red : Color.orange).opacity(0.1),
-                    in: RoundedRectangle(cornerRadius: 6))
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
     }
 }

@@ -6,13 +6,13 @@ Each cell reports what the *representation* of the result is, not whether the ge
 
 **Coverage gap: NURBS operands are not exercised.** No modeling operation in the kernel produces a B-spline face — `loft` emits ruled planar faces (`LoftMode::Smooth` is unimplemented), and the only practical source of `SurfaceKind::BSpline` is STEP import. Booleans against imported NURBS geometry are therefore uncharacterised here.
 
-**15 of 102 cells degrade**; 0 produce the wrong solid rather than a coarse one.
+**17 of 102 cells degrade**; 0 produce the wrong solid rather than a coarse one.
 
 ## Degradations by cause
 
 | cause | cells |
 |---|---|
-| `boolean-fallback` | 15 |
+| `boolean-fallback` | 17 |
 
 ## generic-overlap
 
@@ -25,7 +25,7 @@ Each cell reports what the *representation* of the result is, not whether the ge
 | plane × torus | torus overlapping a box corner | ✅ analytic | ⚠️ soup<br>`boolean-fallback` | ✅ analytic |
 | cylinder × sphere | sphere straddling a cylinder's round wall | ✅ analytic | ⚠️ soup<br>`boolean-fallback` | ⚠️ soup<br>`boolean-fallback` |
 | sphere × cylinder | cylinder through a sphere, off-axis | ✅ analytic | ⚠️ soup<br>`boolean-fallback` | ✅ analytic |
-| cone × cylinder | cylinder straddling a cone's slant wall | ✅ analytic | ⚠️ soup<br>`boolean-fallback` | ✅ analytic |
+| cone × cylinder | cylinder straddling a cone's slant wall | ⚠️ soup<br>`boolean-fallback` | ⚠️ soup<br>`boolean-fallback` | ✅ analytic |
 | torus × cylinder | cylinder through a torus tube | ✅ analytic | ✅ analytic | ✅ analytic |
 
 ## tangent
@@ -55,7 +55,7 @@ Each cell reports what the *representation* of the result is, not whether the ge
 | cylinder × cylinder | cross-drill exiting a cylinder's round wall | ⚠️ soup<br>`boolean-fallback` | ⚠️ soup<br>`boolean-fallback` | ⚠️ soup<br>`boolean-fallback` |
 | sphere × cylinder | drill straight through a sphere | ✅ analytic | ⚠️ soup<br>`boolean-fallback` | ⚠️ soup<br>`boolean-fallback` |
 | cone × cylinder | cross-drill exiting a cone's slant wall | ✅ analytic | ⚠️ soup<br>`boolean-fallback` | ⚠️ soup<br>`boolean-fallback` |
-| torus × cylinder | drill through a torus tube | ✅ analytic | ✅ analytic | ✅ analytic |
+| torus × cylinder | drill through a torus tube | ⚠️ soup<br>`boolean-fallback` | ✅ analytic | ✅ analytic |
 | plane × cylinder | through-hole exiting two planar box faces (the control) | ✅ analytic | ✅ analytic | ✅ analytic |
 | cylinder × cylinder | Steinmetz: perpendicular equal-radius cylinders | ⚠️ soup<br>`boolean-fallback` | ⚠️ soup<br>`boolean-fallback` | ⚠️ soup<br>`boolean-fallback` |
 

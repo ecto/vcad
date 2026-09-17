@@ -658,6 +658,16 @@ impl Solid {
                 let (result, report) = boolean_op_reported(a.as_ref(), b.as_ref(), op, segments)?;
                 let BooleanResult::BRep(brep) = result;
                 let names = match (&self.names, &other.names) {
+                    // A degraded result is triangle soup: every face is an
+                    // anonymous planar triangle, and the only names it could
+                    // inherit are sibling ordinals over thousands of coplanar
+                    // cap triangles — unstable across rebuilds, so worthless
+                    // as references, and quadratic to derive (they were ~100%
+                    // of the rana-60 stator's 40-minute solve). It stays
+                    // named-but-empty so later operands keep their names.
+                    (Some(_), Some(_)) if report.reason.is_some() => {
+                        Some(vcad_kernel_naming::NameMap::new())
+                    }
                     (Some(na), Some(nb)) => Some(vcad_kernel_naming::propagate_boolean(
                         a.as_ref(),
                         na,

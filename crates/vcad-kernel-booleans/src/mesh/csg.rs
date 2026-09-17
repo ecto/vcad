@@ -46,7 +46,7 @@ use vcad_kernel_tessellate::manifold::{make_manifold, DEFAULT_WELD_EPS};
 use vcad_kernel_tessellate::TriangleMesh;
 
 use crate::api::BooleanOp;
-use crate::mesh::point_in_mesh;
+use crate::mesh::MeshRayIndex;
 
 /// Plane-side classification tolerance (mm) for splitting.
 const EPS: f64 = 1e-5;
@@ -293,17 +293,74 @@ enum Class {
     OnOpposed,
 }
 
-/// Classify a fragment against the other operand's mesh by ray parity at
-/// two probes nudged off the fragment along ±normal.
-fn classify(frag: &Polygon, other: &TriangleMesh) -> Class {
-    if other.indices.is_empty() {
+/// Point membership in one operand by ray parity, voted across three ray
+/// directions.
+///
+/// A single ray is only as good as the mesh it crosses, and operands are not
+/// always closed: an analytic solid carrying a tangent-contact defect
+/// tessellates with a full-height crack (the rana-60 stator's posts, where a
+/// fillet block meets the post's side), and a chained fallback hands in
+/// t-junction soup. Every probe whose one +X ray threads such a crack reads
+/// the wrong parity — measured on the stator, 35 mm² of the ring's top cap,
+/// nowhere near the posts, classified as lying on them and was dropped: the
+/// union came out 1600 mm³ short, inside its own volume bound.
+///
+/// The ray direction is fixed inside `mesh_ray` (its exact predicates and its
+/// index are built around +X), so the other two directions are had by
+/// cyclically permuting coordinates — a proper rotation, so orientation and
+/// parity semantics carry over unchanged. A crack fools the rays that cross
+/// it; it takes cracks on two of three mutually perpendicular lines through
+/// the same probe to fool the vote. On a closed mesh all three agree, so the
+/// answer is the single-ray answer.
+struct Membership {
+    /// The operand with coordinates cyclically shifted 0, 1 and 2 places.
+    views: [TriangleMesh; 3],
+}
+
+impl Membership {
+    fn new(mesh: &TriangleMesh) -> Self {
+        let shifted = |k: usize| {
+            let mut m = mesh.clone();
+            for v in m.vertices.as_chunks_mut::<3>().0 {
+                v.rotate_left(k);
+            }
+            m
+        };
+        Membership {
+            views: [shifted(0), shifted(1), shifted(2)],
+        }
+    }
+
+    fn index(&self) -> [MeshRayIndex<'_>; 3] {
+        [
+            MeshRayIndex::new(&self.views[0]),
+            MeshRayIndex::new(&self.views[1]),
+            MeshRayIndex::new(&self.views[2]),
+        ]
+    }
+}
+
+/// Majority vote of the three rays for `p`.
+fn contains(index: &[MeshRayIndex<'_>; 3], p: &Point3) -> bool {
+    let votes = [
+        index[0].contains(p),
+        index[1].contains(&Point3::new(p.y, p.z, p.x)),
+        index[2].contains(&Point3::new(p.z, p.x, p.y)),
+    ];
+    votes.iter().filter(|&&v| v).count() >= 2
+}
+
+/// Classify a fragment against the other operand by ray parity at two probes
+/// nudged off the fragment along ±normal.
+fn classify(frag: &Polygon, other: &[MeshRayIndex<'_>; 3]) -> Class {
+    if other[0].mesh().indices.is_empty() {
         return Class::Out;
     }
     let c = frag.centroid();
     let n = frag.normal;
     let eps = probe_offset(frag);
-    let plus = point_in_mesh(&(c + eps * n), other);
-    let minus = point_in_mesh(&(c - eps * n), other);
+    let plus = contains(other, &(c + eps * n));
+    let minus = contains(other, &(c - eps * n));
     match (plus, minus) {
         (false, false) => Class::Out,
         (true, true) => Class::In,
@@ -720,12 +777,14 @@ pub fn mesh_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp) -> 
         BooleanOp::Difference => matches!(c, Class::In),
     };
 
+    let (member_a, member_b) = (Membership::new(mesh_a), Membership::new(mesh_b));
+    let (in_a, in_b) = (member_a.index(), member_b.index());
     let mut out: Vec<Polygon> = frags_a
         .into_iter()
-        .filter(|f| keep_a(classify(f, mesh_b)))
+        .filter(|f| keep_a(classify(f, &in_b)))
         .collect();
     for mut f in frags_b {
-        if keep_b(classify(&f, mesh_a)) {
+        if keep_b(classify(&f, &in_a)) {
             if op == BooleanOp::Difference {
                 // Kept B fragments bound the carved cavity; they face
                 // inward in the result.

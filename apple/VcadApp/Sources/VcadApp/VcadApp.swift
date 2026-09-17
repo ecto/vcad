@@ -8,6 +8,18 @@ struct VcadApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     init() {
+        // No AppKit window restoration: the app owns its windows (a hidden
+        // SwiftUI host plus the real editor window) and remembers its own
+        // layout. Restoring the host after an unclean exit crashed the next
+        // launch inside NSPersistentUIRestorer before any of our code ran, and
+        // every launch after that sat behind AppKit's modal "quit unexpectedly
+        // while reopening windows" prompt with no editor window at all.
+        // `ApplePersistenceIgnoreState` is what skips both the restore and
+        // the prompt (it is the switch behind Xcode's "launch without state
+        // restoration").
+        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+        UserDefaults.standard.set(true, forKey: "ApplePersistenceIgnoreState")
+
         // Headless smoke hook (matches VCAD_GRIPPER/VCAD_ROUTE): dump the parsed
         // feature tree of a .vcad to stderr and exit — verifies the DAG parser
         // without driving the GUI. e.g. VCAD_DUMP_TREE=examples/plate.vcad
@@ -60,7 +72,11 @@ struct VcadApp: App {
             EditorView(model: model, intent: intent)
         }
         .windowStyle(.automatic)
-        .commands { DocumentCommands(model: model) }
+        .commands { DocumentCommands(model: model, intent: intent) }
+
+        Settings {
+            SettingsView()
+        }
     }
 }
 
@@ -323,14 +339,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         MainActor.assumeIsolated {
             guard let model = AppInstance.currentModel else {
-                // Nothing to reuse (the view has not come up yet): let each URL
-                // have its own instance rather than dropping it.
-                urls.forEach { AppInstance.open(document: $0) }
+                // The view has not come up yet (we were launched for these
+                // files): it opens them the moment it attaches.
+                AppInstance.pendingOpen.append(contentsOf: urls)
                 return
             }
-            for (i, url) in urls.enumerated() {
-                if i == 0 { AppInstance.opening(url, from: model) }
-                else { AppInstance.open(document: url) }
+            // Outlines ride along with the document; the first document may
+            // claim this instance, further documents get their own.
+            var documents = 0
+            for url in urls {
+                if url.pathExtension.lowercased() == "dxf" { AppInstance.opening(url, from: model); continue }
+                if documents == 0 { AppInstance.opening(url, from: model) } else { AppInstance.open(document: url) }
+                documents += 1
             }
         }
     }

@@ -1,7 +1,11 @@
-//! Bounded rectangular CAM jobs for the native CNC workspace.
+//! Bounded CAM jobs for the native CNC workspace: rectangular face / pocket /
+//! profile, plus contour profiles (outside or inside) along an imported
+//! closed polyline, with optional holding tabs.
 use serde::{Deserialize, Serialize};
 use std::ffi::{c_char, CStr, CString};
-use vcad_kernel_cam::{CamSettings, Contour, Contour2D, Face, Pocket2D, Tool, ToolpathSegment};
+use vcad_kernel_cam::{
+    CamSettings, Contour, Contour2D, Face, Pocket2D, Point2D, Tool, ToolpathSegment,
+};
 
 #[derive(Deserialize)]
 struct Request {
@@ -16,6 +20,43 @@ struct Request {
     plunge: f64,
     rpm: f64,
     clearance: f64,
+    /// Closed polyline (mm, stock frame: XY lower-left at 0) for the contour
+    /// operations. Ignored by the rectangular ones.
+    #[serde(default)]
+    contour: Vec<[f64; 2]>,
+    /// Holding tabs left on an outside contour (0 = none).
+    #[serde(default)]
+    tabs: u32,
+    #[serde(default, rename = "tabWidth")]
+    tab_width: f64,
+    #[serde(default, rename = "tabHeight")]
+    tab_height: f64,
+}
+
+/// Build a kernel contour from a closed polyline in the stock frame.
+fn polyline_contour(r: &Request) -> Result<Contour, String> {
+    if r.contour.len() < 3 {
+        return Err("A contour needs at least three points".into());
+    }
+    let margin = 0.001;
+    for p in &r.contour {
+        if !p[0].is_finite() || !p[1].is_finite() {
+            return Err("Contour points must be finite".into());
+        }
+        if p[0] < -margin || p[0] > r.width + margin || p[1] < -margin || p[1] > r.height + margin {
+            return Err("Contour points must lie inside the width × height region".into());
+        }
+    }
+    let mut c = Contour::new(Point2D::new(r.contour[0][0], r.contour[0][1]));
+    for p in r.contour.iter().skip(1) {
+        c.line_to(Point2D::new(p[0], p[1]));
+    }
+    let first = r.contour[0];
+    let last = r.contour[r.contour.len() - 1];
+    if (first[0] - last[0]).hypot(first[1] - last[1]) > 1e-6 {
+        c.line_to(Point2D::new(first[0], first[1]));
+    }
+    Ok(c)
 }
 
 #[derive(Serialize)]
@@ -89,6 +130,29 @@ fn generate(input: &str) -> Result<String, String> {
         }
         "profile" => Contour2D::outside(Contour::rectangle(0.0, 0.0, r.width, r.height), r.depth)
             .generate(&tool, &settings),
+        "contour_outside" | "contour_inside" => {
+            let contour = polyline_contour(&r)?;
+            let mut op = if r.operation == "contour_outside" {
+                Contour2D::outside(contour, r.depth)
+            } else {
+                Contour2D::inside(contour, r.depth)
+            };
+            if r.tabs > 0 {
+                if !r.tab_width.is_finite()
+                    || !r.tab_height.is_finite()
+                    || r.tab_width <= 0.0
+                    || r.tab_height <= 0.0
+                    || r.tab_height > r.depth
+                    || r.tabs > 64
+                {
+                    return Err(
+                        "Tabs need a positive width and a height no deeper than the cut".into(),
+                    );
+                }
+                op = op.with_tabs(r.tabs as usize, r.tab_width, r.tab_height);
+            }
+            op.generate(&tool, &settings)
+        }
         _ => return Err("Unknown operation".into()),
     }
     .map_err(|e| e.to_string())?;
@@ -102,7 +166,7 @@ fn generate(input: &str) -> Result<String, String> {
             ToolpathSegment::Rapid { to } => (to, true, 0.0),
             ToolpathSegment::Linear { to, feed } => (to, false, feed),
             ToolpathSegment::Comment { .. } => continue,
-            _ => return Err("Unsupported motion in rectangular toolpath".into()),
+            _ => return Err("Unsupported motion in toolpath".into()),
         };
         if to.iter().any(|v| !v.is_finite()) || !feed.is_finite() {
             return Err("Non-finite generated motion".into());
@@ -195,6 +259,39 @@ mod tests {
         serde_json::json!({"operation":op,"width":40,"height":30,"depth":1,
             "diameter":3.175,"stepdown":0.5,"stepover":1.5,"feed":400,
             "plunge":100,"rpm":10000,"clearance":5})
+    }
+    #[test]
+    fn contour_jobs_follow_an_imported_polyline_with_tabs() {
+        // A diamond inside a 40×30 region: outside with three tabs, inside plain.
+        let diamond = serde_json::json!([[20, 3], [37, 15], [20, 27], [3, 15]]);
+        for (op, tabs) in [("contour_outside", 3), ("contour_inside", 0)] {
+            let mut req = request(op);
+            req["contour"] = diamond.clone();
+            req["tabs"] = serde_json::json!(tabs);
+            req["tabWidth"] = serde_json::json!(4.0);
+            req["tabHeight"] = serde_json::json!(0.5);
+            let json: serde_json::Value =
+                serde_json::from_str(&generate(&req.to_string()).unwrap()).unwrap();
+            let moves = json["moves"].as_array().unwrap();
+            assert!(
+                moves.len() > 8,
+                "{op}: expected a traced contour, got {}",
+                moves.len()
+            );
+            // Every cutting move stays within the region plus the cutter radius.
+            for m in moves {
+                let to = m["to"].as_array().unwrap();
+                let (x, y) = (to[0].as_f64().unwrap(), to[1].as_f64().unwrap());
+                assert!(
+                    x >= -1.6 && x <= 41.6 && y >= -1.6 && y <= 31.6,
+                    "{op}: {x},{y}"
+                );
+            }
+        }
+        // A point outside the region is refused.
+        let mut bad = request("contour_outside");
+        bad["contour"] = serde_json::json!([[0, 0], [50, 0], [50, 30]]);
+        assert!(generate(&bad.to_string()).is_err());
     }
     #[test]
     fn rectangular_jobs_have_explicit_motion_and_no_tool_change() {

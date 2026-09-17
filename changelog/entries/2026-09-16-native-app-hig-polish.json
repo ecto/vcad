@@ -1,0 +1,10 @@
+{
+  "id": "2026-09-16-native-app-hig-polish",
+  "version": "0.10.0",
+  "date": "2026-09-16",
+  "category": "feat",
+  "title": "Native Mac app: one design system, a real document app",
+  "summary": "The native app now has one panel surface, semantic type, named undo, a full menu bar with Settings, a declared .vcad document type, a reference grid and orientation triad, and remembers its layout.",
+  "details": "Three generations of shell code collapsed into one: every floating panel, eyebrow, key/value row, numeric field and selection highlight comes from a single design system that follows light and dark appearance, and roughly a dozen never-instantiated views are gone. The app behaves like a Mac document app: the bundle declares the .vcad type with an app and document icon, Save is atomic, Save As keeps the undo history, closing offers to save, and recents reach the Dock menu. Undo is named (Undo Extrude, Undo Move Part), the Edit menu has Select All, Delete, Rename, Hide and Isolate, the View menu has the workspace switcher and panel toggles, a Camera menu holds the standard views with ⌘1–4 and Frame All on ⌘0, and Settings (⌘,) covers presentation, grid, sounds and haptics. No bare-letter shortcuts remain and ⇧⌘W no longer shadows Close All. The windowed viewport gains a millimetre reference grid and contact shadow plus an always-on orientation triad; workspace switches keep each workspace's camera; panel state and the active workspace persist across launches. Scrub fields accept locale decimal separators and ⌥/⇧ fine/coarse scrubbing. The intent bar can be undone as a whole instead of throwing the document away.",
+  "features": ["app", "native", "ux"]
+}

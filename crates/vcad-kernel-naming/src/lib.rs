@@ -261,14 +261,38 @@ pub fn propagate_boolean(
     names_b: &NameMap,
     out: &BRepSolid,
 ) -> NameMap {
-    // Collect (surface, name) for every named input face.
-    let mut inputs: Vec<(&dyn Surface, &FaceName)> = Vec::new();
+    // Collect the named input faces as surface classes: one entry per
+    // geometrically distinct surface, remembering whether more than one
+    // distinct name lives on it. A result face only ever needs to know
+    // "exactly one name, and which" — so neither the per-face candidate list
+    // nor its sort is materialized. That matters when an operand is triangle
+    // soup (a mesh-fallback result): thousands of coplanar cap triangles each
+    // carry their own sibling name, and listing + sorting them per result
+    // face made naming ~100% of a chained boolean's cost (the rana-60 stator:
+    // 40+ minutes, essentially all of it here).
+    struct SurfaceClass<'a> {
+        surface: &'a dyn Surface,
+        name: &'a FaceName,
+        ambiguous: bool,
+    }
+    let mut classes: Vec<SurfaceClass> = Vec::new();
     for (brep, names) in [(a, names_a), (b, names_b)] {
         for (face_id, name) in &names.faces {
             let Some(face) = brep.topology.faces.get(*face_id) else {
                 continue;
             };
-            inputs.push((brep.geometry.surfaces[face.surface_index].as_ref(), name));
+            let surface = brep.geometry.surfaces[face.surface_index].as_ref();
+            match classes
+                .iter_mut()
+                .find(|c| same_surface(c.surface, surface))
+            {
+                Some(class) => class.ambiguous |= class.name != name,
+                None => classes.push(SurfaceClass {
+                    surface,
+                    name,
+                    ambiguous: false,
+                }),
+            }
         }
     }
 
@@ -276,17 +300,18 @@ pub fn propagate_boolean(
     let mut inherited: Vec<(FaceName, [i64; 3], FaceId)> = Vec::new();
     for (face_id, face) in &out.topology.faces {
         let surface = out.geometry.surfaces[face.surface_index].as_ref();
-        let mut names = inputs
-            .iter()
-            .filter(|(s, _)| same_surface(surface, *s))
-            .map(|(_, n)| *n)
-            .collect::<Vec<_>>();
-        names.dedup();
-        names.sort();
-        names.dedup();
-        if let [name] = names.as_slice() {
+        let mut found: Option<&FaceName> = None;
+        let mut ambiguous = false;
+        for class in classes.iter().filter(|c| same_surface(surface, c.surface)) {
+            if class.ambiguous || found.is_some_and(|f| f != class.name) {
+                ambiguous = true;
+                break;
+            }
+            found = Some(class.name);
+        }
+        if let (Some(name), false) = (found, ambiguous) {
             let c = face_centroid(out, face_id);
-            inherited.push(((*name).clone(), quantize(c), face_id));
+            inherited.push((name.clone(), quantize(c), face_id));
         }
     }
 

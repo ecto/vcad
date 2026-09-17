@@ -280,6 +280,7 @@ pub fn topology_signature(
         clock: None,
         root_cache: None,
         mesh_segments: 0,
+        on_root: None,
     };
     let scene = evaluate_document(&d, &options).map_err(DocDiffError::from)?;
     Ok(scene
@@ -366,6 +367,7 @@ fn bboxes(
         clock: None,
         root_cache: None,
         mesh_segments: 0,
+        on_root: None,
     };
     let scene = evaluate_document(&d, &options).map_err(DocDiffError::from)?;
 

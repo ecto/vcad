@@ -108,7 +108,7 @@ final class ElectronicsWorkspace {
             components.append(["ref": ref, "value": value, "footprintId": "vcad:Native_2Pad", "position": ecJSON(point), "pins": pins, "pads": pads])
             sch["components"] = components; sch["wires"] = sch["wires"] ?? [ECObject](); sch["junctions"] = sch["junctions"] ?? [ECObject](); sch["labels"] = sch["labels"] ?? [ECObject](); doc["schematic"] = sch
         }
-        if let before { model.undoStack = Array((undoBefore + [before]).suffix(64)) }
+        if let before { model.undoStack = Array((undoBefore + [UndoEntry(data: before, name: "Place Component")]).suffix(64)) }
         selectedRef = ref; tool = .select
     }
     func editComponent(_ model: EditorModel, key: String, value: Any) {
@@ -126,7 +126,7 @@ final class ElectronicsWorkspace {
                 if let i = rows.firstIndex(where: { $0["ref"] as? String == ref }) { rows[i][key] = value }
                 sch["components"] = rows; doc["schematic"] = sch
             }
-            if let before { model.undoStack = Array((undoBefore + [before]).suffix(64)) }
+            if let before { model.undoStack = Array((undoBefore + [UndoEntry(data: before, name: "Change Value")]).suffix(64)) }
             return
         }
         if view == .schematic {
@@ -165,7 +165,7 @@ final class ElectronicsWorkspace {
         model.editElectronics { doc in var sch = doc["schematic"] as? ECObject ?? [:]; sch["nets"] = nets; doc["schematic"] = sch }
         // Net assignment updates are committed with the schematic by syncBoardNets.
         syncBoardNets(model, nets: nets, merged: matching, target: name)
-        if let before { model.undoStack = Array((undoBefore + [before]).suffix(64)) }
+        if let before { model.undoStack = Array((undoBefore + [UndoEntry(data: before, name: "Connect Pins")]).suffix(64)) }
         pendingPin = nil; activeNet = name
     }
     private func syncBoardNets(_ model: EditorModel, nets: [String: [String]], merged: [String], target: String) {

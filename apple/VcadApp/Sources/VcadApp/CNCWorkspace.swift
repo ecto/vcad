@@ -15,6 +15,13 @@ struct CNCSetup: Codable, Equatable, Sendable {
     var plunge = 100.0
     var rpm = 10000.0
     var clearance = 5.0
+    /// Contour operations: the closed polyline to follow (stock frame, mm)
+    /// and the holding tabs left on an outside cut.
+    var contour: [[Double]] = []
+    var tabs = 0
+    var tabWidth = 4.0
+    var tabHeight = 1.0
+    var isContour: Bool { operation.hasPrefix("contour_") }
 }
 struct CNCMove: Decodable, Sendable {
     var to: [Double]
@@ -41,11 +48,24 @@ struct CNCOperation: Identifiable {
     var preview = CNCPreview()
     var current: Bool { program != nil && setup == generatedSetup }
     var name: String { Self.name(setup.operation) }
+    static let kinds = ["face", "pocket", "profile", "contour_outside", "contour_inside"]
     static func name(_ kind: String) -> String {
-        switch kind { case "pocket": return "Clear pocket"; case "profile": return "Outer profile"; default: return "Face stock" }
+        switch kind {
+        case "pocket": return "Clear pocket"
+        case "profile": return "Outer profile"
+        case "contour_outside": return "Outside contour"
+        case "contour_inside": return "Inside contour"
+        default: return "Face stock"
+        }
     }
     var symbol: String {
-        switch setup.operation { case "pocket": return "square.dashed.inset.filled"; case "profile": return "square.dashed"; default: return "square.3.layers.3d" }
+        switch setup.operation {
+        case "pocket": return "square.dashed.inset.filled"
+        case "profile": return "square.dashed"
+        case "contour_outside": return "circle.dashed"
+        case "contour_inside": return "circle.dashed.inset.filled"
+        default: return "square.3.layers.3d"
+        }
     }
 }
 
@@ -86,7 +106,7 @@ struct CNCPreview {
 @MainActor @Observable
 final class CNCWorkspace {
     let machine = CNCController()
-    var inspectorTab: CNCInspectorTab = .inspector
+    var inspectorTab: CNCInspectorTab = .terminal
     var followSpindle = false
     var autoFit = true
     private(set) var importedProgram: CNCProgram?
@@ -94,9 +114,11 @@ final class CNCWorkspace {
     private(set) var usesImportedProgram = false
     private var importedPreview = CNCPreview()
     var macros: [CNCMacro] = []
-    var leftPanelShown = true
-    var rightPanelShown = true
-    var bottomPanelShown = true
+    /// Panel visibility is remembered by the editor's layout memory.
+    var onLayoutChange: (() -> Void)?
+    var leftPanelShown = true { didSet { onLayoutChange?() } }
+    var rightPanelShown = true { didSet { onLayoutChange?() } }
+    var bottomPanelShown = false { didSet { onLayoutChange?() } }
     var shown = false {
         didSet { if !shown { pausePreview() } }
     }
@@ -222,15 +244,66 @@ final class CNCWorkspace {
     func select(_ selection: CNCSelection) {
         guard !machine.active else { return }
         useGeneratedJob()
-        inspectorTab = .inspector
+        rightPanelShown = true           // the inspector lives in the right rail
         self.selection = selection
         switch selection { case .operation: mode = .toolpaths; default: mode = .setup }
     }
     func addOperation(_ kind: String) {
-        guard !machine.active, !generating, ["face", "pocket", "profile"].contains(kind) else { return }
+        guard !machine.active, !generating, CNCOperation.kinds.contains(kind) else { return }
         var spec = setup; spec.operation = kind
+        if !spec.isContour { spec.contour = []; spec.tabs = 0 }
         let operation = CNCOperation(setup: spec)
         operations.append(operation); select(.operation(operation.id)); setupConfirmed = false
+    }
+
+    /// The outline the contour operations follow, when one has been imported.
+    private(set) var outline: CNCOutline?
+
+    /// Import a DXF outline and turn it into contour operations: the outer
+    /// loop as an outside contour with holding tabs, each hole large enough
+    /// for the cutter as an inside contour. Stock is sized to the outline.
+    func importOutlineFile() {
+        guard !machine.active, !generating else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "dxf") ?? .plainText, .plainText]
+        panel.message = "Choose a DXF outline (closed polylines, millimetres)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            guard size <= 8_000_000 else { throw CNCError.message("Choose a DXF smaller than 8 MB.") }
+            try importOutline(CNCOutline.parseDXF(String(contentsOf: url, encoding: .utf8), name: url.lastPathComponent))
+        } catch { self.error = error.localizedDescription }
+    }
+
+    /// Replace the operations with the outline's contour cuts.
+    func importOutline(_ outline: CNCOutline) throws {
+        guard !machine.active, !generating else { return }
+        guard outline.width <= 1000, outline.height <= 1000 else {
+            throw CNCError.message("Outline exceeds the 1 m machining region.")
+        }
+        useGeneratedJob()
+        self.outline = outline
+        stockWidth = (outline.width * 10).rounded(.up) / 10
+        stockHeight = (outline.height * 10).rounded(.up) / 10
+        var base = setup
+        base.width = stockWidth; base.height = stockHeight
+        base.depth = stockThickness
+        var ops: [CNCOperation] = []
+        let tooSmall = outline.holes.filter { min($0.bounds.width, $0.bounds.height) <= base.diameter }
+        for hole in outline.holes where !tooSmall.contains(hole) {
+            var spec = base
+            spec.operation = "contour_inside"; spec.contour = hole.points.map { [$0.x, $0.y] }; spec.tabs = 0
+            ops.append(CNCOperation(setup: spec))
+        }
+        var outer = base
+        outer.operation = "contour_outside"; outer.contour = outline.outer.points.map { [$0.x, $0.y] }
+        outer.tabs = 3; outer.tabWidth = 4; outer.tabHeight = min(1, stockThickness / 2)
+        ops.append(CNCOperation(setup: outer))
+        operations = ops
+        select(.operation(ops[0].id))
+        setupConfirmed = false; revision += 1
+        error = tooSmall.isEmpty ? nil
+            : "\(counted(tooSmall.count, "hole")) smaller than the Ø \(base.diameter.formatted()) mm cutter skipped — drill them separately."
     }
     func removeSelectedOperation() {
         guard !machine.active, !generating, operations.count > 1 else { return }

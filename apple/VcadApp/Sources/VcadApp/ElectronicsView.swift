@@ -29,17 +29,17 @@ struct NativeElectronicsView: View {
                             if ec.view == .spatial { ElectronicsBoardPreview(board: ec.board(model)) }
                             else { ElectronicsCanvas(model: model) }
                         }
-                        .padding(.horizontal, 270)
+                        .padding(.horizontal, Theme.Width.inspector + 2 * Theme.Space.l)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        HStack(alignment: .top, spacing: 16) {
-                            navigator.padding(16).frame(width: 236)
+                        HStack(alignment: .top, spacing: Theme.Space.l) {
+                            navigator.padding(Theme.Space.l).frame(width: Theme.Width.navigator)
                                 .frame(maxHeight: min(470, geometry.size.height - 32))
-                                .cncFloatingPanel()
+                                .panelSurface()
                             Spacer(minLength: 0)
-                            inspector.padding(16).frame(width: 268)
+                            inspector.padding(Theme.Space.l).frame(width: Theme.Width.inspector)
                                 .frame(maxHeight: min(600, geometry.size.height - 32))
-                                .cncFloatingPanel()
-                        }.padding(16)
+                                .panelSurface()
+                        }.padding(Theme.Space.l)
                     }
                 }
                 Divider()
@@ -56,7 +56,7 @@ struct NativeElectronicsView: View {
         .onChange(of: model.source) { _, _ in ec.selectedRef = nil; ec.selectedTrace = nil; ec.routeStart = nil; ec.pendingPin = nil }
         .sheet(isPresented: $ec.checking) {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Connectivity checks").font(.title2)
+                Text("Connectivity Checks").font(.title2)
                 Text("Checks duplicate references, missing net assignments and trace metadata. This is not a clearance DRC or electrical simulation.").font(.callout).foregroundStyle(.secondary)
                 List(ec.issues.isEmpty ? ["No issues found by these checks."] : ec.issues, id: \.self) { Text($0) }.frame(height: 240)
                 Button("Done") { ec.checking = false }.keyboardShortcut(.defaultAction)
@@ -82,17 +82,13 @@ struct NativeElectronicsView: View {
             Spacer(minLength: 0)
             Button("Undo", systemImage: "arrow.uturn.backward") { model.undo() }.labelStyle(.iconOnly).disabled(!model.canUndo)
             Button("Redo", systemImage: "arrow.uturn.forward") { model.redo() }.labelStyle(.iconOnly).disabled(!model.canRedo)
-            Button("Check") { ec.check(model) }.disabled(ec.board(model).isEmpty)
-            Menu("Document") {
-                Button("Open…") { open() }
-                Button("Save…") { save() }.disabled(model.documentJSON == nil)
-            }.fixedSize()
+            Button("Check Connectivity") { ec.check(model) }.disabled(ec.board(model).isEmpty)
         }.controlSize(.small)
     }
     private var navigator: some View {
         @Bindable var ec = ec
         return VStack(alignment: .leading, spacing: 12) {
-            Label("Circuit", systemImage: "cpu").font(.headline)
+            PanelHeader(title: "Circuit", systemImage: "cpu")
             TextField("Search parts or nets", text: $search).textFieldStyle(.roundedBorder)
             Picker("Navigator", selection: $navigatorTab) {
                 ForEach(["Parts", "Nets", "Layers"], id: \.self) { Text($0) }
@@ -108,8 +104,8 @@ struct NativeElectronicsView: View {
                             if search.isEmpty || (ref + value).localizedCaseInsensitiveContains(search) {
                                 Button { ec.selectedRef = ref; ec.selectedTrace = nil; ec.selectedVia = nil; ec.tool = .select } label: {
                                     HStack { Image(systemName: "cpu"); Text(ref); Spacer(); Text(value).foregroundStyle(.secondary) }
-                                        .padding(8).background(ec.selectedRef == ref ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 7))
-                                }.buttonStyle(.plain)
+                                        .padding(Theme.Space.s).selectableRow(selected: ec.selectedRef == ref)
+                                }.buttonStyle(.plain).accessibilityAddTraits(ec.selectedRef == ref ? .isSelected : [])
                             }
                         }
                     } else if navigatorTab == "Nets" {
@@ -118,11 +114,14 @@ struct NativeElectronicsView: View {
                             if search.isEmpty || name.localizedCaseInsensitiveContains(search) {
                                 Button { ec.activeNet = row.ecID; ec.routeStart = nil } label: {
                                     HStack { Image(systemName: "point.3.connected.trianglepath.dotted"); Text(name); Spacer() }
-                                        .padding(8).background(ec.activeNet == row.ecID ? Color.accentColor.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 7))
-                                }.buttonStyle(.plain)
+                                        .padding(Theme.Space.s).selectableRow(selected: ec.activeNet == row.ecID)
+                                }.buttonStyle(.plain).accessibilityAddTraits(ec.activeNet == row.ecID ? .isSelected : [])
                             }
                         }
-                        if ecRows(ec.board(model)["nets"]).isEmpty { Text("Connect schematic pins to create a net.").foregroundStyle(.secondary) }
+                        if ecRows(ec.board(model)["nets"]).isEmpty {
+                            EmptyPanelState(title: "No nets", systemImage: "point.3.connected.trianglepath.dotted",
+                                            detail: "Connect schematic pins to create a net.")
+                        }
                     } else {
                         Picker("Active copper", selection: $ec.activeLayer) {
                             Text("Front copper").tag("FCu"); Text("Back copper").tag("BCu")
@@ -134,7 +133,7 @@ struct NativeElectronicsView: View {
             Button(ec.view == .schematic ? "Show in Board" : "Show in Schematic", systemImage: "arrow.left.arrow.right") {
                 ec.view = ec.view == .schematic ? .board : .schematic
             }
-            Text("\(ecRows(ec.board(model)["footprints"]).count) components · \(ecRows(ec.board(model)["traces"]).count) traces")
+            Text("\(counted(ecRows(ec.board(model)["footprints"]).count, "component")) · \(counted(ecRows(ec.board(model)["traces"]).count, "trace"))")
                 .font(.caption).foregroundStyle(.secondary)
         }.controlSize(.small)
     }
@@ -142,7 +141,7 @@ struct NativeElectronicsView: View {
         @Bindable var ec = ec
         return ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text(ec.tool == .route ? "Route" : ec.tool == .place ? "Place component" : ec.selectedRef ?? "Circuit board").font(.headline)
+                PanelHeader(title: ec.tool == .route ? "Route" : ec.tool == .place ? "Place component" : ec.selectedRef ?? "Circuit board")
                 if ec.tool == .select, let ref = ec.selectedRef,
                    let component = ecRows((ec.view == .schematic ? ec.schematic(model)["components"] : ec.board(model)["footprints"])).first(where: { $0["ref"] as? String == ref }) {
                     HStack {
@@ -198,26 +197,8 @@ struct NativeElectronicsView: View {
             }.controlSize(.small)
         }
     }
-    private func open() {
-        let panel = NSOpenPanel(); panel.allowedContentTypes = [UTType(filenameExtension: "vcad") ?? .json, .json]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            let data = try Data(contentsOf: url)
-            guard data.count < 32_000_000, let doc = try JSONSerialization.jsonObject(with: data) as? ECObject,
-                  doc["nodes"] is ECObject else { throw CocoaError(.fileReadCorruptFile) }
-            // AppInstance preserves unsaved work in the current document.
-            AppInstance.opening(url, from: model)
-        } catch { fileError = error.localizedDescription }
-    }
-    private func save() {
-        guard let doc = model.documentJSON else { return }
-        let panel = NSSavePanel(); panel.allowedContentTypes = [UTType(filenameExtension: "vcad") ?? .json]; panel.nameFieldStringValue = model.source.label + ".vcad"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            let data = try JSONSerialization.data(withJSONObject: doc, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: url, options: .atomic); model.openDocument(url)
-        } catch { fileError = error.localizedDescription }
-    }
+    /// The same Open panel the File menu uses.
+    private func open() { openPanel(model) }
 }
 
 extension Dictionary where Key == String, Value == Any {
@@ -285,7 +266,7 @@ struct ElectronicsCanvas: View {
                     let rect = CGRect(x: center.x - 3 * scale, y: center.y - 1.5 * scale, width: 6 * scale, height: 3 * scale)
                     context.fill(Path(roundedRect: rect, cornerRadius: 2), with: .color(ref == ec.selectedRef ? .accentColor.opacity(0.4) : .secondary.opacity(0.25)))
                     context.stroke(Path(roundedRect: rect, cornerRadius: 2), with: .color(ref == ec.selectedRef ? .accentColor : .primary), lineWidth: 1)
-                    context.draw(Text(ref + " · " + (f["value"] as? String ?? "")).font(.system(size: 11)), at: CGPoint(x: center.x, y: center.y - 2.5 * scale))
+                    context.draw(Text(ref + " · " + (f["value"] as? String ?? "")).font(.subheadline), at: CGPoint(x: center.x, y: center.y - 2.5 * scale))
                     let pads = ecRows(f[ec.view == .schematic ? "pins" : "pads"])
                     for pad in pads {
                         let pp = screen(Self.world(pad, in: f)), r = max(3, scale * 0.6)
@@ -392,7 +373,7 @@ private struct ElectronicsNetPreview: View {
             context.stroke(bus, with: .color(.orange), lineWidth: 1.5)
             for (index, pin) in visible.enumerated() {
                 let y = step * CGFloat(index + 1)
-                context.draw(Text(pin).font(.system(size: 11, design: .monospaced)), at: CGPoint(x: 8, y: y), anchor: .leading)
+                context.draw(Text(pin).font(.subheadline.monospaced()), at: CGPoint(x: 8, y: y), anchor: .leading)
                 var wire = Path(); wire.move(to: CGPoint(x: 80, y: y)); wire.addLine(to: CGPoint(x: size.width - 35, y: y))
                 context.stroke(wire, with: .color(.orange), lineWidth: 1.5)
                 context.fill(Path(ellipseIn: CGRect(x: size.width - 38, y: y - 3, width: 6, height: 6)), with: .color(.orange))

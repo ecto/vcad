@@ -31,6 +31,42 @@ final class KeyableWindow: NSWindow, NSWindowDelegate {
     func windowDidResize(_ notification: Notification) { alignTitlebarButtons() }
     func windowDidBecomeKey(_ notification: Notification) { alignTitlebarButtons() }
     func windowDidExitFullScreen(_ notification: Notification) { alignTitlebarButtons() }
+    /// The red button and ⌘W both go through the unsaved-changes check.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        MainActor.assumeIsolated { ReleaseWindowController.shared.confirmClose() }
+    }
+
+    // Edit ▸ Select All / Delete, the AppKit way: the standard menu items send
+    // these down the responder chain, so a focused text field answers them
+    // itself and the parts answer when nothing else does. The Delete key
+    // reaches here the same way (`deleteBackward:` / `deleteForward:`).
+    @objc override func selectAll(_ sender: Any?) {
+        MainActor.assumeIsolated { ReleaseWindowController.shared.editorModel?.selectAllParts() }
+    }
+    @objc func delete(_ sender: Any?) {
+        MainActor.assumeIsolated { ReleaseWindowController.shared.editorModel?.deleteSelectedParts() }
+    }
+    @objc override func deleteBackward(_ sender: Any?) { delete(sender) }
+    @objc override func deleteForward(_ sender: Any?) { delete(sender) }
+    override func keyDown(with event: NSEvent) {
+        // ⌫ / ⌦ with nothing else responding: delete the selected parts.
+        if event.keyCode == 51 || event.keyCode == 117, event.modifierFlags.intersection([.command, .option, .control]).isEmpty {
+            delete(nil); return
+        }
+        super.keyDown(with: event)
+    }
+    /// Standard Edit items grey out when there is nothing to act on.
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        let model = MainActor.assumeIsolated { ReleaseWindowController.shared.editorModel }
+        switch item.action {
+        case #selector(selectAll(_:)):
+            return MainActor.assumeIsolated { model?.usesDocumentTree == true && (model?.partCount ?? 0) > 0 }
+        case #selector(delete(_:)):
+            return MainActor.assumeIsolated { model?.hasDeletableSelection == true }
+        default:
+            return super.validateUserInterfaceItem(item)
+        }
+    }
 }
 
 @MainActor
@@ -68,6 +104,7 @@ final class ReleaseWindowController {
     func show(model: EditorModel, intent: IntentEngine) {
         guard window == nil else { return }
         self.model = model
+        model.evaluatesOffMainThread = true
         mainWindow = NSApp.keyWindow ?? NSApp.mainWindow
 
         let frame = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
@@ -75,12 +112,18 @@ final class ReleaseWindowController {
                               backing: .buffered, defer: false)
         w.delegate = w
         w.isReleasedWhenClosed = false
+        w.isRestorable = false
         w.isOpaque = false
         w.backgroundColor = .clear
         w.hasShadow = false
         w.level = .normal                       // stacks like any window, not always-on-top
         w.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        w.contentView = NSHostingView(rootView: ReleasedOverlayView(model: model, intent: intent))
+        let host = NSHostingView(rootView: ReleasedOverlayView(model: model, intent: intent))
+        // The window's size belongs to AppKit (and the user), never to the
+        // content's ideal size: with the default sizing options a workspace
+        // whose layout reports a small ideal height shrinks the whole window.
+        host.sizingOptions = []
+        w.contentView = host
         w.makeKeyAndOrderFront(nil)
         window = w
         if ProcessInfo.processInfo.environment["VCAD_WINDOWED"] == "1" {
@@ -88,6 +131,12 @@ final class ReleaseWindowController {
         }
         DockIcon.shared.follow(model: model)
         mainWindow?.orderOut(nil)
+        // Come back the way the last session was left, unless the dev hook or
+        // the preference says otherwise.
+        if ProcessInfo.processInfo.environment["VCAD_WINDOWED"] == nil,
+           model.remembersWindowed || Prefs.opensInWindow {
+            setWindowed(true)
+        }
 
         let update: () -> Void = { [weak self] in self?.updatePassThrough() }
         if let m = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { _ in
@@ -164,7 +213,48 @@ final class ReleaseWindowController {
 
     func updateCNCWindowMinimum() {
         guard let w = window, let model, model.isWindowed else { return }
-        w.contentMinSize = (model.cnc.shown || model.electronicsShown) ? NSSize(width: 1020, height: 660) : NSSize(width: 800, height: 560)
+        w.contentMinSize = model.workspace == .design ? NSSize(width: 800, height: 560) : NSSize(width: 1020, height: 660)
+    }
+
+    /// The editor window, for sheets.
+    var hostWindow: NSWindow? { window }
+    /// The document, for the window's responder-chain actions.
+    var editorModel: EditorModel? { model }
+
+    /// ⌘W / the close button: offer to save first, then close (which quits
+    /// this instance — one document, one process).
+    func requestClose() {
+        guard let w = window else { return }
+        if confirmClose() { w.close() }
+    }
+
+    /// Ask about unsaved changes. Returns true when closing may proceed.
+    func confirmClose() -> Bool {
+        guard let model, model.documentDirty, model.usesDocumentTree else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Do you want to save the changes made to “\(model.documentName)”?"
+        alert.informativeText = "Your changes will be lost if you don’t save them."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Don’t Save")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            model.saveDocument()
+            return !model.documentDirty
+        case .alertSecondButtonReturn:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Frame whatever is selected: a part, an instance, or everything.
+    func frameSelection() {
+        guard let model else { return }
+        if let ii = model.selectedInstanceIndex { frame(entityNamed: "inst\(ii)") }
+        else if let pi = model.selectedPartIndex { frame(entityNamed: "part\(pi)") }
+        else { model.resetCamera(animated: true) }
     }
 
     /// Where a part sits on screen, in overlay view coords (top-left origin).
@@ -474,7 +564,7 @@ final class ReleaseWindowController {
     }
 
     func followCNCTool() {
-        guard let model, model.cnc.shown, model.cnc.followSpindle,
+        guard let model, model.workspace == .manufacture, model.cnc.followSpindle,
               model.cnc.machine.g54Active, model.cnc.machine.status.isFresh,
               let position = model.cnc.machine.status.work, let parent = centeringEntity else { return }
         model.stopSpin()
@@ -551,13 +641,16 @@ struct ReleasedOverlayView: View {
         parts.append(String(describing: model.baseShape))
         parts.append(String(describing: model.modifier))
         parts.append(String(model.modifierValue))
-        parts.append(String(model.triangleCount))
+        // Not the triangle count: it is an OUTPUT of the build. Keying on it
+        // made every document evaluate twice — the first build changed the
+        // count, the next render saw a new key and built again, and a part
+        // that takes a minute to solve took two.
         parts.append(String(model.zebraMode))
         parts.append(String(model.sketching))
         return parts.joined(separator: "|")
     }
 
-    private var studio: Bool { model.cnc.shown }
+    private var studio: Bool { model.workspace == .manufacture }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -566,58 +659,56 @@ struct ReleasedOverlayView: View {
                     .modifier(ChromeRegion(key: "workspaceHeader"))
                 Divider()
             } else {
-                WorkspaceHeader(model: model).frame(maxWidth: 920).cncFloatingPanel()
+                WorkspaceHeader(model: model).frame(maxWidth: 920).panelSurface()
                     .modifier(ChromeRegion(key: "workspaceHeader"))
-                    .padding(.horizontal, 16).padding(.vertical, 10)
+                    .padding(.horizontal, Theme.Space.l).padding(.vertical, 10)
             }
-            if model.electronicsShown {
+            switch model.workspace {
+            case .electronics:
                 NativeElectronicsView(model: model)
                     .modifier(ChromeRegion(key: "electronicsWorkspace"))
-            } else {
-            if !studio {
+            case .design:
                 DesignModelingTools(model: model).frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 18).padding(.vertical, 8).background(.bar)
+                    .padding(.horizontal, 18).padding(.vertical, Theme.Space.s).background(.bar)
                     .modifier(ChromeRegion(key: "designCommands"))
-            }
-            viewport.frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay {
-                    if studio {
+                viewport.frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .manufacture:
+                viewport.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay {
                         GeometryReader { geo in
-                            VStack(spacing: 12) {
-                                HStack(alignment: .top, spacing: 12) {
+                            VStack(spacing: Theme.Space.m) {
+                                HStack(alignment: .top, spacing: Theme.Space.m) {
                                     if model.cnc.leftPanelShown {
                                         CNCStudioOutline(cnc: model.cnc)
-                                            .cncFloatingPanel()
+                                            .panelSurface()
                                             .modifier(ChromeRegion(key: "cncOutline"))
                                     }
                                     Spacer(minLength: 0)
                                     if model.cnc.rightPanelShown {
-                                        CNCStudioMachinePanel(cnc: model.cnc)
-                                            .cncFloatingPanel()
-                                            .modifier(ChromeRegion(key: "cncMachine"))
+                                        CNCStudioInspector(model: model)
+                                            .panelSurface()
+                                            .modifier(ChromeRegion(key: "cncInspector"))
                                     }
                                 }.frame(maxHeight: .infinity, alignment: .top)
                                 VStack(spacing: 0) {
                                     if model.cnc.bottomPanelShown {
-                                        CNCStudioInspectorDock(model: model)
-                                            .frame(height: min(180, geo.size.height * 0.25))
+                                        CNCStudioDrawer(model: model)
+                                            .frame(height: min(240, geo.size.height * 0.3))
                                         Divider()
                                     }
                                     CNCStudioTransport(cnc: model.cnc)
-                                }.cncFloatingPanel()
+                                }.panelSurface()
                                     .modifier(ChromeRegion(key: "cncBottom"))
-                            }.padding(12)
+                            }.padding(Theme.Space.m)
                         }
                     }
-                }
-        }
+            }
         }
         .ignoresSafeArea(.container, edges: .top)
         .onAppear { ReleaseWindowController.shared.updateDocumentWindow() }
         .onChange(of: model.source) { _, _ in ReleaseWindowController.shared.updateDocumentWindow() }
         .onChange(of: model.documentDirty) { _, _ in ReleaseWindowController.shared.updateDocumentWindow() }
-        .onChange(of: model.electronicsShown) { _, _ in ReleaseWindowController.shared.updateCNCWindowMinimum() }
-        .onChange(of: studio) { _, _ in ReleaseWindowController.shared.updateCNCWindowMinimum() }
+        .onChange(of: model.workspace) { _, _ in ReleaseWindowController.shared.updateCNCWindowMinimum() }
     }
 
     private var viewport: some View {
@@ -675,28 +766,23 @@ struct ReleasedOverlayView: View {
                     .offset(x: r.minX, y: r.minY)
                     .allowsHitTesting(false)
             }
-            // BCB-style tool windows, hosted in the overlay itself (separate
+            // Floating panels, hosted in the overlay itself (separate
             // NSPanels break SwiftUI hit testing after auto-resize).
             if !studio {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: Theme.Space.m) {
                 if model.showsTree {
                     DesignModelNavigator(model: model)
                         .modifier(ChromeRegion(key: "tree"))
                 }
-                // Dynamics, as its own tool window. Released mode floats over
-                // the desktop, so the studio's single scrolling inspector has
-                // no home here — the BCB idiom is one window per concern.
+                // Dynamics, as its own panel: one panel per concern.
                 if model.canSimulate {
                     SimulationWindow(model: model)
                         .modifier(ChromeRegion(key: "sim"))
                 }
             }
-            .padding(16)
+            .padding(Theme.Space.l)
+            .animation(Motion.panel, value: model.showsTree)
             }
-            // The Object Inspector floats beside whatever it inspects: it
-            // tracks the selected part's projected screen position (and so
-            // follows it through orbits and drags), parking under the palette
-            // when nothing is selected.
         }
         .background {
             // Esc clears the selection. In release-to-desktop an empty-space
@@ -711,11 +797,8 @@ struct ReleasedOverlayView: View {
         }
         .overlay(alignment: .topTrailing) {
             if !studio {
-            // The right rail: identity + the inspector, docked to the screen
-            // edge. (It used to chase the selected part around the viewport,
-            // which reads as clever for one part and as a moving target for a
-            // real assembly — CAD inspectors live in a fixed rail.)
-            VStack(alignment: .trailing, spacing: 12) {
+            // The right rail: the inspector, docked to the screen edge.
+            VStack(alignment: .trailing, spacing: Theme.Space.m) {
                 if model.showsInspector {
                     if model.source.isGripper {
                         ReceiptLedgerWindow(model: model)
@@ -726,36 +809,54 @@ struct ReleasedOverlayView: View {
                     }
                 }
             }
-            .padding(16)
+            .padding(Theme.Space.l)
             .animation(Motion.panel, value: model.showsInspector)
             .animation(Motion.panel, value: model.source.isGripper)
             }
         }
         .overlay(alignment: .top) {
-            // Cross-domain gripper receipt — the released twin of the studio's
-            // top-center verification pill.
+            // Cross-domain gripper receipt — the top-center verification pill.
             if !studio && model.source.isGripper {
                 GripperReceiptPill(model: model)
-                    .padding(.top, 16)
+                    .padding(.top, Theme.Space.l)
                     .modifier(ChromeRegion(key: "gripper"))
             }
         }
         .overlay(alignment: .top) {
-            if !studio && !model.source.isGripper {
-                DesignBreadcrumb(model: model).padding(.top, 16)
+            if model.solving {
+                HStack(spacing: Theme.Space.s) {
+                    ProgressView().controlSize(.small)
+                    Text(model.solveProgress.total > 1
+                         ? "Solving \(model.documentName)… \(model.solveProgress.done) of \(model.solveProgress.total)"
+                         : "Solving \(model.documentName)…").font(.callout).monospacedDigit()
+                }
+                .padding(.horizontal, 14).padding(.vertical, 8).pillSurface()
+                .padding(.top, Theme.Space.l)
+                .transition(.opacity)
+                .accessibilityLabel("Solving \(model.documentName)")
+            } else if !studio && !model.source.isGripper {
+                DesignBreadcrumb(model: model).padding(.top, Theme.Space.l)
             }
         }
         .overlay(alignment: .bottomTrailing) {
             if !studio {
-                DesignViewportTools(model: model).padding(16)
+                DesignViewportTools(model: model).padding(Theme.Space.l)
                     .modifier(ChromeRegion(key: "designViewportTools"))
+            }
+        }
+        .overlay(alignment: .bottomLeading) {
+            // Orientation triad: which way X, Y and Z point right now.
+            if Prefs.showsTriad {
+                AxisTriad(azimuth: model.azimuth, elevation: model.elevation)
+                    .padding(.leading, Theme.Space.l)
+                    .padding(.bottom, studio ? (model.cnc.bottomPanelShown ? 340 : 100) : Theme.Space.l)
+                    .allowsHitTesting(false)
             }
         }
         .overlay(alignment: .bottom) {
             if !studio {
             // Bottom cluster: the AI command bar (the app's spine) plus the
-            // kinematic transport when a timeline is loaded. Same views, same
-            // model/engine bindings as the studio — just floated over the desktop.
+            // kinematic transport when a timeline is loaded.
             VStack(spacing: 10) {
                 if model.sketching {
                     SketchHintBar(model: model)
@@ -775,25 +876,18 @@ struct ReleasedOverlayView: View {
                         .modifier(ChromeRegion(key: "composer"))
                 }
             }
-            .padding(.bottom, 16)
+            .padding(.bottom, Theme.Space.l)
             .animation(Motion.smooth, value: intent.draft.isEmpty)
             .animation(Motion.smooth, value: model.timeline == nil)
             .animation(Motion.panel, value: model.sketching)
             }
         }
-        .overlay(alignment: .topLeading) {
-            if model.cnc.shown && !studio {
-                CNCPanel(cnc: model.cnc)
-                    .padding(.leading, 16).padding(.top, 64)
-                    .modifier(ChromeRegion(key: "cncPanel"))
-            }
-        }
         .overlay {
             if studio {
                 CNCStudioViewportChrome(model: model)
-                    .padding(.leading, model.cnc.leftPanelShown ? 210 : 0)
-                    .padding(.trailing, model.cnc.rightPanelShown ? 298 : 0)
-                    .padding(.bottom, model.cnc.bottomPanelShown ? 320 : 108)
+                    .padding(.leading, model.cnc.leftPanelShown ? Theme.Width.cncOutline + 2 * Theme.Space.m : 0)
+                    .padding(.trailing, model.cnc.rightPanelShown ? Theme.Width.inspector + 2 * Theme.Space.m + 6 : 0)
+                    .padding(.bottom, model.cnc.bottomPanelShown ? 330 : 90)
             }
         }
         .background(model.isWindowed ? Color(nsColor: .windowBackgroundColor) : Color.clear)
@@ -1160,11 +1254,15 @@ struct ReleasedARView: NSViewRepresentable {
     let selectedInstances: Set<Int>
     let visibility: VisibilityState
     let geometryKey: String
+    /// Windowed viewports draw a reference grid and contact shadow; released
+    /// ones float bare over the desktop.
+    let grounded: Bool
 
     final class Coordinator {
         var camera: PerspectiveCamera?
         var anchor: AnchorEntity?
         var builtKey = ""
+        var builtGrounded = false
         var framedCNCRevision = -1
         var builtSelection: Set<Int> = []
         var builtInstances: Set<Int> = []
@@ -1220,7 +1318,7 @@ struct ReleasedARView: NSViewRepresentable {
     /// background stays clear, so only the lighting comes from the environment.
     private func applyLighting(_ ar: ARView) {
         ar.environment.lighting.resource =
-            model.zebraMode ? ViewportView.zebraEnvironment : ViewportView.studioEnvironment
+            model.zebraMode ? SceneAssets.zebraEnvironment : SceneAssets.studioEnvironment
     }
 
     func updateNSView(_ ar: ARView, context: Context) {
@@ -1252,13 +1350,19 @@ struct ReleasedARView: NSViewRepresentable {
         if geometryDirty || context.coordinator.builtKey != geometryKey {
             rebuild(in: context.coordinator.anchor, coordinator: context.coordinator)
             applyLighting(ar)
+        } else if context.coordinator.builtGrounded != grounded {
+            // A presentation switch: show or hide the grounding set in place.
+            context.coordinator.builtGrounded = grounded
+            for name in ["grid", "contactShadow"] {
+                context.coordinator.anchor?.findEntity(named: name)?.isEnabled = grounded
+            }
         }
         if let parent = ReleaseWindowController.shared.centeringEntity {
             syncCNCOverlay(model.cnc, in: parent, model: model)
-            if model.cnc.shown && model.cnc.autoFit && !model.cnc.followSpindle && context.coordinator.framedCNCRevision != cncRevision {
+            if model.workspace == .manufacture && model.cnc.autoFit && !model.cnc.followSpindle && context.coordinator.framedCNCRevision != cncRevision {
                 context.coordinator.framedCNCRevision = cncRevision
                 Task { @MainActor in
-                    guard model.cnc.shown, model.cnc.autoFit, !model.cnc.followSpindle else { return }
+                    guard model.workspace == .manufacture, model.cnc.autoFit, !model.cnc.followSpindle else { return }
                     ReleaseWindowController.shared.frame(entityNamed: "cncRoot")
                 }
             }
@@ -1331,11 +1435,17 @@ struct ReleasedARView: NSViewRepresentable {
         coordinator.builtInstances = model.selectedInstances
         coordinator.builtVisibility = VisibilityState(hidden: model.hiddenParts,
                                                       isolated: model.isolatedPart)
+        coordinator.builtGrounded = grounded
         model.geometryDirty = false
-        coordinator.instanceEntities.removeAll(keepingCapacity: true)
-        anchor.children.filter { $0.name == "geomRoot" }.forEach { $0.removeFromParent() }
 
         let scene = model.buildScene()
+        // Still solving with nothing landed yet: leave the previous geometry
+        // (or nothing) on screen; parts are drawn as they land and the model
+        // flips geometryDirty when the kernel is done.
+        if scene.solving && scene.meshes.isEmpty { return }
+        coordinator.instanceEntities.removeAll(keepingCapacity: true)
+        anchor.children.filter { ["geomRoot", "grid", "contactShadow"].contains($0.name) }
+            .forEach { $0.removeFromParent() }
         let sceneScale = 0.6 / max(scene.size, 0.0001)
 
         let centering = Entity()
@@ -1356,7 +1466,7 @@ struct ReleasedARView: NSViewRepresentable {
         for (i, inst) in scene.instances.enumerated() {
             var m = PhysicallyBasedMaterial()
             if model.zebraMode {
-                m = ViewportView.zebraChrome
+                m = SceneAssets.zebraChrome
             } else {
                 m.baseColor = .init(tint: inst.material.color)
                 m.roughness = .init(floatLiteral: inst.material.roughness)
@@ -1377,7 +1487,7 @@ struct ReleasedARView: NSViewRepresentable {
         for (i, item) in scene.meshes.enumerated() {
             var m = PhysicallyBasedMaterial()
             if model.zebraMode {
-                m = ViewportView.zebraChrome
+                m = SceneAssets.zebraChrome
             } else if model.usesDocumentTree {
                 let r = model.resolvedMaterial(forPart: i)
                 m.baseColor = .init(tint: r.color)
@@ -1412,315 +1522,71 @@ struct ReleasedARView: NSViewRepresentable {
         geomRoot.addChild(zUp)
         geomRoot.scale = SIMD3<Float>(repeating: sceneScale)
         anchor.addChild(geomRoot)
+
+        // Grounding: a reference grid and a contact shadow under the part,
+        // only when there is a window floor to stand on. Sized in the same
+        // display units as the part so grid cells read as round millimetres.
+        if !model.source.isGripper, !scene.solving, scene.size > 0 {
+            let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            for e in SceneAssets.groundingEntities(partSizeMM: model.sizeMM, sceneSize: scene.size,
+                                                   sceneScale: sceneScale, dark: dark) {
+                e.isEnabled = grounded
+                anchor.addChild(e)
+            }
+        }
     }
 }
 
-// MARK: - Floating tool windows (BCB-style UX, Apple HIG styling)
-//
-// The C++ Builder idea — the IDE as a constellation of small floating tool
-// windows around your work — implemented as native macOS panels: material
-// backgrounds, SF Symbols, standard controls.
-
-/// A floating tool window: compact title row (drags the panel) over a
-/// material body, rounded and stroked like a native HUD panel.
-struct ToolWindow<Content: View>: View {
-    let title: String
-    let onClose: () -> Void
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 24)
-            }
-            .overlay(alignment: .trailing) {
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.tertiary)
-                        .padding(4)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Close")
-            }
-            content
-        }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator, lineWidth: 1))
-        .fixedSize()
-    }
-}
-
-/// The Component Palette, after Borland C++ Builder: a speedbar of document
-/// actions, a tab strip, a dense grid of icon tools, and a hint line that
-/// explains whatever the pointer is over. BCB's palette was icon-only and
-/// stable — same tile in the same place every time you reach for it — with the
-/// words living in the hint bar rather than under every glyph. That is what is
-/// modernised here (SF Symbols, a segmented tab strip, HIG focus rings), not
-/// the 1997 bevels.
-struct ComponentPaletteWindow: View {
-    @Bindable var model: EditorModel
-    /// What the pointer is over, for the hint line. BCB put hints in the status
-    /// bar; a palette-local line keeps the explanation next to the thing.
-    @State private var hovered: Tool.ID?
-    @State private var hoveredAction: String?
-
-    private let paletteWidth: CGFloat = 236
-    private let tile: CGFloat = 34
-
-    var body: some View {
-        ToolWindow(title: "Components", onClose: { model.showsPalette = false }) {
-            VStack(alignment: .leading, spacing: 8) {
-                speedbar
-                Divider()
-                tabStrip
-                toolGrid
-                hintLine
-            }
-            .frame(width: paletteWidth, alignment: .leading)
-            .background {
-                Button("") { model.disarm() }
-                    .keyboardShortcut(.cancelAction)
-                    .frame(width: 0, height: 0).opacity(0)
-                    .accessibilityHidden(true)
-                    .disabled(model.armedShape == nil)
-            }
-        }
-    }
-
-    // MARK: speedbar — the document actions, not components
-
-    /// BCB kept the speedbar (open/save/run) separate from the palette proper;
-    /// mixing them put "export USDZ" one pixel from "add a cube". Same split
-    /// here, and every action is also a menu item with a key equivalent.
-    private var speedbar: some View {
-        HStack(spacing: 2) {
-            speedButton("Undo", "arrow.uturn.backward", enabled: model.canUndo,
-                        hint: "Undo the last edit (⌘Z)") { model.undo() }
-            speedButton("Redo", "arrow.uturn.forward", enabled: model.canRedo,
-                        hint: "Redo (⇧⌘Z)") { model.redo() }
-            speedDivider
-            speedButton("Zebra", "line.3.horizontal", enabled: true, active: model.zebraMode,
-                        hint: "Zebra curvature analysis (Z)") { model.zebraMode.toggle() }
-            speedDivider
-            speedButton("Export STL", "square.and.arrow.up", enabled: model.canExport,
-                        hint: "Export the document as STL (⌘E)") {
-                exportPanel(ext: "stl") { model.exportSTL(to: $0) }
-            }
-            speedButton("Export USDZ", "arkit", enabled: model.canExport,
-                        hint: "Export as USDZ for Quick Look (⇧⌘E)") {
-                exportPanel(ext: "usdz") { model.exportUSDZ(to: $0) }
-            }
-            Spacer(minLength: 0)
-        }
-    }
-
-    private var speedDivider: some View {
-        Rectangle().fill(.separator).frame(width: 1, height: 16).padding(.horizontal, 3)
-    }
-
-    // MARK: tabs
-
-    private var tabStrip: some View {
-        Picker("", selection: $model.toolTab) {
-            ForEach(availableTabs) { t in Text(t.label).tag(t) }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .controlSize(.small)
-        // Number keys switch tabs, as they did on the studio palette. Zero-sized
-        // rather than absent: a shortcut only fires while its button is in the
-        // view hierarchy.
-        .background {
-            ForEach(Array(availableTabs.enumerated()), id: \.element) { idx, tab in
-                Button("") { model.toolTab = tab }
-                    .keyboardShortcut(KeyEquivalent(Character("\(idx + 1)")), modifiers: [])
-                    .frame(width: 0, height: 0)
-                    .opacity(0)
-                    .accessibilityHidden(true)
-            }
-        }
-    }
-
-    // MARK: the palette proper
-
-    private var toolGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: tile), spacing: 4, alignment: .leading)],
-                  alignment: .leading, spacing: 4) {
-            ForEach(model.tools(for: activeTab)) { tool in
-                toolTile(tool)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(Motion.snappy, value: activeTab)
-    }
-
-    private func toolTile(_ tool: Tool) -> some View {
-        Button(action: tool.action) {
-            Image(systemName: tool.symbol)
-                .font(.system(size: 15))
-                .frame(width: tile, height: tile)
-                .foregroundStyle(tool.isActive ? AnyShapeStyle(Color.accentColor)
-                                 : tool.enabled ? AnyShapeStyle(.primary)
-                                 : AnyShapeStyle(.tertiary))
-                .background(background(active: tool.isActive, hovered: hovered == tool.id && tool.enabled),
-                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(tool.isActive ? Color.accentColor.opacity(0.55) : .clear,
-                                  lineWidth: 1))
-                // .plain buttons only hit-test opaque pixels; without this,
-                // clicks in the transparent padding do nothing.
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!tool.enabled)
-        .onHover { inside in
-            hovered = inside ? tool.id : (hovered == tool.id ? nil : hovered)
-        }
-        .help(tool.hint.isEmpty ? tool.label : "\(tool.label) — \(tool.hint)")
-        .accessibilityLabel(tool.label)
-    }
-
-    private func background(active: Bool, hovered: Bool) -> AnyShapeStyle {
-        if active { return AnyShapeStyle(.selection) }
-        if hovered { return AnyShapeStyle(.quaternary) }
-        return AnyShapeStyle(.clear)
-    }
-
-    // MARK: hint line
-
-    /// One line, always present (never collapsing — a palette that changes
-    /// height as the pointer moves is a palette you cannot aim at).
-    private var hintLine: some View {
-        Text(hintText)
-            .font(.system(size: 10))
-            .foregroundStyle(hintIsBlocked ? AnyShapeStyle(Color.orange)
-                             : model.armedShape != nil ? AnyShapeStyle(Color.accentColor)
-                             : AnyShapeStyle(.secondary))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .frame(width: paletteWidth, height: 13, alignment: .leading)
-            .animation(nil, value: hintText)
-    }
-
-    private var hoveredTool: Tool? {
-        model.tools(for: activeTab).first { $0.id == hovered }
-    }
-
-    private var hintIsBlocked: Bool {
-        if let t = hoveredTool { return !t.enabled }
-        return false
-    }
-
-    private var hintText: String {
-        if let s = model.armedShape { return "Click in the scene to place \(s.label) · Esc" }
-        if let a = hoveredAction { return a }
-        guard let t = hoveredTool else { return activeTab.paletteHint }
-        return t.hint.isEmpty ? t.label : "\(t.label) — \(t.hint)"
-    }
-
-    /// Combine only exists for documents (needs two selected parts).
-    private var availableTabs: [ToolTab] {
-        model.usesDocumentTree ? ToolTab.allCases : [.create, .modify]
-    }
-    private var activeTab: ToolTab {
-        availableTabs.contains(model.toolTab) ? model.toolTab : .create
-    }
-
-    private func speedButton(_ label: String, _ symbol: String, enabled: Bool,
-                             active: Bool = false, hint: String,
-                             action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12))
-                .frame(width: 26, height: 22)
-                .foregroundStyle(active ? AnyShapeStyle(Color.accentColor)
-                                 : enabled ? AnyShapeStyle(.secondary)
-                                 : AnyShapeStyle(.tertiary))
-                .background(active ? AnyShapeStyle(.selection) : AnyShapeStyle(.clear),
-                            in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .onHover { inside in
-            hoveredAction = inside ? (enabled ? hint : "\(label) — unavailable") : nil
-        }
-        .help(hint)
-        .accessibilityLabel(label)
-    }
-
-    private func exportPanel(ext: String, _ export: @escaping (URL) -> Bool) {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "\(model.documentName).\(ext)"
-        panel.begin { resp in
-            guard resp == .OK, let url = panel.url else { return }
-            _ = export(url)
-        }
-    }
-}
+// MARK: - Floating panels
 
 /// The Object Inspector: what the selected feature is, its live parameters,
-/// the document's named parameters, camera, and measurements.
+/// the document's named parameters, and measurements.
 struct ObjectInspectorWindow: View {
     @Bindable var model: EditorModel
-    @State private var measurementsShown = false
     private var title: String {
         model.selectedFeatureNode?.name ?? model.features.first { $0.id == model.selectedFeatureID }?.name ?? "Inspector"
     }
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text(title).font(.headline)
-                Spacer()
-                Button { model.showsInspector = false } label: { Image(systemName: "sidebar.right") }
-                    .buttonStyle(.borderless).help("Hide inspector").accessibilityLabel("Hide inspector")
-            }
+        VStack(alignment: .leading, spacing: Theme.Space.m) {
+            PanelHeader(title: title, onClose: { model.showsInspector = false })
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: Theme.Space.m) {
                     if model.usesDocumentTree { documentSections } else { sandboxSection }
                     if !model.docParameters.isEmpty {
                         Divider()
-                        header("Document Parameters")
-                        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) { docParameterRows }
+                        Eyebrow("Document Parameters")
+                        docParameterRows
                     }
                     Divider()
-                    DisclosureGroup("Measurements", isExpanded: $measurementsShown) {
-                        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) { measurementRows }
-                            .padding(.top, 8)
-                    }.font(.caption)
+                    DisclosureGroup("Measurements", isExpanded: $model.measurementsShown) {
+                        VStack(alignment: .leading, spacing: 7) { measurementRows }
+                            .padding(.top, Theme.Space.s)
+                    }.font(.callout)
                 }
             }.frame(maxHeight: 420).fixedSize(horizontal: false, vertical: true)
-        }.padding(16).frame(width: 268).cncFloatingPanel()
+        }.padding(Theme.Space.l).frame(width: Theme.Width.inspector).panelSurface()
     }
 
     // MARK: document (a .vcad's feature tree)
 
     /// The selected feature: what it is, what it is made of, and — for the ops
-    /// that declare editable parameters — live scrub fields. This is the studio
-    /// inspector's job, and it is the same `FeatureParamEditors` doing it, so a
-    /// newly editable op shows up in both places at once.
+    /// that declare editable parameters — live scrub fields.
     @ViewBuilder private var documentSections: some View {
         if let ii = model.selectedInstanceIndex {
-            header(model.instanceName(ii) ?? "Instance \(ii)")
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
-                row("Kind", "Assembly instance")
-                if let def = model.instancePartDefName(ii) { row("Part", def) }
+            Eyebrow(model.instanceName(ii) ?? "Instance \(ii)")
+            VStack(alignment: .leading, spacing: 7) {
+                KeyValueRow("Kind", "Assembly instance")
+                if let def = model.instancePartDefName(ii) { KeyValueRow("Part", def) }
             }
             if let node = model.instanceFeatureNode(ii) {
                 Divider()
                 // The geometry an instance draws lives in its part def, so the
                 // editors act on the definition: change the link's cube here and
                 // every instance of that link follows.
-                header("\(node.name) — shared by every instance")
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
-                    row("Operation", DocumentGraph.label(node.opType))
-                    if InspectorView.editableOps.contains(node.opType) {
+                Eyebrow("\(node.name) — shared by every instance")
+                VStack(alignment: .leading, spacing: 7) {
+                    KeyValueRow("Operation", DocumentGraph.label(node.opType))
+                    if FeatureParamEditors.editableOps.contains(node.opType) {
                         FeatureParamEditors(model: model, node: node) { snapshot in
                             ReleaseWindowController.shared.refreshGeometry(model: model,
                                                                            collisions: snapshot)
@@ -1729,27 +1595,27 @@ struct ObjectInspectorWindow: View {
                 }
             }
         } else if let node = model.selectedFeatureNode {
-            header(node.name)
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
-                row("Operation", DocumentGraph.label(node.opType))
+            Eyebrow(DocumentGraph.label(node.opType))
+            VStack(alignment: .leading, spacing: 7) {
                 if let pi = node.partIndex {
-                    GridRow {
-                        Text("Material").font(.system(size: 11)).foregroundStyle(.secondary)
+                    HStack {
+                        Text("Material").font(.callout).foregroundStyle(.secondary)
+                        Spacer(minLength: Theme.Space.s)
                         materialMenu(pi)
                     }
                     if !model.isPartVisible(pi) {
-                        GridRow {
-                            Text("Visibility").font(.system(size: 11)).foregroundStyle(.secondary)
-                            Label("Hidden", systemImage: "eye.slash").font(.system(size: 11))
-                                .foregroundStyle(.secondary)
+                        HStack {
+                            Text("Visibility").font(.callout).foregroundStyle(.secondary)
+                            Spacer()
+                            Label("Hidden", systemImage: "eye.slash").font(.callout).foregroundStyle(.secondary)
                         }
                     }
                 }
             }
-            if InspectorView.editableOps.contains(node.opType) {
+            if FeatureParamEditors.editableOps.contains(node.opType) {
                 Divider()
-                header("Parameters")
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
+                Eyebrow("Parameters")
+                VStack(alignment: .leading, spacing: 7) {
                     // Edits re-solve the bound nodes; the released scene swaps
                     // meshes in place (collisions only on commit — per-tick
                     // regen stutters big documents).
@@ -1759,115 +1625,73 @@ struct ObjectInspectorWindow: View {
                     }
                 }
             } else if let d = node.detail {
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
-                    row("Value", d)
-                }
+                KeyValueRow("Value", d)
             }
         } else {
-            Text("Select a feature in the tree")
-                .font(.system(size: 11)).foregroundStyle(.tertiary)
+            EmptyPanelState(title: "Nothing selected", systemImage: "cursorarrow.click.2",
+                            detail: "Select a feature in the navigator or a part in the viewport.")
         }
     }
 
     // MARK: sandbox (the built-in primitive + modifier)
 
     @ViewBuilder private var sandboxSection: some View {
-        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 7) {
-            row("Shape", model.baseShape.label)
-            row("Modifier", model.modifier.label)
+        VStack(alignment: .leading, spacing: 7) {
+            KeyValueRow("Shape", model.baseShape.label)
+            KeyValueRow("Modifier", model.modifier.label)
             if model.modifier != .none && model.modifierEffective {
-                GridRow {
-                    Text(model.modifier.paramLabel)
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                    HStack(spacing: 6) {
-                        Slider(value: $model.modifierValue, in: 0...12)
-                            .controlSize(.mini)
-                            .frame(width: 108)
-                        TextField("Radius", value: $model.modifierValue, format: .number.precision(.fractionLength(1...3)))
-                            .textFieldStyle(.roundedBorder).frame(width: 60)
-                            .onChange(of: model.modifierValue) { _, value in
-                                if !value.isFinite || !(0...12).contains(value) { model.modifierValue = value.isFinite ? min(12, max(0, value)) : 0 }
-                            }
-                        Text("mm").font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text(model.modifier.paramLabel).font(.callout).foregroundStyle(.secondary)
+                    Spacer(minLength: Theme.Space.s)
+                    Slider(value: $model.modifierValue, in: 0...12)
+                        .controlSize(.mini)
+                        .frame(width: 90)
+                        .accessibilityLabel(model.modifier.paramLabel)
+                    ScrubField(label: "", value: model.modifierValue, sensitivity: 0.05, minValue: 0) { v, _ in
+                        model.modifierValue = min(12, max(0, v))
                     }
                 }
             } else if model.modifier != .none {
-                GridRow {
-                    Text("").font(.system(size: 11))
-                    Label("No edges on a sphere", systemImage: "info.circle")
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                }
+                Label("No edges on a sphere", systemImage: "info.circle")
+                    .font(.callout).foregroundStyle(.secondary)
             }
         }
     }
 
     @ViewBuilder private var docParameterRows: some View {
-        ForEach(model.docParameters) { p in
-            GridRow {
-                Text(p.name).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .help(p.description ?? p.name)
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(model.docParameters) { p in
                 if let v = p.value {
-                    ScrubField(label: "", value: v, unit: p.unit ?? "mm",
-                               sensitivity: InspectorView.paramSensitivity(p),
+                    ScrubField(label: p.name, value: v, unit: p.unit ?? "mm",
+                               sensitivity: FeatureParamEditors.paramSensitivity(p),
                                minValue: p.min ?? -.greatestFiniteMagnitude) { v, s in
                         model.editParameter(p.name, value: v, snapshot: s)
                         // Collisions on typed commits / scrub start only —
                         // per-tick regen would stutter big docs.
                         ReleaseWindowController.shared.refreshGeometry(model: model, collisions: s)
                     }
-                    .frame(width: 140)
+                    .help(p.description ?? p.name)
                 } else if let f = p.formula {
-                    Text("= \(f)").font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                    KeyValueRow(p.name, "= \(f)").help(p.description ?? p.name)
                 }
             }
         }
     }
 
-    @ViewBuilder private var viewRows: some View {
-        GridRow {
-            Text("Camera").font(.system(size: 11)).foregroundStyle(.secondary)
-            HStack(spacing: 2) {
-                camButton("Iso", az: .pi / 5, el: .pi / 7)
-                camButton("Front", az: 0, el: 0)
-                camButton("Right", az: .pi / 2, el: 0)
-                camButton("Top", az: 0, el: 1.45)
-            }
-        }
-        GridRow {
-            Text("Zoom").font(.system(size: 11)).foregroundStyle(.secondary)
-            Slider(value: zoomBinding, in: 0...1)
-                .controlSize(.mini)
-                .frame(width: 140)
-        }
-    }
-
     @ViewBuilder private var measurementRows: some View {
-        row("Triangles", model.triangleCount.formatted())
-        row("Bounds", String(format: "%.1f × %.1f × %.1f mm",
-                             abs(model.sizeMM.x), abs(model.sizeMM.y), abs(model.sizeMM.z)))
-        row("Solve", String(format: "%.1f ms", model.solveMillis))
+        KeyValueRow("Triangles", model.triangleCount.formatted())
+        KeyValueRow("Bounds", String(format: "%.1f × %.1f × %.1f mm",
+                                     abs(model.sizeMM.x), abs(model.sizeMM.y), abs(model.sizeMM.z)))
+        KeyValueRow("Solve", String(format: "%.1f ms", model.solveMillis))
         if let info = model.pickInfo {
-            GridRow {
-                Text("Picked").font(.system(size: 11)).foregroundStyle(.secondary)
-                Text(info).font(.system(size: 11).monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 140, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            KeyValueRow("Picked", info)
         }
     }
 
-    private func header(_ t: String) -> some View {
-        Text(t.uppercased())
-            .font(.system(size: 9, weight: .semibold))
-            .tracking(0.6)
-            .foregroundStyle(.tertiary)
-    }
-
-    /// Material assignment for a part — swatch + grouped presets, the studio
-    /// inspector's control rather than a bare Picker (which showed a checkmark
-    /// against "aluminum" for parts that had no material at all).
+    /// Material assignment for a part — swatch + grouped presets. A Menu
+    /// rather than a Picker: the presets are grouped by category, and the
+    /// checkmark must reflect the part's real assignment (a part with no
+    /// material shows "Default", never a preset it does not have).
     private func materialMenu(_ pi: Int) -> some View {
         let current = model.materialName(forPart: pi) ?? "default"
         let resolved = model.resolvedMaterial(forPart: pi)
@@ -1885,95 +1709,35 @@ struct ObjectInspectorWindow: View {
         } label: {
             HStack(spacing: 6) {
                 Circle().fill(Color(portedColor: resolved.color)).frame(width: 10, height: 10)
-                    .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 0.5))
+                    .overlay(Circle().strokeBorder(.separator, lineWidth: 0.5))
                 Text(MaterialPreset.byKey(current)?.name ?? current.capitalized)
-                    .font(.system(size: 11))
-                Image(systemName: "chevron.up.chevron.down").font(.system(size: 8)).opacity(0.5)
+                    .font(.callout)
             }
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.visible)
         .fixedSize()
-    }
-
-    /// Zoom slider ∈ [0,1] mapped onto the orbit distance (inverted: right = closer).
-    private var zoomBinding: Binding<Double> {
-        Binding(
-            get: { Double(1 - (model.distance - 0.45) / (8.0 - 0.45)) },
-            set: {
-                model.stopSpin()
-                model.distance = 0.45 + Float(1 - $0) * (8.0 - 0.45)
-                model.pinchBaseline = model.distance
-            })
-    }
-
-    private func camButton(_ label: String, az: Float, el: Float) -> some View {
-        Button(label) {
-            model.stopSpin()
-            withAnimation(.smooth(duration: 0.25)) {
-                model.azimuth = az
-                model.elevation = el
-            }
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.mini)
-    }
-
-    private func row(_ k: String, _ v: String) -> some View {
-        GridRow {
-            Text(k).font(.system(size: 11)).foregroundStyle(.secondary)
-            Text(v).font(.system(size: 11).monospacedDigit())
-        }
-    }
-}
-
-/// The feature tree / history, as a closable tool window. It carried no title
-/// or close button while every other panel had both.
-struct FeatureTreeWindow: View {
-    @Bindable var model: EditorModel
-
-    var body: some View {
-        ToolWindow(title: model.usesDocumentTree ? "Features" : "History",
-                   onClose: { model.showsTree = false }) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    FeatureTreeView(model: model)
-                }
-                // Clicking geometry selects a row that may be scrolled out of
-                // sight — a sync you cannot see is not a sync.
-                .onChange(of: model.selectedFeatureID) { _, id in
-                    guard let id else { return }
-                    withAnimation(Motion.snappy) { proxy.scrollTo(id, anchor: .center) }
-                }
-            }
-            .frame(width: 230)
-            .frame(maxHeight: 380)
-            .fixedSize(horizontal: false, vertical: true)
-        }
+        .accessibilityLabel("Material")
     }
 }
 
 /// The cross-domain Receipt, in the inspector's slot. The gripper is neither a
 /// sandbox primitive nor a feature-tree document, so the Object Inspector has
-/// nothing true to say about it — the studio swapped the whole inspector for
-/// this ledger, and so does the released desktop.
+/// nothing true to say about it.
 struct ReceiptLedgerWindow: View {
     @Bindable var model: EditorModel
 
     var body: some View {
-        ToolWindow(title: "Receipt", onClose: { model.showsInspector = false }) {
+        VStack(alignment: .leading, spacing: Theme.Space.m) {
+            PanelHeader(title: "Receipt", systemImage: "checklist", onClose: { model.showsInspector = false })
             ReceiptLedger(model: model)
-                .frame(width: 264)
-                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(Theme.Space.l).frame(width: Theme.Width.inspector).panelSurface()
     }
 }
 
-/// The released twin of the studio's Simulation inspector section.
-///
-/// Wraps the same `SimInspector` the studio uses, so the two cannot drift:
-/// every readout, every control, and every fail-closed message is defined once.
-/// Only the chrome differs — a floating BCB tool window rather than a section
-/// inside the scrolling inspector.
+/// The Simulation panel. Wraps the same `SimInspector` every platform uses, so
+/// every readout, control, and fail-closed message is defined once.
 ///
 /// **Anything added here must carry a `ChromeRegion`.** Released mode passes
 /// the mouse through to the desktop everywhere the hit test says the pixel is
@@ -1983,11 +1747,64 @@ struct SimulationWindow: View {
     @Bindable var model: EditorModel
 
     var body: some View {
-        ToolWindow(title: "Simulation", onClose: { model.sim.teardown() }) {
+        VStack(alignment: .leading, spacing: Theme.Space.m) {
+            PanelHeader(title: "Simulation", systemImage: "atom", onClose: { model.sim.teardown() })
             SimInspector(model: model)
-                .frame(width: 240)
-                .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(Theme.Space.l).frame(width: Theme.Width.navigator).panelSurface()
+    }
+}
+
+/// The orientation triad: three labelled axes projected with the current
+/// camera, so you can always tell which way X, Y and Z point. Z is up.
+struct AxisTriad: View {
+    let azimuth: Float
+    let elevation: Float
+
+    var body: some View {
+        let size: CGFloat = 44
+        let axes: [(String, SIMD3<Float>, Color)] = [
+            ("X", [1, 0, 0], Color(nsColor: GizmoInk.x)),
+            ("Y", [0, 1, 0], Color(nsColor: GizmoInk.y)),
+            ("Z", [0, 0, 1], Color(nsColor: GizmoInk.z)),
+        ]
+        // Draw back-to-front so the axis pointing at the viewer sits on top.
+        let projected = axes.map { (name, dir, color) in (name, project(dir), color) }
+            .sorted { $0.1.depth < $1.1.depth }
+        ZStack {
+            ForEach(projected, id: \.0) { name, p, color in
+                let end = CGPoint(x: size / 2 + p.x * size * 0.42, y: size / 2 - p.y * size * 0.42)
+                Path { path in
+                    path.move(to: CGPoint(x: size / 2, y: size / 2))
+                    path.addLine(to: end)
+                }
+                .stroke(color.opacity(p.depth < 0 ? 0.45 : 1), style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                Text(name)
+                    .font(.caption2.weight(.bold).monospaced())
+                    .foregroundStyle(.white)
+                    .frame(width: 14, height: 14)
+                    .background(color.opacity(p.depth < 0 ? 0.45 : 1), in: Circle())
+                    .position(end)
+            }
+        }
+        .frame(width: size, height: size)
+        .padding(6)
+        .pillSurface()
+        .accessibilityLabel("Orientation: X right, Y forward, Z up")
+    }
+
+    /// Kernel Z-up axis → screen (x right, y up, depth toward the viewer),
+    /// for the same orbit camera the viewport uses (display Y-up).
+    private func project(_ k: SIMD3<Float>) -> (x: CGFloat, y: CGFloat, depth: Float) {
+        // Kernel (x, y, z) → display (x, z, −y): the renderer's −90° X rotation.
+        let d = SIMD3<Float>(k.x, k.z, -k.y)
+        let ca = cos(azimuth), sa = sin(azimuth), ce = cos(elevation), se = sin(elevation)
+        // Camera basis for the orbit: forward from the camera to the target.
+        let cam = SIMD3<Float>(sa * ce, se, ca * ce)
+        let forward = -simd_normalize(cam)
+        let right = simd_normalize(simd_cross(forward, SIMD3<Float>(0, 1, 0)))
+        let up = simd_cross(right, forward)
+        return (CGFloat(simd_dot(d, right)), CGFloat(simd_dot(d, up)), -simd_dot(d, forward))
     }
 }
 
@@ -2035,35 +1852,8 @@ struct ReleasedScene: View {
                        selectedInstances: model.selectedInstances,
                        visibility: VisibilityState(hidden: model.hiddenParts,
                                                    isolated: model.isolatedPart),
-                       geometryKey: geometryKey)
-    }
-}
-
-
-/// Show or hide the tool panels in either window presentation.
-struct PanelsPill: View {
-    @Bindable var model: EditorModel
-
-    private var anyShown: Bool { model.showsPalette || model.showsTree || model.showsInspector }
-
-    var body: some View {
-        Button {
-            withAnimation(Motion.panel) {
-                model.setPanels(shown: !anyShown)
-            }
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: anyShown ? "sidebar.squares.left" : "sidebar.squares.leading")
-                    .font(.system(size: 11, weight: .semibold))
-                Text(anyShown ? "Hide Panels" : "Show Panels")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(.ultraThinMaterial, in: Capsule())
-        }
-        .buttonStyle(.plain)
-        .help("Show or hide the floating tool windows (⌘⇧Space)")
+                       geometryKey: geometryKey,
+                       grounded: model.isWindowed && Prefs.showsGrid)
     }
 }
 

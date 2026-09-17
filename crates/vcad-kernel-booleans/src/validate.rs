@@ -362,6 +362,45 @@ fn mesh_aabb(mesh: &TriangleMesh) -> Option<([f64; 3], [f64; 3])> {
     Some((min, max))
 }
 
+/// Slack on the union volume bound, as a fraction of `vol(A) + vol(B)`.
+///
+/// The bound itself is exact; the slack absorbs tessellation schedules. A
+/// result's rims are re-sampled sag-adaptively, so its curved faces can read a
+/// fraction of a percent larger than the operands' inscribed polygons (0.64%
+/// at 32 segments). 2% keeps every such difference out and still catches the
+/// failures this guards against, which are gross: the rana-60 stator's tangent
+/// fillet blocks read +46% and −46%.
+const UNION_VOLUME_SLACK: f64 = 0.02;
+
+/// Sound post-hoc check for a Union: `max(vol A, vol B) ≤ vol(A ∪ B) ≤ vol A +
+/// vol B`, always. Unlike the sampled oracles this module tried and removed,
+/// the bound is a theorem, not an estimate — thin features cannot fool it —
+/// so a result outside it (beyond tessellation slack) is definitely the wrong
+/// solid.
+///
+/// Measured on the rana-60 stator: a ring, a tab and fillet blocks whose cut
+/// cylinders are tangent to the ring's face. The sixth union returned a
+/// 7314 mm³ "analytic" solid from operands totalling 5006 mm³ (298
+/// non-manifold edges), and the whole 50-stage part came out at a third of
+/// its true volume while reporting `Analytic` throughout.
+pub(crate) fn union_volume_out_of_bounds(
+    result: &TriangleMesh,
+    mesh_a: &TriangleMesh,
+    mesh_b: &TriangleMesh,
+) -> bool {
+    let (va, vb, vr) = (
+        mesh_signed_volume(mesh_a),
+        mesh_signed_volume(mesh_b),
+        mesh_signed_volume(result),
+    );
+    // An operand that does not read as a positive solid cannot bound anything.
+    if !(va.is_finite() && vb.is_finite() && vr.is_finite()) || va <= 0.0 || vb <= 0.0 {
+        return false;
+    }
+    let slack = UNION_VOLUME_SLACK * (va + vb);
+    vr > va + vb + slack || vr < va.max(vb) - slack
+}
+
 /// Does `result` disagree grossly with the volume the operation's set
 /// semantics predict from the operands?
 ///

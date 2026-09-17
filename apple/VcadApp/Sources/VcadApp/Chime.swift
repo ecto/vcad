@@ -20,6 +20,8 @@ final class Chime {
     }
 
     func play(_ kind: Kind) {
+        // Respect the preference; a silent app is a setting, not a crash.
+        guard Prefs.playsSounds else { return }
         if !started {
             do {
                 try engine.start()

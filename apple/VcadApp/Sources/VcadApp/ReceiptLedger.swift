@@ -47,51 +47,45 @@ struct ReceiptLedger: View {
     private var anyViolated: Bool { verdicts.contains { !$0.held && !$0.stale } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: Theme.Space.m) {
             header
             VStack(spacing: 0) {
                 ForEach(Array(verdicts.enumerated()), id: \.offset) { _, v in verdictRow(v) }
             }
-            Divider().overlay(.white.opacity(0.08))
+            Divider()
             quoteRow
             makeButton
         }
-        .padding(14)
-        .glassCard()
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder((anyViolated ? Color.orange : Color.green).opacity(0.32), lineWidth: 1)
-        )
-        .animation(.snappy(duration: 0.2), value: anyViolated)
-        .animation(.snappy(duration: 0.2), value: model.receiptStale)
-        .animation(.snappy(duration: 0.2), value: model.connectorOK)
+        .animation(Motion.snappy, value: anyViolated)
+        .animation(Motion.snappy, value: model.receiptStale)
+        .animation(Motion.snappy, value: model.connectorOK)
     }
 
     private var header: some View {
         HStack(spacing: 6) {
-            Image(systemName: "checklist").font(.system(size: 11))
-            Text("RECEIPT").font(.system(size: 10, weight: .semibold)).tracking(0.6)
+            Image(systemName: anyViolated ? "exclamationmark.triangle.fill" : "checkmark.seal.fill")
+                .foregroundStyle(anyViolated ? Color.orange : Color.green)
+            Eyebrow(anyViolated ? "Checks violated" : "All checks hold")
             Spacer()
             Text("connector \(Int(model.connectorX.rounded())) mm")
-                .font(.system(size: 10, design: .monospaced))
+                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
         }
-        .foregroundStyle(.tertiary)
     }
 
     @ViewBuilder private func verdictRow(_ v: Verdict) -> some View {
         HStack(spacing: 8) {
             Image(systemName: v.held ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                .font(.system(size: 12))
+                .font(.callout)
                 .foregroundStyle(v.held ? Color.green : Color.orange)
                 .frame(width: 16)
-            Text(v.label).font(.system(size: 12))
+            Text(v.label).font(.callout)
             Spacer(minLength: 8)
             if v.stale {
                 ProgressView().controlSize(.mini).scaleEffect(0.7)
-                Text("recomputing").font(.system(size: 11, design: .monospaced))
+                Text("recomputing").font(.subheadline.monospaced())
                     .foregroundStyle(.tertiary)
             } else {
-                Text(v.detail).font(.system(size: 12, design: .monospaced))
+                Text(v.detail).font(.callout.monospaced())
                     .foregroundStyle(v.held ? .secondary : Color.orange)
             }
         }
@@ -111,15 +105,15 @@ struct ReceiptLedger: View {
     private var quoteRow: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Image(systemName: "shippingbox.fill").font(.system(size: 12))
+                Image(systemName: "shippingbox.fill").font(.callout)
                     .foregroundStyle(.secondary).frame(width: 16)
-                Text("Quote").font(.system(size: 12))
+                Text("Quote").font(.callout)
                 Spacer()
                 if model.receiptStale {
                     ProgressView().controlSize(.mini).scaleEffect(0.7)
                 } else {
                     Text("\(dollars(model.quoteCents)) · \(model.leadDays) day")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(.callout.weight(.medium).monospaced())
                         .foregroundStyle(.secondary)
                 }
             }
@@ -135,16 +129,16 @@ struct ReceiptLedger: View {
     /// "est." tag so the user sees exactly which line is not a kernel result.
     @ViewBuilder private func quoteLine(_ label: String, _ amount: String, estimate: Bool) -> some View {
         HStack(spacing: 6) {
-            Text(label).font(.system(size: 10))
+            Text(label).font(.caption)
                 .foregroundStyle(.tertiary)
             Spacer()
             if estimate {
-                Text("est.").font(.system(size: 9, weight: .semibold))
+                Text("est.").font(.caption2.weight(.semibold))
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal, 4).padding(.vertical, 1)
-                    .background(.white.opacity(0.06), in: Capsule())
+                    .background(.quaternary, in: Capsule())
             }
-            Text(amount).font(.system(size: 10, design: .monospaced))
+            Text(amount).font(.caption.monospaced())
                 .foregroundStyle(.tertiary)
         }
         .padding(.leading, 24)
@@ -157,10 +151,10 @@ struct ReceiptLedger: View {
             model.chime.play(.solved)
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "hammer.fill").font(.system(size: 12))
+                Image(systemName: "hammer.fill").font(.callout)
                 Text(model.receiptStale ? "Recomputing…"
                      : (gateOpen ? "Make it" : "Resolve violations first"))
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.body.weight(.medium))
                 Spacer()
             }
             .padding(.horizontal, 12).padding(.vertical, 9)
@@ -175,6 +169,7 @@ struct ReceiptLedger: View {
         .buttonStyle(.plain)
         .disabled(!gateOpen)
         .help(gateOpen ? "Every cross-domain check holds"
-                       : "Make-it unlocks only when every check passes")
+                       : "Make it unlocks only when every check passes")
+        .accessibilityLabel(gateOpen ? "Make it" : "Resolve violations first")
     }
 }

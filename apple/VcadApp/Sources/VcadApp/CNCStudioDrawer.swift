@@ -1,37 +1,25 @@
 import SwiftUI
 import AppKit
 
-/// Additional tools share the existing lower inspector; the viewport and
-/// transport never switch to a second machine-control screen.
-struct CNCStudioInspectorDock: View {
+/// The drawer above the machine bar: the controller terminal, the job's
+/// G-code, or saved macros — one at a time, opened from the bar.
+struct CNCStudioDrawer: View {
     @Bindable var model: EditorModel
     private var cnc: CNCWorkspace { model.cnc }
     var body: some View {
         @Bindable var cnc = cnc
         VStack(spacing: 0) {
             HStack {
-                Picker("Inspector section", selection: $cnc.inspectorTab) {
-                    ForEach(CNCInspectorTab.allCases) { Text($0.rawValue).tag($0) }
-                }.pickerStyle(.segmented).labelsHidden().frame(width: 340)
+                Eyebrow(cnc.inspectorTab.rawValue)
                 Spacer()
                 Text(cnc.usesImportedProgram ? cnc.importedName : cnc.selectedOperation.name)
                     .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-            }.padding(.horizontal, 14).padding(.vertical, 8)
+            }.padding(.horizontal, 18).padding(.vertical, Theme.Space.s)
             switch cnc.inspectorTab {
-            case .inspector:
-                if cnc.usesImportedProgram {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label(cnc.importedName, systemImage: "doc.text").font(.headline)
-                        Text("Imported G-code · G54 · one manually installed tool").font(.caption).foregroundStyle(.secondary)
-                        Text("Preview assumes XYZ0 before the program establishes a position. Initial travel and fixtures are not verified.")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Button("Edit generated operations") { cnc.useGeneratedJob(); cnc.select(.operation(cnc.selectedOperation.id)) }.disabled(cnc.machine.active)
-                    }.padding(18).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                } else { CNCStudioBottomInspector(model: model) }
             case .terminal: CNCStudioTerminal(cnc: cnc)
             case .gcode:
                 ScrollView {
-                    Text(cnc.jobCode ?? "Generate the job or import a G-code file.").font(.system(size: 11, design: .monospaced))
+                    Text(cnc.jobCode ?? "Generate the job or import a G-code file.").font(.subheadline.monospaced())
                         .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).padding(.vertical, 6)
                 }
             case .macros: CNCStudioMacros(cnc: cnc)
@@ -55,7 +43,7 @@ struct CNCStudioTerminal: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     Text(cnc.machine.log.isEmpty ? "Controller commands and replies appear here." : cnc.machine.log.joined(separator: "\n"))
-                        .font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                        .font(.subheadline.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
                     Color.clear.frame(height: 1).id("end")
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
                     .onChange(of: cnc.machine.log.last) { _, _ in if autoScroll { proxy.scrollTo("end", anchor: .bottom) } }

@@ -111,7 +111,7 @@ final class CNCMachineToolsTests: XCTestCase {
         let directory = URL(fileURLWithPath: "/tmp/vcad-manufacture")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for (name, width, appearance) in [("compact", 996.0, NSAppearance.Name.aqua), ("wide", 1400.0, .aqua), ("dark", 996.0, .darkAqua)] {
-            let content = CNCMachineRail(cnc: cnc).cncFloatingPanel().padding(12)
+            let content = CNCMachineBar(cnc: cnc).panelSurface().padding(12)
                 .frame(width: width).background(Color(nsColor: .windowBackgroundColor))
             let hosting = NSHostingView(rootView: content)
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 220), styleMask: [.borderless], backing: .buffered, defer: false)
@@ -140,14 +140,15 @@ final class CNCMachineToolsTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
             cnc.inspectorTab = .terminal
+            cnc.bottomPanelShown = true
             let content = VStack(spacing: 12) {
                 WorkspaceHeader(model: model)
                 HStack(alignment: .top) {
-                    CNCStudioOutline(cnc: cnc).frame(height: 480).cncFloatingPanel()
+                    CNCStudioOutline(cnc: cnc).frame(height: 480).panelSurface()
                     Spacer()
-                    CNCStudioMachinePanel(cnc: cnc).frame(height: 480).cncFloatingPanel()
+                    CNCStudioInspector(model: model).frame(height: 480).panelSurface()
                 }
-                CNCStudioInspectorDock(model: model).frame(height: 150).cncFloatingPanel()
+                CNCStudioDrawer(model: model).frame(height: 200).clipped().panelSurface()
                 CNCStudioTransport(cnc: cnc)
             }.padding(12).background(Color(nsColor: .windowBackgroundColor))
             let hosting = NSHostingView(rootView: content)
