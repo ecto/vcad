@@ -18,7 +18,7 @@ use vcad_kernel_cam::materials::{
 };
 use vcad_kernel_cam::CamSettings;
 
-use super::types::{positive, MachineReq};
+use crate::types::{positive, MachineReq};
 
 /// The whole material table, with the hazards and guidance attached to each
 /// entry.

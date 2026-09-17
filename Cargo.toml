@@ -54,6 +54,7 @@ members = [
     "crates/vcad-slicer-gcode",
     "crates/vcad-slicer-bambu",
     "crates/vcad-kernel-cam",
+    "crates/vcad-cam-api",
     "crates/vcad-kernel-stocksim",
     "crates/vcad-kernel-topopt",
     "crates/vcad-kernel-photonics",
@@ -156,6 +157,7 @@ default-members = [
     "crates/vcad-slicer-gcode",
     "crates/vcad-slicer-bambu",
     "crates/vcad-kernel-cam",
+    "crates/vcad-cam-api",
     "crates/vcad-kernel-stocksim",
     "crates/vcad-kernel-topopt",
     "crates/vcad-kernel-photonics",
@@ -308,6 +310,7 @@ vcad-kernel-calibration = { path = "crates/vcad-kernel-calibration", version = "
 vcad-slicer-gcode = { path = "crates/vcad-slicer-gcode", version = "0.10.0" }
 vcad-slicer-bambu = { path = "crates/vcad-slicer-bambu", version = "0.10.0" }
 vcad-kernel-cam = { path = "crates/vcad-kernel-cam", version = "0.10.0" }
+vcad-cam-api = { path = "crates/vcad-cam-api", version = "0.10.0" }
 vcad-kernel-stocksim = { path = "crates/vcad-kernel-stocksim", version = "0.10.0" }
 vcad-kernel-topopt = { path = "crates/vcad-kernel-topopt", version = "0.10.0" }
 vcad-kernel-photonics = { path = "crates/vcad-kernel-photonics", version = "0.10.0" }

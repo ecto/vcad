@@ -7,10 +7,10 @@
 //!
 //! # Which mesh gets sectioned, and why it matters
 //!
-//! A scene part carries two meshes' worth of geometry: the `EvaluatedMesh` the
-//! app renders, which came from [`vcad_kernel::Solid::to_mesh`] — that is
-//! `tessellate_brep` followed by `repair_export_mesh`, the *export* boundary —
-//! and, where the root is still a B-rep, the solid itself.
+//! A part in an evaluated document carries two meshes' worth of geometry: the
+//! mesh the app renders, which came from `vcad_kernel::Solid::to_mesh` — that
+//! is `tessellate_brep` followed by `repair_export_mesh`, the *export*
+//! boundary — and, where the root is still a B-rep, the solid itself.
 //!
 //! Measured on the stator (2026-09-17): the export mesh sections with tears up
 //! to **0.4 mm** on the faces where tangent fillets meet, while the raw
@@ -27,6 +27,12 @@
 //! topology — can only be sectioned as it stands. That is not wrong, only
 //! less exact, and the response says so rather than letting the caller assume
 //! the better path was taken.
+//!
+//! Which mesh to hand over is the *caller's* decision, because only the caller
+//! holds the solid: the C ABI reaches a scene part, the WASM kernel reaches a
+//! solid handle. Both tessellate the B-rep themselves and call
+//! [`section_mesh`] with the `mesh_source` they used, which is the same code
+//! path [`from_mesh_request`] runs.
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -37,7 +43,7 @@ use vcad_kernel_cam::outline::{
 };
 use vcad_kernel_cam::Point2D;
 
-use super::types::{loop_points, positive};
+use crate::types::{loop_points, positive};
 
 // ---------------------------------------------------------------------------
 // Options shared by both sectioning entry points
@@ -137,19 +143,34 @@ pub fn from_mesh_request(input: &str) -> Result<Value, String> {
     section(&positions, &req.indices, &req.section, "inline")
 }
 
-/// Section a part of an evaluated scene at `z`, or at the mid-height of its
-/// own bounds when `auto_z`.
-pub fn from_scene(
-    scene: *const crate::VcadScene,
-    part_index: usize,
+/// Section a mesh the caller produced itself, saying where it came from.
+///
+/// This is the seam the C ABI's scene and the WASM kernel's solid handle both
+/// come through: they hold the topology, so they choose the mesh (see the
+/// module notes — the raw tessellation, never the export mesh, whenever there
+/// is a B-rep) and this does the rest.
+///
+/// `z` is used when `auto_z` is false; when it is true the mid-height of the
+/// mesh's own Z range is used and `z` is ignored. `options` is the same
+/// document [`from_mesh_request`] reads, minus `positions` and `indices`, and
+/// may be `"{}"`.
+///
+/// `curve_segments` reads back the curve resolution the caller tessellated at,
+/// so the answer records it; pass `None` when it is not known.
+pub fn section_mesh(
+    positions: &[[f64; 3]],
+    indices: &[u32],
     z: f64,
     auto_z: bool,
     options: &str,
+    mesh_source: &str,
 ) -> Result<Value, String> {
-    if scene.is_null() {
-        return Err("outline from scene: the scene handle is null.".into());
-    }
-    let mut req: SectionReq = serde_json::from_str(options)
+    let text = if options.trim().is_empty() {
+        "{}"
+    } else {
+        options
+    };
+    let mut req: SectionReq = serde_json::from_str(text)
         .map_err(|e| format!("the section options could not be read: {e}."))?;
     if auto_z {
         req.auto_z = Some(true);
@@ -157,50 +178,26 @@ pub fn from_scene(
         req.z = Some(z);
         req.auto_z = Some(false);
     }
+    section(positions, indices, &req, mesh_source)
+}
 
-    let s: &crate::VcadScene = unsafe { &*scene };
-    let part = s.inner.parts.get(part_index).ok_or_else(|| {
-        format!(
-            "this scene has {} part(s), so there is no part {part_index}.",
-            s.inner.parts.len()
-        )
-    })?;
-
-    let segments = req.segments.unwrap_or(64);
-    // The raw tessellation where there is topology to build it from; the
-    // scene's own mesh otherwise. See the module notes.
-    if let Some(brep) = part.solid.as_ref().and_then(|solid| solid.as_brep()) {
-        let mesh = vcad_kernel_tessellate::tessellate_brep(brep, segments);
-        let positions: Vec<[f64; 3]> = mesh
-            .vertices
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|c| [c[0] as f64, c[1] as f64, c[2] as f64])
-            .collect();
-        return section(&positions, &mesh.indices, &req, "raw_tessellation");
-    }
-
-    let cached = s
-        .inner
-        .root_keys
-        .get(part_index)
-        .and_then(|k| k.as_ref())
-        .is_some();
-    let source = if cached {
-        "cached_root_mesh"
+/// The curve resolution a caller should tessellate a B-rep at before calling
+/// [`section_mesh`], read off the same `segments` option the inline request
+/// carries. Defaults to 64 — fine enough that a Ø2.5 bore sections to within a
+/// few microns of round.
+pub fn section_segments(options: &str) -> Result<u32, String> {
+    let text = if options.trim().is_empty() {
+        "{}"
     } else {
-        "export_mesh"
+        options
     };
-    let positions: Vec<[f64; 3]> = part
-        .mesh
-        .positions
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|c| [c[0] as f64, c[1] as f64, c[2] as f64])
-        .collect();
-    section(&positions, &part.mesh.indices, &req, source)
+    let req: SectionReq = serde_json::from_str(text)
+        .map_err(|e| format!("the section options could not be read: {e}."))?;
+    match req.segments {
+        Some(0) => Err("segments is 0: a curve needs at least one segment.".into()),
+        Some(n) => Ok(n),
+        None => Ok(64),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +224,7 @@ fn section(
     let z = if auto {
         (z_min + z_max) / 2.0
     } else {
-        super::types::finite(
+        crate::types::finite(
             "z",
             req.z
                 .ok_or("no z was given and auto_z is off: say where to section.")?,

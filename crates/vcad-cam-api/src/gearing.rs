@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use vcad_kernel_cam::gear::contour::FlankTolerance;
 use vcad_kernel_cam::{Contour, ContourSegment, GearReport, PlanetaryTrain, SpurGear};
 
-use super::types::{finite, non_negative, positive};
+use crate::types::{finite, non_negative, positive};
 
 /// One gear.
 #[derive(Debug, Clone, Deserialize)]
