@@ -1367,10 +1367,16 @@ enum OffsetBackend {
 /// where the offset curve is trimmed, which is where a step lands or does
 /// not. At 0.002 mm it is within 0.14 µm of converged, and the whole outer
 /// profile offsets in about 15 ms.
+///
+/// The fine step is for where the trims land, not for the path that is cut:
+/// handed on at that density the stator job is 77 000 moves instead of 14 000,
+/// every one shorter than the machine can accelerate through. The result is
+/// thinned to 1 µm, well inside both the 0.02 mm the oracle allows and
+/// anything a spindle holds.
 fn offset_options() -> crate::fit::OffsetOptions {
     crate::fit::OffsetOptions {
         step: 0.002,
-        simplify: 1e-5,
+        simplify: 1e-3,
         ..crate::fit::OffsetOptions::default()
     }
 }
@@ -1500,7 +1506,9 @@ impl Contour2D {
         let mut stretches: Vec<CentreLineStretch> = Vec::new();
         let mut open: Option<(f64, f64, f64)> = None;
         for (s, over) in samples {
-            match (&mut open, over > 1e-6) {
+            // The cut path is thinned to 1 µm (`offset_options`), so an
+            // overcut of a micron or so is that, not a centre-line stretch.
+            match (&mut open, over > 5e-3) {
                 (None, true) => open = Some((s, s, over)),
                 (Some(run), true) => {
                     run.1 = s;
@@ -2426,7 +2434,7 @@ mod tests {
         );
         assert!(!report.centre_line.is_empty(), "no stretch reported");
         for stretch in &report.centre_line {
-            assert!(stretch.to > stretch.from);
+            assert!(stretch.to > stretch.from, "{:?}", report.centre_line);
             assert!(stretch.max_wall_error <= report.max_wall_error + 1e-9);
             assert_eq!(stretch.phase, ContourPhase::Finish);
         }

@@ -1894,9 +1894,32 @@ struct LiftedRun {
     len: f64,
     start: [f64; 2],
     end: [f64; 2],
-    mid: [f64; 2],
     top: f64,
     path: Vec<[f64; 2]>,
+    /// The pass had not yet been down to its depth when this began: the
+    /// cutter is arriving, not stepping over something.
+    entry: bool,
+}
+
+/// The point half-way along a polyline, by length.
+fn path_midpoint(path: &[[f64; 2]]) -> [f64; 2] {
+    let total: f64 = path
+        .windows(2)
+        .map(|w| (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]))
+        .sum();
+    let mut left = total / 2.0;
+    for w in path.windows(2) {
+        let len = (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]);
+        if len >= left && len > 0.0 {
+            let t = left / len;
+            return [
+                w[0][0] + (w[1][0] - w[0][0]) * t,
+                w[0][1] + (w[1][1] - w[0][1]) * t,
+            ];
+        }
+        left -= len;
+    }
+    path.last().copied().unwrap_or([0.0, 0.0])
 }
 
 /// 5. Tabs, as the moves actually cut them.
@@ -1927,35 +1950,14 @@ fn check_tabs(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> TabAudit 
         }
         // A lifted stretch: level XY motion held above this pass's depth, and
         // still inside the stock.
+        // A tab is a lift FROM depth and a return to it. Level motion above
+        // the pass depth before the pass has been down there is the entry — a
+        // ramp starts with a stub at the previous pass's floor — unless it
+        // joins a lifted stretch at the end of the lap, which is one tab
+        // sitting across the seam.
+        let mut runs: Vec<LiftedRun> = Vec::new();
         let mut run: Option<LiftedRun> = None;
-        let flush = |run: &mut Option<LiftedRun>, obs: &mut Vec<TabObservation>| {
-            if let Some(LiftedRun {
-                len,
-                start,
-                end,
-                mid,
-                top,
-                path,
-            }) = run.take()
-            {
-                let chord = (end[0] - start[0]).hypot(end[1] - start[1]);
-                let straightness = if len > 0.0 { chord / len } else { 1.0 };
-                obs.push(TabObservation {
-                    xy: mid,
-                    start,
-                    end,
-                    path,
-                    top_z: top,
-                    pass_z: 0.0,
-                    lifted_run: len,
-                    metal_width: len - d,
-                    height: 0.0,
-                    straightness,
-                    straight: straightness >= 0.98,
-                    pass_index: 0,
-                });
-            }
-        };
+        let mut reached = false;
         for &i in g {
             let m = &moves[i];
             let level = (m.to[2] - m.from[2]).abs() < 1e-9;
@@ -1965,7 +1967,6 @@ fn check_tabs(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> TabAudit 
                     Some(r) => {
                         r.len += m.xy_len();
                         r.end = m.b();
-                        r.mid = [(r.start[0] + m.to[0]) / 2.0, (r.start[1] + m.to[1]) / 2.0];
                         r.path.push(m.b());
                     }
                     None => {
@@ -1973,17 +1974,57 @@ fn check_tabs(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> TabAudit 
                             len: m.xy_len(),
                             start: m.a(),
                             end: m.b(),
-                            mid: [(m.from[0] + m.to[0]) / 2.0, (m.from[1] + m.to[1]) / 2.0],
                             top: m.to[2],
                             path: vec![m.a(), m.b()],
+                            entry: !reached,
                         })
                     }
                 }
             } else if m.xy_len() > 1e-12 {
-                flush(&mut run, &mut obs);
+                runs.extend(run.take());
+            }
+            reached |= m.min_z() <= depth + 1e-9;
+        }
+        runs.extend(run.take());
+        if runs.first().is_some_and(|r| r.entry) {
+            let lead = runs.remove(0);
+            let joins = runs.last().is_some_and(|last| {
+                (last.end[0] - lead.start[0]).hypot(last.end[1] - lead.start[1]) < 1e-6
+                    && (last.top - lead.top).abs() < 1e-9
+            });
+            if joins {
+                let last = runs.last_mut().expect("checked above");
+                last.len += lead.len;
+                last.end = lead.end;
+                last.path.extend(lead.path.into_iter().skip(1));
             }
         }
-        flush(&mut run, &mut obs);
+        for LiftedRun {
+            len,
+            start,
+            end,
+            top,
+            path,
+            ..
+        } in runs
+        {
+            let chord = (end[0] - start[0]).hypot(end[1] - start[1]);
+            let straightness = if len > 0.0 { chord / len } else { 1.0 };
+            obs.push(TabObservation {
+                xy: path_midpoint(&path),
+                start,
+                end,
+                path,
+                top_z: top,
+                pass_z: 0.0,
+                lifted_run: len,
+                metal_width: len - d,
+                height: 0.0,
+                straightness,
+                straight: straightness >= 0.98,
+                pass_index: 0,
+            });
+        }
         for o in obs.iter_mut().filter(|o| o.pass_z == 0.0) {
             o.pass_z = depth;
             o.pass_index = pi;
@@ -2716,6 +2757,51 @@ mod tests {
             .unwrap();
         tp.segments.extend(outside.segments);
         (part, tp)
+    }
+
+    /// A 40 mm square cut round the outside with a Ø2 cutter: the tool centre
+    /// runs the 42 mm square from (-1,-1). `lap` is the G-code for one pass.
+    fn square_job(lap: &str) -> TabAudit {
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [40.0, 0.0], [40.0, 40.0], [0.0, 40.0]],
+            vec![],
+        )
+        .unwrap();
+        let spec = JobSpec::new(part, 3.0, 2.0);
+        let gcode = format!("G21 G90 G94 G17 G54\nM3 S10000\nG0 Z5\n{lap}G0 Z5\nM5\nM2\n");
+        verify_gcode(&gcode, &spec, &VerifyOptions::default())
+            .unwrap()
+            .tabs
+    }
+
+    /// A ramp begins with a level stub at the previous pass's floor. The
+    /// cutter is arriving there, not stepping over anything.
+    #[test]
+    fn the_stub_a_ramp_starts_from_is_not_a_tab() {
+        let tabs = square_job(
+            "G0 X-1 Y-1\nG1 Z-1 F100\nG1 X-0.998 Y-1 F400\nG1 X9 Y-1 Z-2\n\
+             G1 X41 Y-1\nG1 X41 Y41\nG1 X-1 Y41\nG1 X-1 Y-1\nG1 X9 Y-1\n",
+        );
+        assert_eq!(tabs.tab_count, 0, "{:?}", tabs.observations);
+        assert!(tabs.check.pass);
+    }
+
+    /// A tab sitting across the seam is met twice in one lap — at its start and
+    /// again at its end — and is one tab with its whole width.
+    #[test]
+    fn a_tab_across_the_seam_is_one_whole_tab() {
+        // Lifted from X14 round to X26 through the seam at X20: 12 mm of lift,
+        // 10 mm of metal with a Ø2 cutter.
+        let tabs = square_job(
+            "G0 X20 Y-1\nG1 Z-2 F100\nG1 X26 Y-1 F400\nG1 Z-3 F100\nG1 X41 Y-1 F400\n\
+             G1 X41 Y41\nG1 X-1 Y41\nG1 X-1 Y-1\nG1 X14 Y-1\nG1 Z-2\nG1 X20 Y-1\n",
+        );
+        assert_eq!(tabs.tab_count, 1, "{:?}", tabs.observations);
+        let tab = &tabs.observations[0];
+        assert!((tab.lifted_run - 12.0).abs() < 1e-9, "{tab:?}");
+        assert!((tab.metal_width - 10.0).abs() < 1e-9, "{tab:?}");
+        assert!((tab.xy[0] - 20.0).abs() < 1e-9 && (tab.xy[1] + 1.0).abs() < 1e-9);
+        assert!(tabs.check.pass);
     }
 
     #[test]
