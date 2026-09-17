@@ -197,7 +197,7 @@ struct CNCStudioOutline: View {
                         item(operation.name,
                              detail: operationDetail(operation),
                              symbol: operation.symbol, selection: .operation(operation.id),
-                             current: cnc.jobCurrent ? true : nil)
+                             status: status(of: operation))
                             .contextMenu {
                                 Button("Move up") { cnc.select(.operation(operation.id)); cnc.moveSelectedOperation(by: -1) }
                                 Button("Move down") { cnc.select(.operation(operation.id)); cnc.moveSelectedOperation(by: 1) }
@@ -242,7 +242,21 @@ struct CNCStudioOutline: View {
         if !cnc.verified { return .secondary }
         return cnc.unacknowledgedWarnings.isEmpty ? .green : .orange
     }
-    private func item(_ title: String, detail: String, symbol: String, selection: CNCSelection, current: Bool? = nil) -> some View {
+    /// What the tick on an operation row means. A refused job used to show a
+    /// green check on every operation, which reads as "all good" beside a
+    /// blocker — so the mark now says which cut the refusal is about.
+    enum CNCRowStatus { case none, built, warned, refused }
+
+    private func status(of operation: CNCOperation) -> CNCRowStatus {
+        guard cnc.jobCurrent else { return .none }
+        if cnc.blockers.contains(where: { $0.operationID == operation.id }) { return .refused }
+        if !cnc.blockers.isEmpty && cnc.operations.count == 1 { return .refused }
+        if cnc.warnings.contains(where: { $0.operationID == operation.id }) { return .warned }
+        return operation.ranges.isEmpty ? .none : .built
+    }
+
+    private func item(_ title: String, detail: String, symbol: String, selection: CNCSelection,
+                      status: CNCRowStatus = .none) -> some View {
         let selected = !cnc.usesImportedProgram && cnc.selection == selection && cnc.mode != .machine
         return Button { cnc.select(selection) } label: {
             HStack(spacing: 9) {
@@ -252,7 +266,18 @@ struct CNCStudioOutline: View {
                     Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
                 Spacer(minLength: 0)
-                if let current { Image(systemName: current ? "checkmark" : "circle.dotted").font(.caption).foregroundStyle(current ? Color.green : .secondary) }
+                switch status {
+                case .none: EmptyView()
+                case .built:
+                    Image(systemName: "checkmark").font(.caption).foregroundStyle(Color.green)
+                        .accessibilityLabel("built")
+                case .warned:
+                    Image(systemName: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(Color.orange)
+                        .accessibilityLabel("warning")
+                case .refused:
+                    Image(systemName: "xmark.octagon.fill").font(.caption).foregroundStyle(Color.red)
+                        .accessibilityLabel("refused")
+                }
             }.padding(.horizontal, 11).padding(.vertical, 7).frame(maxWidth: .infinity, alignment: .leading)
                 .selectableRow(selected: selected)
         }.buttonStyle(.plain).padding(.horizontal, 7).accessibilityAddTraits(selected ? .isSelected : [])
@@ -404,14 +429,17 @@ struct CNCStudioInspector: View {
         Group {
             switch cnc.selection {
             case .operation:
+                // The verdict comes first. It was below thirty settings, which
+                // is the same as not being there: on a refused job the only
+                // thing on screen was a form that looked fine.
+                CNCVerificationSection(cnc: cnc)
+                Divider()
+                Button(cnc.generating ? "Building…" : cnc.jobCurrent ? "Rebuild and check" : "Build and check the job") { cnc.build() }
+                    .disabled(cnc.machine.active || cnc.generating)
+                Divider()
                 CNCOperationInspector(cnc: cnc)
                 Divider()
                 Toggle("Show clearance plane", isOn: $cnc.showClearance)
-                Divider()
-                CNCVerificationSection(cnc: cnc)
-                Divider()
-                Button(cnc.generating ? "Building…" : "Build and check the job") { cnc.build() }
-                    .disabled(cnc.machine.active || cnc.generating)
             case .stock:
                 CNCSetupSummary(cnc: cnc)
                 Divider()

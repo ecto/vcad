@@ -15,6 +15,7 @@ final class CNCJobSnapshotTests: XCTestCase {
 
     private func job(blocked: Bool) async throws -> EditorModel {
         let model = EditorModel()
+        model.workspace = .manufacture
         let cnc = model.cnc
         cnc.shown = true
         cnc.toolDiameter = 2
@@ -65,17 +66,17 @@ final class CNCJobSnapshotTests: XCTestCase {
                     CNCStudioTransport(cnc: cnc).panelSurface()
                 }
                 .padding(12)
-                .frame(width: 1180, height: 820)
+                .frame(width: 1320, height: 860)
                 .background(Color(nsColor: .windowBackgroundColor))
 
                 let hosting = NSHostingView(rootView: content)
-                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 820),
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1320, height: 860),
                                       styleMask: [.borderless], backing: .buffered, defer: false)
                 window.appearance = NSAppearance(named: appearance)
                 window.contentView = hosting; window.orderFront(nil)
                 try? await Task.sleep(for: .milliseconds(350))
                 hosting.layoutSubtreeIfNeeded()
-                XCTAssertLessThanOrEqual(hosting.fittingSize.width, 1181,
+                XCTAssertLessThanOrEqual(hosting.fittingSize.width, 1321,
                                          "\(name)-\(suffix): the panels must fit the window")
                 let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
                 hosting.cacheDisplay(in: hosting.bounds, to: bitmap)

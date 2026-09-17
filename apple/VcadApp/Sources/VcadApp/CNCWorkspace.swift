@@ -370,11 +370,9 @@ final class CNCWorkspace {
     /// Every check with its verdict, for the inspector's Verification section.
     var checkRows: [CNCCheckRow] {
         guard jobCurrent else { return [] }
-        guard let v = verification else {
-            return [CNCCheckRow(id: "unverified", title: "Verification",
-                                verdict: .notRun, value: "not run",
-                                detail: unverifiedReason)]
-        }
+        // No verification is said once, by the headline and the warning that
+        // has to be acknowledged — not a third time as an empty check row.
+        guard let v = verification else { return [] }
         let blockedBy = Set(policy?.blockedBy ?? [])
         return v.checks.map { check in
             CNCCheckRow(id: check.name,
@@ -418,7 +416,7 @@ final class CNCWorkspace {
         }
         if blocking {
             for check in result?.toolChecks ?? [] where check.severity == "error" {
-                out.append(CNCFinding(id: "tool-\(check.opIndex)", text: check.message,
+                out.append(CNCFinding(id: "tool-\(check.opIndex)", text: Self.toolCheckText(check),
                                       xy: nil, z: nil,
                                       operationID: operation(forRequest: check.opIndex),
                                       blocking: true))
@@ -445,13 +443,21 @@ final class CNCWorkspace {
         }
         if !blocking, let checks = result?.toolChecks {
             for check in checks where check.severity == "warning" {
-                out.append(CNCFinding(id: "tool-warning-\(check.opIndex)", text: check.message,
+                out.append(CNCFinding(id: "tool-warning-\(check.opIndex)-\(check.kind.name)",
+                                      text: Self.toolCheckText(check),
                                       xy: nil, z: nil,
                                       operationID: operation(forRequest: check.opIndex),
                                       blocking: false))
             }
         }
         return out
+    }
+
+    /// A tool check names the cut it is about and reads as a sentence. The
+    /// kernel's own message is a clause, because it is written to be embedded.
+    private static func toolCheckText(_ check: CNCToolCheck) -> String {
+        let message = check.message.prefix(1).uppercased() + check.message.dropFirst()
+        return check.op.isEmpty ? message : "\(check.op): \(check.message)"
     }
 
     /// Which app operation a request index belongs to.

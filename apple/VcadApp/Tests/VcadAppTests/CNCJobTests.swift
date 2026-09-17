@@ -347,9 +347,9 @@ final class CNCJobTests: XCTestCase {
         try cnc.importProgram("G21 G90\nG0 X1 Y2 Z3\nG1 X10 F100\nM2", name: "part.nc")
         XCTAssertTrue(cnc.usesImportedProgram)
         XCTAssertFalse(cnc.verified, "nothing checked this program")
-        let row = try XCTUnwrap(cnc.checkRows.first)
-        XCTAssertEqual(row.id, "unverified")
-        XCTAssertEqual(row.verdict, .notRun)
+        XCTAssertTrue(cnc.checkRows.isEmpty, "there are no check results to list, so none are listed")
+        let unverified = try XCTUnwrap(cnc.warnings.first { $0.id == "unverified" })
+        XCTAssertTrue(unverified.text.contains("Nothing has checked"), "got: \(unverified.text)")
         cnc.machine.connect(simulated: true)
         defer { cnc.machine.disconnect() }
         cnc.setupConfirmed = true
@@ -402,8 +402,20 @@ final class CNCJobTests: XCTestCase {
         cnc.select(finding)
         XCTAssertEqual(cnc.markedXY?.count, 2)
         XCTAssertEqual(cnc.markedXY, finding.xy)
-        if let id = finding.operationID {
-            XCTAssertEqual(cnc.selectedOperation.id, id)
-        }
+        let id = try XCTUnwrap(finding.operationID, "a violation with a place has to name a cut")
+        XCTAssertEqual(cnc.selectedOperation.id, id)
+
+        // …and it has to be the right cut: the operation it names must have a
+        // move that really passes through the place the oracle reported, or
+        // the red mark is pointing at the wrong row.
+        let xy = try XCTUnwrap(finding.xy)
+        let moves = cnc.jobMoves
+        let named = try XCTUnwrap(cnc.operations.first { $0.id == id })
+        let nearest = named.ranges.flatMap { range -> [Double] in
+            guard range.start < range.end, range.end <= moves.count else { return [] }
+            return moves[range.start..<range.end].map { hypot($0.to[0] - xy[0], $0.to[1] - xy[1]) }
+        }.min() ?? .greatestFiniteMagnitude
+        XCTAssertLessThan(nearest, 0.05,
+                          "\(named.name) is named for a violation at \(xy) but its nearest move is \(nearest) mm away")
     }
 }

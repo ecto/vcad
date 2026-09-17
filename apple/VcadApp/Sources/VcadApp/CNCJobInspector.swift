@@ -180,7 +180,7 @@ struct CNCOperationInspector: View {
         let s = cnc.setup
         switch s.kind {
         case .face: return "\(cnc.stockWidth.formatted()) × \(cnc.stockHeight.formatted()) mm"
-        case .helicalBore: return "\(counted(s.bores.count, "hole")) at Ø \(s.boreDiameter.formatted()) mm"
+        case .helicalBore: return "\(s.bores.count) × Ø\(s.boreDiameter.formatted()) mm"
         case .pocket, .contourInside, .contourOutside:
             return s.contour.isEmpty ? "the whole blank" : "\(counted(s.contour.count, "point")) closed loop"
         }
@@ -324,14 +324,8 @@ struct CNCSetupSummary: View {
             if let v = cnc.verification {
                 KeyValueRow("Deepest Z", "\(CNCVerdictText.mm(v.depth.deepestZ, 3)) mm")
             }
-            ForEach(Array((cnc.job?.toolChecks ?? []).enumerated()), id: \.offset) { _, check in
-                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
-                    Image(systemName: check.severity == "error" ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(check.severity == "error" ? Color.red : Color.orange).font(.caption)
-                    Text("\(check.op): \(check.message)").font(.caption)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            // Tool checks are not listed twice: they arrive below as findings,
+            // where they can also be acknowledged.
             CNCVerificationSection(cnc: cnc)
         }
     }
