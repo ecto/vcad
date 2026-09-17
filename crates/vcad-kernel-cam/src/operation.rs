@@ -8,7 +8,10 @@ mod face;
 mod pocket;
 mod roughing3d;
 
-pub use contour::{Contour2D, Tab};
+pub use contour::{
+    CentreLineStretch, Contour2D, ContourPhase, ContourReport, CutDirection, EntryStyle, Tab,
+    ThinSlotStrategy,
+};
 pub use face::Face;
 pub use pocket::Pocket2D;
 pub use roughing3d::Roughing3D;
