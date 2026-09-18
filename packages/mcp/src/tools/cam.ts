@@ -220,18 +220,18 @@ function guard(fn: () => ToolResult): ToolResult {
     // gets a fresh module, and say plainly that this is a kernel bug rather
     // than something about the job.
     //
-    // The known one: `vcad-eval` budgets its boolean batching with
-    // `std::time::Instant::now`, which is not implemented on
-    // wasm32-unknown-unknown and panics. A document that reaches that path —
-    // a chain of Difference nodes, e.g. a plate with several holes cut one
-    // after another — traps. The app never saw it because `evaluateDocument`
-    // catches the trap and silently falls back to evaluating in TypeScript;
-    // sectioning has no such fallback, because the whole point is to reach the
-    // B-rep the TypeScript path does not have.
+    // This guard was written for a specific trap: `vcad-eval` budgeted its
+    // boolean batching with `std::time::Instant::now`, which wasm32 does not
+    // implement, so any document reaching that path — a chain of Difference
+    // nodes — panicked. That is fixed (the budget now runs off the caller's
+    // clock), and the guard stays because it was never really about that bug:
+    // *any* trap poisons the instance, and sectioning cannot fall back to
+    // evaluating in TypeScript the way `evaluateDocument` does, because the
+    // whole point is to reach the B-rep the TypeScript path does not have.
     if (e instanceof WebAssembly.RuntimeError) {
       resetKernelWasm(`cam: kernel trapped: ${e.message}`);
       return err(
-        `The kernel trapped while working on this part (${e.message}). This is a bug in the kernel, not in the job. A document built as a chain of Difference nodes is the known trigger — authoring the cuts as one Difference against a union of the tools avoids it. The WASM instance has been reset, so the next call starts clean.`,
+        `The kernel trapped while working on this part (${e.message}). This is a bug in the kernel, not in the job. The WASM instance has been reset, so the next call starts clean.`,
       );
     }
     if (e instanceof TornSolid) {

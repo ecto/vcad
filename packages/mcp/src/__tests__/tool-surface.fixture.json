@@ -6020,7 +6020,7 @@
   {
     "name": "record_measurement",
     "title": "Record Measurement",
-    "description": "Record as-built measurements (caliper dimensions, scale mass) of a printed part against its predict_print snapshot and emit the receipt-vs-reality delta report: per-feature deltas with tolerances, per-axis scale factors (X/Y/Z shrinkage), hole undersize and thin-wall flow offsets, and concrete printer-profile suggestions. Accepts the prediction inline (from a saved prediction.json) when the session's warm instance is gone. Partial measurements are fine.",
+    "description": "Close a prediction with a reading off the real part. Two things it can close. (1) `measurements`: as-built caliper/scale numbers against a predict_print snapshot, answering the receipt-vs-reality delta report — per-feature deltas with tolerances, per-axis scale factors (X/Y/Z shrinkage), hole undersize and thin-wall flow offsets, and concrete printer-profile suggestions. Accepts the prediction inline (from a saved prediction.json) when the session's warm instance is gone; partial measurements are fine. (2) `claim`: a named claim on a claim-family report deposited by cam_job / cam_gear — the family decides Holds or Violated, the claim moves onto a measured basis so build_receipt stops reading Provisional, and for a gear's over-pins dimension the same call returns the cutter compensation the reading implies for the next part. Fails closed: a measurement aimed at a claim that is arithmetic on a program rather than a dimension of a part is refused, as is one in the wrong unit or with no stated tolerance or instrument.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -6050,11 +6050,56 @@
         "prediction": {
           "type": "object",
           "description": "A full PrintPrediction (as returned by predict_print) to measure against. Overrides the cached prediction — use this to replay a prediction.json after the session's warm instance recycled."
+        },
+        "claim": {
+          "type": "string",
+          "description": "Close a receipt claim instead of a print prediction: the claim's name on a deposited claim-family report, e.g. \"gear.over_pins\". Needs document_id and value. The family decides Holds or Violated and the claim moves onto a measured basis, so the receipt can stop reading Provisional. A claim that is arithmetic on a program rather than a dimension of a part (job.no_gouge) is refused, not recorded."
+        },
+        "claim_report_id": {
+          "type": "string",
+          "description": "Which deposited report the claim is on (from cam_job / cam_gear's `claims.id`). Optional when the document holds exactly one report carrying that claim."
+        },
+        "subject": {
+          "type": "string",
+          "description": "The claim's subject when it has one, e.g. \"20T-m1\" — required when the report claims the same thing about several subjects (a sun and a planet both have an over-pins dimension)."
+        },
+        "kind": {
+          "type": "string",
+          "description": "How the reading was taken: \"over_pins\" (with pin_diameter), \"caliper\" (with feature), \"span\" (with teeth), or \"hole_diameter\". Defaults to over_pins when pin_diameter is given."
+        },
+        "value": {
+          "type": "number",
+          "description": "The reading, in the claim's own unit."
+        },
+        "unit": {
+          "type": "string",
+          "description": "The unit the reading is in. Checked against the claim's unit and refused on a mismatch — an inch reading recorded against a mm claim is a scrapped part, not a rounding error."
+        },
+        "pin_diameter": {
+          "type": "number",
+          "description": "Pin or ball diameter the reading was taken over, mm."
+        },
+        "feature": {
+          "type": "string",
+          "description": "What was measured, for a caliper reading, e.g. \"across the flats\"."
+        },
+        "teeth": {
+          "type": "number",
+          "description": "Teeth spanned, for a base-tangent (span) reading."
+        },
+        "tolerance": {
+          "type": "number",
+          "description": "Acceptance half-width on |measured − predicted|, in the claim's unit. The claim holds when the difference is inside tolerance + uncertainty. Required: a measurement with no stated tolerance cannot decide anything."
+        },
+        "uncertainty": {
+          "type": "number",
+          "description": "One-sigma uncertainty of the reading, same unit. Default 0."
+        },
+        "instrument": {
+          "type": "string",
+          "description": "Instrument provenance, e.g. \"Mitutoyo 293-340 s/n 12345\", \"Ø1.5 gauge pins\". Recorded on the claim — a measurement nobody can trace is not evidence."
         }
-      },
-      "required": [
-        "measurements"
-      ]
+      }
     },
     "annotations": {
       "readOnlyHint": false
@@ -7472,6 +7517,10 @@
     "inputSchema": {
       "type": "object",
       "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "CAD session to file this gear's claims against. Optional — without it the claims come back in the result but nothing certifies them later. With it, build_receipt carries the over-pins prediction and record_measurement can close it."
+        },
         "gear": {
           "type": "object",
           "description": "{ module, teeth, pressure_angle?, profile_shift?, backlash_thinning?, internal?, face_width? }."

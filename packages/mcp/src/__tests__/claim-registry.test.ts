@@ -100,8 +100,8 @@ async function ok(client: Client, name: string, args: Json): Promise<Json> {
   return bodyOf(res);
 }
 
-/** The same 80 × 50 × 6 plate cam.test.ts machines: one Difference, so the
- *  kernel's wasm boolean batching is never reached. */
+/** The same 80 × 50 × 6 plate cam.test.ts machines, in the same shape, so the
+ *  two suites are talking about the same part. */
 const PLATE = `
 [let plate [cube 80 50 6]]
 [let bore [translate 40 25 -1 [cylinder-n 8 8 96]]]

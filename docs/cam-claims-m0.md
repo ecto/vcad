@@ -266,6 +266,99 @@ which this gear and pin do not have. The API's numbers are the ones above,
 and the test cross-checks them against both the linearised reading and the
 `cos α / 2` identity that relates the two.)
 
+## How the family reaches a receipt
+
+Everything above was true at M0 and reached nobody. `design_claims` turned
+a `ClaimSet` into `vcad_receipt::ReceiptClaim`s, and the only thing that
+builds receipts — MCP's `build_receipt` — hard-wired three families (PCB
+through WASM, mechanical clearance and design constraints as hand-written
+TypeScript) with nowhere to look a fourth up. That was not a CAM problem:
+*no* Rust claim family in the repo had ever reached a receipt.
+
+M1 is the three pieces that close it.
+
+**A registry.** `vcad-claim-registry` maps schema id → (family metadata,
+an adapter that turns that family's serialized report into receipt
+claims). It cannot live in `vcad-receipt` — every family depends on that
+crate, so a registry inside it is a dependency cycle — so it sits above
+them, one cargo feature per family. It holds no claim logic of its own:
+each adapter deserializes the family's own `ClaimSet` and calls the
+family's own `design_claims`, because a registry that re-implemented a
+ladder would be a second answer to "does this claim hold". `families()`
+is built from what was compiled in, so a build that trimmed a family
+cannot advertise one it could not serve. Reachable from the browser and
+from MCP through the kernel WASM as `receiptFamilies`,
+`receiptClaimsFor`, `receiptRestate` and `receiptBind`.
+
+**A slot.** `Document.claim_reports` holds, per deposit: the family's
+schema, its serialized report, and the **live inputs** the claims rest on
+(keyed by the `BASIS_*` names above, each as JSON text). The inputs are
+the load-bearing half. A report already knows the digests it was made
+against; only the live inputs let a later `build_receipt` recompute them
+and notice that the program, the outline or the tool moved. `cam_job` and
+`cam_gear` deposit automatically when the call names a `document_id`.
+One hasher — `vcad_claim_registry::fingerprint_of` — is called by both
+the depositing side and the re-stating side, because two hashers would be
+two answers and the one that disagreed would report a stale job as clean.
+
+**The merge.** `build_receipt` re-states every deposit against today's
+inputs *before* reading its claims, then folds them into the unified
+ledger. So the staleness story above is now end to end: edit the G-code
+and `cam.job.no_gouge` comes back `unverifiable` (Stale), naming
+`program` as what moved, rather than certifying a program nobody holds.
+A deposit whose family this build does not carry, or whose report will
+not translate, becomes an `unverifiable` claim saying why — never a
+silently dropped one, which is the single outcome that would read clean.
+
+### The loop, as an agent runs it
+
+```
+cam_gear    document_id, gear, pin_diameter
+            → gear.over_pins Provisional, deposited as cam.gear:20t-m1
+
+build_receipt document_id
+            → cam.gear.over_pins  pass / basis: predicted
+              …so the receipt rolls up provisional, never pass
+
+              (cut the part, put pins in it)
+
+record_measurement
+            document_id, claim: "gear.over_pins", value, unit: "mm",
+            pin_diameter, tolerance, instrument
+            → Holds on basis Measured (or Violated), plus the cutter
+              compensation and a gear.over_pins.compensated claim that
+              supersedes the one just closed — Provisional again
+
+build_receipt document_id
+            → cam.gear.over_pins  pass / basis: measured
+```
+
+`record_measurement` keeps its original path untouched: a call carrying
+`measurements` still joins a `predict_print` snapshot and answers the
+calibration delta report. Only a call carrying `claim` takes the receipt
+path, and asking for both at once is refused rather than resolved.
+
+It is fail-closed in four more ways than `bind` is, because it is the
+surface an agent reaches: a reading in a unit the claim is not stated in,
+one with no tolerance (nothing to decide by), one with no instrument (a
+reading nobody can trace is not evidence), and one aimed at a claim on the
+computed rung are all refused, and a refused measurement closes nothing.
+
+### The one thing that had to change in the deposit
+
+`gear.over_pins.compensated` rests on `BASIS_PROGRAM` — the program that
+will cut the *next* part — and a gear-only deposit has no program. Since
+`restate` treats a basis key the fingerprint does not carry as *changed*,
+the compensation claim came back `Stale` the moment it was created, and
+would have stayed there forever.
+
+A deposit now records such a key as explicitly **absent** (`Inputs::absent`,
+the literal `null`) rather than omitting it. That hashes stably, so the
+claim settles as the `Provisional` prediction it actually is — and the
+moment a real program is deposited under that key the digest moves and the
+claim re-opens, which is exactly right: a compensation worked out for one
+program is not evidence about another.
+
 ## 3D: `vcad-kernel-stocksim::verify_toolpath_against_mesh`
 
 ```rust
@@ -438,14 +531,16 @@ All in `cargo test -p vcad-kernel-cam` and `cargo test -p vcad-kernel-stocksim`.
 - **M0 — this.** The family, built from the wave-1 reports; fingerprint
   basis and `restate`; measurement binding with the gear compensation loop;
   3D job verification in stocksim with honest resolution reporting.
-- **M1 — a measured part closes it in the app.** The receipt reaches the
-  app's run blocker and the measurement goes back the other way: cut the
-  part, measure it, and the `Provisional` claims settle to `Holds` or
-  `Violated` on the document. Needs the MCP surface
-  (`build_receipt`/`verify_receipt` learning the `cam` domain, alongside
-  the `pcb`, `mechanical` and `constraint` families it already knows) and
-  a `record_measurement` that binds to a receipt claim rather than only to
-  a print prediction.
+- **M1 — a measured part closes it. DONE over MCP; the app is still to
+  come.** The loop runs end to end for an agent: `cam_job` and `cam_gear`
+  deposit this family's claim set on the session document,
+  `build_receipt` merges it into the unified receipt, and
+  `record_measurement` binds a reading to a claim so the `Provisional`
+  ones settle to `Holds` or `Violated` on a measured basis. See
+  [the registry section below](#how-the-family-reaches-a-receipt).
+  What M1 did *not* do: the app's run blocker still does not show the
+  receipt, and there is no UI for entering a measurement — both are app
+  work on top of a surface that now exists.
 - **M2 — the compensation loop closes.** `close_over_pins` drives a re-cut:
   the corrected offset is applied to the contour op, the new job is
   verified, and the superseding claim is measured in its turn. The first

@@ -190,6 +190,55 @@ Pass `measured` with the pin diameter you used and it returns the cutter offset
 that reading implies for the next part. That loop is how a predicted tooth
 thickness becomes a known one.
 
+## The receipt: what a job claims, and closing it
+
+`cam_job` and `cam_gear` do not only answer a verdict — given a `document_id`
+they deposit a `vcad.cam-claims/1` claim set on that document, and
+`build_receipt` merges it into the unified receipt alongside the PCB,
+clearance and constraint families. Each claim sits on one of two rungs, and
+which one is a property of the claim, not of how hard the oracle worked:
+
+- **computed** — arithmetic on the program, the contour and the tool
+  (`job.no_gouge`, `job.depth`, `job.rapids_safe`). It passes on a *verified*
+  basis; no measurement could make it truer.
+- **predicted** — a statement about the physical part (`job.tabs_hold`,
+  `gear.over_pins`). It passes only on a *predicted* basis, so the receipt
+  rolls up **provisional** and never `pass` until a part is measured.
+
+Two claims refuse to pass vacuously: `job.envelope_in_travel` is
+`unverifiable` without a work offset and travel limits, and `job.tabs` is
+`unverifiable` when the job declares no tabs — "nothing to audit" is not
+"tabs that hold".
+
+**Staleness is real.** The deposit stores the live inputs each claim rests on
+(the program, the outline, the tool, the stock), and `build_receipt` re-hashes
+them before reading the report. Edit the program and its claims come back
+`unverifiable`, naming `program` as what moved, rather than certifying a
+program nobody holds.
+
+**Closing a prediction** is `record_measurement`, given `claim` rather than
+`measurements`:
+
+```
+record_measurement({
+  document_id, claim: "gear.over_pins", subject: "20T-m1",
+  value: 21.0788, unit: "mm", pin_diameter: 1.4,
+  tolerance: 0.02, instrument: "Ø1.4 gauge pins, Mitutoyo 293-340",
+})
+```
+
+The claim settles to `Holds` or `Violated` on a **measured** basis, and for an
+over-pins reading the same call returns the cutter compensation it implies
+plus a `gear.over_pins.compensated` claim that supersedes the one just closed
+— itself only provisional again, because a compensation is a plan until the
+second part is measured too.
+
+It fails closed on everything that would launder a reading into evidence: a
+measurement aimed at a computed claim (you cannot close arithmetic with a
+caliper), one in a unit the claim is not stated in, one with no tolerance
+(nothing to decide by), and one with no instrument (a reading nobody can trace
+is not evidence). A refused measurement closes nothing.
+
 ## Enabling the pack
 
 ```
