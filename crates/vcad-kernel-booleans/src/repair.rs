@@ -701,7 +701,11 @@ mod tests {
         let mut unique = visited.clone();
         unique.sort_unstable();
         unique.dedup();
-        assert_eq!(visited.len(), unique.len(), "a vertex is still visited twice");
+        assert_eq!(
+            visited.len(),
+            unique.len(),
+            "a vertex is still visited twice"
+        );
     }
 
     /// A ring with no retraced edge is left exactly as it was.

@@ -71,6 +71,9 @@ pub(crate) struct TangencyLine {
     /// `MERGE_GENERATORS` by construction (a wider pair is not a tangency and
     /// gets a real intersection curve) and never below `TANGENCY_EPS`: a pair
     /// that genuinely only touches has one seam point and nothing to collapse.
+    // Measured and carried, not yet read: the seam collapse that consumes it
+    // is the next round (see docs/boolean-multilump-union-diagnosis.md).
+    #[allow(dead_code)]
     pub width: f64,
     /// Where the touch actually EXISTS: the parameter range along `dir`,
     /// measured from `point`, over which both carriers are really present.
