@@ -305,21 +305,37 @@ at another invariant.
 The check stays opt-in until it earns its keep on a case it actually catches.
 It is sound, and the invariant is real; it just has no demonstrated catch yet.
 
-## Open item: `snap_tangential_crossings` costs the stator 2.7x
+## Retracted: the tangency snap's cost is the snapping, not the lookup
 
-Measured on the 57-stage stator, debug profile, same machine and load:
+An earlier note here blamed `split::snap_tangential_crossings` for
+re-deriving the tangent carriers from the geometry store on every arc split,
+and proposed handing it the pipeline's once-per-boolean lines instead. That
+was wrong, and the fix made it worse.
 
-    tangency snap on    79.0 s
-    tangency snap off   28.8 s   (VCAD_NO_TANGENCY_SNAP=1)
+Measured on the stator's 57 stages, debug profile, load ~8:
 
-`split::snap_tangential_crossings` re-derives the tangent carriers by scanning
-the whole geometry store on every arc split, and the stator's solid grows to
-~500 surfaces over its 57 stages. The pipeline already computes the tangency
-lines **once per boolean** (`tangency::cylinder_tangencies` plus
-`cylinder_plane_tangencies`) for the repair pass; the splitter should be handed
-those instead of re-deriving them. That is a plumbing change, and it has to
-land before the seam work can: 2.7x on a part that already takes 20 s is not
-a cost the roadmap can absorb for a 0.015 mm crack.
+| | solve |
+|---|---|
+| snap off | **30.6 s** |
+| snap on, re-deriving per split | 79.0 s |
+| snap on, consuming the precomputed lines | **104.7 s** |
+
+The re-plumb is a real improvement in structure — the splitter and the repair
+pass now read one set of tangencies instead of deriving it twice, and it
+covers cylinder–plane tangencies the old scan never saw — but it is *slower*,
+because it fires more often. **The cost is the snapping itself**: pinning a
+crossing moves where a face is cut, which makes more sub-faces and more work
+for everything downstream. No amount of making the lookup cheaper touches it.
+
+So the snap is now **opt-in** (`VCAD_TANGENCY_SNAP=1`), and the stator is back
+to 29.8 s. What it buys, on the two-operand reproducer, is `block ∪ ring`
+going from 10 unpaired edges to 6; `ring ∪ block` reaches 0 without it, on the
+repair-side tangency zone alone. A 3.4x solve for four edges is not a trade
+this part can make.
+
+The idea is still right and the machinery is kept: a cheaper form would pin
+only the crossings a tangency actually makes ill-conditioned, rather than
+every crossing near one.
 
 ## Open item: the mesh fallback moves intermediate solids by millimetres
 

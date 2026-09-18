@@ -19,6 +19,8 @@ for bisecting, never for shipping.
 | `VCAD_NO_UNION_REFEREE=1` | Stop the mesh boolean from refereeing a cracked analytic union, so the analytic result is returned whatever it looks like. |
 | `VCAD_SPLIT_DEBUG=1` | Per-face splitter decisions — which curve cut which face, and why a cut was declined. Needs `--features debug-boolean`; the output is large, so wrap the operation of interest in markers rather than counting occurrences. |
 | `VCAD_NO_ARCGUARD=1` | Let a circle split a planar face even when the arc runs along the face's own boundary. |
+| `VCAD_TANGENCY_SNAP=1` | Opt-in: pin a circle split's crossing to the analytic touch point where the cutting circle is tangent to a boundary arc. Off by default because it costs the rana-60 stator 3.4× (29.8 s → 104.7 s) for four unpaired edges — and the cost is the snapping's effect on the splits, not finding the tangency. See `docs/boolean-multilump-union-diagnosis.md`. |
+| `VCAD_BURIED_FACE_CHECK=1` | Opt-in: after every union/difference, check that no retained face has material on both sides — a missing trim, which no volume bound or edge count can see. Sound (zero false positives across the boolean suite) but with no demonstrated catch yet, and it costs a BVH per operand plus a handful of parity rays per face, so it is off. |
 | `VCAD_NO_FREEZE=1` | Disable seam freezing. |
 | `VCAD_NO_VBAND=1` / `VCAD_BAND_DEBUG=1` | Cylindrical band splitting: disable / trace. |
 | `VCAD_NO_WELD=1`, `VCAD_NO_WELD2=1` | Disable the coarse seam-snap and boundary-vertex weld rounds in `repair::repair_topology`. |

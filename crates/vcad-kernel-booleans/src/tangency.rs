@@ -211,3 +211,39 @@ pub(crate) fn cylinder_tangencies(a: &BRepSolid, b: &BRepSolid) -> Vec<TangencyL
     }
     out
 }
+
+thread_local! {
+    /// The tangency lines of the boolean currently being evaluated.
+    ///
+    /// Scoped state rather than a parameter because the splitters that need
+    /// it sit five frames and two recursions below the pipeline, and the
+    /// alternative — re-deriving the lines from the geometry store on every
+    /// arc split — is what it replaces: the rana-60 stator grows to ~500
+    /// surfaces over its 57 stages, and re-scanning them per split cost the
+    /// part 79 s against 28.8 s without it.
+    static CURRENT: std::cell::RefCell<Vec<TangencyLine>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Publishes `lines` as the current boolean's tangencies until dropped,
+/// restoring whatever was there before — booleans nest (a band split runs its
+/// own), and an inner one must not leave the outer one's view changed.
+pub(crate) struct Scope(Vec<TangencyLine>);
+
+impl Drop for Scope {
+    fn drop(&mut self) {
+        let previous = std::mem::take(&mut self.0);
+        CURRENT.with(|c| *c.borrow_mut() = previous);
+    }
+}
+
+/// Publish `lines` for the lifetime of the returned guard.
+pub(crate) fn scoped(lines: Vec<TangencyLine>) -> Scope {
+    let previous = CURRENT.with(|c| std::mem::replace(&mut *c.borrow_mut(), lines));
+    Scope(previous)
+}
+
+/// The tangency lines of the boolean in progress, if any.
+pub(crate) fn with_current<R>(f: impl FnOnce(&[TangencyLine]) -> R) -> R {
+    CURRENT.with(|c| f(&c.borrow()))
+}
