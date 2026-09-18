@@ -1797,9 +1797,48 @@ fn check_rapids(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> CheckRe
     );
     let stock = spec.stock();
     let over_stock =
-        |p: [f64; 3]| p[0] >= stock[0] && p[0] <= stock[2] && p[1] >= stock[1] && p[1] <= stock[3];
+        |p: [f64; 2]| p[0] >= stock[0] && p[0] <= stock[2] && p[1] >= stock[1] && p[1] <= stock[3];
+
+    // The cutting moves made so far, newest last: the replay's own record of
+    // what has been opened. A rapid below the stock top is legal exactly where
+    // this program has already cut to at least that depth — down a hole it
+    // bored, along a slot it opened — and refused everywhere else.
+    //
+    // Why exactly on a previous path and not merely near one: the oracle
+    // carries one cutter diameter, so the region a pass opened is the disc of
+    // that radius swept along its centre path. The tool going back down needs
+    // the same disc, and a disc of radius r fits inside the sweep of radius r
+    // only where its centre is *on* the centre path. Anything looser would
+    // authorise a rapid into the wall of the hole it is aiming at. Peck
+    // drilling, the case this exists for, retracts and re-enters at exactly
+    // the hole's own XY.
+    let mut opened: Vec<([f64; 2], [f64; 2], f64)> = Vec::new();
+    let already_open = |opened: &[([f64; 2], [f64; 2], f64)], p: [f64; 2], z: f64| {
+        opened.iter().rev().any(|(a, b, cut_z)| {
+            *cut_z <= z + opts.depth_tolerance && point_segment_distance(p, *a, *b) <= 1e-6
+        })
+    };
+    // Every point of a rapid's XY segment has to be over free air or over
+    // something already opened to that depth.
+    let crosses_uncut = |opened: &[([f64; 2], [f64; 2], f64)], m: &Move| {
+        if !segment_over_rect(m.a(), m.b(), stock) {
+            return false;
+        }
+        let (a, b) = (m.a(), m.b());
+        let step = (spec.tool_diameter / 2.0).max(0.1);
+        let n = ((m.xy_len() / step).ceil() as usize).clamp(1, 4096);
+        (0..=n).any(|k| {
+            let t = k as f64 / n as f64;
+            let p = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+            over_stock(p) && !already_open(opened, p, m.min_z())
+        })
+    };
+
     for m in moves {
         if !m.rapid {
+            if m.min_z() < 0.0 {
+                opened.push((m.a(), m.b(), m.min_z()));
+            }
             continue;
         }
         // Testing the two ends alone lets a rapid *cross* the blank: a G0 from
@@ -1807,10 +1846,7 @@ fn check_rapids(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> CheckRe
         // air and drags the cutter through the middle of the part. `check_gouge`
         // does not cover it either — it skips rapids on purpose. So the whole
         // XY segment is clipped against the blank, not just its endpoints.
-        if m.xy_len() > 1e-9
-            && m.min_z() < opts.safe_rapid_z
-            && segment_over_rect(m.a(), m.b(), stock)
-        {
+        if m.xy_len() > 1e-9 && m.min_z() < opts.safe_rapid_z && crosses_uncut(&opened, m) {
             rep.hit(
                 Violation {
                     index: m.index,
@@ -1825,14 +1861,28 @@ fn check_rapids(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> CheckRe
                 },
                 opts.max_examples,
             );
-        } else if m.to[2] < m.from[2] && m.to[2] < 0.0 && over_stock(m.to) {
+        } else if m.to[2] < m.from[2]
+            && m.to[2] < 0.0
+            && over_stock(m.b())
+            && !already_open(&opened, m.b(), m.to[2])
+        {
+            // Not every rapid below the stock top is a crash. A G83 peck cycle
+            // retracts clear, then rapids straight back *down its own hole* to
+            // just above the last peck's floor; that is the ordinary shape of
+            // the safest cycle for a deep hole, and refusing it left the app
+            // unable to run it. What is refused is a rapid into material this
+            // program has not opened.
             rep.hit(
                 Violation {
                     index: m.index,
                     xy: m.b(),
                     z: m.to[2],
                     value: -m.to[2],
-                    what: format!("rapid descends to Z{:.3}, below the stock top", m.to[2]),
+                    what: format!(
+                        "rapid descends to Z{:.3}, below the stock top and into material this \
+                         program has not cut",
+                        m.to[2]
+                    ),
                 },
                 opts.max_examples,
             );
@@ -3625,6 +3675,111 @@ mod tests {
         clear.push(ToolpathSegment::rapid(-20.0, 150.0, -5.0));
         clear.push(ToolpathSegment::rapid(120.0, 150.0, -5.0));
         assert!(verify_toolpath(&clear, &spec, &opts).unwrap().rapids.pass);
+    }
+
+    /// Friction item 63: the oracle refused every peck-drilled job. A `G83`
+    /// cycle retracts clear of the hole to carry the chips out and then rapids
+    /// straight back *down its own hole* to just above the last peck's floor —
+    /// so the safest cycle for a deep hole was the one the app could not run.
+    /// A rapid below the stock top is legal where this program has already cut
+    /// to that depth, and nowhere else.
+    #[test]
+    fn a_peck_cycle_may_rapid_back_down_its_own_hole() {
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [40.0, 0.0], [40.0, 40.0], [0.0, 40.0]],
+            vec![],
+        )
+        .unwrap();
+        let mut spec = JobSpec::new(part, 6.0, 3.0);
+        spec.stock_bbox = Some([-5.0, -5.0, 45.0, 45.0]);
+        let opts = VerifyOptions::default();
+
+        // G83 by hand: three pecks with a full retract between them.
+        let peck = |x: f64| {
+            let mut tp = Toolpath::new();
+            tp.push(ToolpathSegment::rapid(10.0, 10.0, 5.0));
+            tp.push(ToolpathSegment::linear(10.0, 10.0, -2.0, 100.0));
+            tp.push(ToolpathSegment::rapid(10.0, 10.0, 5.0));
+            // Back down the open hole, stopping 0.5 mm above the last floor.
+            tp.push(ToolpathSegment::rapid(x, 10.0, 5.0));
+            tp.push(ToolpathSegment::rapid(x, 10.0, -1.5));
+            tp.push(ToolpathSegment::linear(10.0, 10.0, -4.0, 100.0));
+            tp.push(ToolpathSegment::rapid(10.0, 10.0, 5.0));
+            tp.push(ToolpathSegment::rapid(10.0, 10.0, -3.5));
+            tp.push(ToolpathSegment::linear(10.0, 10.0, -6.0, 100.0));
+            tp.push(ToolpathSegment::rapid(10.0, 10.0, 5.0));
+            tp
+        };
+
+        let rep = verify_toolpath(&peck(10.0), &spec, &opts).unwrap();
+        assert!(rep.rapids.pass, "{:?}", rep.rapids.examples);
+
+        // And the operation that really writes one: a Ø3 drill pecking 6 mm.
+        let op = crate::Drill::peck([(10.0, 10.0)], 6.0, 2.0);
+        let drill = crate::Tool::Drill {
+            diameter: 3.0,
+            point_angle: 118.0,
+        };
+        let tp = op
+            .generate(
+                &drill,
+                &crate::ToolGeometry::new().with_flute_length(30.0),
+                &crate::CamSettings::default(),
+            )
+            .unwrap();
+        assert!(
+            replay_toolpath(&tp, &opts)
+                .unwrap()
+                .iter()
+                .any(|m| m.rapid && m.to[2] < 0.0),
+            "a peck cycle rapids back below the stock top; if it stopped doing \
+             that this test no longer covers item 63"
+        );
+        let rep = verify_toolpath(&tp, &spec, &opts).unwrap();
+        assert!(rep.rapids.pass, "{:?}", rep.rapids.examples);
+
+        // The same program with the re-entry 1 mm off the hole's centre puts
+        // the cutter into solid metal at Z-1.5.
+        let rep = verify_toolpath(&peck(11.0), &spec, &opts).unwrap();
+        assert!(!rep.rapids.pass, "{:?}", rep.rapids);
+        assert!(
+            rep.rapids
+                .examples
+                .iter()
+                .any(|e| e.what.contains("has not cut")),
+            "{:?}",
+            rep.rapids.examples
+        );
+
+        // And a rapid down where nothing has been cut at all is still refused.
+        let mut fresh = Toolpath::new();
+        fresh.push(ToolpathSegment::rapid(10.0, 10.0, 5.0));
+        fresh.push(ToolpathSegment::linear(10.0, 10.0, -2.0, 100.0));
+        fresh.push(ToolpathSegment::rapid(10.0, 10.0, 5.0));
+        fresh.push(ToolpathSegment::rapid(30.0, 30.0, 5.0));
+        fresh.push(ToolpathSegment::rapid(30.0, 30.0, -1.5));
+        let rep = verify_toolpath(&fresh, &spec, &opts).unwrap();
+        assert!(!rep.rapids.pass, "{:?}", rep.rapids);
+
+        // A rapid below the top is not a licence to travel in XY either: the
+        // clipped-segment case stays refused, because the material it crosses
+        // was never opened.
+        let mut across = Toolpath::new();
+        across.push(ToolpathSegment::rapid(10.0, 10.0, 5.0));
+        across.push(ToolpathSegment::linear(10.0, 10.0, -2.0, 100.0));
+        across.push(ToolpathSegment::rapid(10.0, 10.0, 5.0));
+        across.push(ToolpathSegment::rapid(-20.0, 20.0, -5.0));
+        across.push(ToolpathSegment::rapid(60.0, 20.0, -5.0));
+        let rep = verify_toolpath(&across, &spec, &opts).unwrap();
+        assert!(!rep.rapids.pass, "{:?}", rep.rapids);
+        assert!(
+            rep.rapids
+                .examples
+                .iter()
+                .any(|e| e.what.contains("80.00 mm in XY")),
+            "{:?}",
+            rep.rapids.examples
+        );
     }
 
     /// A bottom allowance bigger than the stock puts the floor above the stock
