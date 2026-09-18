@@ -391,6 +391,39 @@ Honesty: **kinematic degrees of freedom are out of scope.** A mate never moves a
 - **DFM** — `vcad-kernel-dfm` checks designs against manufacturability rule packs (minimum wall thickness, drill standards, etc.) and suggests fixes.
 - **Cost** — `vcad-kernel-cost` estimates manufacturing cost with a shared model used by quoting tools.
 
+## Verification Receipts
+
+Nearly every solver above ends the same way: a per-domain **claim family** —
+`vcad.flow-claims/1`, `vcad.thermal-claims/1`, `vcad.cam-claims/1`, a dozen
+more — stating what the design will do, on what basis, and what would have to
+be measured to close it. They all translate into one unified receipt schema
+(`vcad.receipt/1`, in `vcad-receipt`), whose rollup is fail-closed twice over:
+a claim the oracle could not check is `unverifiable` and never a pass, and a
+receipt that *would* pass but rests on any `predicted` claim reads
+**Provisional** — predictions can steer a design, only verified or measured
+evidence can certify one.
+
+`vcad-claim-registry` is the lookup that makes those families reachable:
+schema id → the family's metadata and the adapter that turns its serialized
+report into receipt claims. It owns no claim logic — each adapter calls the
+family crate's own `design_claims`, because a registry that re-implemented a
+ladder would be a second answer to "does this claim hold" — and it lists only
+what was compiled in, so a trimmed build cannot advertise a family it could
+not serve. It is exposed through the kernel WASM (`receiptFamilies`,
+`receiptClaimsFor`, `receiptRestate`, `receiptBind`) and reached from MCP by
+`build_receipt`.
+
+A document carries deposited reports in `claim_reports`, each stored with the
+**live inputs** its claims rest on. That is what makes staleness real rather
+than nominal: `build_receipt` re-hashes those inputs and re-states the report
+before reading it, so editing a G-code program turns its claims from `Holds`
+into `Stale` instead of certifying a job nobody holds any more. In the other
+direction, `record_measurement` binds a reading off the real part to a claim —
+the family decides Holds or Violated, the claim moves onto a **measured**
+basis, and for a gear's over-pins dimension the same call returns the cutter
+offset the reading implies, plus a fresh `Provisional` claim for the next part
+that supersedes the one just closed.
+
 ## One Kernel, Every Surface
 
 Everything above compiles to a single unified API in `vcad-kernel`, which is consumed three ways: natively by the CLI and MCP server, via `vcad-kernel-wasm` in the browser (the same kernel runs client-side at [vcad.io](https://vcad.io)), and through the [IR format](/architecture/ir) that makes every model a reproducible, parametric program.

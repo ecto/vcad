@@ -1,0 +1,22 @@
+{
+  "id": "2026-09-18-cam-claims-reach-the-receipt",
+  "version": "0.10.0",
+  "date": "2026-09-18",
+  "category": "feat",
+  "title": "A machined part's claims now reach the receipt",
+  "summary": "A CAM job says what it will make, that goes on the document as claims, and a measurement off the finished part closes them — or fails them.",
+  "details": "vcad could already tell you a milling job was safe to run. It could not tell you, afterwards, what that job had promised and whether the part kept the promise. The kernel had known how to say it for a while — a dozen domains each state their results as claims, with an honest note about whether a claim is arithmetic or a prediction — but nothing ever collected them, so none of it appeared on a receipt. Now a job or a gear calculation files its claims against the document you ran it on, and building a receipt gathers them up. The distinction the receipt keeps is the useful one: 'this program never cuts into the part' is arithmetic and passes outright, while 'these tabs will hold' and 'this gear will measure 21.07 mm over pins' are claims about metal nobody has cut, so they read as provisional and the whole receipt refuses to read clean until someone measures a part. Recording a measurement is what closes them: give it the reading, the pins you used, your tolerance and which instrument it came off, and the claim settles as held or violated on the strength of the part rather than the model. For a gear the same call hands back the cutter offset that reading implies for the next one, along with a fresh claim for that part which supersedes the one just closed. It refuses readings it cannot honour — a caliper aimed at a claim about a G-code program, a number in the wrong unit, one with no tolerance or no instrument named — because a measurement that decides nothing should not look like evidence. And the claims stay tied to the job they were made about: edit the program and they go stale on the next receipt instead of vouching for something you no longer have.",
+  "features": [
+    "cam",
+    "receipts",
+    "verification",
+    "gears",
+    "mcp"
+  ],
+  "mcpTools": [
+    "cam_job",
+    "cam_gear",
+    "build_receipt",
+    "record_measurement"
+  ]
+}

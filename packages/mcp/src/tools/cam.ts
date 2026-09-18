@@ -33,6 +33,7 @@ import type { Document } from "@vcad/ir";
 import { resetKernelWasm, type Engine } from "@vcad/engine";
 import { getSession } from "./session-core.js";
 import { storeArtifact } from "./artifact-store.js";
+import { depositFrom, depositClaimReport } from "./claim-registry.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import { err, ok, type ToolResult } from "./tool-result.js";
 
@@ -219,18 +220,18 @@ function guard(fn: () => ToolResult): ToolResult {
     // gets a fresh module, and say plainly that this is a kernel bug rather
     // than something about the job.
     //
-    // The known one: `vcad-eval` budgets its boolean batching with
-    // `std::time::Instant::now`, which is not implemented on
-    // wasm32-unknown-unknown and panics. A document that reaches that path —
-    // a chain of Difference nodes, e.g. a plate with several holes cut one
-    // after another — traps. The app never saw it because `evaluateDocument`
-    // catches the trap and silently falls back to evaluating in TypeScript;
-    // sectioning has no such fallback, because the whole point is to reach the
-    // B-rep the TypeScript path does not have.
+    // This guard was written for a specific trap: `vcad-eval` budgeted its
+    // boolean batching with `std::time::Instant::now`, which wasm32 does not
+    // implement, so any document reaching that path — a chain of Difference
+    // nodes — panicked. That is fixed (the budget now runs off the caller's
+    // clock), and the guard stays because it was never really about that bug:
+    // *any* trap poisons the instance, and sectioning cannot fall back to
+    // evaluating in TypeScript the way `evaluateDocument` does, because the
+    // whole point is to reach the B-rep the TypeScript path does not have.
     if (e instanceof WebAssembly.RuntimeError) {
       resetKernelWasm(`cam: kernel trapped: ${e.message}`);
       return err(
-        `The kernel trapped while working on this part (${e.message}). This is a bug in the kernel, not in the job. A document built as a chain of Difference nodes is the known trigger — authoring the cuts as one Difference against a union of the tools avoids it. The WASM instance has been reset, so the next call starts clean.`,
+        `The kernel trapped while working on this part (${e.message}). This is a bug in the kernel, not in the job. The WASM instance has been reset, so the next call starts clean.`,
       );
     }
     if (e instanceof TornSolid) {
@@ -288,6 +289,43 @@ function checkSummary(verification: Json | undefined, full: boolean): Json {
 
 const SAFETY =
   "Verified against the part before it was handed over. `blocked: true` means do not cut. Cycle time, feeds and cutter fit are predictions until a part is measured.";
+
+/**
+ * Store the kernel's `claims` block on the session document, when the call
+ * named one.
+ *
+ * This is the step that makes a CAM job *certifiable* rather than merely
+ * checked: the verification report says whether the oracle objected now, the
+ * deposit says what the job claims about the part and what those claims rest
+ * on, so `build_receipt` can re-state them later and `record_measurement` can
+ * close the predicted ones. Without a `document_id` there is nowhere to put
+ * it and the block still rides in the result, so nothing is lost — only
+ * unpersisted.
+ *
+ * The id is stable per job name, so re-posting the same job replaces its
+ * claims instead of stacking a second, contradictory set on the document.
+ */
+function deposit(
+  args: Json,
+  block: unknown,
+  idPrefix: string,
+  label: string,
+): Json | undefined {
+  const documentId = typeof args.document_id === "string" ? args.document_id : "";
+  if (!documentId) return undefined;
+  const slug = label.replace(/[^a-z0-9._-]+/gi, "-").toLowerCase() || "default";
+  const entry = depositFrom(block, `${idPrefix}:${slug}`, label);
+  if (!entry) return undefined;
+  depositClaimReport(getSession(documentId), entry);
+  const summary = (block as Json).summary;
+  return {
+    id: entry.id,
+    schema: entry.schema,
+    document_id: documentId,
+    ...(summary ? { summary } : {}),
+    next: "build_receipt on this document now carries these claims; record_measurement closes the predicted ones.",
+  };
+}
 
 // ---------------------------------------------------------------------------
 // cam_outline
@@ -744,6 +782,15 @@ export function camJob(args: Json, engine: Engine): ToolResult {
       notes,
       safety: SAFETY,
     };
+    // Deposited on a blocked job too: the claims are *why* it was refused,
+    // and a ledger that only ever saw passing jobs is a record of nothing.
+    const claims = deposit(
+      args,
+      out.claims,
+      "cam.job",
+      String(out.name ?? args.name ?? "job"),
+    );
+    if (claims) body.claims = claims;
     if (out.arc_fit) body.arc_fit = out.arc_fit;
     if (full) {
       body.moves = out.moves;
@@ -881,6 +928,11 @@ export const camGearSchema = {
   type: "object" as const,
   required: ["gear"],
   properties: {
+    document_id: {
+      type: "string" as const,
+      description:
+        "CAD session to file this gear's claims against. Optional — without it the claims come back in the result but nothing certifies them later. With it, build_receipt carries the over-pins prediction and record_measurement can close it.",
+    },
     gear: {
       type: "object" as const,
       description:
@@ -950,6 +1002,22 @@ export function camGear(args: Json, engine: Engine): ToolResult {
         "Exact involute geometry. Whether the teeth come out this size depends on the machine, the cutter and the material — measure over pins and pass `measured` to get the correction for the next part.",
     };
     if (full && contours) body.contours = contours;
+    // The deposit carries the gear definition as well as the claims, which is
+    // what lets a later measurement over pins come back as a cutter offset
+    // rather than just "the teeth are fat".
+    const claims = deposit(
+      args,
+      out.claims,
+      "cam.gear",
+      String(out.claim_subject ?? "gear"),
+    );
+    if (claims) {
+      body.claims = {
+        ...claims,
+        subject: out.claim_subject,
+        next: "record_measurement with claim_report_id, claim: \"gear.over_pins\" and the reading over pins closes this — and returns the compensation for the next part.",
+      };
+    }
     return ok(body);
   });
 }

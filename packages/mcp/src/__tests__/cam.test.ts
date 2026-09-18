@@ -76,12 +76,13 @@ function bodyOf(result: ToolCallResult): Json {
  * reason `cam_outline` must not be sectioning the export mesh.
  *
  * The three tools are unioned and cut in **one** Difference rather than
- * chained one after another, and that is not stylistic: a chain of Difference
- * nodes reaches `vcad-eval`'s boolean batching, which budgets itself with
- * `std::time::Instant::now` — not implemented on wasm32, so it panics and
- * traps the module. `evaluateDocument` hides that by falling back to
- * evaluating in TypeScript; sectioning cannot, because the B-rep it needs
- * only exists on the kernel side. See the trap guard in tools/cam.ts.
+ * chained one after another. That was once forced: a chain of Difference nodes
+ * reached `vcad-eval`'s boolean batching, which budgeted itself with
+ * `std::time::Instant::now` — not implemented on wasm32 — and trapped the
+ * module. That is fixed (the budget runs off the caller's clock now, and
+ * `chained-difference-brep.test.ts` guards it), so the shape here is kept
+ * only because it is the part the rest of these assertions are written
+ * against, not because the kernel still needs it.
  */
 const PLATE = `
 [let plate [cube 80 50 6]]

@@ -1009,6 +1009,170 @@ fn the_milestone_planet_measures_over_pins() {
 }
 
 // ---------------------------------------------------------------------------
+// 9b. The claim deposit
+// ---------------------------------------------------------------------------
+
+/// Parse a deposit's `report` field back into the claim set it carries.
+fn claim_set(deposit: &Value) -> vcad_kernel_cam::receipt::ClaimSet {
+    let text = deposit["report"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a deposit's report is JSON text: {deposit}"));
+    serde_json::from_str(text).expect("the deposit round-trips through the registry's wire form")
+}
+
+/// The status of one named claim, e.g. `"job.no_gouge"`.
+fn status(set: &vcad_kernel_cam::receipt::ClaimSet, name: &str) -> String {
+    let c = set
+        .claims
+        .iter()
+        .find(|c| c.name == name)
+        .unwrap_or_else(|| {
+            panic!(
+                "no claim {name} among {:?}",
+                set.claims.iter().map(|c| &c.name).collect::<Vec<_>>()
+            )
+        });
+    format!("{:?}", c.status)
+}
+
+#[test]
+fn a_posted_job_claims_what_it_will_make_and_says_what_it_rests_on() {
+    let out = call(super::job, &stator_job(0.15, 1.0, None));
+    ok(&out);
+    let deposit = &out["claims"];
+    assert_eq!(deposit["schema"], json!("vcad.cam-claims/1"));
+
+    let set = claim_set(deposit);
+    // The geometric checks passed, so the claims about the *program* hold
+    // outright — arithmetic needs no measurement.
+    assert_eq!(status(&set, "job.no_gouge"), "Holds");
+    assert_eq!(status(&set, "job.depth"), "Holds");
+    assert_eq!(status(&set, "job.rapids_safe"), "Holds");
+    assert_eq!(status(&set, "job.loose_pieces"), "Holds");
+    // …and the claim about the *metal* does not. This is the ladder: a
+    // prediction about a part nobody has cut is Provisional, never a pass.
+    assert_eq!(
+        status(&set, "job.tabs_hold"),
+        "Provisional",
+        "a tab that has never held anything cannot Hold"
+    );
+    // No travel limits were given, so the envelope check refuses to pass
+    // vacuously rather than reporting a fit against nothing.
+    assert_eq!(status(&set, "job.envelope_in_travel"), "Unverified");
+    assert!(
+        !set.all_hold(),
+        "a set with a Provisional claim has not earned a clean verdict"
+    );
+
+    // The inputs are what make the claims re-checkable later: the program
+    // that runs, the part it is checked against, the tool, the stock.
+    let inputs = deposit["inputs"].as_object().expect("an inputs map");
+    for key in ["program", "outline", "tool", "stock"] {
+        assert!(inputs.contains_key(key), "no {key} in {inputs:?}");
+    }
+    // Every claim's basis key is one the deposit actually carries — a claim
+    // resting on an input nobody recorded would read Stale forever.
+    for claim in &set.claims {
+        for key in &claim.depends_on {
+            assert!(
+                inputs.contains_key(key),
+                "{} rests on {key}, which the deposit does not record",
+                claim.name
+            );
+        }
+    }
+    // The program in the deposit is the G-code that was handed back, so
+    // editing the program is what invalidates the claims.
+    let program: String = serde_json::from_str(inputs["program"].as_str().unwrap()).unwrap();
+    assert_eq!(program, out["gcode"].as_str().unwrap());
+}
+
+#[test]
+fn a_refused_job_still_says_which_claim_it_violated() {
+    // The inside contour offset the wrong way: it cuts into the part.
+    let s = stator();
+    let out = call(super::job, &wrong_side_job(&s));
+    ok(&out);
+    assert_eq!(out["blocked"], json!(true), "this job gouges");
+    // No G-code, and a claim set that says exactly why — a receipt that only
+    // ever saw passing jobs would be a record of nothing.
+    assert!(out.get("gcode").is_none() || out["gcode"].is_null());
+    let set = claim_set(&out["claims"]);
+    assert_eq!(status(&set, "job.no_gouge"), "Violated");
+    let gouge = set.find("job.no_gouge", None).unwrap();
+    assert!(
+        gouge.value.unwrap_or(0.0) > 0.0,
+        "a violated gouge claim carries how far in it cut"
+    );
+    assert!(
+        gouge
+            .detail
+            .as_deref()
+            .unwrap_or("")
+            .contains("enter the part"),
+        "and says so in words: {:?}",
+        gouge.detail
+    );
+}
+
+#[test]
+fn a_gear_deposits_the_dimension_it_predicts_and_the_gear_to_correct_it_with() {
+    let out = call(
+        super::gear,
+        &json!({
+            "gear": { "module": 1.0, "teeth": 20, "backlash_thinning": 0.03 },
+            "cutter_diameter": 1.0, "pin_diameter": 1.4, "contours": false,
+        }),
+    );
+    ok(&out);
+    let set = claim_set(&out["claims"]);
+    let subject = out["claim_subject"].as_str().expect("a filing subject");
+    assert_eq!(subject, "20T-m1");
+
+    let pins = set
+        .find("gear.over_pins", Some(subject))
+        .expect("the over-pins claim is filed under the gear's subject");
+    assert_eq!(format!("{:?}", pins.status), "Provisional");
+    // The claim carries the dimension the report predicts, to the micron.
+    let predicted = pins.value.expect("a predicted dimension");
+    assert!(
+        (predicted - f(&out["report"]["over_pins"]["dimension"])).abs() < 1e-9,
+        "the claim and the report must predict the same M"
+    );
+    assert!((predicted - 21.0738).abs() < 1e-3, "M is {predicted:.6}");
+
+    // The gear itself rides in the inputs: without it a later measurement
+    // can say the teeth are fat and not by how much to move the cutter.
+    let inputs = out["claims"]["inputs"].as_object().unwrap();
+    let gear: Value = serde_json::from_str(inputs["gear"].as_str().unwrap()).unwrap();
+    assert_eq!(f(&gear["module"]), 1.0);
+    assert_eq!(gear["teeth"], json!(20));
+
+    // `program` is recorded as absent, not left out. A measurement adds
+    // `gear.over_pins.compensated`, which rests on the program that will cut
+    // the next part; a basis key the fingerprint does not carry reads as
+    // changed, so leaving it out would make that claim permanently Stale
+    // instead of the Provisional prediction it is.
+    assert_eq!(
+        inputs["program"].as_str(),
+        Some("null"),
+        "a gear job has no program yet, and says so rather than staying silent"
+    );
+
+    // Every claim's basis key — including the one only a measurement adds —
+    // is a key this deposit carries.
+    for claim in &set.claims {
+        for key in &claim.depends_on {
+            assert!(
+                inputs.contains_key(key),
+                "{} rests on {key}, which the deposit does not record",
+                claim.name
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 10. Tabs where you put them
 // ---------------------------------------------------------------------------
 

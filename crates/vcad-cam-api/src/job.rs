@@ -779,7 +779,9 @@ fn build(req: JobRequest) -> Result<Value, String> {
             .unwrap_or(1.0)
     };
 
-    let (verification, replayed) = if tools.len() <= 1 {
+    // The spec comes back out alongside the verification: it is what the
+    // claims are stated against, and what a later re-state has to hash.
+    let (verification, replayed, whole_spec) = if tools.len() <= 1 {
         let number = tools.first().copied().unwrap_or(0);
         let spec = spec_for(diameter_of(number), centre_cutting_of(number));
         let (v, how) = replay(&program.toolpath, Some(&gcode), &spec)?;
@@ -788,7 +790,7 @@ fn build(req: JobRequest) -> Result<Value, String> {
                 "the posted G-code could not be replayed, so the toolpath it came from was verified instead. Anything the post adds — a probe macro, a machine-specific word — is unchecked.".to_string(),
             ));
         }
-        (v, how)
+        (v, how, spec)
     } else {
         // One `JobSpec` carries one tool diameter, so a job with several tools
         // is replayed once per tool over that tool's own blocks — a Ø2 bore
@@ -832,7 +834,7 @@ fn build(req: JobRequest) -> Result<Value, String> {
         combined.pass = self::checks(&combined)
             .iter()
             .all(|c| c.pass || c.severity == Severity::Warning);
-        (combined, how)
+        (combined, how, spec)
     };
 
     // Where the tabs actually ended up, against where they were asked for.
@@ -865,6 +867,29 @@ fn build(req: JobRequest) -> Result<Value, String> {
         // The key is only ever written on the pass.
         response["gcode"] = json!(gcode);
     }
+
+    // What this job claims about the part it makes, in the shape a document
+    // stores and `build_receipt` reads. Deposited on a blocked job too: the
+    // claims are *why* it was refused, and a receipt that only ever saw
+    // passing jobs would be a record of nothing.
+    //
+    // `program` is the G-code even when the toolpath was what got replayed —
+    // the program is the artifact that runs, so it is the thing whose change
+    // has to invalidate the claims.
+    response["claims"] = crate::claims::deposit(
+        vcad_kernel_cam::receipt::job_claims(&verification, &whole_spec, &opts),
+        crate::claims::Inputs::new()
+            .with(vcad_kernel_cam::receipt::BASIS_PROGRAM, &gcode)
+            .with(vcad_kernel_cam::receipt::BASIS_OUTLINE, &whole_spec.part)
+            .with(
+                vcad_kernel_cam::receipt::BASIS_TOOL,
+                &whole_spec.tool_diameter,
+            )
+            .with(vcad_kernel_cam::receipt::BASIS_STOCK, &whole_spec),
+        &["verify2d"],
+        req.name.clone(),
+    );
+
     response["notes"] = json!(notes);
     Ok(response)
 }

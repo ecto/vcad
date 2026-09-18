@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/vcad-ir",
     "crates/vcad-receipt",
+    "crates/vcad-claim-registry",
     "crates/vcad-parts",
     "crates/vcad-printcheck",
     "crates/vcad",
@@ -107,6 +108,7 @@ members = [
 default-members = [
     "crates/vcad-ir",
     "crates/vcad-receipt",
+    "crates/vcad-claim-registry",
     "crates/vcad-parts",
     "crates/vcad-printcheck",
     "crates/vcad",
@@ -260,6 +262,10 @@ opencascade = { version = "0.2" }
 # run `npm run version:sync`.
 vcad-ir = { path = "crates/vcad-ir", version = "0.10.0" }
 vcad-receipt = { path = "crates/vcad-receipt", version = "0.10.0" }
+# Families are opt-in per consumer: `default-features = false` here forces
+# every member to name the claim families it actually serves, so a bundle
+# cannot advertise a family it did not compile in.
+vcad-claim-registry = { path = "crates/vcad-claim-registry", version = "0.10.0", default-features = false }
 vcad-parts = { path = "crates/vcad-parts", version = "0.10.0" }
 vcad-printcheck = { path = "crates/vcad-printcheck", version = "0.10.0" }
 vcad-kernel = { path = "crates/vcad-kernel", version = "0.10.0" }

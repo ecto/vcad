@@ -792,6 +792,27 @@ export interface KernelModule {
   /** Gear geometry, over-pins measurement and measured compensation. */
   camGear?: (requestJson: string) => string;
   /**
+   * The claim-family registry (`vcad-claim-registry`): the lookup that lets
+   * a Rust claim family's report reach the unified receipt. Same convention
+   * as the CAM surface — a JSON document out, failure as `{"error": "…"}`.
+   */
+  receiptFamilies?: () => string;
+  /** One family's serialized report → unified `vcad.receipt/1` claims. */
+  receiptClaimsFor?: (schema: string, reportJson: string) => string;
+  /** Re-state a report against the digests of its inputs as they stand now. */
+  receiptRestate?: (
+    schema: string,
+    reportJson: string,
+    inputsJson: string,
+  ) => string;
+  /** Bind a measurement of the real part to a family's predicted claim. */
+  receiptBind?: (
+    schema: string,
+    reportJson: string,
+    measurementsJson: string,
+    contextJson: string,
+  ) => string;
+  /**
    * A machining contour out of a document part, sectioned from its **raw**
    * tessellation where there is a B-rep behind it — never the export mesh,
    * which the repair pass can tear by as much as 0.4 mm.
@@ -1375,6 +1396,10 @@ export class Engine {
       camRecommendFeeds: (wasmModule as Record<string, unknown>).camRecommendFeeds as KernelModule["camRecommendFeeds"],
       camCheckFeeds: (wasmModule as Record<string, unknown>).camCheckFeeds as KernelModule["camCheckFeeds"],
       camGear: (wasmModule as Record<string, unknown>).camGear as KernelModule["camGear"],
+      receiptFamilies: (wasmModule as Record<string, unknown>).receiptFamilies as KernelModule["receiptFamilies"],
+      receiptClaimsFor: (wasmModule as Record<string, unknown>).receiptClaimsFor as KernelModule["receiptClaimsFor"],
+      receiptRestate: (wasmModule as Record<string, unknown>).receiptRestate as KernelModule["receiptRestate"],
+      receiptBind: (wasmModule as Record<string, unknown>).receiptBind as KernelModule["receiptBind"],
       camOutlineFromDocument: (wasmModule as Record<string, unknown>).camOutlineFromDocument as KernelModule["camOutlineFromDocument"],
       particleSimulate: (wasmModule as Record<string, unknown>).particleSimulate as KernelModule["particleSimulate"],
       particleOptimize: (wasmModule as Record<string, unknown>).particleOptimize as KernelModule["particleOptimize"],
@@ -2088,6 +2113,104 @@ export class Engine {
   /** Gear geometry, over-pins measurement and measured compensation. */
   camGear<T = Record<string, unknown>>(request: unknown): T {
     return this.camCall<T>("camGear", JSON.stringify(request));
+  }
+
+  // =========================================================================
+  // Claim-family registry — schema id → the family behind it
+  // =========================================================================
+  //
+  // Every per-domain claim family (`vcad.cam-claims/1`,
+  // `vcad.thermal-claims/1`, …) already knew how to translate itself into
+  // unified receipt claims, and nothing knew how to find them, so no family
+  // ever reached a receipt. These four reach `vcad-claim-registry`, which is
+  // that lookup. Same "a JSON document, never an exception" convention as the
+  // CAM surface: they throw only when the binding is missing from the loaded
+  // WASM, which is a build problem, not a verification answer.
+
+  /** Whether this kernel build carries the claim registry at all. */
+  hasClaimRegistry(): boolean {
+    return typeof this.kernel.receiptClaimsFor === "function";
+  }
+
+  /**
+   * The claim families this kernel build serves — schema id, receipt domain,
+   * the crate behind each, and whether it can be re-stated against changed
+   * inputs or closed by a measurement.
+   */
+  receiptFamilies<T = Record<string, unknown>>(): T {
+    const fn = this.kernel.receiptFamilies;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "receiptFamilies is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return JSON.parse(fn()) as T;
+  }
+
+  /**
+   * One family's serialized report → unified claims. An unregistered schema
+   * comes back as `{"error": …}`, never as an empty claim list: an empty list
+   * would let a receipt roll up as though the family had been checked.
+   */
+  receiptClaimsFor<T = Record<string, unknown>>(
+    schema: string,
+    reportJson: string,
+  ): T {
+    const fn = this.kernel.receiptClaimsFor;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "receiptClaimsFor is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return JSON.parse(fn(schema, reportJson)) as T;
+  }
+
+  /**
+   * Re-state a stored report against the inputs as they stand now, so a claim
+   * whose basis moved comes back `Stale`. `inputs` maps each of the family's
+   * basis keys to that input's JSON **text**, exactly as the depositing tool
+   * recorded it — the kernel hashes it with the same function the deposit
+   * used, so the two sides cannot disagree.
+   */
+  receiptRestate<T = Record<string, unknown>>(
+    schema: string,
+    reportJson: string,
+    inputs: Record<string, string>,
+  ): T {
+    const fn = this.kernel.receiptRestate;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "receiptRestate is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return JSON.parse(fn(schema, reportJson, JSON.stringify(inputs))) as T;
+  }
+
+  /**
+   * Bind a measurement of the real part to a family's predicted claim.
+   * `context` carries whatever the family needs to derive a follow-up — for
+   * CAM's `gear.over_pins`, the `gear` the prediction was made from.
+   */
+  receiptBind<T = Record<string, unknown>>(
+    schema: string,
+    reportJson: string,
+    measurements: unknown,
+    context: unknown = null,
+  ): T {
+    const fn = this.kernel.receiptBind;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "receiptBind is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return JSON.parse(
+      fn(
+        schema,
+        reportJson,
+        JSON.stringify(measurements),
+        context === null || context === undefined ? "" : JSON.stringify(context),
+      ),
+    ) as T;
   }
 
   /**

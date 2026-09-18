@@ -6495,6 +6495,123 @@ mod cam_wasm {
 pub use cam_wasm::*;
 
 // =============================================================================
+// Claim-family registry bindings
+// =============================================================================
+//
+// The door the Rust claim families were missing. Every family crate already
+// knew how to turn its own report into unified receipt claims, and the MCP
+// `build_receipt` had no way to ask: it hard-wired three families and no
+// `design_claims` in the repo ever reached a receipt. These four functions
+// are that lookup, over `vcad-claim-registry`.
+//
+// They follow the CAM surface's convention rather than `JsError`: one JSON
+// document in, one JSON document out, failure as `{"error": "…"}`. A caller
+// that has to branch on exception-vs-value for "unknown schema" ends up with
+// two error paths and uses neither.
+
+mod registry_wasm {
+    use wasm_bindgen::prelude::*;
+
+    fn fail(message: impl std::fmt::Display) -> String {
+        serde_json::json!({ "error": message.to_string() }).to_string()
+    }
+
+    fn render(value: serde_json::Value) -> String {
+        serde_json::to_string(&value).unwrap_or_else(fail)
+    }
+
+    /// The claim families this bundle carries: schema id, receipt domain, the
+    /// crate behind it, and whether it supports re-stating against changed
+    /// inputs or binding a measurement.
+    ///
+    /// Built from what was compiled in, so a trimmed bundle cannot advertise
+    /// a family it could not serve.
+    #[wasm_bindgen(js_name = receiptFamilies)]
+    pub fn receipt_families() -> String {
+        let families: Vec<serde_json::Value> = vcad_claim_registry::families()
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "schema": f.schema,
+                    "domain": f.domain,
+                    "crate": f.crate_name,
+                    "summary": f.summary,
+                    "native_only": f.native_only,
+                    "stale_aware": f.stale_aware(),
+                    "bindable": f.bindable(),
+                })
+            })
+            .collect();
+        render(serde_json::json!({ "families": families }))
+    }
+
+    /// One family's serialized report → unified `vcad.receipt/1` claims.
+    ///
+    /// An unregistered schema is an error, never an empty claim list: an
+    /// empty list would let a receipt roll up as though the family had been
+    /// checked and found clean.
+    #[wasm_bindgen(js_name = receiptClaimsFor)]
+    pub fn receipt_claims_for(schema: &str, report_json: &str) -> String {
+        match vcad_claim_registry::claims_for(schema, report_json) {
+            Ok(claims) => match serde_json::to_value(&claims) {
+                Ok(v) => render(serde_json::json!({ "schema": schema, "claims": v })),
+                Err(e) => fail(e),
+            },
+            Err(e) => fail(e),
+        }
+    }
+
+    /// Re-state a stored report against the digests of its inputs as they
+    /// stand now. `inputs_json` is `{ "<basis key>": "<input as JSON text>" }`
+    /// — the document's stored inputs, hashed here by the same function that
+    /// hashed them at deposit time.
+    #[wasm_bindgen(js_name = receiptRestate)]
+    pub fn receipt_restate(schema: &str, report_json: &str, inputs_json: &str) -> String {
+        let inputs: std::collections::BTreeMap<String, String> =
+            match serde_json::from_str(inputs_json) {
+                Ok(v) => v,
+                Err(e) => return fail(format!("the inputs could not be read: {e}")),
+            };
+        let current = vcad_claim_registry::fingerprint_of(&inputs);
+        match vcad_claim_registry::restate(schema, report_json, &current) {
+            Ok(report) => render(serde_json::json!({ "schema": schema, "report": report })),
+            Err(e) => fail(e),
+        }
+    }
+
+    /// Bind a measurement of the real part to a family's predicted claim.
+    ///
+    /// `context_json` carries whatever the family needs to derive a follow-up
+    /// — for CAM's `gear.over_pins`, the `gear` the prediction was made from,
+    /// which is the basis input the deposit already stores.
+    #[wasm_bindgen(js_name = receiptBind)]
+    pub fn receipt_bind(
+        schema: &str,
+        report_json: &str,
+        measurements_json: &str,
+        context_json: &str,
+    ) -> String {
+        let context: serde_json::Value = if context_json.trim().is_empty() {
+            serde_json::Value::Null
+        } else {
+            match serde_json::from_str(context_json) {
+                Ok(v) => v,
+                Err(e) => return fail(format!("the measurement context could not be read: {e}")),
+            }
+        };
+        match vcad_claim_registry::bind(schema, report_json, measurements_json, &context) {
+            Ok(outcome) => match serde_json::to_value(&outcome) {
+                Ok(v) => render(v),
+                Err(e) => fail(e),
+            },
+            Err(e) => fail(e),
+        }
+    }
+}
+
+pub use registry_wasm::*;
+
+// =============================================================================
 // ECAD (Electronics) bindings
 // =============================================================================
 

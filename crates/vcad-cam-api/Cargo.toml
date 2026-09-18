@@ -12,5 +12,9 @@ repository.workspace = true
 
 [dependencies]
 vcad-kernel-cam = { workspace = true }
+# Only for the one shared input hasher: the deposit and the receipt builder
+# that re-states it have to agree byte for byte. Just the CAM family —
+# cam-api does not drag the other domains in.
+vcad-claim-registry = { workspace = true, features = ["cam"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -15,6 +15,26 @@
  * the full prediction inline, so a cold instance (or a prediction.json saved
  * to disk, as examples/calibration-coupon does) can replay it.
  *
+ * ── Two things a measurement can close ─────────────────────────────────────
+ *
+ * `record_measurement` started life bound to one thing: a `PrintPrediction`
+ * from `predict_print`. That left every *other* prediction in the system with
+ * no way to be closed — a `vcad.cam-claims/1` over-pins dimension is exactly
+ * as measurable as a printed hole, and stayed `Provisional` forever because
+ * no tool could hand it a caliper reading.
+ *
+ * So there are now two paths through this tool, chosen by what the call
+ * carries, and they do not interact:
+ *
+ * - **`measurements` (a map of measurable id → value)** — the original 3DP
+ *   path, unchanged: joined against a `PrintPrediction`, out comes the
+ *   calibration delta report.
+ * - **`claim`** — the receipt path: the reading is bound to a claim on a
+ *   deposited claim-family report, the family decides `Holds` or `Violated`,
+ *   and the claim comes back on a **measured** basis so the receipt can stop
+ *   reading Provisional. For CAM's `gear.over_pins` the same call also returns
+ *   the cutter compensation the reading implies.
+ *
  * Design doc: docs/plans/2026-07-07-3dp-print-then-measure.md
  */
 
@@ -33,6 +53,11 @@ import {
 import { getSession } from "./session-core.js";
 import { computeInspection } from "./inspect.js";
 import { behavior, type ToolDef } from "./tool-def.js";
+import {
+  bindMeasurement,
+  claimReports,
+  type ClaimReportEntry,
+} from "./claim-registry.js";
 
 const MEASURABLE_KINDS: readonly MeasurableKind[] = ["dimension", "diameter", "mass"];
 const MEASURABLE_AXES: readonly MeasurableAxis[] = ["X", "Y", "Z", "XY"];
@@ -141,8 +166,62 @@ export const recordMeasurementSchema = {
       description:
         "A full PrintPrediction (as returned by predict_print) to measure against. Overrides the cached prediction — use this to replay a prediction.json after the session's warm instance recycled.",
     },
+    claim: {
+      type: "string" as const,
+      description:
+        "Close a receipt claim instead of a print prediction: the claim's name on a deposited claim-family report, e.g. \"gear.over_pins\". Needs document_id and value. The family decides Holds or Violated and the claim moves onto a measured basis, so the receipt can stop reading Provisional. A claim that is arithmetic on a program rather than a dimension of a part (job.no_gouge) is refused, not recorded.",
+    },
+    claim_report_id: {
+      type: "string" as const,
+      description:
+        "Which deposited report the claim is on (from cam_job / cam_gear's `claims.id`). Optional when the document holds exactly one report carrying that claim.",
+    },
+    subject: {
+      type: "string" as const,
+      description:
+        "The claim's subject when it has one, e.g. \"20T-m1\" — required when the report claims the same thing about several subjects (a sun and a planet both have an over-pins dimension).",
+    },
+    kind: {
+      type: "string" as const,
+      description:
+        "How the reading was taken: \"over_pins\" (with pin_diameter), \"caliper\" (with feature), \"span\" (with teeth), or \"hole_diameter\". Defaults to over_pins when pin_diameter is given.",
+    },
+    value: {
+      type: "number" as const,
+      description: "The reading, in the claim's own unit.",
+    },
+    unit: {
+      type: "string" as const,
+      description:
+        "The unit the reading is in. Checked against the claim's unit and refused on a mismatch — an inch reading recorded against a mm claim is a scrapped part, not a rounding error.",
+    },
+    pin_diameter: {
+      type: "number" as const,
+      description: "Pin or ball diameter the reading was taken over, mm.",
+    },
+    feature: {
+      type: "string" as const,
+      description: "What was measured, for a caliper reading, e.g. \"across the flats\".",
+    },
+    teeth: {
+      type: "number" as const,
+      description: "Teeth spanned, for a base-tangent (span) reading.",
+    },
+    tolerance: {
+      type: "number" as const,
+      description:
+        "Acceptance half-width on |measured − predicted|, in the claim's unit. The claim holds when the difference is inside tolerance + uncertainty. Required: a measurement with no stated tolerance cannot decide anything.",
+    },
+    uncertainty: {
+      type: "number" as const,
+      description: "One-sigma uncertainty of the reading, same unit. Default 0.",
+    },
+    instrument: {
+      type: "string" as const,
+      description:
+        "Instrument provenance, e.g. \"Mitutoyo 293-340 s/n 12345\", \"Ø1.5 gauge pins\". Recorded on the claim — a measurement nobody can trace is not evidence.",
+    },
   },
-  required: ["measurements"],
 };
 
 type ToolResult = { content: Array<{ type: "text"; text: string }> };
@@ -302,9 +381,254 @@ export function predictPrint(input: unknown, engine: Engine): ToolResult {
   return jsonResult(prediction);
 }
 
+// ─── The receipt-claim path ──────────────────────────────────────────────────
+
+/** One claim as it sits in a family's serialized claim set. */
+interface StoredClaim {
+  name: string;
+  subject?: string;
+  status: string;
+  basis: string;
+  value?: number;
+  measured?: number;
+  unit: string;
+}
+
+/** The claims inside a deposited report, or `[]` if it will not parse. */
+function storedClaims(entry: ClaimReportEntry): StoredClaim[] {
+  try {
+    const set = JSON.parse(entry.report) as { claims?: StoredClaim[] };
+    return Array.isArray(set.claims) ? set.claims : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The reading's `kind`, in the family's own wire form.
+ *
+ * Fail-closed on the details each kind needs: a pin measurement without the
+ * pin diameter cannot be turned back into a tooth thickness, and guessing a
+ * diameter would produce a confident, wrong compensation.
+ */
+function measurementKind(args: Record<string, unknown>): unknown {
+  const pin = typeof args.pin_diameter === "number" ? args.pin_diameter : undefined;
+  const declared =
+    typeof args.kind === "string" ? args.kind.toLowerCase() : pin !== undefined ? "over_pins" : "";
+  switch (declared) {
+    case "over_pins":
+      if (pin === undefined || !(pin > 0)) {
+        throw new Error(
+          "an over-pins reading needs the `pin_diameter` it was taken with — the prediction was made for a specific pin, and a reading over a different one is a different number.",
+        );
+      }
+      return { OverPins: { pin_diameter: pin } };
+    case "caliper": {
+      const feature = typeof args.feature === "string" ? args.feature : "";
+      if (!feature) {
+        throw new Error(
+          'a caliper reading needs `feature` — what was measured, e.g. "across the flats".',
+        );
+      }
+      return { Caliper: { feature } };
+    }
+    case "span": {
+      const teeth = typeof args.teeth === "number" ? Math.round(args.teeth) : 0;
+      if (teeth <= 0) {
+        throw new Error("a span reading needs `teeth` — how many teeth the anvils spanned.");
+      }
+      return { Span: { teeth } };
+    }
+    case "hole_diameter":
+      return "HoleDiameter";
+    default:
+      throw new Error(
+        'kind must be one of "over_pins", "caliper", "span" or "hole_diameter" (or give pin_diameter and it is taken as over_pins).',
+      );
+  }
+}
+
+/**
+ * Bind a caliper/pin/scale reading to a claim on a deposited report.
+ *
+ * The whole point of the ladder: until this runs, a `Predicted` claim can
+ * never be better than `Provisional`, and the receipt it sits in can never
+ * roll up better than `provisional` either. This is what closes it — or
+ * violates it, which is just as useful and far more common on a first part.
+ */
+function recordClaimMeasurement(
+  args: Record<string, unknown>,
+  engine: Engine | undefined,
+): ToolResult {
+  const claim = String(args.claim);
+  const documentId = args.document_id !== undefined ? String(args.document_id) : "";
+  if (!documentId) {
+    throw new Error(
+      "closing a claim needs `document_id` — the claims live on the document the oracle was run against.",
+    );
+  }
+  if (!engine) {
+    throw new Error(
+      "closing a claim needs the kernel engine; it is unavailable in this context.",
+    );
+  }
+  const value = args.value;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error("`value` must be a finite number — the reading off the part.");
+  }
+  const tolerance = args.tolerance;
+  if (typeof tolerance !== "number" || !(tolerance >= 0)) {
+    throw new Error(
+      "`tolerance` must be a non-negative number: a measurement with no stated acceptance band cannot decide whether a claim holds.",
+    );
+  }
+  const instrument = typeof args.instrument === "string" ? args.instrument.trim() : "";
+  if (!instrument) {
+    throw new Error(
+      '`instrument` is required — a reading nobody can trace back to a tool is not evidence. e.g. "Ø1.5 gauge pins" or "Mitutoyo 293-340".',
+    );
+  }
+  const subject = typeof args.subject === "string" ? args.subject : undefined;
+
+  const doc = getSession(documentId);
+  const deposits = claimReports(doc);
+  if (deposits.length === 0) {
+    throw new Error(
+      `document ${documentId} carries no claim reports — run cam_job or cam_gear with this document_id first, so there is a prediction to close.`,
+    );
+  }
+
+  // Which report. Named explicitly, or the one that actually carries the
+  // claim; two candidates is an ambiguity to surface, not to pick from.
+  let entry: ClaimReportEntry | undefined;
+  if (typeof args.claim_report_id === "string" && args.claim_report_id) {
+    entry = deposits.find((r) => r.id === args.claim_report_id);
+    if (!entry) {
+      throw new Error(
+        `no claim report '${String(args.claim_report_id)}' on this document. It holds: ${deposits.map((r) => r.id).join(", ")}.`,
+      );
+    }
+  } else {
+    const candidates = deposits.filter((r) =>
+      storedClaims(r).some(
+        (c) => c.name === claim && (subject === undefined || c.subject === subject),
+      ),
+    );
+    if (candidates.length === 0) {
+      throw new Error(
+        `no report on this document carries a claim named '${claim}'${subject ? ` for subject '${subject}'` : ""}. Reports here: ${deposits.map((r) => `${r.id} (${r.schema})`).join(", ")}.`,
+      );
+    }
+    if (candidates.length > 1) {
+      throw new Error(
+        `'${claim}' appears on ${candidates.length} reports (${candidates.map((r) => r.id).join(", ")}) — name one with claim_report_id, or narrow it with subject.`,
+      );
+    }
+    entry = candidates[0];
+  }
+
+  // The target claim, before binding: its unit and predicted value are what
+  // the reading is checked against.
+  const before = storedClaims(entry).filter(
+    (c) => c.name === claim && (subject === undefined || c.subject === subject),
+  );
+  if (before.length === 0) {
+    throw new Error(
+      `report '${entry.id}' has no claim '${claim}'${subject ? ` for subject '${subject}'` : ""}. It claims: ${storedClaims(entry).map((c) => (c.subject ? `${c.name}[${c.subject}]` : c.name)).join(", ")}.`,
+    );
+  }
+  if (before.length > 1) {
+    throw new Error(
+      `'${claim}' is claimed for ${before.length} subjects on report '${entry.id}' (${before.map((c) => c.subject ?? "—").join(", ")}) — say which with subject.`,
+    );
+  }
+  const target = before[0];
+  // A unit mismatch is not a rounding error, it is a scrapped part.
+  if (typeof args.unit === "string" && args.unit && args.unit !== target.unit) {
+    throw new Error(
+      `'${claim}' is claimed in ${target.unit === "1" ? "a dimensionless unit" : target.unit}, and the reading says ${String(args.unit)}. Convert it rather than recording it in the wrong unit.`,
+    );
+  }
+
+  const measurement = {
+    claim,
+    ...(target.subject !== undefined ? { subject: target.subject } : {}),
+    kind: measurementKind(args),
+    value,
+    uncertainty:
+      typeof args.uncertainty === "number" && args.uncertainty >= 0 ? args.uncertainty : 0,
+    tolerance,
+    instrument,
+  };
+
+  const bound = bindMeasurement(doc, engine, entry.id, measurement);
+
+  // What the claim says now — the ladder having moved, or not.
+  const after = storedClaims(bound.entry).filter((c) => c.name === claim);
+  const closed = after.find((c) => c.subject === target.subject) ?? after[0];
+  // A compensation claim, when the family derived one, is a NEW prediction
+  // for the next part: it supersedes the one just closed and is itself only
+  // Provisional. Surfacing it here is what makes the loop a loop.
+  const superseding = storedClaims(bound.entry).filter(
+    (c) => (c as { supersedes?: string }).supersedes === claim,
+  );
+
+  return jsonResult({
+    ok: true,
+    bound: {
+      claim,
+      ...(target.subject !== undefined ? { subject: target.subject } : {}),
+      report_id: bound.entry.id,
+      schema: bound.entry.schema,
+      predicted: target.value,
+      measured: value,
+      unit: target.unit,
+      delta:
+        typeof target.value === "number"
+          ? Number((value - target.value).toFixed(6))
+          : undefined,
+      status: closed?.status,
+      basis: closed?.basis,
+      instrument,
+    },
+    derived: bound.derived,
+    superseded_by: superseding.map((c) => ({
+      claim: c.name,
+      status: c.status,
+      basis: c.basis,
+      predicted: c.value,
+    })),
+    note: bound.note,
+    next:
+      closed?.status === "Violated"
+        ? "The part is outside the band. `derived` carries what to change; re-cut, then record the next measurement — the compensated claim is itself only Provisional until that part is measured too."
+        : "build_receipt on this document now carries this claim on a measured basis.",
+    honesty:
+      "One part, one reading. A single measurement inside tolerance closes this claim for this part; it is not a process capability.",
+  });
+}
+
 /** Record as-built measurements and emit the receipt-vs-reality delta. */
-export function recordMeasurement(input: unknown): ToolResult {
+export function recordMeasurement(input: unknown, engine?: Engine): ToolResult {
   const args = (input ?? {}) as Record<string, unknown>;
+
+  // Two paths, chosen by what the call carries. `claim` means the receipt
+  // ladder; `measurements` means the print-calibration report. Asking for
+  // both at once is a confusion worth surfacing, not silently resolving.
+  if (typeof args.claim === "string" && args.claim) {
+    if (args.measurements !== undefined) {
+      throw new Error(
+        "pass either `claim` (close a receipt claim) or `measurements` (join a print prediction), not both — they close different things.",
+      );
+    }
+    return recordClaimMeasurement(args, engine);
+  }
+  if (args.measurements === undefined) {
+    throw new Error(
+      "pass `measurements` (a map of measurable id → value, against a predict_print snapshot) or `claim` (a claim name on a deposited claim report, with value/tolerance/instrument).",
+    );
+  }
+
   const documentId = args.document_id !== undefined ? String(args.document_id) : undefined;
 
   let prediction: PrintPrediction | undefined;
@@ -396,9 +720,9 @@ export const toolDefs: ToolDef[] = [
     name: "record_measurement",
     pack: "print",
     description:
-      "Record as-built measurements (caliper dimensions, scale mass) of a printed part against its predict_print snapshot and emit the receipt-vs-reality delta report: per-feature deltas with tolerances, per-axis scale factors (X/Y/Z shrinkage), hole undersize and thin-wall flow offsets, and concrete printer-profile suggestions. Accepts the prediction inline (from a saved prediction.json) when the session's warm instance is gone. Partial measurements are fine.",
+      "Close a prediction with a reading off the real part. Two things it can close. (1) `measurements`: as-built caliper/scale numbers against a predict_print snapshot, answering the receipt-vs-reality delta report — per-feature deltas with tolerances, per-axis scale factors (X/Y/Z shrinkage), hole undersize and thin-wall flow offsets, and concrete printer-profile suggestions. Accepts the prediction inline (from a saved prediction.json) when the session's warm instance is gone; partial measurements are fine. (2) `claim`: a named claim on a claim-family report deposited by cam_job / cam_gear — the family decides Holds or Violated, the claim moves onto a measured basis so build_receipt stops reading Provisional, and for a gear's over-pins dimension the same call returns the cutter compensation the reading implies for the next part. Fails closed: a measurement aimed at a claim that is arithmetic on a program rather than a dimension of a part is refused, as is one in the wrong unit or with no stated tolerance or instrument.",
     inputSchema: recordMeasurementSchema,
-    handler: (a) => recordMeasurement(a),
+    handler: (a, c) => recordMeasurement(a, c.engine),
     behavior: behavior({}),
   },
 ];

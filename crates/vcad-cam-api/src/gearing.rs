@@ -138,11 +138,38 @@ pub fn run(input: &str) -> Result<Value, String> {
             .map_err(|e| format!("the span measurement could not be worked out: {e}"))?;
     }
 
+    // The subject every gear claim is filed under. A document can hold a
+    // whole train, so "the gear" is not identification enough — a sun and a
+    // planet both claim an over-pins dimension, and a measurement has to say
+    // which one it closed.
+    let subject = format!("{}T-m{}", gear.teeth, gear.module);
+
     let mut out = json!({
         "gear": gear,
         "cutter_diameter": cutter,
         "recommended_pin_diameter": gear.recommended_pin_diameter().ok(),
         "report": report,
+        // The gear rides in `inputs` as well as in the claims: it is both the
+        // basis a claim goes stale against AND what `close_over_pins` needs
+        // to turn a reading over pins back into a cutter offset. Without it
+        // stored, a measurement can say the teeth are fat and not by how much
+        // to move the cutter.
+        "claims": crate::claims::deposit(
+            vcad_kernel_cam::receipt::gear_claims(&report, &subject),
+            crate::claims::Inputs::new()
+                .with(vcad_kernel_cam::receipt::BASIS_GEAR, &gear)
+                .with(vcad_kernel_cam::receipt::BASIS_TOOL, &cutter)
+                // A measurement over pins adds `gear.over_pins.compensated`,
+                // which rests on the program that will cut the *next* part.
+                // There is none yet, and saying so is what lets that claim
+                // settle as Provisional instead of reading Stale forever —
+                // while still re-opening the moment a real program lands
+                // under this key.
+                .absent(vcad_kernel_cam::receipt::BASIS_PROGRAM),
+            &["gear"],
+            Some(subject.clone()),
+        ),
+        "claim_subject": subject,
     });
 
     // The compensation a measured reading implies: how far, and which way, to

@@ -2190,6 +2190,21 @@ pub struct Document {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub analysis_studies: Vec<AnalysisStudy>,
 
+    /// Claim-family reports deposited on this document by the tools that
+    /// produced them, keyed by claim-family schema id. `build_receipt`
+    /// re-states each one against its inputs as they stand now and merges
+    /// the family's claims into the unified receipt.
+    ///
+    /// This is the slot that made the Rust claim families reachable: they all
+    /// knew how to translate themselves into receipt claims, and there was
+    /// nowhere for a document to *hold* one. Unlike `analysis_studies`, which
+    /// is a typed enum of study definitions the solver re-runs, a report is
+    /// the family's own serialized answer — the registry
+    /// (`vcad-claim-registry`) is what knows how to read it, so a new family
+    /// needs no change here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub claim_reports: Vec<ClaimReport>,
+
     // Drafting (optional, zero-cost when absent)
     /// Drawing sheet settings: title block, section lines, BOM visibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2342,6 +2357,61 @@ pub struct JointSweep {
     pub to: f64,
     /// Number of intervals; `steps + 1` states are sampled.
     pub steps: u32,
+}
+
+/// A claim-family report deposited on a document.
+///
+/// One of these is what lets a Rust claim family — `vcad.cam-claims/1`,
+/// `vcad.thermal-claims/1`, … — reach a receipt. The tool that ran the
+/// oracle (`cam_job`, `solve_thermal`, `analyze_tolerance_stackup`, …)
+/// deposits its family's own serialized answer here; `build_receipt` hands
+/// `schema` + `report` to `vcad-claim-registry`, which knows which family's
+/// `design_claims` to call. Nothing in this type is family-specific, so a
+/// new family needs no IR change — the registry is the only place that has
+/// to learn about it.
+///
+/// # Why `inputs` is here and not folded into `report`
+///
+/// A claim goes `Stale` when something it rests on moves, which means the
+/// document has to hold the *live* inputs, not just the digests the report
+/// was made against. `inputs` is exactly that: the JSON text of each input
+/// the family named as a basis (for CAM: `program`, `outline`, `tool`,
+/// `stock`, `gear`, `material`, `solid`). Edit the program here and the next
+/// `build_receipt` re-states its claims as `Stale` rather than `Holds`.
+///
+/// Both `report` and the `inputs` values are JSON **text**, not parsed
+/// values: the registry's entry points take serialized reports, and hashing
+/// the exact bytes means a digest cannot drift on a map's key order or a
+/// float's formatting. A re-serialization that changes only whitespace reads
+/// as a change, which errs towards `Stale` and never towards a false
+/// `Holds`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct ClaimReport {
+    /// Stable id for this deposit, unique within the document. Re-depositing
+    /// under the same id replaces the report — one job, one current answer.
+    pub id: String,
+    /// The claim family's schema tag, e.g. `"vcad.cam-claims/1"`. The key the
+    /// registry is looked up by.
+    pub schema: String,
+    /// What this report is about, for a human reading the ledger,
+    /// e.g. `"planet-20T profile"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub label: Option<String>,
+    /// RFC 3339 timestamp of the oracle run that produced it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub generated_at: Option<String>,
+    /// The family's serialized claim set — the exact JSON text the registry
+    /// consumes.
+    pub report: String,
+    /// The live inputs the report's claims rest on, as JSON text, keyed by
+    /// the family's own basis key. An input the family names and this map
+    /// does not carry reads as changed, never as unchanged.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub inputs: HashMap<String, String>,
 }
 
 /// A persisted solver study for the unified Analyze mode (#592).
@@ -2527,6 +2597,7 @@ impl Default for Document {
             clearance_specs: Vec::new(),
             constraints: Vec::new(),
             analysis_studies: Vec::new(),
+            claim_reports: Vec::new(),
             drawing: None,
             timeline: None,
             hardware: Vec::new(),
