@@ -1,0 +1,15 @@
+{
+  "id": "2026-09-17-cam-setup-from-the-part",
+  "version": "0.10.0",
+  "date": "2026-09-17",
+  "category": "feat",
+  "title": "Set a job up on real metal, from the real part",
+  "summary": "The Manufacture workspace takes its outline from the part on screen, knows what the blank is made of, and shows where zero, the clamps and the tabs are.",
+  "details": "The outline used to be a separate DXF that nothing checked against the solid, so a stale one machined in silence. Import ▸ From model sections the part on screen — the B-rep's own tessellation, not the repaired export mesh — reports whether the part is the same shape at every height, sets the stock thickness from its Z range, and refuses a torn solid with the gap count and width rather than healing the tear away. A DXF imported while a document is open is compared against it, and an outline that is not that part is a warning with the numbers in it. Stock gets a material picker, and feeds stop being typed from memory: Recommend feeds fills feed, plunge, stepdown, stepover and spindle on every operation and says which position to set the router dial to — the S word does nothing on this spindle, and the app now says so. A \"first cut on this machine\" toggle derates feed and stepdown to 60 %, and hand-typed numbers get the same table's second opinion beside them (\"0.018 mm/tooth: rubbing\"). Work zero can sit on the part's corner, the blank's corner or the middle of the blank, with the distance from the blank's corner shown and the whole job moving onto it; a placement shifts and turns the job for a blank clamped crooked, and the part it is verified against turns with it. Clamps are rectangles you type, drawn on the stock, and a clamp inside the cutter's sweep is a warning that has to be acknowledged. Tabs are drawn twice — a handle where each was asked for and the metal where the audit found it — and can be dragged along the contour or typed as a fraction; either way the position goes into the request and the rebuilt job says where the tab really landed. Breaking through is only offered when a spoilboard is declared, and the refusal names what is under the blank. A pocket can now keep material inside itself (\"islands\"), and the job reports how close the cutter came to each one.",
+  "features": [
+    "cam",
+    "manufacturing",
+    "native-app",
+    "accessibility"
+  ]
+}

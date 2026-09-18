@@ -68,6 +68,26 @@ struct CNCOutline: Equatable {
         }
     }
 
+    /// An outline from a section of the part on screen.
+    ///
+    /// The section comes back where the part was modelled — the stator sits at
+    /// z 11.1–17.1 and nowhere near the origin in XY — and CAM works in the
+    /// stock frame, lower-left at zero. So this does for a sectioned solid
+    /// exactly what the DXF reader does for a file: shift it, and remember by
+    /// how much, so the toolpath is drawn on the part rather than beside it
+    /// (items 18 and 47).
+    static func from(region: CNCSection.Region, name: String) -> CNCOutline {
+        let outer = CNCLoop(points: region.outer.map { CGPoint(x: $0[0], y: $0[1]) })
+        let origin = outer.bounds.origin
+        func shift(_ loop: CNCLoop) -> CNCLoop {
+            CNCLoop(points: loop.points.map { CGPoint(x: $0.x - origin.x, y: $0.y - origin.y) })
+        }
+        let holes = region.holes.map { hole in
+            shift(CNCLoop(points: hole.map { CGPoint(x: $0[0], y: $0[1]) }))
+        }
+        return CNCOutline(outer: shift(outer), holes: holes, name: name, origin: origin)
+    }
+
     /// Parse every closed LWPOLYLINE in a DXF. Bulge arcs are not supported
     /// (export the outline pre-tessellated); a polyline carrying a bulge is
     /// refused rather than silently flattened wrong.

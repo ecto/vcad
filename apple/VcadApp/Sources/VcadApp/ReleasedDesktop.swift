@@ -936,6 +936,20 @@ struct ReleasedOverlayView: View {
         return (o, d)
     }
 
+    /// Screen point → the CNC work frame, on the stock top.
+    ///
+    /// Everything the CNC overlay draws hangs off `cncRoot` at `cnc.origin`,
+    /// which is where the stock frame's zero sits in the model, so a point on
+    /// that plane is the work-frame point under the pointer.
+    private func cncWorkPoint(at p: CGPoint) -> [Double]? {
+        guard let ray = kernelRay(at: p), abs(ray.d.z) > 1e-5 else { return nil }
+        let z = Float(model.cnc.origin.z)
+        let t = (z - ray.o.z) / ray.d.z
+        guard t > 0, t.isFinite else { return nil }
+        let hit = ray.o + ray.d * t
+        return [Double(hit.x) - model.cnc.origin.x, Double(hit.y) - model.cnc.origin.y]
+    }
+
     /// Screen point → 2D sketch-plane coords.
     private func sketchPlanePoint(at p: CGPoint) -> SIMD2<Float>? {
         guard let ray = kernelRay(at: p) else { return nil }
@@ -1120,6 +1134,18 @@ struct ReleasedOverlayView: View {
     private var marqueeOrOrbitGesture: some Gesture {
         DragGesture(minimumDistance: 2)
             .onChanged { value in
+                // A drag that starts on a holding tab moves the tab, not the
+                // camera: the tab is a handle on the part, and where it sits
+                // is the difference between a part that stays put and one that
+                // comes loose (friction-log item 21).
+                if model.cnc.draggingTabName != nil { return }
+                if model.lastDrag == .zero, !model.draggingHandle, model.workspace == .manufacture,
+                   let name = ReleaseWindowController.shared.hits(atViewPoint: value.startLocation)
+                       .first(where: { $0.entity.name.hasPrefix("cncTabHandle-") })?.entity.name,
+                   model.cnc.beginTabDrag(named: name) {
+                    NSCursor.closedHand.set()
+                    return
+                }
                 // ⌘-drag from empty space is a rubber band, matching ⌘-click's
                 // "add to the selection". A plain drag stays an orbit: rebinding
                 // orbit to a modifier to make room for marquee would break the
@@ -1161,7 +1187,20 @@ struct ReleasedOverlayView: View {
                 }
                 model.lastDrag = value.translation
             }
-            .onEnded { _ in
+            .onEnded { value in
+                // The tab lands where it was dropped, on the contour: the drop
+                // point becomes a fraction, the fraction goes into the request,
+                // and the rebuilt job says where the tab really ended up.
+                if model.cnc.draggingTabName != nil {
+                    NSCursor.arrow.set()
+                    if let point = cncWorkPoint(at: value.location) {
+                        model.cnc.dropTab(atWork: point)
+                    } else {
+                        model.cnc.cancelTabDrag()
+                    }
+                    model.lastDrag = .zero
+                    return
+                }
                 if let m = marquee {
                     commitMarquee(from: m.start, to: m.current)
                     marquee = nil

@@ -39,15 +39,19 @@ final class CNCJobTests: XCTestCase {
     }
 
     /// The job that was really cut: Ø2 two-flute, 1 mm stock, 0.15 mm skin.
-    private func statorJob(tool: Double = 2.0,
-                           thickness: Double = 1.0,
-                           skin: Double = 0.15,
-                           under: CNCUnderStock = .machineBed) throws -> CNCWorkspace {
+    ///
+    /// Shared with the setup tests, which need the same part in the same state
+    /// — a second fixture would be a second part, and then the two files would
+    /// be testing different things without saying so.
+    static func statorWorkspace(tool: Double = 2.0,
+                                thickness: Double = 1.0,
+                                skin: Double = 0.15,
+                                under: CNCUnderStock = .machineBed) throws -> CNCWorkspace {
         let cnc = CNCWorkspace()
         cnc.toolDiameter = tool
         cnc.stockThickness = thickness
         cnc.underStock = under
-        try cnc.importOutline(try statorOutline())
+        try cnc.importOutline(try CNCOutline.parseDXF(try statorDXF(), name: "stator-outline.dxf"))
         for operation in cnc.operations {
             cnc.select(.operation(operation.id))
             cnc.setup.bottomAllowance = skin
@@ -56,6 +60,13 @@ final class CNCJobTests: XCTestCase {
             }
         }
         return cnc
+    }
+
+    private func statorJob(tool: Double = 2.0,
+                           thickness: Double = 1.0,
+                           skin: Double = 0.15,
+                           under: CNCUnderStock = .machineBed) throws -> CNCWorkspace {
+        try Self.statorWorkspace(tool: tool, thickness: thickness, skin: skin, under: under)
     }
 
     private func runOrder(_ cnc: CNCWorkspace) -> [String] {

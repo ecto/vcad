@@ -6,11 +6,18 @@ import SwiftUI
 
 /// A labelled number field. Values are typed, not scrubbed: a feed is a
 /// decision, not a slider.
+///
+/// Every one of these carries a label, an identifier and its current value in
+/// the accessibility tree, so a script can find it by name and set it without
+/// the window being frontmost (friction-log item 51: the sidebar summary was
+/// the only confirmation that a typed value had taken).
 struct CNCNumber: View {
     var label: String
     @Binding var value: Double
     var unit = "mm"
     var help: String?
+    /// A stable name for scripts and tests. Defaults to the label.
+    var identifier: String?
     var body: some View {
         HStack {
             Text(label).font(.callout)
@@ -18,7 +25,10 @@ struct CNCNumber: View {
             HStack(spacing: 5) {
                 TextField(label, value: $value, format: .number.precision(.fractionLength(0...3)))
                     .multilineTextAlignment(.trailing).textFieldStyle(.roundedBorder).frame(width: 76)
-                    .font(.callout.monospaced()).accessibilityLabel(label)
+                    .font(.callout.monospaced())
+                    .accessibilityLabel(label)
+                    .accessibilityIdentifier(identifier ?? label)
+                    .accessibilityValue("\(value.formatted(.number.precision(.fractionLength(0...3)))) \(unit)")
                 Text(unit).font(.caption).foregroundStyle(.secondary).frame(minWidth: 18, alignment: .trailing)
             }
         }
@@ -37,12 +47,12 @@ struct CNCOperationInspector: View {
         Group {
             Eyebrow("Cut")
             KeyValueRow("Shape", shapeSummary)
-            CNCNumber(label: "Cut depth", value: $cnc.setup.depth)
-            CNCNumber(label: "Roughing stepdown", value: $cnc.setup.stepdown)
+            CNCNumber(label: "Cut depth", value: $cnc.setup.depth, identifier: "cnc.op.depth")
+            CNCNumber(label: "Roughing stepdown", value: $cnc.setup.stepdown, identifier: "cnc.op.stepdown")
             if kind == .face || kind == .pocket {
-                CNCNumber(label: "Stepover", value: $cnc.setup.stepover)
+                CNCNumber(label: "Stepover", value: $cnc.setup.stepover, identifier: "cnc.op.stepover")
             }
-            CNCNumber(label: "Clearance", value: $cnc.setup.clearance)
+            CNCNumber(label: "Clearance", value: $cnc.setup.clearance, identifier: "cnc.op.clearance")
 
             if kind == .contourInside || kind == .pocket {
                 Divider()
@@ -55,6 +65,29 @@ struct CNCOperationInspector: View {
                     }
                     .labelsHidden().pickerStyle(.radioGroup)
                     .accessibilityLabel("What happens to the waste in this opening")
+                    .accessibilityIdentifier("cnc.op.waste")
+                if kind == .pocket {
+                    // Material inside the opening that the pocket keeps: the
+                    // kernel clears around it and the answer says how close
+                    // the cutter came.
+                    Toggle("Keep the features inside this opening",
+                           isOn: Binding(get: { !cnc.setup.islands.isEmpty },
+                                         set: { cnc.keepIslands($0) }))
+                        .accessibilityIdentifier("cnc.op.islands")
+                        .help("Anything of the outline that lies inside this pocket is left standing, and the job reports how close the cutter came to it.")
+                    if !cnc.setup.islands.isEmpty {
+                        KeyValueRow("Kept", counted(cnc.setup.islands.count, "island"))
+                        ForEach(Array(cnc.islandClearances(of: cnc.selectedOperation).enumerated()), id: \.offset) { index, island in
+                            KeyValueRow("Island \(index + 1)",
+                                        island.kept
+                                        ? "untouched · cutter stayed \(CNCVerdictText.mm(island.centreClearanceMm ?? 0)) mm off"
+                                        : "cut into by \(CNCVerdictText.mm(island.cutIntoMm, 3)) mm")
+                        }
+                    } else if cnc.islandCandidates(for: cnc.selectedOperation).isEmpty {
+                        Text("No part of this outline lies inside this opening, so there is nothing to keep.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
 
             if kind.isContour {
@@ -95,13 +128,18 @@ struct CNCOperationInspector: View {
             if kind.isContour {
                 Divider()
                 Eyebrow("Holding tabs")
-                Stepper(value: $cnc.setup.tabs, in: 0...12) {
+                Stepper(value: Binding(get: { cnc.setup.tabs }, set: { cnc.setTabCount($0) }), in: 0...12) {
                     KeyValueRow("Tabs", cnc.setup.tabs == 0 ? "none" : "\(cnc.setup.tabs)")
                 }
+                .accessibilityLabel("Tabs").accessibilityIdentifier("cnc.tabs.count")
+                .accessibilityValue("\(cnc.setup.tabs)")
                 if cnc.setup.tabs > 0 {
                     CNCNumber(label: "Metal left", value: $cnc.setup.tabWidth,
-                              help: "Width means metal, not the run the cutter is lifted over.")
-                    CNCNumber(label: "Tab height", value: $cnc.setup.tabHeight)
+                              help: "Width means metal, not the run the cutter is lifted over.",
+                              identifier: "cnc.tabs.width")
+                    CNCNumber(label: "Tab height", value: $cnc.setup.tabHeight,
+                              identifier: "cnc.tabs.height")
+                    CNCTabSection(cnc: cnc)
                 }
                 if kind == .contourInside && cnc.setup.tabs == 0 {
                     Text("Nothing holds the slug on the last pass. Add tabs or leave a skin.")
@@ -111,18 +149,26 @@ struct CNCOperationInspector: View {
 
             Divider()
             Eyebrow("The floor")
+            // Item 50: breaking through is only a choice when something under
+            // the blank can take the cut. On the bare bed it is not offered at
+            // all, and the reason names what is down there.
+            let hasSpoilboard = cnc.underStock.thickness != nil
             Picker("Bottom", selection: Binding(
                 get: { cnc.setup.bottomAllowance < 0 ? 1 : 0 },
                 set: { cnc.setup.bottomAllowance = $0 == 1 ? -min(0.3, abs(cnc.setup.bottomAllowance)) : max(0, cnc.setup.bottomAllowance) })) {
                     Text("Leave a skin").tag(0)
-                    Text("Break through").tag(1)
-                }.pickerStyle(.segmented).labelsHidden().accessibilityLabel("What the cut does at the bottom")
+                    if hasSpoilboard { Text("Break through").tag(1) }
+                }.pickerStyle(.segmented).labelsHidden()
+                .accessibilityLabel("What the cut does at the bottom")
+                .accessibilityIdentifier("cnc.op.floor")
             CNCNumber(label: cnc.setup.bottomAllowance < 0 ? "Break through by" : "Skin left",
                       value: Binding(get: { abs(cnc.setup.bottomAllowance) },
-                                     set: { cnc.setup.bottomAllowance = cnc.setup.bottomAllowance < 0 ? -abs($0) : abs($0) }))
-            if cnc.setup.bottomAllowance < 0, cnc.underStock.thickness == nil {
-                Text("Nothing is declared under the stock, so breaking through is refused. Set it on Stock.")
-                    .font(.caption).foregroundStyle(.orange)
+                                     set: { cnc.setup.bottomAllowance = cnc.setup.bottomAllowance < 0 ? -abs($0) : abs($0) }),
+                      identifier: "cnc.op.bottomAllowance")
+            if !hasSpoilboard {
+                Text("The blank is on the \(cnc.underStock.label.lowercased()), which is not sacrificial: a cut that goes past the underside would be cut into the machine. Declare a spoilboard on Stock to break through.")
+                    .font(.caption)
+                    .foregroundStyle(cnc.setup.bottomAllowance < 0 ? Color.orange : Color.secondary)
             }
 
             if kind.isContour {
@@ -140,12 +186,17 @@ struct CNCOperationInspector: View {
             }
 
             Divider()
-            Eyebrow("Feeds and speeds")
-            CNCNumber(label: "Cutting feed", value: $cnc.setup.feed, unit: "mm/min")
-            CNCNumber(label: "Plunge", value: $cnc.setup.plunge, unit: "mm/min")
-            CNCNumber(label: "Spindle", value: $cnc.setup.rpm, unit: "RPM")
+            CNCFeedsSection(cnc: cnc)
+            CNCNumber(label: "Cutting feed", value: $cnc.setup.feed, unit: "mm/min",
+                      identifier: "cnc.op.feed")
+            CNCNumber(label: "Plunge", value: $cnc.setup.plunge, unit: "mm/min",
+                      identifier: "cnc.op.plunge")
+            CNCNumber(label: "Spindle", value: $cnc.setup.rpm, unit: "RPM",
+                      help: "On a router with a speed dial this number does nothing: set the dial by hand.",
+                      identifier: "cnc.op.rpm")
             Button("Apply these feeds to all operations") { cnc.applyFeedsToAllOperations() }
                 .disabled(cnc.operations.count < 2)
+                .accessibilityIdentifier("cnc.feeds.applyToAll")
 
             if kind == .contourOutside {
                 Divider()
@@ -194,6 +245,11 @@ struct CNCOperationInspector: View {
 /// a script outside the app, none of them by looking at the preview.
 struct CNCVerificationSection: View {
     @Bindable var cnc: CNCWorkspace
+    /// The stock, origin and tool panels are where a job is *set up*, and a
+    /// full list of eight checks there pushed the settings off the bottom of
+    /// the panel. They get the verdict and anything wrong with it; the
+    /// check-by-check list stays on the operation it is about.
+    var compact = false
 
     var body: some View {
         Eyebrow("Verification")
@@ -208,7 +264,7 @@ struct CNCVerificationSection: View {
             ForEach(cnc.warnings) { finding in
                 warningRow(finding)
             }
-            ForEach(cnc.checkRows) { row in
+            ForEach(compact ? [] : cnc.checkRows) { row in
                 Button { select(row) } label: {
                     HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
                         Image(systemName: row.symbol).foregroundStyle(colour(row.verdict))
@@ -310,6 +366,9 @@ struct CNCVerificationSection: View {
 /// Setup said nothing at all about what had been made.
 struct CNCSetupSummary: View {
     @Bindable var cnc: CNCWorkspace
+    /// On a setup panel the verdict is enough; the check-by-check list lives
+    /// on the operation it is about, where there is room for it.
+    var compact = true
 
     var body: some View {
         Eyebrow("This job")
@@ -326,7 +385,7 @@ struct CNCSetupSummary: View {
             }
             // Tool checks are not listed twice: they arrive below as findings,
             // where they can also be acknowledged.
-            CNCVerificationSection(cnc: cnc)
+            CNCVerificationSection(cnc: cnc, compact: compact)
         }
     }
 }

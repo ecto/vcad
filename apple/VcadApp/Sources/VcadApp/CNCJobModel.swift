@@ -91,6 +91,9 @@ struct CNCJobOperationRequest: Encodable, Sendable {
     var springPass: Bool?
     var finishFeed: Double?
     var tabs: Int?
+    /// Where each tab goes, as a fraction of the way round the loop. When this
+    /// is present it *is* the tab list and `tabs` is left out.
+    var tabPositions: [Double]?
     var tabWidth: Double?
     var tabHeight: Double?
     var bottomAllowance: Double?
@@ -98,6 +101,12 @@ struct CNCJobOperationRequest: Encodable, Sendable {
     var through: Bool?
     var order: Int?
     var role: String?
+    /// When this operation runs, lower first. An operation without one keeps
+    /// the phase its role implies, so the profile that frees the part still
+    /// goes last unless something says otherwise in as many words.
+    var phase: Int?
+    /// Material a pocket keeps: closed loops the cutter clears around.
+    var islands: [[[Double]]]?
 
     struct ThinSlot: Encodable, Sendable {
         var strategy: String
@@ -114,11 +123,12 @@ struct CNCJobOperationRequest: Encodable, Sendable {
         case springPass = "spring_pass"
         case finishFeed = "finish_feed"
         case tabs
+        case tabPositions = "tab_positions"
         case tabWidth = "tab_width"
         case tabHeight = "tab_height"
         case bottomAllowance = "bottom_allowance"
         case thinSlot = "thin_slot"
-        case through, order, role
+        case through, order, role, phase, islands
     }
 }
 
@@ -143,6 +153,12 @@ struct CNCJobStockRequest: Encodable, Sendable {
     var spoilboard: Double?
 }
 
+/// Soft limits in machine coordinates, for the envelope check.
+struct CNCJobTravelRequest: Encodable, Sendable {
+    var min: [Double]
+    var max: [Double]
+}
+
 /// The Anolex 4030 Ultra 2, which is the machine this app drives. A trim
 /// router on a dial: its `S` word does nothing, so the feeds table must never
 /// assume a commanded spindle speed.
@@ -152,10 +168,27 @@ struct CNCJobMachineRequest: Encodable, Sendable {
     var `class` = "hobby"
     var maxFeed = 3000.0
     var maxAccel = 300.0
+    /// Travel limits, when the machine has reported them. Absent means the
+    /// envelope is checked against the stock alone, as before.
+    var travel: CNCJobTravelRequest?
+    /// Where G54 sits in machine coordinates, for the same check.
+    var workOffset: [Double]?
     enum CodingKeys: String, CodingKey {
-        case name, spindle, `class`
+        case name, spindle, `class`, travel
         case maxFeed = "max_feed"
         case maxAccel = "max_accel"
+        case workOffset = "work_offset"
+    }
+}
+
+/// Where the part sits on the stock: rotation first, about work zero.
+struct CNCJobPlacementRequest: Encodable, Sendable {
+    var dx: Double
+    var dy: Double
+    var rotationDeg: Double
+    enum CodingKeys: String, CodingKey {
+        case dx, dy
+        case rotationDeg = "rotation_deg"
     }
 }
 
@@ -173,6 +206,9 @@ struct CNCJobOptionsRequest: Encodable, Sendable {
     var wcs = "G54"
     var verify = true
     var part: CNCJobPartRequest?
+    /// Moves every operation *and* the part the job is verified against, so a
+    /// placed job is still checked against the metal it really cuts.
+    var placement: CNCJobPlacementRequest?
 
     struct ArcFit: Encodable, Sendable { var tolerance: Double }
     /// No changer on this machine: a tool change is an operator stop and a
@@ -185,7 +221,7 @@ struct CNCJobOptionsRequest: Encodable, Sendable {
         case spinUpSeconds = "spin_up_seconds"
         case parkZ = "park_z"
         case safeZ = "safe_z"
-        case wcs, verify, part
+        case wcs, verify, part, placement
     }
 }
 
@@ -399,6 +435,47 @@ struct CNCFitReport: Decodable, Sendable {
     var unreachable = CNCCornerSummary()
 }
 
+/// Where one tab really ended up, measured off the toolpath.
+///
+/// `alongContour` is a fraction of the way round the contour **as it was
+/// drawn**, while the fraction asked for in `tab_positions` is stated on the
+/// cutter's own offset loop. The two frames differ by the direction of cut and
+/// by drift round every corner, so the app never subtracts one from the other:
+/// it drags to a place, reads back where the tab landed, and corrects.
+struct CNCTabLanding: Decodable, Sendable {
+    var at: [Double] = [0, 0]
+    var alongContour = 0.0
+    var gapToNextMm = 0.0
+    var metalWidth = 0.0
+    var height = 0.0
+    var straight = true
+    var passes = 0
+}
+
+struct CNCTabPlacement: Decodable, Sendable {
+    var op = ""
+    var opIndex = 0
+    var requested = 0
+    var requestedPositions: [Double] = []
+    var found = 0
+    var perimeterMm = 0.0
+    var tabs: [CNCTabLanding] = []
+}
+
+/// How close the cutter came to material a pocket was told to keep.
+struct CNCIslandClearance: Decodable, Sendable {
+    struct Island: Decodable, Sendable {
+        var island = 0
+        var centreClearanceMm: Double?
+        var cutIntoMm = 0.0
+        var kept = true
+    }
+    var op = ""
+    var opIndex = 0
+    var toleranceMm = 0.0
+    var islands: [Island] = []
+}
+
 struct CNCReportEntry<Body: Decodable & Sendable>: Decodable, Sendable {
     var op = ""
     var opIndex = 0
@@ -423,6 +500,8 @@ struct CNCJobResult: Decodable, Sendable {
     var policy = CNCJobPolicy()
     var fit: [CNCReportEntry<CNCFitReport>] = []
     var report: [CNCReportEntry<CNCContourReport>] = []
+    var tabPlacement: [CNCTabPlacement] = []
+    var islandClearance: [CNCIslandClearance] = []
     var notes: [CNCJobNote] = []
 
     init() {}
@@ -446,12 +525,14 @@ struct CNCJobResult: Decodable, Sendable {
         policy = try c.decodeIfPresent(CNCJobPolicy.self, forKey: .policy) ?? CNCJobPolicy()
         fit = try c.decodeIfPresent([CNCReportEntry<CNCFitReport>].self, forKey: .fit) ?? []
         report = try c.decodeIfPresent([CNCReportEntry<CNCContourReport>].self, forKey: .report) ?? []
+        tabPlacement = try c.decodeIfPresent([CNCTabPlacement].self, forKey: .tabPlacement) ?? []
+        islandClearance = try c.decodeIfPresent([CNCIslandClearance].self, forKey: .islandClearance) ?? []
         notes = try c.decodeIfPresent([CNCJobNote].self, forKey: .notes) ?? []
     }
 
     private enum CodingKeys: String, CodingKey {
         case name, blocked, error, gcode, moves, opRanges, duration, toolChecks
-        case verification, policy, fit, report, notes
+        case verification, policy, fit, report, notes, tabPlacement, islandClearance
     }
 
     /// True when the oracle refused the job, or the request never got that far.
