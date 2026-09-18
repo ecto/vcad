@@ -41,6 +41,14 @@ struct CNCSetup: Codable, Equatable, Sendable {
     var tabs = 0
     var tabWidth = 4.0
     var tabHeight = 1.0
+    /// Where each tab goes, as a fraction of the way round the loop. Empty
+    /// means "space `tabs` of them evenly", which is what the kernel does on
+    /// its own; a dragged tab writes its fraction here (item 21).
+    var tabPositions: [Double] = []
+
+    /// Material a pocket keeps: closed loops the cutter clears around and
+    /// never enters. Only a pocket has them.
+    var islands: [[[Double]]] = []
 
     // The floor. Positive leaves a skin, negative breaks through into whatever
     // is declared under the stock.
@@ -146,8 +154,19 @@ struct CNCJobKey: Equatable, Sendable {
     var margin: Double
     var spoilboard: Double?
     var diameter: Double
+    var flutes: Int
+    var fluteLength: Double
+    var stickout: Double
+    var centreCutting: Bool
     var outer: [[Double]]
     var holes: [[[Double]]]
+    /// Where the part sits on the blank, and where the operator zeroes.
+    var placement: CNCPlacement
+    var zero: CNCZeroLocation
+    /// Clamps are not in the request — they are checked here — but a job
+    /// acknowledged with one clamp on the blank is not the same job with
+    /// another one added.
+    var clamps: [[Double]]
 }
 
 /// Timed interpolation of the generated path, independent of controller state.
@@ -261,9 +280,37 @@ final class CNCWorkspace {
             // Item 49: changing the cutter re-decides which holes can be
             // machined, without a re-import and without losing settings.
             reconcileOutlineOperations()
+            refreshFeedNotes()
         }
     }
-    var toolFlutes = 2 { didSet { setupConfirmed = false; revision += 1 } }
+
+    // MARK: material, feeds and what to set on the router
+
+    /// The kernel's material table, loaded once.
+    private(set) var materials: [CNCMaterial] = []
+    /// What the blank is made of. Nothing is assumed: with no material chosen
+    /// the app offers no numbers, because the first real cut was made with
+    /// feeds typed for a material the plate turned out not to be (item 54).
+    var materialID: String? {
+        didSet {
+            guard materialID != oldValue else { return }
+            setupConfirmed = false; revision += 1; refreshFeedNotes()
+        }
+    }
+    var material: CNCMaterial? { materials.first { $0.id == materialID } }
+    /// A first cut on an unknown machine runs at 60% of the numbers: feed and
+    /// stepdown are the two that decide whether the cutter survives.
+    var firstCutDerate = false { didSet { revision += 1 } }
+    /// What "Recommend feeds" last worked out, kept so the panel can show the
+    /// dial and the working.
+    private(set) var recommendation: CNCFeedAdvice?
+    /// What the kernel makes of the numbers in the selected operation right
+    /// now — the second opinion beside hand-typed feeds.
+    private(set) var feedNotes: [CNCFeedNote] = []
+    var toolFlutes = 2 { didSet { setupConfirmed = false; revision += 1; refreshFeedNotes() } }
+    /// Whether the cutter cuts across its own centre. A tool that does not
+    /// cannot plunge, and the job says so rather than finding out in metal.
+    var toolCentreCutting = true { didSet { setupConfirmed = false; revision += 1 } }
     /// Usable cutting length. Zero means "not declared", and the job says so
     /// rather than assuming the flutes are long enough for the cut.
     var toolFluteLength = 0.0 { didSet { setupConfirmed = false; revision += 1 } }
@@ -275,6 +322,53 @@ final class CNCWorkspace {
     /// cutter to run right around the part and still stand on material.
     var automaticMargin: Double { max(2 * toolDiameter + 2, 5) }
     var effectiveMargin: Double { stockMargin ?? automaticMargin }
+
+    // MARK: where the job sits on the metal
+
+    /// Where the operator will set G54 (item 41).
+    var zeroLocation: CNCZeroLocation = .partCorner {
+        didSet { setupConfirmed = false; revision += 1 }
+    }
+    /// Where the part sits on the blank, and how far round it is turned.
+    var placement = CNCPlacement() { didSet { setupConfirmed = false; revision += 1 } }
+    /// Clamps, toes and screw heads on the blank, in the work frame.
+    var clamps: [CNCClamp] = [] { didSet { setupConfirmed = false; revision += 1 } }
+
+    /// Where the part's own origin sits in the work frame, before the job is
+    /// turned: the choice of zero, as a number.
+    var zeroOffset: [Double] {
+        switch zeroLocation {
+        case .partCorner: return [0, 0]
+        case .stockCorner: return [effectiveMargin, effectiveMargin]
+        case .stockCentre: return [-stockWidth / 2, -stockHeight / 2]
+        }
+    }
+    /// The placement the request carries: the zero the operator will set, plus
+    /// whatever the part is shifted and turned by on the table.
+    var effectivePlacement: CNCPlacement { placement.moved(by: zeroOffset) }
+
+    /// How far the blank's lower-left corner is from work zero, X and Y. This
+    /// is the number to walk the machine to before touching off.
+    var stockCornerFromZero: [Double] {
+        effectivePlacement.apply([-effectiveMargin, -effectiveMargin])
+    }
+    /// The rectangle the cutter sweeps, in the work frame: the part outline
+    /// plus a radius, turned and placed with the job.
+    var sweepRect: [Double] {
+        let r = toolDiameter / 2
+        let corners = [[-r, -r], [stockWidth + r, -r],
+                       [stockWidth + r, stockHeight + r], [-r, stockHeight + r]]
+            .map { effectivePlacement.apply($0) }
+        let xs = corners.map { $0[0] }, ys = corners.map { $0[1] }
+        return [xs.min() ?? 0, ys.min() ?? 0, xs.max() ?? 0, ys.max() ?? 0]
+    }
+    /// Clamps the cutter would sweep through. The job request has no clamp
+    /// field, so this is the app's own check and is reported as one.
+    var clampsInTheWay: [CNCClamp] { clamps.filter { $0.overlaps(sweepRect) } }
+
+    /// The machine's own limits and measured skew, when the machine bar has
+    /// them. Read reflectively so this package does not depend on that one.
+    var machineProfile: CNCMachineProfile { CNCMachineProfile.read(machine) }
 
     var jogStep = 1.0
     var jogFeed = 300.0
@@ -312,7 +406,10 @@ final class CNCWorkspace {
         get { operations[index].setup }
         set {
             guard !machine.active, newValue != operations[index].setup else { return }
+            let feedsChanged = newValue.cutting != operations[index].setup.cutting
+                || newValue.kind != operations[index].setup.kind
             operations[index].setup = newValue; setupConfirmed = false; revision += 1
+            if feedsChanged { refreshFeedNotes() }
         }
     }
 
@@ -326,8 +423,15 @@ final class CNCWorkspace {
                   margin: effectiveMargin,
                   spoilboard: underStock.thickness,
                   diameter: toolDiameter,
+                  flutes: toolFlutes,
+                  fluteLength: toolFluteLength,
+                  stickout: toolStickout,
+                  centreCutting: toolCentreCutting,
                   outer: outline?.outer.points.map { [$0.x, $0.y] } ?? [],
-                  holes: outline?.holes.map { $0.points.map { [$0.x, $0.y] } } ?? [])
+                  holes: outline?.holes.map { $0.points.map { [$0.x, $0.y] } } ?? [],
+                  placement: effectivePlacement,
+                  zero: zeroLocation,
+                  clamps: clamps.map { [$0.x, $0.y, $0.width, $0.height] })
     }
     var jobCurrent: Bool {
         if usesImportedProgram { return importedProgram != nil }
@@ -440,6 +544,22 @@ final class CNCWorkspace {
         if !blocking, !(policy?.verified ?? false) {
             out.append(CNCFinding(id: "unverified", text: unverifiedReason,
                                   xy: nil, z: nil, operationID: nil, blocking: false))
+        }
+        // The outline is not the part on screen. Not a refusal — a fixture is
+        // not the part either — but not something to machine past in silence.
+        if !blocking, let mismatch = outlineMismatch {
+            out.append(CNCFinding(id: "outline-mismatch", text: mismatch, xy: nil, z: nil,
+                                  operationID: nil, blocking: false))
+        }
+        // Clamps are the app's own check: the request has no clamp field, so
+        // this says what was compared rather than implying the kernel knows.
+        for clamp in clampsInTheWay where !blocking {
+            let depth = clamp.overlapDepth(sweepRect)
+            out.append(CNCFinding(
+                id: "clamp-\(clamp.id)",
+                text: "\(clamp.name) stands \(CNCVerdictText.mm(depth, 1)) mm inside the rectangle the cutter sweeps. The kernel does not know about clamps — this is the app comparing the sweep with what you typed. Move it, or move the job.",
+                xy: [clamp.x + clamp.width / 2, clamp.y + clamp.height / 2], z: 0,
+                operationID: nil, blocking: false))
         }
         if !blocking, let checks = result?.toolChecks {
             for check in checks where check.severity == "warning" {
@@ -664,6 +784,10 @@ final class CNCWorkspace {
         select(.operation(operations[0].id))
         setupConfirmed = false; revision += 1
         error = unmachinableMessage
+        // Item 16: nothing checked the DXF against the loaded solid, so a
+        // stale outline machined silently.
+        compareWithModel(outline)
+        refreshFeedNotes()
     }
 
     private var unmachinableMessage: String? {
@@ -764,6 +888,522 @@ final class CNCWorkspace {
         return "Opening \(w.formatted()) × \(h.formatted())"
     }
 
+    // MARK: - The part on screen
+
+    /// The document the Manufacture workspace should take an outline from.
+    /// Set by the studio from the editor's own source, so the workspace can be
+    /// driven without one in a test.
+    var modelDocument: (() -> CNCModelDocument?)?
+    /// Which part of the document to section.
+    var modelPartIndex = 0
+    /// The last section, kept for the summary: the prismatic verdict, the
+    /// thickness it suggests, which mesh it came from.
+    private(set) var modelSection: CNCSection?
+    /// Why the last "From model…" could not be used, in the kernel's words.
+    private(set) var modelRefusal: String?
+    /// True when there is a part on screen to take an outline from — which is
+    /// what makes "From model…" the default import.
+    var hasModel: Bool { modelDocument?() != nil }
+
+    /// An outline from the part on screen, at its own mid-height.
+    ///
+    /// Items 16 and 37: the outline was a separate DXF nothing compared
+    /// against the solid, and there was no way to get one *out* of the solid —
+    /// the one that was lost had to be regenerated outside vcad.
+    @discardableResult
+    func importFromModel() -> Bool {
+        guard !machine.active, !generating else { return false }
+        guard let document = modelDocument?() else {
+            error = "There is no document open to take an outline from. Open a part, or import a DXF."
+            return false
+        }
+        do {
+            let section = try CNCCam.section(document, partIndex: modelPartIndex)
+            modelSection = section
+            // A torn solid is the signal, not a nuisance: healing it away here
+            // would hide exactly the thing worth seeing (item 30). The default
+            // heal tolerance stays where the kernel put it.
+            if let torn = section.tornMessage {
+                modelRefusal = torn
+                error = torn
+                return false
+            }
+            guard let region = section.part, region.outer.count >= 3 else {
+                modelRefusal = "Nothing closed came back from the section at Z \(CNCVerdictText.mm(section.z, 3))."
+                error = modelRefusal
+                return false
+            }
+            modelRefusal = nil
+            let outline = CNCOutline.from(region: region, name: document.name)
+            try importOutline(outline)
+            // The blank is as thick as the part is tall: the stator was
+            // modelled at z 11.1–17.1 and the thickness stayed at the 10 mm
+            // default until it was typed in by hand (item 17).
+            if section.suggestedStockThickness.isFinite, section.suggestedStockThickness > 0 {
+                stockThickness = (section.suggestedStockThickness * 1000).rounded() / 1000
+            }
+            outlineMismatch = nil
+            return true
+        } catch {
+            modelRefusal = error.localizedDescription
+            self.error = error.localizedDescription
+            return false
+        }
+    }
+
+    /// The part on screen as loops in the stock frame, for the comparison.
+    private func modelLoops() -> [[[Double]]]? {
+        guard let region = modelSection?.part, region.outer.count >= 3 else { return nil }
+        let outline = CNCOutline.from(region: region, name: "model")
+        return [outline.outer.points.map { [Double($0.x), Double($0.y)] }]
+            + outline.holes.map { $0.points.map { [Double($0.x), Double($0.y)] } }
+    }
+
+    /// Why the imported outline is not the part on screen, when it is not.
+    /// A warning, not a refusal — plenty of real work machines a fixture that
+    /// is not the part — but one that has to be acknowledged (item 16).
+    private(set) var outlineMismatch: String?
+
+    /// Compare an imported outline against the part on screen, if there is
+    /// one. Silent when there is nothing to compare against.
+    private func compareWithModel(_ outline: CNCOutline) {
+        outlineMismatch = nil
+        // A section of the part on screen, taken now: comparing against a
+        // stale one would be the very mistake this is here to catch.
+        if modelDocument?() != nil, modelSection == nil,
+           let document = modelDocument?(),
+           let section = try? CNCCam.section(document, partIndex: modelPartIndex),
+           !section.isTorn {
+            modelSection = section
+        }
+        guard let loops = modelLoops() else { return }
+        let imported = [outline.outer.points.map { [Double($0.x), Double($0.y)] }]
+            + outline.holes.map { $0.points.map { [Double($0.x), Double($0.y)] } }
+        do {
+            let comparison = try CNCCam.compareOutline([
+                "a": ["loops": imported],
+                "b": ["loops": loops],
+                "tolerance": 0.05,
+            ])
+            if !comparison.agrees { outlineMismatch = comparison.warning }
+        } catch {
+            // Not being able to compare is itself worth saying: silence here
+            // would read as agreement.
+            outlineMismatch = "This outline could not be compared with the part on screen: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Material, feeds and the dial to set
+
+    /// Load the kernel's material table once.
+    func loadMaterials() {
+        guard materials.isEmpty else { return }
+        do { materials = try CNCCam.materials() }
+        catch { self.error = error.localizedDescription }
+    }
+
+    private func toolRequest() -> [String: Any] {
+        var tool: [String: Any] = ["diameter": toolDiameter, "flutes": toolFlutes, "kind": "flat_end_mill"]
+        if toolFluteLength > 0 { tool["flute_length"] = toolFluteLength }
+        return tool
+    }
+    private var machineRequestJSON: [String: Any] {
+        ["class": "hobby", "spindle": "dial", "max_feed": 3000.0]
+    }
+    /// Which entry in the feeds table this operation is: a profile cut through
+    /// sheet is buried on both sides, which is a slot however it is drawn.
+    private func feedsOperationName(_ kind: CNCOpKind) -> String {
+        switch kind {
+        case .face: return "profile"
+        case .pocket: return "pocket"
+        case .helicalBore: return "slot"
+        case .contourInside, .contourOutside: return "slot"
+        }
+    }
+
+    /// The numbers the kernel recommends for this material, tool and cut.
+    func recommendFeeds() -> CNCFeedAdvice? {
+        guard let id = materialID else {
+            error = "Choose what the blank is made of before asking for feeds."
+            return nil
+        }
+        do {
+            let advice = try CNCCam.recommend([
+                "material": id,
+                "op": feedsOperationName(setup.kind),
+                "tool": toolRequest(),
+                "machine": machineRequestJSON,
+            ])
+            recommendation = advice
+            return advice
+        } catch {
+            self.error = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Recommend and apply: feed, plunge, stepdown, stepover and rpm, on every
+    /// operation. Item 52 — with five operations the only way to change
+    /// material was to edit each one, or re-import the outline.
+    @discardableResult
+    func applyRecommendedFeeds() -> CNCFeedAdvice? {
+        guard !machine.active, !generating, let advice = recommendFeeds() else { return nil }
+        let values = advice.values(derated: firstCutDerate)
+        var spec = setup
+        spec.feed = values.feed
+        spec.plunge = values.plunge
+        spec.stepdown = values.stepdown
+        spec.rpm = values.rpm
+        // A pass cannot step over further than the cutter is wide, and only a
+        // face or a pocket steps over at all.
+        spec.stepover = min(max(values.stepover, 0.01), toolDiameter)
+        setup = spec
+        applyFeedsToAllOperations()
+        refreshFeedNotes()
+        return advice
+    }
+
+    /// What the kernel makes of the numbers in the selected operation.
+    func refreshFeedNotes() {
+        guard let id = materialID else { feedNotes = []; return }
+        let s = setup
+        guard [s.feed, s.plunge, s.rpm, s.stepdown].allSatisfy({ $0.isFinite && $0 > 0 }) else {
+            feedNotes = []; return
+        }
+        do {
+            let check = try CNCCam.checkFeeds([
+                "material": id,
+                "op": feedsOperationName(s.kind),
+                "tool": toolRequest(),
+                "machine": machineRequestJSON,
+                "settings": ["feed": s.feed, "plunge": s.plunge, "rpm": s.rpm,
+                             "stepdown": s.stepdown,
+                             "stepover": min(max(s.stepover, 0.01), toolDiameter)],
+            ])
+            feedNotes = check.notes
+        } catch {
+            feedNotes = []
+        }
+    }
+
+    // MARK: - Clamps
+
+    func addClamp() {
+        guard !machine.active, !generating else { return }
+        // Somewhere out of the way to start: beyond the blank's own corner, so
+        // a new clamp never silently overlaps the cut.
+        let corner = stockCornerFromZero
+        clamps.append(CNCClamp(x: (corner[0] - 40).rounded(), y: (corner[1] - 40).rounded(),
+                               name: "Clamp \(clamps.count + 1)"))
+    }
+    func removeClamp(_ id: UUID) {
+        guard !machine.active, !generating else { return }
+        clamps.removeAll { $0.id == id }
+    }
+
+    // MARK: - Islands
+
+    /// Loops of the outline that lie inside an operation's own contour, and so
+    /// could be kept rather than cleared away.
+    func islandCandidates(for operation: CNCOperation) -> [[[Double]]] {
+        let wall = operation.setup.contour
+        guard operation.setup.kind == .pocket, wall.count >= 3, let outline else { return [] }
+        return outline.holes.map { $0.points.map { [Double($0.x), Double($0.y)] } }
+            .filter { hole in
+                hole.count >= 3 && hole.allSatisfy { contains(wall, $0) }
+            }
+    }
+
+    /// Keep everything inside this pocket, or clear it all away.
+    func keepIslands(_ keep: Bool) {
+        guard !machine.active, !generating, setup.kind == .pocket else { return }
+        var spec = setup
+        spec.islands = keep ? islandCandidates(for: selectedOperation) : []
+        setup = spec
+        if keep && spec.islands.isEmpty {
+            error = "Nothing in this outline lies inside this opening, so there is nothing for the pocket to keep."
+        }
+    }
+
+    /// What the last build said about the material this operation keeps.
+    func islandClearances(of operation: CNCOperation) -> [CNCIslandClearance.Island] {
+        guard jobCurrent, !usesImportedProgram else { return [] }
+        let indices = requestIndices(of: operation)
+        return (job?.islandClearance ?? [])
+            .filter { indices.contains($0.opIndex) }
+            .flatMap(\.islands)
+    }
+
+    /// Point in closed polygon, by ray crossing.
+    private func contains(_ polygon: [[Double]], _ p: [Double]) -> Bool {
+        var inside = false
+        for i in polygon.indices {
+            let a = polygon[i], b = polygon[(i + 1) % polygon.count]
+            guard a.count >= 2, b.count >= 2 else { continue }
+            if (a[1] > p[1]) != (b[1] > p[1]) {
+                let t = (p[1] - a[1]) / (b[1] - a[1])
+                if p[0] < a[0] + t * (b[0] - a[0]) { inside.toggle() }
+            }
+        }
+        return inside
+    }
+
+    // MARK: - Tabs
+
+    /// The tabs of an operation as the audit found them, in order round the
+    /// loop. These are where the metal really is, not where it was asked for.
+    func tabLandings(of operation: CNCOperation) -> [CNCTabLanding] {
+        guard jobCurrent, !usesImportedProgram else { return [] }
+        let indices = requestIndices(of: operation)
+        return (job?.tabPlacement ?? [])
+            .filter { indices.contains($0.opIndex) }
+            .flatMap(\.tabs)
+    }
+
+    /// The tabs an operation asks for, as fractions round its own contour.
+    /// Empty positions mean "evenly spaced", which is what the kernel does —
+    /// so this fills them in before the first drag rather than inventing a
+    /// different rule.
+    func declaredTabPositions(of operation: CNCOperation) -> [Double] {
+        let s = operation.setup
+        if !s.tabPositions.isEmpty { return s.tabPositions }
+        guard s.tabs > 0 else { return [] }
+        return (0..<s.tabs).map { (Double($0) + 0.5) / Double(s.tabs) }
+    }
+
+    /// Where a tab sits on the contour the user sees, as a fraction.
+    ///
+    /// The request states tab positions on the cutter's own offset loop and
+    /// the audit measures the contour as drawn; the two are a rotation apart.
+    /// The panel and the viewport both speak the drawn contour, so this is the
+    /// number they show — the request's own value plus whatever the last build
+    /// measured the difference to be.
+    func tabFraction(of operation: CNCOperation, index: Int) -> Double {
+        let declared = declaredTabPositions(of: operation)
+        guard declared.indices.contains(index) else { return 0 }
+        return wrapFraction(declared[index] + (tabFrameOffset[operation.id] ?? 0))
+    }
+
+    /// Where a tab sits on the contour, in the stock frame, for the overlay to
+    /// draw a handle on.
+    func declaredTabPoint(of operation: CNCOperation, index: Int) -> [Double]? {
+        let points = operation.setup.contour
+        guard points.count >= 3 else { return nil }
+        return point(on: points, at: tabFraction(of: operation, index: index))
+    }
+
+    /// Put a tab at a fraction of the way round the contour, typed rather than
+    /// dragged. Both paths mean the same thing and go the same way.
+    func setTabPosition(index: Int, to fraction: Double) {
+        guard fraction.isFinite else { return }
+        let operation = selectedOperation
+        guard let xy = point(on: operation.setup.contour, at: wrapFraction(fraction)) else { return }
+        moveTab(operation: operation.id, index: index, to: xy)
+    }
+
+    /// What a drag is waiting to find out: the place the user dropped a tab,
+    /// and whether the rebuild put it there.
+    private struct TabDrag {
+        var operationID: UUID
+        var index: Int
+        var target: Double
+        var xy: [Double]
+        var corrected = false
+    }
+    private var pendingTabDrag: TabDrag?
+    /// How far an operation's requested fractions sit from where tabs land,
+    /// learned from the last build. The request is stated on the cutter's own
+    /// offset loop and the audit measures the drawn contour, so the two are a
+    /// rotation apart — measured, never assumed.
+    private var tabFrameOffset: [UUID: Double] = [:]
+
+    /// Drag a tab to a point on the contour, in the work frame.
+    ///
+    /// Everything goes through the request: the drop point becomes a fraction
+    /// of the way round the contour, the fraction becomes `tab_positions`, and
+    /// the job is rebuilt. Where the tab really ended up comes back in
+    /// `tab_placement`, and if the kernel settled it somewhere else — it lands
+    /// tabs on straight stretches — that is what the overlay then draws.
+    func moveTab(operation id: UUID, index: Int, to xy: [Double]) {
+        guard !machine.active, !generating,
+              let position = operations.firstIndex(where: { $0.id == id }),
+              xy.count >= 2, xy.allSatisfy(\.isFinite) else { return }
+        let points = operations[position].setup.contour
+        guard points.count >= 3 else { return }
+        var positions = declaredTabPositions(of: operations[position])
+        guard positions.indices.contains(index) else { return }
+        let target = fraction(on: points, nearest: xy)
+        positions[index] = wrapFraction(target - (tabFrameOffset[id] ?? 0))
+        operations[position].setup.tabPositions = positions
+        operations[position].setup.tabs = positions.count
+        pendingTabDrag = TabDrag(operationID: id, index: index, target: target, xy: xy)
+        setupConfirmed = false; revision += 1
+        build()
+    }
+
+    /// The tab handle being dragged in the viewport, by entity name.
+    private(set) var draggingTabName: String?
+
+    /// Start dragging the tab handle an entity name points at.
+    /// `cncTabHandle-<operation uuid>-<index>`.
+    @discardableResult
+    func beginTabDrag(named name: String) -> Bool {
+        guard !machine.active, !generating, tab(named: name) != nil else { return false }
+        draggingTabName = name
+        return true
+    }
+    func cancelTabDrag() { draggingTabName = nil }
+
+    /// Drop the dragged tab at a point in the work frame.
+    func dropTab(atWork xy: [Double]) {
+        guard let name = draggingTabName, let target = tab(named: name) else { return }
+        draggingTabName = nil
+        guard xy.count >= 2, xy.allSatisfy(\.isFinite) else { return }
+        // The viewport works in the work frame; a contour is stated in the
+        // part's own. Undo the placement rather than dragging the tab to a
+        // place on a part that is not there.
+        moveTab(operation: target.id, index: target.index, to: unplace(xy))
+    }
+
+    private func tab(named name: String) -> (id: UUID, index: Int)? {
+        let parts = name.split(separator: "-")
+        guard parts.count >= 3, parts[0] == "cncTabHandle",
+              let index = Int(parts[parts.count - 1]) else { return nil }
+        let uuid = parts[1..<(parts.count - 1)].joined(separator: "-")
+        guard let id = UUID(uuidString: uuid), operations.contains(where: { $0.id == id }) else { return nil }
+        return (id, index)
+    }
+
+    /// A point in the work frame, back in the part's own frame.
+    func unplace(_ xy: [Double]) -> [Double] {
+        let p = effectivePlacement
+        let a = -p.rotationDeg * .pi / 180
+        let (x, y) = (xy[0] - p.dx, xy[1] - p.dy)
+        return [x * cos(a) - y * sin(a), x * sin(a) + y * cos(a)]
+    }
+
+    /// Add or remove tabs on the selected contour, keeping the ones that are
+    /// already placed where they are.
+    func setTabCount(_ count: Int) {
+        guard !machine.active, !generating, setup.isContour else { return }
+        let wanted = max(0, min(12, count))
+        var spec = setup
+        var positions = declaredTabPositions(of: selectedOperation)
+        if wanted == 0 {
+            positions = []
+        } else if wanted < positions.count {
+            positions = Array(positions.prefix(wanted))
+        } else if wanted > positions.count {
+            // A new tab goes into the widest gap between the ones that are
+            // already placed, which is where a machinist would put it.
+            while positions.count < wanted {
+                positions.append(widestGapMidpoint(positions))
+                positions.sort()
+            }
+        }
+        spec.tabs = wanted
+        spec.tabPositions = positions.isEmpty ? [] : positions
+        setup = spec
+    }
+
+    private func widestGapMidpoint(_ positions: [Double]) -> Double {
+        guard let first = positions.first else { return 0.5 }
+        guard positions.count > 1 else { return wrapFraction(first + 0.5) }
+        let sorted = positions.sorted()
+        var best = (gap: 0.0, mid: 0.5)
+        for i in sorted.indices {
+            let a = sorted[i], b = sorted[(i + 1) % sorted.count]
+            let gap = wrapFraction(b - a)
+            if gap > best.gap { best = (gap, wrapFraction(a + gap / 2)) }
+        }
+        return best.mid
+    }
+
+    private func wrapFraction(_ v: Double) -> Double {
+        guard v.isFinite else { return 0 }
+        let r = v.truncatingRemainder(dividingBy: 1)
+        return r < 0 ? r + 1 : r
+    }
+
+    /// The fraction of the way round a closed polyline nearest a point.
+    private func fraction(on points: [[Double]], nearest p: [Double]) -> Double {
+        var run = 0.0, best = (fraction: 0.0, distance: Double.greatestFiniteMagnitude)
+        let total = perimeter(points)
+        guard total > 0 else { return 0 }
+        for i in points.indices {
+            let a = points[i], b = points[(i + 1) % points.count]
+            let dx = b[0] - a[0], dy = b[1] - a[1]
+            let length = hypot(dx, dy)
+            if length > 0 {
+                let t = max(0, min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (length * length)))
+                let d = hypot(a[0] + t * dx - p[0], a[1] + t * dy - p[1])
+                if d < best.distance { best = ((run + t * length) / total, d) }
+            }
+            run += length
+        }
+        return best.fraction
+    }
+
+    /// The point a fraction of the way round a closed polyline.
+    private func point(on points: [[Double]], at fraction: Double) -> [Double]? {
+        let total = perimeter(points)
+        guard total > 0 else { return nil }
+        var remaining = wrapFraction(fraction) * total
+        for i in points.indices {
+            let a = points[i], b = points[(i + 1) % points.count]
+            let length = hypot(b[0] - a[0], b[1] - a[1])
+            if remaining <= length || i == points.count - 1 {
+                let t = length > 0 ? remaining / length : 0
+                return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+            }
+            remaining -= length
+        }
+        return points.first
+    }
+
+    private func perimeter(_ points: [[Double]]) -> Double {
+        var total = 0.0
+        for i in points.indices {
+            let a = points[i], b = points[(i + 1) % points.count]
+            total += hypot(b[0] - a[0], b[1] - a[1])
+        }
+        return total
+    }
+
+    /// Learn where the request's fractions land, and correct a drag that
+    /// missed. Called after every build that carries a tab audit.
+    private func settleTabs() {
+        guard let drag = pendingTabDrag,
+              let position = operations.firstIndex(where: { $0.id == drag.operationID }) else { return }
+        let landings = tabLandings(of: operations[position])
+        guard !landings.isEmpty else { pendingTabDrag = nil; return }
+        // The tab that landed nearest where the user dropped it is the one
+        // that was dragged; no pairing of two different frames is needed.
+        let landed = landings.min {
+            hypot($0.at[0] - drag.xy[0], $0.at[1] - drag.xy[1])
+                < hypot($1.at[0] - drag.xy[0], $1.at[1] - drag.xy[1])
+        }
+        guard let landed else { pendingTabDrag = nil; return }
+        var residual = drag.target - landed.alongContour
+        residual -= (residual).rounded()          // the short way round the loop
+        tabFrameOffset[drag.operationID] = wrapFraction((tabFrameOffset[drag.operationID] ?? 0) + residual)
+        // One correction, then the answer stands: the kernel settles tabs onto
+        // straight stretches on purpose, and chasing that would be a loop.
+        if !drag.corrected, abs(residual) > 0.01,
+           operations[position].setup.tabPositions.indices.contains(drag.index) {
+            operations[position].setup.tabPositions[drag.index] =
+                wrapFraction(operations[position].setup.tabPositions[drag.index] + residual)
+            pendingTabDrag?.corrected = true
+            revision += 1
+            // The build that is reporting this is still running, so the
+            // correction goes after it rather than into a guard that would
+            // drop it on the floor.
+            Task { @MainActor [weak self] in self?.build() }
+            return
+        }
+        pendingTabDrag = nil
+    }
+
     // MARK: - Building the job
 
     /// Kept under its old name because the machine bar's readiness popover
@@ -787,6 +1427,17 @@ final class CNCWorkspace {
         }
     }
 
+    /// Which request-operation indices one listed operation became.
+    private func requestIndices(of operation: CNCOperation) -> [Int] {
+        var start = 0
+        for candidate in operations {
+            let count = requestCount(of: candidate)
+            if candidate.id == operation.id { return Array(start..<(start + count)) }
+            start += count
+        }
+        return []
+    }
+
     private func apply(_ result: CNCJobResult, key: CNCJobKey) {
         job = result; builtKey = key
         // The kernel's own words when it could not build the job at all.
@@ -808,6 +1459,8 @@ final class CNCWorkspace {
             operations[i].fitReport = result.fit.first { indices.contains($0.opIndex) }?.report
         }
         previewFraction = 0; revision += 1
+        // A dragged tab is not placed until the job says where it went.
+        settleTabs()
     }
 
     /// How many kernel operations one listed operation becomes. A pilot group
@@ -836,6 +1489,14 @@ final class CNCWorkspace {
         let clearance = operations.map(\.setup.clearance).filter { $0.isFinite && $0 > 0 }.max() ?? 5
         options.safeZ = max(1, clearance)
         options.parkZ = max(1, clearance)
+        // Where the part sits on the blank, and where zero is: the job moves
+        // and the part it is checked against moves with it, so a turned or
+        // shifted job is verified against the metal it will really cut.
+        let placed = effectivePlacement
+        if !placed.isIdentity {
+            options.placement = CNCJobPlacementRequest(dx: placed.dx, dy: placed.dy,
+                                                      rotationDeg: placed.rotationDeg)
+        }
         if let outline {
             options.part = CNCJobPartRequest(
                 outer: outline.outer.points.map { [Double($0.x), Double($0.y)] },
@@ -846,14 +1507,27 @@ final class CNCWorkspace {
             // job was checked is the one that destroys a part.
             options.verify = false
         }
+        // The machine's own limits, when the machine bar has measured them: a
+        // job that would run off the end of the table is worth hearing about
+        // before the cutter is in the work, not after.
+        var machineRequest = CNCJobMachineRequest()
+        let profile = machineProfile
+        if let lo = profile.travelMin, let hi = profile.travelMax, lo.count == 3, hi.count == 3 {
+            machineRequest.travel = CNCJobTravelRequest(min: lo, max: hi)
+        }
+        if let offset = profile.workOffset, offset.count == 3 {
+            machineRequest.workOffset = offset
+        }
         return CNCJobRequest(
             name: outline?.name ?? "vcad job",
             stock: CNCJobStockRequest(thickness: stockThickness,
                                       margin: effectiveMargin,
                                       spoilboard: underStock.thickness),
+            machine: machineRequest,
             tools: [CNCJobToolRequest(diameter: toolDiameter, flutes: toolFlutes,
-                                     fluteLength: toolFluteLength > 0 ? toolFluteLength : nil,
-                                     stickout: toolStickout > 0 ? toolStickout : nil)],
+                                      fluteLength: toolFluteLength > 0 ? toolFluteLength : nil,
+                                      stickout: toolStickout > 0 ? toolStickout : nil,
+                                      centreCutting: toolCentreCutting)],
             operations: requests,
             options: options)
     }
@@ -868,22 +1542,38 @@ final class CNCWorkspace {
             r.bottomAllowance = s.bottomAllowance
             r.order = position
             // The outside profile runs last whatever the list says, because
-            // after it the part is held by tabs at best. Forcing it means
-            // saying so out loud: the operation is asked for in the phase its
-            // position implies. (An explicit phase override in the FFI would
-            // say this without borrowing another role's name.)
-            if s.forceOrder && kind == .contourOutside { r.role = "inside_feature" }
+            // after it the part is held by tabs at best. Forcing it says so
+            // outright: the operation runs in the phase its place in the list
+            // implies. It used to be said by calling the profile an
+            // "inside_feature" — a lie about what the cut is, told to change
+            // when it happens.
+            if s.forceOrder { r.phase = position }
             return r
         }
         switch s.kind {
         case .face:
             var r = common(.face, name: operation.name)
-            r.rectangle = [0, 0, stockWidth, stockHeight]
+            // A rectangle cannot be turned and stay a rectangle, and the
+            // kernel refuses one rather than quietly facing its bounding box.
+            // A turned job says the same area as four points instead.
+            if effectivePlacement.rotationDeg != 0 {
+                r.contour = [[0, 0], [stockWidth, 0], [stockWidth, stockHeight], [0, stockHeight]]
+                r.kind = .pocket
+                // It is still facing, and still runs first: clearing the same
+                // area under another name must not change when it happens.
+                if r.phase == nil { r.role = "facing" }
+            } else {
+                r.rectangle = [0, 0, stockWidth, stockHeight]
+            }
             return [r]
         case .pocket:
             var r = common(.pocket, name: operation.name)
             if s.contour.count >= 3 { r.contour = s.contour } else { r.rectangle = [0, 0, stockWidth, stockHeight] }
             r.stockToLeave = s.stockToLeave > 0 ? s.stockToLeave : nil
+            // Material the pocket keeps. The kernel clears around it and the
+            // answer reports how close the cutter came to each one.
+            let islands = s.islands.filter { $0.count >= 3 }
+            if !islands.isEmpty { r.islands = islands }
             return [r]
         case .contourInside, .contourOutside:
             var r = common(s.kind, name: operation.name)
@@ -896,7 +1586,15 @@ final class CNCWorkspace {
             r.finishStepdowns = s.finishStepdowns > 1 ? s.finishStepdowns : nil
             r.springPass = s.springPass ? true : nil
             r.finishFeed = s.finishFeed > 0 ? s.finishFeed : nil
-            if s.tabs > 0 {
+            // Dragged tabs are sent as the positions they were dragged to;
+            // untouched ones as a count the kernel spaces evenly. Sending both
+            // is refused by the kernel when they disagree, which is right: two
+            // answers to "where are the tabs" is one too many.
+            let positions = s.tabPositions.filter { $0.isFinite && (0...1).contains($0) }
+            if !positions.isEmpty {
+                r.tabPositions = positions
+                r.tabWidth = s.tabWidth; r.tabHeight = s.tabHeight
+            } else if s.tabs > 0 {
                 r.tabs = s.tabs; r.tabWidth = s.tabWidth; r.tabHeight = s.tabHeight
             }
             r.thinSlot = .init(strategy: s.thinSlot.rawValue,
@@ -977,9 +1675,13 @@ final class CNCWorkspace {
 
     private func verifyImported(code: String) -> CNCJobResult? {
         guard let outline else { return nil }
+        // The program is in the work frame, so the part it is checked against
+        // has to be placed there too — otherwise a job on skewed stock reads
+        // as gouging everything it touches.
+        let placement = effectivePlacement
         let part = CNCJobPartRequest(
-            outer: outline.outer.points.map { [Double($0.x), Double($0.y)] },
-            holes: outline.holes.map { $0.points.map { [Double($0.x), Double($0.y)] } })
+            outer: outline.outer.points.map { placement.apply([Double($0.x), Double($0.y)]) },
+            holes: outline.holes.map { $0.points.map { placement.apply([Double($0.x), Double($0.y)]) } })
         let stock = CNCJobStockRequest(thickness: stockThickness,
                                        margin: effectiveMargin,
                                        spoilboard: underStock.thickness)

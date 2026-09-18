@@ -23,7 +23,7 @@
 //!                     "tabs": 3, "tab_width": 4, "tab_height": 0.42,
 //!                     "bottom_allowance": 0.15,
 //!                     "thin_slot": { "strategy": "centre_line", "tolerance": 0.05 },
-//!                     "order": 0, "role": "inside_feature" } ],
+//!                     "order": 0, "role": "inside_feature", "phase": 0 } ],
 //!   "options": { "arc_fit": { "tolerance": 0.01 },
 //!                "tool_change": { "type": "manual_pause_reprobe", "probe_macro": null },
 //!                "spin_up_seconds": 3.0, "park_z": 5.0, "safe_z": 5.0,
@@ -36,7 +36,9 @@
 //! Operation `kind` is one of `face`, `pocket`, `contour_outside`,
 //! `contour_inside`, `drill`, `helical_bore`. The geometry each one reads:
 //! `rectangle: [x0,y0,x1,y1]` for `face` and a rectangular `pocket`;
-//! `contour: [[x,y], …]` for a shaped `pocket` and both contours;
+//! `contour: [[x,y], …]` for a shaped `pocket` and both contours, with
+//! `islands: [[[x,y], …], …]` on a pocket for material it clears around and
+//! keeps;
 //! `holes: [{ "x": , "y": , "depth": } | [x,y]]` plus `cycle`
 //! (`spot` | `straight` | `peck` | `chip_break`), `peck_depth`, `retreat`,
 //! `dwell`, `clearance`, `peck_clearance`, `through` for `drill`; and
@@ -57,6 +59,9 @@
 //!   "fit":    [ { "op", "op_index", "side", "report": { … FitReport … } } ],
 //!   "report": [ { "op", "op_index", "report": { … ContourReport … } } ],
 //!   "arc_fit": { "segments_in", "segments_out", "arcs_emitted", "max_deviation" },
+//!   "island_clearance": [ { "op", "op_index", "tool_diameter", "tolerance_mm",
+//!                           "islands": [ { "island", "centre_clearance_mm",
+//!                                          "cut_into_mm", "kept" } ] } ],
 //!   "tool_sequence": [1, 2],
 //!   "notes": [ { "level": "caution", "text": "…" } ] }
 //! ```
@@ -220,6 +225,17 @@ struct OperationReq {
     // geometry
     #[serde(default)]
     contour: Option<Vec<[f64; 2]>>,
+    /// Material kept inside a `pocket`: closed polylines the cutter clears
+    /// around and never enters. Only a pocket has them — an island in a
+    /// contour operation would be a second wall, not a kept lump, and is
+    /// refused rather than quietly dropped.
+    ///
+    /// The oracle's part region is an outer boundary and openings, which
+    /// cannot express material *inside* an opening, so islands are checked
+    /// separately: `island_clearance` in the response reports how close the
+    /// cutter came to each one, and a cut into an island blocks the job.
+    #[serde(default)]
+    islands: Option<Vec<Vec<[f64; 2]>>>,
     #[serde(default)]
     holes: Option<Vec<HoleReq>>,
     #[serde(default)]
@@ -313,6 +329,20 @@ struct OperationReq {
     order: Option<i32>,
     #[serde(default)]
     role: Option<String>,
+    /// When this operation runs, said outright: lower phases run first, and an
+    /// operation with no phase keeps the one its role implies (facing 0,
+    /// inside features 1, the profile that frees the part 2).
+    ///
+    /// This exists because the only way to run the outside profile early used
+    /// to be to call it an `"inside_feature"` — a lie about what the cut *is*,
+    /// told to move *when* it happens. Give a phase instead and the role stays
+    /// true. Ties are broken by the order the operations were given in.
+    ///
+    /// A job that uses phases is ordered by them alone, so the "profile last"
+    /// rule no longer decides anything it does not say: that is the point, and
+    /// it is stated in the response's notes.
+    #[serde(default)]
+    phase: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -485,6 +515,9 @@ fn build(req: JobRequest) -> Result<Value, String> {
         job.push(job_op);
     }
 
+    // The run order, when the caller stated one outright.
+    apply_phases(&mut job, &built, &mut notes)?;
+
     // Tool geometry, reported whatever happens. `Job::assemble` refuses on an
     // error-level finding, so the findings are collected before it runs — a
     // refusal with no list of what was wrong is the thing wave 1 set out to
@@ -629,6 +662,29 @@ fn build(req: JobRequest) -> Result<Value, String> {
     });
     if let Some(report) = arc_fit {
         response["arc_fit"] = report;
+    }
+
+    // Material a pocket keeps. The oracle cannot see it (see `island_audit`),
+    // so this runs whatever `options.verify` says: cutting away a lump the
+    // request asked to keep is a wrong job, not an opinion about one.
+    let (island_reports, island_gouges) = island_audit(&built, &job, &moves, &ranges);
+    if !island_reports.is_empty() {
+        response["island_clearance"] = json!(island_reports);
+    }
+    if !island_gouges.is_empty() {
+        notes.push(Note::danger(format!(
+            "this job cuts into material it was told to keep: {}. No G-code is returned.",
+            island_gouges.join("; ")
+        )));
+        response["blocked"] = json!(true);
+        response["error"] = json!(format!(
+            "this job cuts into material it was told to keep: {}.",
+            island_gouges.join("; ")
+        ));
+        response["policy"] =
+            json!({ "verified": false, "blocked_by": ["island_gouge"], "warnings": [] });
+        response["notes"] = json!(notes);
+        return Ok(response);
     }
 
     if !req.options.verify {
@@ -878,6 +934,11 @@ fn place(op: &OperationReq, placement: &Placement, name: &str) -> Result<Operati
     if let Some(points) = &op.contour {
         out.contour = Some(placement.apply_loop(points));
     }
+    if let Some(islands) = &op.islands {
+        // An island travels with the pocket it sits in, or the cutter would
+        // clear around where it used to be.
+        out.islands = Some(islands.iter().map(|i| placement.apply_loop(i)).collect());
+    }
     if let Some(holes) = &op.holes {
         out.holes = Some(
             holes
@@ -910,6 +971,227 @@ fn place(op: &OperationReq, placement: &Placement, name: &str) -> Result<Operati
         ]);
     }
     Ok(out)
+}
+
+/// Put the job in the order its phases ask for, when any were given.
+///
+/// The kernel orders a job by the *role* each operation plays — facing, then
+/// inside features, then the profile that frees the part — and that rule is
+/// right nearly always, which is why it stays the default. What it could not
+/// express was "run this one earlier anyway", and the only way to say it was to
+/// call the outside profile an `"inside_feature"`: a lie about what the cut is,
+/// told to change when it happens.
+///
+/// A phase says it directly. Every operation gets one — its own, or the one its
+/// role implies — and the whole job is ordered by phase, then by the order the
+/// operations arrived in. The roles are then all one bucket on purpose: a role
+/// decides nothing but the order, and the order has just been stated.
+fn apply_phases(
+    job: &mut Job,
+    built: &[(CamSettings, OperationReq, ToolEntry)],
+    notes: &mut Vec<Note>,
+) -> Result<(), String> {
+    if built.iter().all(|(_, o, _)| o.phase.is_none()) {
+        return Ok(());
+    }
+    let phases: Vec<i32> = built
+        .iter()
+        .enumerate()
+        .map(|(i, (_, o, _))| {
+            o.phase.unwrap_or(match job.ops[i].role {
+                OpRole::Facing => 0,
+                OpRole::InsideFeature => 1,
+                OpRole::OutsideProfile => 2,
+            })
+        })
+        .collect();
+    let mut wanted: Vec<usize> = (0..built.len()).collect();
+    wanted.sort_by_key(|&i| (phases[i], i));
+    for (rank, &i) in wanted.iter().enumerate() {
+        job.ops[i].role = OpRole::InsideFeature;
+        job.ops[i].order = rank as i32;
+    }
+    // Tools are still kept together, which on a multi-tool job can pull an
+    // operation out of the order that was asked for. A job that runs in an
+    // order it was not told to is exactly what this field exists to stop, so
+    // it is refused rather than quietly re-sorted.
+    let actual = job.order();
+    if actual != wanted {
+        let named = |list: &[usize]| {
+            list.iter()
+                .map(|&i| job.ops[i].name.clone())
+                .collect::<Vec<_>>()
+                .join(" → ")
+        };
+        return Err(format!(
+            "the phases ask for {}, but this job would run {}: operations are grouped by tool, so a phase order that interleaves two tools cannot be honoured. Give each tool's operations consecutive phases, or drop the phase override.",
+            named(&wanted),
+            named(&actual)
+        ));
+    }
+    notes.push(Note::info(format!(
+        "this job runs in the phase order it was given ({}). The usual rule — facing, then inside features, then the profile that frees the part — did not decide it.",
+        wanted
+            .iter()
+            .map(|&i| format!("{} (phase {})", job.ops[i].name, phases[i]))
+            .collect::<Vec<_>>()
+            .join(" → ")
+    )));
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Islands
+// ---------------------------------------------------------------------------
+
+/// How close the cutter came to the material each pocket was told to keep.
+///
+/// The oracle's part is an outer boundary and openings, and material *inside*
+/// an opening cannot be written down that way — so a cut straight across an
+/// island reads as perfectly clean to every check in `verify2d`. This is the
+/// check that is missing, measured off the same moves the preview draws: for
+/// every island, the closest the cutter's *centre* came, less its radius.
+///
+/// The preview samples arcs to [`PREVIEW_TOLERANCE`], and arc fitting is
+/// allowed its own tolerance, so a clearance is only believed to about
+/// `tolerance_mm`. Anything inside that is reported and not refused; anything
+/// beyond it is a cut into a kept lump and blocks the job.
+fn island_audit(
+    built: &[(CamSettings, OperationReq, ToolEntry)],
+    job: &Job,
+    moves: &[Move],
+    ranges: &[RangeOut],
+) -> (Vec<Value>, Vec<String>) {
+    let tolerance = PREVIEW_TOLERANCE + 0.01;
+    let mut out = Vec::new();
+    let mut gouges = Vec::new();
+    for (index, (_, op, entry)) in built.iter().enumerate() {
+        let islands: Vec<Vec<[f64; 2]>> = op
+            .islands
+            .iter()
+            .flatten()
+            .filter(|l| l.len() >= 3)
+            .cloned()
+            .collect();
+        if islands.is_empty() {
+            continue;
+        }
+        let radius = entry.tool.diameter() / 2.0;
+        let cuts = cut_segments(moves, ranges, index);
+        let mut entries = Vec::with_capacity(islands.len());
+        for (i, island) in islands.iter().enumerate() {
+            let clearance = cuts
+                .iter()
+                .map(|(a, b)| signed_clearance(*a, *b, island))
+                .fold(f64::MAX, f64::min);
+            let into = if clearance == f64::MAX {
+                0.0
+            } else {
+                radius - clearance
+            };
+            if into > tolerance {
+                gouges.push(format!(
+                    "{} cuts {into:.3} mm into island {i}",
+                    job.ops[index].name
+                ));
+            }
+            entries.push(json!({
+                "island": i,
+                // Centre-line clearance: how far the tool centre stayed from
+                // the island's wall. A path that entered the island reads
+                // negative.
+                "centre_clearance_mm": if clearance == f64::MAX { Value::Null } else { json!(clearance) },
+                "cut_into_mm": into.max(0.0),
+                "kept": into <= tolerance,
+            }));
+        }
+        out.push(json!({
+            "op": job.ops[index].name,
+            "op_index": index,
+            "tool_diameter": entry.tool.diameter(),
+            "tolerance_mm": tolerance,
+            "islands": entries,
+            "note": "the part region the oracle checks against cannot hold material inside an opening, so islands are checked here instead: the closest the cutter centre came to each island wall, less its radius.",
+        }));
+    }
+    (out, gouges)
+}
+
+/// Every cutting segment of one operation, in XY, at or below the stock top.
+/// A move above Z0 cuts nothing, so it cannot gouge anything either.
+fn cut_segments(moves: &[Move], ranges: &[RangeOut], op_index: usize) -> Vec<([f64; 2], [f64; 2])> {
+    let mut out = Vec::new();
+    for range in ranges.iter().filter(|r| r.op_index == Some(op_index)) {
+        if range.start >= range.end || range.end > moves.len() {
+            continue;
+        }
+        for pair in moves[range.start..range.end].windows(2) {
+            let (a, b) = (&pair[0], &pair[1]);
+            if b.rapid || a.to[2].min(b.to[2]) > 1e-9 {
+                continue;
+            }
+            out.push(([a.to[0], a.to[1]], [b.to[0], b.to[1]]));
+        }
+    }
+    out
+}
+
+/// Distance from a segment to a closed loop, negative when the segment is
+/// inside it.
+fn signed_clearance(a: [f64; 2], b: [f64; 2], loop_: &[[f64; 2]]) -> f64 {
+    let mut best = f64::MAX;
+    for i in 0..loop_.len() {
+        let (c, d) = (loop_[i], loop_[(i + 1) % loop_.len()]);
+        best = best.min(segment_distance(a, b, c, d));
+    }
+    if point_in_loop(a, loop_) || point_in_loop(b, loop_) {
+        -best
+    } else {
+        best
+    }
+}
+
+fn point_in_loop(p: [f64; 2], loop_: &[[f64; 2]]) -> bool {
+    let mut inside = false;
+    for i in 0..loop_.len() {
+        let (a, b) = (loop_[i], loop_[(i + 1) % loop_.len()]);
+        if (a[1] > p[1]) != (b[1] > p[1]) {
+            let t = (p[1] - a[1]) / (b[1] - a[1]);
+            if p[0] < a[0] + t * (b[0] - a[0]) {
+                inside = !inside;
+            }
+        }
+    }
+    inside
+}
+
+fn segment_distance(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> f64 {
+    if segments_cross(a, b, c, d) {
+        return 0.0;
+    }
+    point_segment_distance(a, c, d)
+        .min(point_segment_distance(b, c, d))
+        .min(point_segment_distance(c, a, b))
+        .min(point_segment_distance(d, a, b))
+}
+
+fn point_segment_distance(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let length2 = dx * dx + dy * dy;
+    if length2 <= f64::EPSILON {
+        return (p[0] - a[0]).hypot(p[1] - a[1]);
+    }
+    let t = (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length2).clamp(0.0, 1.0);
+    (a[0] + t * dx - p[0]).hypot(a[1] + t * dy - p[1])
+}
+
+fn segments_cross(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> bool {
+    let side = |p: [f64; 2], q: [f64; 2], r: [f64; 2]| {
+        (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    };
+    let (d1, d2) = (side(a, b, c), side(a, b, d));
+    let (d3, d4) = (side(c, d, a), side(c, d, b));
+    (d1 * d2 < 0.0) && (d3 * d4 < 0.0)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -956,6 +1238,11 @@ fn build_op(
     })?;
 
     let kind = normalise_kind(&op.kind);
+    if op.islands.is_some() && kind != "pocket" {
+        return Err(format!(
+            "{what} is a \"{kind}\" and carries \"islands\": only a pocket keeps material inside itself. An island on a contour would be a second wall, not a kept lump."
+        ));
+    }
     let operation: CamOperation = match kind.as_str() {
         "face" => {
             let r = rectangle(op, stock, &what)?;
@@ -970,6 +1257,10 @@ fn build_op(
                 }
             };
             let mut pocket = Pocket2D::new(contour, final_depth);
+            for (i, island) in op.islands.iter().flatten().enumerate() {
+                pocket =
+                    pocket.with_island(contour_from(&format!("{what}.islands[{i}]"), island)?);
+            }
             if let Some(s) = op.stock_to_leave {
                 pocket = pocket.with_stock_to_leave(non_negative(
                     &format!("{what}.stock_to_leave"),
@@ -1138,6 +1429,11 @@ fn build_op(
         }
     };
 
+    if op.role.is_some() && op.phase.is_some() {
+        return Err(format!(
+            "{what} gives both a \"role\" and a \"phase\", and they are two ways of saying the same thing: a role is what the cut is, and the only thing it decides is when it runs. Give the phase alone."
+        ));
+    }
     let role = match op.role.as_deref().map(normalise_kind).as_deref() {
         None => operation.default_role(),
         Some("facing") => OpRole::Facing,

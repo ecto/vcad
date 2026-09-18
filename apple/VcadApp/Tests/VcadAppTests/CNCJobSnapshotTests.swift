@@ -13,7 +13,7 @@ import XCTest
 @MainActor
 final class CNCJobSnapshotTests: XCTestCase {
 
-    private func job(blocked: Bool) async throws -> EditorModel {
+    private func job(blocked: Bool, setup: Bool = false) async throws -> EditorModel {
         let model = EditorModel()
         model.workspace = .manufacture
         let cnc = model.cnc
@@ -32,10 +32,34 @@ final class CNCJobSnapshotTests: XCTestCase {
             cnc.setup.stepdown = 0.17
             if cnc.setup.tabs > 0 { cnc.setup.tabHeight = 0.42 }
         }
+        if setup {
+            // The Setup stage as it is really used: a material, zero on the
+            // blank's corner, the job placed a little crooked, and two clamps
+            // on the table — one of them in the cutter's way.
+            cnc.loadMaterials()
+            cnc.materialID = "copper-c110"
+            cnc.zeroLocation = .stockCorner
+            cnc.placement = CNCPlacement(dx: 0, dy: 0, rotationDeg: 4)
+            let sweep = cnc.sweepRect
+            cnc.clamps = [
+                CNCClamp(x: sweep[0] - 34, y: sweep[1] + 8, width: 40, height: 18, name: "Left toe"),
+                CNCClamp(x: sweep[2] - 6, y: sweep[3] - 30, width: 40, height: 18, name: "Right toe"),
+            ]
+        }
         cnc.build()
         let deadline = Date().addingTimeInterval(120)
         while cnc.generating && Date() < deadline { try? await Task.sleep(for: .milliseconds(25)) }
-        cnc.select(.operation(cnc.operations[0].id))
+        if setup {
+            // The tabs belong to the profile, so that is the operation the tab
+            // panel is about even while the stock is what is selected.
+            if let profile = cnc.operations.first(where: { $0.setup.kind == .contourOutside }) {
+                cnc.select(.operation(profile.id))
+            }
+            cnc.select(.stock)
+            cnc.mode = .setup
+        } else {
+            cnc.select(.operation(cnc.operations[0].id))
+        }
         return model
     }
 
@@ -47,19 +71,43 @@ final class CNCJobSnapshotTests: XCTestCase {
         let directory = URL(fileURLWithPath: "/tmp/vcad-manufacture")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 
-        for (name, isBlocked) in [("job-passing", false), ("job-blocked", true)] {
-            let model = try await job(blocked: isBlocked)
+        for (name, isBlocked, isSetup) in [("job-passing", false, false),
+                                           ("job-blocked", true, false),
+                                           ("job-setup", false, true)] {
+            let model = try await job(blocked: isBlocked, setup: isSetup)
             let cnc = model.cnc
             cnc.machine.connect(simulated: true)
             defer { cnc.machine.disconnect() }
             XCTAssertEqual(!cnc.blockers.isEmpty, isBlocked,
                            "\(name): blockers \(cnc.blockers.map(\.text))")
+            if isSetup {
+                XCTAssertFalse(cnc.clampsInTheWay.isEmpty,
+                               "the setup snapshot is meant to show a clamp in the sweep")
+                XCTAssertFalse(cnc.tabLandings(of: cnc.operations.last!).isEmpty,
+                               "…and tabs that were really cut")
+            }
 
             for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
                 let content = VStack(spacing: 12) {
                     WorkspaceHeader(model: model)
                     HStack(alignment: .top, spacing: 12) {
                         CNCStudioOutline(cnc: cnc).frame(height: 620).panelSurface()
+                        if isSetup {
+                            // The panels this stage is about, side by side:
+                            // where zero is, where the job sits on the metal,
+                            // what is clamped to it, and where the tabs are.
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    CNCZeroSection(cnc: cnc)
+                                    Divider()
+                                    CNCPlacementSection(cnc: cnc)
+                                    Divider()
+                                    CNCClampSection(cnc: cnc)
+                                    Divider()
+                                    CNCTabSection(cnc: cnc)
+                                }.padding(14).controlSize(.small)
+                            }.frame(width: 320, height: 620).panelSurface()
+                        }
                         Spacer(minLength: 0)
                         CNCStudioInspector(model: model).frame(height: 620).panelSurface()
                     }

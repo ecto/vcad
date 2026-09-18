@@ -1330,6 +1330,343 @@ fn a_turned_rectangle_is_refused_rather_than_quietly_boxed() {
 }
 
 // ---------------------------------------------------------------------------
+// 11b. Islands: material a pocket keeps
+// ---------------------------------------------------------------------------
+
+/// The run order of the operation blocks, by name.
+fn run_order(out: &Value) -> Vec<String> {
+    let mut blocks: Vec<(u64, String)> = out["op_ranges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["block"] == json!("operation"))
+        .map(|r| {
+            (
+                r["start"].as_u64().unwrap(),
+                r["name"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+    blocks.sort_by_key(|(start, _)| *start);
+    blocks.into_iter().map(|(_, name)| name).collect()
+}
+
+/// A circle as a closed loop, the way an outline hands one over.
+fn circle_loop(centre: [f64; 2], radius: f64, segments: usize) -> Vec<[f64; 2]> {
+    (0..segments)
+        .map(|i| {
+            let a = std::f64::consts::TAU * i as f64 / segments as f64;
+            [centre[0] + radius * a.cos(), centre[1] + radius * a.sin()]
+        })
+        .collect()
+}
+
+/// Where the two kept bosses stand, and how big they are.
+const BOSSES: [[f64; 2]; 2] = [[20.0, 20.0], [40.0, 20.0]];
+const BOSS_RADIUS: f64 = 4.0;
+
+/// A plate with a rectangular pocket and two bosses left standing in it.
+///
+/// The stator's own opening cannot carry its pilots as islands — the three
+/// M3 pilots are outside that loop, in the ring, not inside it — and the
+/// kernel says so (see `islands_belong_to_pockets_and_travel_with_them`). So
+/// the geometry here is the plainest shape that asks the real question: metal
+/// the pocket must clear *around* and leave standing.
+fn pocket_with_islands(islands: bool, dx: f64) -> Value {
+    let wall = vec![
+        [10.0 + dx, 10.0],
+        [50.0 + dx, 10.0],
+        [50.0 + dx, 30.0],
+        [10.0 + dx, 30.0],
+    ];
+    let mut pocket = json!({
+        "name": "clear around the bosses", "tool": 1, "kind": "pocket",
+        "contour": wall, "depth": 2.0, "stepdown": 0.5, "stepover": 0.8,
+        "feed": 400, "plunge": 100, "rpm": 12000,
+    });
+    if islands {
+        pocket["islands"] = json!(BOSSES
+            .iter()
+            .map(|c| circle_loop([c[0] + dx, c[1]], BOSS_RADIUS, 48))
+            .collect::<Vec<_>>());
+    }
+    json!({
+        "name": "bossed plate",
+        "stock": { "thickness": 6.0, "bbox": [0.0, 0.0, 60.0, 40.0] },
+        "machine": { "name": "Anolex Ultra 2", "spindle": "dial" },
+        "tools": [d2_tool(1)],
+        "operations": [pocket],
+        // A blind pocket is a 2 mm step in a 6 mm plate, and the oracle's part
+        // is a *plan*: an outer boundary and openings, with no language for a
+        // floor half way down. Stating this pocket as an opening would have it
+        // refused for not cutting through; stating it as solid part would have
+        // every pass read as a gouge. So the replay is off here, on purpose —
+        // and the island check still runs, which is the whole reason it does
+        // not live behind `verify`.
+        "options": { "verify": false },
+    })
+}
+
+/// The closest a cutting move came to a point, in XY.
+fn nearest_cut(out: &Value, to: [f64; 2]) -> f64 {
+    out["moves"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["rapid"] != json!(true) && f(&m["to"][2]) <= 1e-9)
+        .map(|m| (f(&m["to"][0]) - to[0]).hypot(f(&m["to"][1]) - to[1]))
+        .fold(f64::MAX, f64::min)
+}
+
+#[test]
+fn a_pocket_clears_around_its_islands_and_never_touches_them() {
+    // A Ø2 cutter clearing around a Ø8 boss may bring its centre no closer
+    // than 4 + 1 mm to the boss's centre.
+    let keep_out = BOSS_RADIUS + 1.0;
+    let out = call(super::job, &pocket_with_islands(true, 0.0));
+    ok(&out);
+    assert_eq!(
+        out["blocked"],
+        json!(false),
+        "clearing around two bosses is a legal job: {} {}",
+        out["policy"],
+        out["error"]
+    );
+
+    // Measured off the moves, not off the report that claims it.
+    for (i, boss) in BOSSES.iter().enumerate() {
+        let nearest = nearest_cut(&out, *boss);
+        assert!(
+            nearest >= keep_out - 0.03,
+            "boss {i} is kept material and the cutter centre came {nearest:.3} mm from it \
+             — under {keep_out:.3} mm it has taken metal out of it"
+        );
+    }
+
+    // And the report's own number is that measurement, not a restatement of
+    // the request: centre clearance is the distance to the wall, so it has to
+    // agree with the measured distance to the centre, less the boss radius.
+    let audit = &out["island_clearance"][0];
+    assert_eq!(audit["op"], json!("clear around the bosses"));
+    let islands = audit["islands"].as_array().unwrap();
+    assert_eq!(islands.len(), 2, "two bosses, two islands");
+    let tolerance = f(&audit["tolerance_mm"]);
+    for (i, island) in islands.iter().enumerate() {
+        assert_eq!(island["kept"], json!(true), "{island}");
+        // Nothing beyond the measurement's own slack: the preview samples arcs
+        // to a chord tolerance, and a 48-sided island is itself a chord
+        // approximation, so a micron either way is the instrument, not a cut.
+        assert!(
+            f(&island["cut_into_mm"]) < tolerance,
+            "nothing may be cut out of an island: {island}"
+        );
+        let measured = nearest_cut(&out, BOSSES[i]) - BOSS_RADIUS;
+        assert!(
+            (f(&island["centre_clearance_mm"]) - measured).abs() < 0.02,
+            "the report says the cutter centre stayed {} mm off island {i}'s wall, and the \
+             moves say {measured:.3} mm",
+            island["centre_clearance_mm"]
+        );
+    }
+
+    // The mutation this test exists to catch: drop the islands from the
+    // request and the pocket clears both bosses away.
+    let plain = call(super::job, &pocket_with_islands(false, 0.0));
+    ok(&plain);
+    let worst = BOSSES
+        .iter()
+        .map(|boss| nearest_cut(&plain, *boss))
+        .fold(f64::MAX, f64::min);
+    assert!(
+        worst < BOSS_RADIUS,
+        "without islands the pocket has to cut the bosses away (it came {worst:.3} mm from a \
+         centre), or this test would pass whether islands work or not"
+    );
+    assert!(
+        plain.get("island_clearance").is_none(),
+        "no islands, no island report"
+    );
+}
+
+#[test]
+fn islands_belong_to_pockets_and_travel_with_them() {
+    // An island on a contour is a different thing — a second wall — so it is
+    // refused rather than quietly ignored.
+    let s = stator();
+    let mut request = stator_job(0.15, 1.0, None);
+    request["operations"][0]["islands"] = json!([s.holes[1]]);
+    let out = call(super::job, &request);
+    let message = out["error"].as_str().expect("refused");
+    assert!(
+        message.contains("pocket"),
+        "the refusal has to name what does take islands: {message:?}"
+    );
+
+    // An island that is not inside the pocket is refused too, in the kernel's
+    // own words. This is what the stator asks: its three pilots sit in the
+    // ring, outside the bore-and-slots opening, so they cannot be that
+    // pocket's islands however sensible the sentence sounds.
+    let mut request = stator_job(0.15, 1.0, None);
+    request["operations"][0]["kind"] = json!("pocket");
+    request["operations"][0]["islands"] = json!(s.holes[1..].to_vec());
+    let out = call(super::job, &request);
+    let message = out["error"].as_str().expect("refused");
+    assert!(
+        message.contains("island") && message.contains("outside"),
+        "an island outside its pocket is refused, not clipped: {message:?}"
+    );
+
+    // And a placed pocket takes its islands with it: the kept lump moves with
+    // the metal, or the cutter clears around where it used to be.
+    let mut req = pocket_with_islands(true, 0.0);
+    req["options"]["placement"] = json!({ "dx": 5.0, "dy": 0.0 });
+    let out = call(super::job, &req);
+    ok(&out);
+    let moved = [BOSSES[0][0] + 5.0, BOSSES[0][1]];
+    assert!(
+        nearest_cut(&out, moved) >= BOSS_RADIUS + 1.0 - 0.03,
+        "the island moved with the pocket, so the cutter has to keep off it there: {:.3} mm",
+        nearest_cut(&out, moved)
+    );
+    assert!(
+        nearest_cut(&out, BOSSES[0]) < BOSS_RADIUS,
+        "and the metal where the boss used to be is cleared, or nothing moved at all"
+    );
+    assert!(
+        f(&out["island_clearance"][0]["islands"][0]["cut_into_mm"])
+            < f(&out["island_clearance"][0]["tolerance_mm"]),
+        "nothing was cut out of the island it moved to: {}",
+        out["island_clearance"][0]["islands"][0]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 11c. Phase: saying when an operation runs, without lying about what it is
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_phase_moves_an_operation_without_renaming_the_cut() {
+    // By default the profile that frees the part runs last, whatever order the
+    // operations arrive in. That rule is right nearly always, and it is why a
+    // phase has to be said out loud to change it.
+    let plain = call(super::job, &stator_job(0.15, 1.0, None));
+    ok(&plain);
+    assert_eq!(
+        run_order(&plain).last().map(String::as_str),
+        Some("profile"),
+        "by default the profile runs last: {:?}",
+        run_order(&plain)
+    );
+
+    let mut request = stator_job(0.15, 1.0, None);
+    let ops = request["operations"].as_array_mut().unwrap();
+    let last = ops.len() - 1;
+    ops[last]["phase"] = json!(-1);
+    let out = call(super::job, &request);
+    ok(&out);
+    let order = run_order(&out);
+    assert_eq!(
+        order.first().map(String::as_str),
+        Some("profile"),
+        "phase −1 puts the profile first: {order:?}"
+    );
+    // It is still an outside profile: the cut did not change, only when it
+    // runs. Same tabs, same side, same depth as the default run.
+    assert_eq!(
+        out["verification"]["tabs"]["tab_count"], plain["verification"]["tabs"]["tab_count"],
+        "the profile is the same cut wherever it runs"
+    );
+    assert_eq!(
+        out["verification"]["depth"]["deepest_z"],
+        plain["verification"]["depth"]["deepest_z"]
+    );
+    // …and the job says the order came from the phases, so nobody has to guess
+    // why the profile ran first.
+    let notes = out["notes"].to_string();
+    assert!(
+        notes.contains("phase order"),
+        "the notes have to say the phases decided the order: {notes}"
+    );
+
+    // Phases order everything, so equal phases keep the order they were given.
+    let mut even = stator_job(0.15, 1.0, None);
+    for op in even["operations"].as_array_mut().unwrap() {
+        op["phase"] = json!(0);
+    }
+    let out = call(super::job, &even);
+    ok(&out);
+    assert_eq!(
+        run_order(&out),
+        vec!["bore and slots", "pilot 1", "pilot 2", "pilot 3", "profile"],
+        "one phase for everything is the order they were written in"
+    );
+}
+
+#[test]
+fn a_phase_and_a_role_are_not_both_given() {
+    let mut request = stator_job(0.15, 1.0, None);
+    let ops = request["operations"].as_array_mut().unwrap();
+    let last = ops.len() - 1;
+    ops[last]["phase"] = json!(0);
+    ops[last]["role"] = json!("inside_feature");
+    let out = call(super::job, &request);
+    let message = out["error"].as_str().expect("refused");
+    assert!(
+        message.contains("role") && message.contains("phase"),
+        "the refusal has to name both: {message:?}"
+    );
+}
+
+#[test]
+fn a_phase_order_two_tools_cannot_run_is_refused_rather_than_resorted() {
+    // Tool changes are grouped, so "T2, then T1, then T2 again" cannot be
+    // honoured — the job would have to stop and re-probe twice. Running it in
+    // some other order instead is the silent wrong answer this field exists to
+    // replace, so it is refused.
+    let mut request = two_tool_job();
+    // The fixture is [profile T1, bore T2, pilot 1 T2, pilot 2 T2, pilot 3 T2].
+    let asked = [1, 2, 0, 3, 4];
+    for (op, phase) in request["operations"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .zip(asked)
+    {
+        op["phase"] = json!(phase);
+    }
+    let out = call(super::job, &request);
+    let message = out["error"].as_str().unwrap_or_else(|| {
+        panic!(
+            "interleaved tools have to be refused, got {}",
+            out["policy"]
+        )
+    });
+    assert!(
+        message.contains("phases ask for") && message.contains("tool"),
+        "the refusal has to say what was asked, what would happen, and why: {message:?}"
+    );
+
+    // The same job with each tool's work kept together runs, and runs in the
+    // order it was given.
+    let agreeable = [4, 0, 1, 2, 3];
+    for (op, phase) in request["operations"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .zip(agreeable)
+    {
+        op["phase"] = json!(phase);
+    }
+    let out = call(super::job, &request);
+    ok(&out);
+    assert_eq!(
+        run_order(&out),
+        vec!["bore and slots", "pilot 1", "pilot 2", "pilot 3", "profile"],
+        "phases the tools can honour run exactly as asked"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // 12. Nothing panics, everything says why
 // ---------------------------------------------------------------------------
 

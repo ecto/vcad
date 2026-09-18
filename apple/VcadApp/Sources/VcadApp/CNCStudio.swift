@@ -90,6 +90,16 @@ struct WorkspaceHeader: View {
                 .accessibilityElement(children: .combine)
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         }.frame(height: Theme.Height.header)
+            // The Manufacture workspace takes its outline from the document on
+            // screen, so it needs the same bytes the editor evaluates. Handing
+            // it a closure rather than the model keeps the workspace testable
+            // without an editor (items 16 and 37).
+            .onAppear { model.cnc.modelDocument = { [weak model] in model?.camDocument() } }
+            // The outline comes from the part the user has selected, or the
+            // first one when nothing is selected.
+            .onChange(of: model.selectedPartIndex) { _, index in
+                model.cnc.modelPartIndex = index ?? 0
+            }
     }
     private var documentLocation: String {
         if case let .document(path, _) = model.source { return path }
@@ -131,14 +141,54 @@ struct CNCStudioOutline: View {
             }.pickerStyle(.segmented).labelsHidden().controlSize(.small).padding(10)
             HStack(spacing: Theme.Space.s) {
                 Menu {
+                    // From the part on screen first, and first for a reason:
+                    // the outline that machines the part should come from the
+                    // part, not from a file that may be a different revision
+                    // (items 16 and 37).
+                    if cnc.hasModel { Button("From model…") { cnc.importFromModel() } }
                     Button("Outline (DXF)…") { cnc.importOutlineFile() }
                     Button("G-code…") { cnc.importFile() }
                 } label: { Label("Import", systemImage: "square.and.arrow.down") }
                     .menuStyle(.borderlessButton).fixedSize()
                     .disabled(cnc.machine.active || cnc.generating)
-                    .help("Import a DXF outline to machine, or a finished G-code program")
+                    .help("Take the outline from the part on screen, import a DXF, or import a finished G-code program")
+                // …and the same choices as plain buttons, because a pull-down
+                // is not reachable from the keyboard or an assistive tool
+                // (friction-log items 45 and 51).
+                if cnc.hasModel {
+                    Button("From model") { cnc.importFromModel() }
+                        .disabled(cnc.machine.active || cnc.generating)
+                        .accessibilityIdentifier("cnc.import.fromModel")
+                        .help("Section the part on screen and machine that outline")
+                }
+                Button("DXF…") { cnc.importOutlineFile() }
+                    .disabled(cnc.machine.active || cnc.generating)
+                    .accessibilityIdentifier("cnc.import.dxf")
                 Spacer(minLength: 0)
-            }.font(.caption).padding(.horizontal, 12).padding(.bottom, 8)
+            }.font(.caption).buttonStyle(.borderless).padding(.horizontal, 12).padding(.bottom, 8)
+            if let section = cnc.modelSection, cnc.modelRefusal == nil {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(section.prismaticVerdict, systemImage: section.prismatic?.prismatic == true
+                          ? "square.stack.3d.up" : "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(section.prismatic?.prismatic == true ? Color.secondary : Color.orange)
+                        .lineLimit(3)
+                    Text("Z \(CNCVerdictText.mm(section.zRange.first ?? 0, 2))…\(CNCVerdictText.mm(section.zRange.last ?? 0, 2)) mm · suggested stock \(CNCVerdictText.mm(section.suggestedStockThickness, 2)) mm · \(section.meshSourceNote)")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                }.padding(.horizontal, 12).padding(.bottom, 8)
+            }
+            if let refusal = cnc.modelRefusal {
+                // A torn solid is not healed away here: the tear is the thing
+                // worth seeing, and the outline would be a guess.
+                Label(refusal, systemImage: "xmark.octagon.fill")
+                    .font(.caption).foregroundStyle(.red).lineLimit(4)
+                    .padding(.horizontal, 12).padding(.bottom, 8)
+            }
+            if let mismatch = cnc.outlineMismatch {
+                Label(mismatch, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption).foregroundStyle(.orange).lineLimit(5)
+                    .padding(.horizontal, 12).padding(.bottom, 8)
+            }
             if let outline = cnc.outline {
                 VStack(alignment: .leading, spacing: 4) {
                     Label("\(outline.name) · \(counted(outline.holes.count, "hole"))", systemImage: "scribble.variable")
@@ -181,13 +231,20 @@ struct CNCStudioOutline: View {
                     .disabled(!cnc.canMoveSelectedOperation(by: 1))
                     .keyboardShortcut(.downArrow, modifiers: [.command, .option])
                     .help("Move the selected operation down (⌥⌘↓)").accessibilityLabel("Move operation down")
+                // A menu for the choice, and a plain button for the common
+                // one: a pull-down is not a path a keyboard or an assistive
+                // tool can rely on (friction-log item 45).
+                Button { cnc.addOperation(.pocket) } label: { Image(systemName: "plus") }
+                    .help("Add a pocket operation").accessibilityLabel("Add operation")
+                    .accessibilityIdentifier("cnc.operations.add")
+                    .disabled(cnc.machine.active || cnc.generating)
                 Menu {
                     ForEach([CNCOpKind.face, .pocket, .contourOutside], id: \.self) { kind in
                         Button(CNCWorkspace.manualLabel(kind)) { cnc.addOperation(kind) }
                     }
-                } label: { Image(systemName: "plus") }
+                } label: { Image(systemName: "chevron.down") }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("Add operation").accessibilityLabel("Add operation")
+                    .help("Add another kind of operation").accessibilityLabel("Choose what to add")
                     .disabled(cnc.machine.active || cnc.generating)
             }.buttonStyle(.borderless).controlSize(.small)
                 .padding(.horizontal, 18).padding(.bottom, 9)
@@ -443,13 +500,16 @@ struct CNCStudioInspector: View {
             case .stock:
                 CNCSetupSummary(cnc: cnc)
                 Divider()
+                CNCMaterialSection(cnc: cnc)
+                Divider()
                 Eyebrow("Size")
-                CNCNumber(label: "Width · X", value: $cnc.stockWidth)
-                CNCNumber(label: "Length · Y", value: $cnc.stockHeight)
-                CNCNumber(label: "Thickness · Z", value: $cnc.stockThickness)
+                CNCNumber(label: "Width · X", value: $cnc.stockWidth, identifier: "cnc.stock.width")
+                CNCNumber(label: "Length · Y", value: $cnc.stockHeight, identifier: "cnc.stock.height")
+                CNCNumber(label: "Thickness · Z", value: $cnc.stockThickness, identifier: "cnc.stock.thickness")
                 CNCNumber(label: "Margin round the part",
                           value: Binding(get: { cnc.effectiveMargin }, set: { cnc.stockMargin = $0 }),
-                          help: "How far the blank stands proud of the part. The cutter runs a radius outside the profile, so it needs material to stand on.")
+                          help: "How far the blank stands proud of the part. The cutter runs a radius outside the profile, so it needs material to stand on.",
+                          identifier: "cnc.stock.margin")
                 if cnc.stockMargin != nil {
                     Button("Follow the cutter (\(cnc.automaticMargin.formatted()) mm)") { cnc.stockMargin = nil }
                 }
@@ -466,7 +526,8 @@ struct CNCStudioInspector: View {
                     .accessibilityLabel("What is under the stock")
                 if let thickness = cnc.underStock.thickness {
                     CNCNumber(label: "Spoilboard thickness",
-                              value: Binding(get: { thickness }, set: { cnc.underStock = .spoilboard($0) }))
+                              value: Binding(get: { thickness }, set: { cnc.underStock = .spoilboard($0) }),
+                              identifier: "cnc.stock.spoilboard")
                 } else {
                     Text("On a bare bed a cut may not break through, so an operation set to break through is refused.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -482,15 +543,19 @@ struct CNCStudioInspector: View {
             case .origin:
                 CNCSetupSummary(cnc: cnc)
                 Divider()
+                CNCZeroSection(cnc: cnc)
+                Divider()
+                CNCPlacementSection(cnc: cnc)
+                Divider()
+                CNCClampSection(cnc: cnc)
+                Divider()
                 Eyebrow("G54 in the model")
-                CNCNumber(label: "CAD X", value: $cnc.origin.x)
-                CNCNumber(label: "CAD Y", value: $cnc.origin.y)
-                CNCNumber(label: "CAD Z", value: $cnc.origin.z)
+                CNCNumber(label: "CAD X", value: $cnc.origin.x, identifier: "cnc.origin.x")
+                CNCNumber(label: "CAD Y", value: $cnc.origin.y, identifier: "cnc.origin.y")
+                CNCNumber(label: "CAD Z", value: $cnc.origin.z, identifier: "cnc.origin.z")
                 if let outline = cnc.outline {
                     KeyValueRow("From the outline", "X \(Double(outline.origin.x).formatted()) · Y \(Double(outline.origin.y).formatted())")
                 }
-                KeyValueRow("Blank corner from zero",
-                            "X −\(cnc.effectiveMargin.formatted()) · Y −\(cnc.effectiveMargin.formatted()) mm")
                 Divider()
                 Button("Place at model top") { placeFromModel(changeStock: false) }
                 Toggle("Show clearance plane", isOn: $cnc.showClearance)
@@ -500,12 +565,21 @@ struct CNCStudioInspector: View {
                 CNCSetupSummary(cnc: cnc)
                 Divider()
                 Eyebrow("T1 · flat end mill")
-                CNCNumber(label: "Diameter", value: $cnc.toolDiameter)
+                CNCNumber(label: "Diameter", value: $cnc.toolDiameter, identifier: "cnc.tool.diameter")
                 Stepper(value: $cnc.toolFlutes, in: 1...6) { KeyValueRow("Flutes", "\(cnc.toolFlutes)") }
+                    .accessibilityLabel("Flutes").accessibilityIdentifier("cnc.tool.flutes")
+                    .accessibilityValue("\(cnc.toolFlutes)")
                 CNCNumber(label: "Flute length", value: $cnc.toolFluteLength,
-                          help: "Usable cutting length. Zero means undeclared, and the job cannot check the cut against it.")
+                          help: "Usable cutting length. Zero means undeclared, and the job cannot check the cut against it.",
+                          identifier: "cnc.tool.fluteLength")
                 CNCNumber(label: "Stickout", value: $cnc.toolStickout,
-                          help: "How far the tool stands out of the collet. Zero means undeclared, and holder clearance over the stock cannot be checked.")
+                          help: "How far the tool stands out of the collet. Zero means undeclared, and holder clearance over the stock cannot be checked.",
+                          identifier: "cnc.tool.stickout")
+                Toggle("Cuts on its centre", isOn: $cnc.toolCentreCutting)
+                    .help("A cutter that does not cut across its own centre cannot plunge; the job checks every entry against this.")
+                    .accessibilityIdentifier("cnc.tool.centreCutting")
+                Divider()
+                CNCFeedsSection(cnc: cnc)
                 if !cnc.unmachinableHoles.isEmpty {
                     Text("\(counted(cnc.unmachinableHoles.count, "hole")) in this outline is too small for this cutter. Fit a smaller one and they come back on their own.")
                         .font(.caption).foregroundStyle(.orange)

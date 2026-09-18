@@ -57,6 +57,26 @@ func syncCNCOverlay(_ cnc: CNCWorkspace, in parent: Entity, model: EditorModel? 
             }
         }
 
+        // Everything below is drawn in the *work* frame — the frame the
+        // toolpath is already in — so a job that is shifted or turned on the
+        // blank shows where it really sits, with zero at the origin.
+        //
+        // The group itself carries the placement backwards, so work-frame
+        // geometry lands on the part where it was modelled (item 47): the part
+        // stays upright on screen and the blank, the sweep and zero sit
+        // crooked around it, which is the picture on the table.
+        let placement = cnc.effectivePlacement
+        let turn = simd_quatf(angle: Float(placement.rotationDeg * .pi / 180), axis: [0, 0, 1])
+        if !cnc.usesImportedProgram, !placement.isIdentity {
+            let back = simd_quatf(angle: Float(-placement.rotationDeg * .pi / 180), axis: [0, 0, 1])
+            group.orientation = back
+            group.position = back.act(SIMD3<Float>(Float(-placement.dx), Float(-placement.dy), 0))
+        }
+        func placed(_ p: [Double], _ z: Double) -> SIMD3<Float> {
+            let q = placement.apply(p)
+            return [Float(q[0]), Float(q[1]), Float(z)]
+        }
+
         // The blank, drawn with the margin it needs rather than at the part's
         // own extents (item 41): the cutter runs a radius outside the profile,
         // and nothing showed how much material that asks for.
@@ -67,9 +87,26 @@ func syncCNCOverlay(_ cnc: CNCWorkspace, in parent: Entity, model: EditorModel? 
             let blank = ModelEntity(
                 mesh: .generateBox(size: [Float(width + 2 * margin), Float(height + 2 * margin), Float(cnc.stockThickness)]),
                 materials: [material])
-            blank.position = [Float(width / 2), Float(height / 2), -Float(cnc.stockThickness / 2)]
+            blank.position = placed([width / 2, height / 2], -cnc.stockThickness / 2)
+            blank.orientation = turn
             blank.name = "cncStock"
             group.addChild(blank)
+        }
+
+        // The part itself, where the job puts it on that blank: a placed job
+        // is a different part on the metal, and this is what says so.
+        if !cnc.usesImportedProgram, cnc.showPart, sane, let outline = cnc.outline {
+            let loops = [outline.outer] + outline.holes
+            for (index, loop) in loops.enumerated() where loop.points.count >= 3 {
+                let moves = (loop.points + [loop.points[0]]).map { point -> CNCMove in
+                    let p = placement.apply([Double(point.x), Double(point.y)])
+                    return CNCMove(to: [p[0], p[1], 0.02], rapid: false)
+                }
+                guard let mesh = cncLineMesh(moves, rapid: false, radius: 0.12) else { continue }
+                let entity = ModelEntity(mesh: mesh, materials: [UnlitMaterial(color: .white.withAlphaComponent(0.7))])
+                entity.name = "cncPartOutline-\(index)"
+                group.addChild(entity)
+            }
         }
 
         // What the cutter sweeps: the part outline grown by one radius, which
@@ -79,9 +116,29 @@ func syncCNCOverlay(_ cnc: CNCWorkspace, in parent: Entity, model: EditorModel? 
             let sweep = ModelEntity(
                 mesh: .generateBox(size: [Float(width + 2 * r), Float(height + 2 * r), 0.05]),
                 materials: [UnlitMaterial(color: .systemYellow.withAlphaComponent(0.35))])
-            sweep.position = [Float(width / 2), Float(height / 2), 0.03]
+            sweep.position = placed([width / 2, height / 2], 0.03)
+            sweep.orientation = turn
             sweep.name = "cncSweep"
             group.addChild(sweep)
+        }
+
+        // Clamps, and whether the cutter would sweep through them. The request
+        // has no clamp field: this is the app's own check, and the colour says
+        // which answer it got.
+        if !cnc.usesImportedProgram {
+            let caught = Set(cnc.clampsInTheWay.map(\.id))
+            for (index, clamp) in cnc.clamps.enumerated() {
+                guard [clamp.x, clamp.y, clamp.width, clamp.height].allSatisfy({ $0.isFinite && abs($0) < 100_000 }),
+                      clamp.width > 0, clamp.height > 0 else { continue }
+                let hit = caught.contains(clamp.id)
+                let entity = ModelEntity(
+                    mesh: .generateBox(size: [Float(clamp.width), Float(clamp.height), 6]),
+                    materials: [SimpleMaterial(color: (hit ? NSColor.systemRed : NSColor.systemGray)
+                                                .withAlphaComponent(hit ? 0.45 : 0.28), isMetallic: false)])
+                entity.position = [Float(clamp.x + clamp.width / 2), Float(clamp.y + clamp.height / 2), 3]
+                entity.name = "cncClamp-\(index)"
+                group.addChild(entity)
+            }
         }
 
         if !cnc.usesImportedProgram && cnc.showClearance && cnc.setup.clearance.isFinite
@@ -92,24 +149,53 @@ func syncCNCOverlay(_ cnc: CNCWorkspace, in parent: Entity, model: EditorModel? 
             plane.name = "cncClearance"; group.addChild(plane)
         }
 
-        // Work zero, and the corner of the blank it is measured from.
+        // Work zero — the origin of everything here — and the corner of the
+        // blank it is measured from, wherever the user chose to put it.
         let origin = ModelEntity(mesh: .generateSphere(radius: 0.6), materials: [UnlitMaterial(color: .white)])
         origin.name = "cncOrigin"; group.addChild(origin)
-        if !cnc.usesImportedProgram && sane && margin > 0 {
-            let corner = ModelEntity(mesh: .generateSphere(radius: 0.4),
-                                     materials: [UnlitMaterial(color: .systemYellow)])
-            corner.position = [Float(-margin), Float(-margin), 0]
-            corner.name = "cncStockCorner"; group.addChild(corner)
-            if let arm = cncLineMesh([CNCMove(to: [-margin, -margin, 0], rapid: false),
-                                      CNCMove(to: [0, -margin, 0], rapid: false),
-                                      CNCMove(to: [0, 0, 0], rapid: false)], rapid: false) {
-                let ruler = ModelEntity(mesh: arm, materials: [UnlitMaterial(color: .systemYellow)])
-                ruler.name = "cncZeroOffset"; group.addChild(ruler)
+        if !cnc.usesImportedProgram && sane {
+            let corner = cnc.stockCornerFromZero
+            if corner.allSatisfy({ $0.isFinite && abs($0) < 100_000 }) {
+                let marker = ModelEntity(mesh: .generateSphere(radius: 0.4),
+                                         materials: [UnlitMaterial(color: .systemYellow)])
+                marker.position = [Float(corner[0]), Float(corner[1]), 0]
+                marker.name = "cncStockCorner"; group.addChild(marker)
+                // The two legs of the distance from the blank's corner to
+                // zero: the numbers the inspector prints, drawn.
+                if let arm = cncLineMesh([CNCMove(to: [corner[0], corner[1], 0], rapid: false),
+                                          CNCMove(to: [0, corner[1], 0], rapid: false),
+                                          CNCMove(to: [0, 0, 0], rapid: false)], rapid: false) {
+                    let ruler = ModelEntity(mesh: arm, materials: [UnlitMaterial(color: .systemYellow)])
+                    ruler.name = "cncZeroOffset"; group.addChild(ruler)
+                }
             }
         }
 
-        // The tabs, where the audit found them rather than where they were
-        // asked for, at the height they were really cut (item 21/34).
+        // Tabs, twice over and drawn differently on purpose: where they were
+        // *asked for* (a handle you can drag) and where they were *cut* (what
+        // the audit measured off the toolpath). Item 21: the user could not
+        // see them at all before cutting, let alone move them.
+        if !cnc.usesImportedProgram {
+            for operation in cnc.operations where operation.setup.isContour {
+                let declared = cnc.declaredTabPositions(of: operation)
+                for index in declared.indices {
+                    guard let xy = cnc.declaredTabPoint(of: operation, index: index),
+                          xy.allSatisfy({ $0.isFinite && abs($0) < 100_000 }) else { continue }
+                    let p = placement.apply(xy)
+                    let handle = ModelEntity(
+                        mesh: .generateSphere(radius: 0.9),
+                        materials: [UnlitMaterial(color: .systemTeal.withAlphaComponent(0.85))])
+                    handle.position = [Float(p[0]), Float(p[1]), 0.6]
+                    // The name carries which tab it is, so a drag in the
+                    // viewport can name it back to the workspace.
+                    handle.name = "cncTabHandle-\(operation.id.uuidString)-\(index)"
+                    handle.components.set(CollisionComponent(shapes: [.generateSphere(radius: 1.6)]))
+                    handle.components.set(InputTargetComponent())
+                    group.addChild(handle)
+                }
+            }
+        }
+        // …and the metal that will really be left, where the audit found it.
         if let tabs = cnc.verification?.tabs.observations, !cnc.usesImportedProgram, cnc.mode != .setup {
             for (i, tab) in tabs.enumerated() where tab.path.count >= 2 {
                 let moves = tab.path.map { CNCMove(to: [$0[0], $0[1], tab.topZ], rapid: false) }
