@@ -621,7 +621,58 @@ like a fix. The fidelity flag is what says the analytic path died and the
 mesh fallback answered instead, which is exactly the failure this whole
 document exists to refuse.
 
-The likely mechanism, not yet confirmed: welding three consecutive loop
+### Confirmed: the weld makes loops retrace themselves
+
+The mechanism below was guessed at first, then **wrongly declared dead**, then
+confirmed. Both errors came from testing it on the wrong thing, and both are
+worth recording because the trap is generic.
+
+The first fixture was a plate with two *externally* tangent cylinders. It
+showed no repeated vertex and no zero-length half-edge — but the collapse
+never fired on it, so it proved nothing. (It did turn up an unrelated
+pre-existing defect: that arrangement sews with **232 over-used edges** on
+HEAD, seam collapse or not.) The second check read the stator's final solid,
+which is `TriangleSoup` — mesh, with no B-rep loops left to inspect.
+
+The union trace names the real failure directly:
+
+```
+[union-fold] union with operand 2 of 49 -> TriangleSoup (VolumeDisagreement)
+[union-tree] L2  vol 420.9 ∪ 376.8 = 702.5   (with the collapse)
+[union-tree] L2  vol 420.9 ∪ 376.8 = 707.3   (without)
+```
+
+**4.8 mm³ destroyed** on one early post-pair union, and `SoupOperand`
+contagion does the rest. The referee was right to reject it.
+
+Run on a fixture where the collapse *does* fire — the post-root arrangement,
+an r 1.05 fillet internally tangent to the r 24 bore — the topology damage is
+plain:
+
+| | open | zero-length half-edges | loops revisiting a vertex |
+|---|---|---|---|
+| without collapse | 0 | 0 | none |
+| with collapse | 7 | 1 twinned | 2 |
+
+and dumping the ring shows exactly what the shape is:
+
+```
+[71] A -> B  len=3.422e-02  twin = [72]
+[72] B -> A  len=3.422e-02  twin = [71]
+```
+
+The loop walks out along an edge and straight back along its twin: a
+**zero-area flap**. The edges are full length, so
+`collapse_degenerate_half_edges` never looks at them; both carry twins, so
+`cleanup_loop_spikes` skips them. `repair::collapse_twin_pair_spurs` now
+retires such a pair, which takes the fixture from 7 unpaired edges to 3 —
+the rest are **nested**: removing the inner flap exposes another A-B-A one
+step out whose halves are twinned to half-edges *outside* the loop, which no
+pass may drop unilaterally. Generalising it is the open piece.
+
+That, and not the tangency machinery, is why the seam collapse is not landed.
+
+The earlier guess, now superseded: welding three consecutive loop
 vertices into one leaves a zero-length half-edge, and
 `repair::collapse_degenerate_half_edges` **skips any half-edge that has a
 twin** — so seam spurs survive into the result and the face is rejected. That
