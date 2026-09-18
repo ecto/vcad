@@ -6280,6 +6280,33 @@ mod cam_wasm {
     // document carrying the gap positions, which is information a thrown
     // error would destroy.
 
+    /// Run `f` behind `catch_unwind` and answer with a JSON document either
+    /// way.
+    ///
+    /// The doc comment above promised these calls never throw, and nothing
+    /// enforced it: a panic anywhere under them crossed into JavaScript as a
+    /// trap, which is the one failure shape the shared contract says cannot
+    /// happen. The C ABI twin in `vcad-ffi/src/cam/mod.rs` has had this guard
+    /// since wave 2; this is the same shape, with the call's name in the
+    /// message so an alert says which door was knocked on.
+    ///
+    /// `wasm32-unknown-unknown` may be built with `panic=abort`, in which case
+    /// nothing can catch a panic and the trap stands. The guard is still the
+    /// right shape - it is what makes the promise true wherever unwinding is
+    /// available, including every native build of this crate - and it costs
+    /// nothing where it is not.
+    fn guard(what: &str, f: impl FnOnce() -> String) -> String {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+            Ok(text) => text,
+            Err(_) => serde_json::json!({
+                "error": format!(
+                    "{what}: the kernel panicked while working on this request. This is a bug, please report it with the request that caused it."
+                ),
+            })
+            .to_string(),
+        }
+    }
+
     /// A whole CAM job: operations, tools, post, verification, G-code.
     ///
     /// Fails closed. When verification is on and an error-severity check
@@ -6287,57 +6314,57 @@ mod cam_wasm {
     /// all**, so a caller cannot export or send it by accident.
     #[wasm_bindgen(js_name = camJob)]
     pub fn cam_job(request_json: &str) -> String {
-        vcad_cam_api::job(request_json)
+        guard("cam_job", || vcad_cam_api::job(request_json))
     }
 
     /// Verify G-code text against the part it is meant to make.
     #[wasm_bindgen(js_name = camVerifyGcode)]
     pub fn cam_verify_gcode(request_json: &str) -> String {
-        vcad_cam_api::verify_gcode(request_json)
+        guard("cam_verify_gcode", || vcad_cam_api::verify_gcode(request_json))
     }
 
     /// Cutter-fit report for one contour, one tool and one side.
     #[wasm_bindgen(js_name = camFit)]
     pub fn cam_fit(request_json: &str) -> String {
-        vcad_cam_api::fit(request_json)
+        guard("cam_fit", || vcad_cam_api::fit(request_json))
     }
 
     /// Section a triangle mesh handed over inline (`positions`, `indices`).
     #[wasm_bindgen(js_name = camOutlineFromMesh)]
     pub fn cam_outline_from_mesh(request_json: &str) -> String {
-        vcad_cam_api::outline_from_mesh(request_json)
+        guard("cam_outline_from_mesh", || vcad_cam_api::outline_from_mesh(request_json))
     }
 
     /// Compare two outlines — a DXF against a sectioned solid, say — and say
     /// whether they are the same part.
     #[wasm_bindgen(js_name = camCompareOutline)]
     pub fn cam_compare_outline(request_json: &str) -> String {
-        vcad_cam_api::compare_outline(request_json)
+        guard("cam_compare_outline", || vcad_cam_api::compare_outline(request_json))
     }
 
     /// The material table, with the hazards attached to each entry.
     #[wasm_bindgen(js_name = camMaterials)]
     pub fn cam_materials() -> String {
-        vcad_cam_api::materials()
+        guard("cam_materials", vcad_cam_api::materials)
     }
 
     /// Feeds, speeds, stepdown, stepover and the router dial to set.
     #[wasm_bindgen(js_name = camRecommendFeeds)]
     pub fn cam_recommend_feeds(request_json: &str) -> String {
-        vcad_cam_api::recommend(request_json)
+        guard("cam_recommend_feeds", || vcad_cam_api::recommend(request_json))
     }
 
     /// A second opinion on feeds and speeds the operator already has.
     #[wasm_bindgen(js_name = camCheckFeeds)]
     pub fn cam_check_feeds(request_json: &str) -> String {
-        vcad_cam_api::check_feeds(request_json)
+        guard("cam_check_feeds", || vcad_cam_api::check_feeds(request_json))
     }
 
     /// Gear geometry: report, contours, over-pins measurement, and the
     /// compensation a measured reading implies.
     #[wasm_bindgen(js_name = camGear)]
     pub fn cam_gear(request_json: &str) -> String {
-        vcad_cam_api::gear(request_json)
+        guard("cam_gear", || vcad_cam_api::gear(request_json))
     }
 
     /// A machining contour out of a solid, sectioned at `z` — or at the
@@ -6367,6 +6394,12 @@ mod cam_wasm {
         auto_z: bool,
         options_json: &str,
     ) -> String {
+        guard("cam_outline_from_solid", || {
+            outline_from_solid(solid, z, auto_z, options_json)
+        })
+    }
+
+    fn outline_from_solid(solid: &Solid, z: f64, auto_z: bool, options_json: &str) -> String {
         let segments = match vcad_cam_api::section_segments(options_json) {
             Ok(n) => n,
             Err(message) => return serde_json::json!({ "error": message }).to_string(),
@@ -6402,6 +6435,18 @@ mod cam_wasm {
     /// `part_index` indexes the scene's parts, in document order.
     #[wasm_bindgen(js_name = camOutlineFromDocument)]
     pub fn cam_outline_from_document(
+        doc_json: &str,
+        part_index: usize,
+        z: f64,
+        auto_z: bool,
+        options_json: &str,
+    ) -> String {
+        guard("cam_outline_from_document", || {
+            outline_from_document(doc_json, part_index, z, auto_z, options_json)
+        })
+    }
+
+    fn outline_from_document(
         doc_json: &str,
         part_index: usize,
         z: f64,
