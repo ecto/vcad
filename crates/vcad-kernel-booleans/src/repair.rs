@@ -70,6 +70,13 @@ fn repair_topology_impl(
         // those on still-unpaired (boundary) half-edges, so interior
         // geometry is never disturbed.
         if std::env::var("VCAD_NO_WELD2").is_err() {
+            // A designed tangency's seam is sampled by three splitters at
+            // three parameters, 8 um apart — four orders of magnitude past
+            // the 1e-6 weld in `sew`, and past SEAM_WELD_TOL too. Put those
+            // rails back on the one line they all belong to FIRST, so the
+            // weld below has coincident vertices to merge instead of three
+            // that it will leave standing.
+            collapse_tangency_seams(topo, tangencies);
             weld_boundary_vertices(topo, SEAM_WELD_TOL);
         }
         collapse_degenerate_half_edges(topo, tolerance);
@@ -80,50 +87,212 @@ fn repair_topology_impl(
     }
 }
 
-/// Retire a half-edge that its own loop immediately follows with its TWIN.
+/// Retire a pair of half-edges by which a loop walks out to a vertex and
+/// straight back: `… → A → B → A → …`.
 ///
-/// Such a pair walks out to a vertex and straight back along the same edge:
-/// `… → A → B → A → …`. It encloses no area, so it contributes nothing to
-/// the face, and the loop it sits in visits one vertex twice — which means
-/// the ring is not a simple boundary and the face cannot be trusted.
+/// Such a pair encloses no area, so it contributes nothing to the face, and
+/// the loop it sits in visits one vertex twice — which means the ring is not
+/// a simple boundary and the face cannot be trusted.
 ///
 /// Neither existing pass removes it. `collapse_degenerate_half_edges` only
 /// looks at half-edges whose two ENDS coincide, and these are full length
 /// (0.034 mm on the case below); `cleanup_loop_spikes` does look for the
-/// A-B-A shape but skips any half-edge carrying a twin, which both of these
-/// do — they are each other's.
+/// A-B-A shape but skips any half-edge carrying a twin, which these do.
 ///
 /// Welding produces them. When two vertices a loop visits are merged — a
-/// designed tangency's over-sampled seam put back on one line, an operand
-/// edge inherited whole through `sew::copy_loop_with_he_map` — the edge
-/// between them folds flat while keeping the pairing it came in with.
-/// Measured on the stator's post-root fillet (r 1.05 internally tangent to
-/// the r 24 bore) one such pair left 7 unpaired edges and two loops with a
-/// repeated vertex, against 0 and none before the weld.
+/// designed tangency's over-sampled seam put back on one line by
+/// [`collapse_tangency_seams`], an operand edge inherited whole through
+/// `sew::copy_loop_with_he_map` — the edge between them folds flat while
+/// keeping the pairing it came in with. Measured on the stator's post-root
+/// fillet (r 1.05 internally tangent to the r 24 bore) one such pair left 7
+/// unpaired edges and two loops with a repeated vertex, against 0 and none
+/// before the weld.
 ///
-/// Both sides go, never one: dropping a single side would leave the other
-/// unpaired, which is the defect this module exists to remove. Loops of
-/// three or fewer are left alone — removing two from those leaves no ring at
-/// all, and a triangle whose two sides are the same edge is a whole face
-/// that wants deleting, not repairing.
+/// # The flaps NEST, and the outer ones are not each other's twin
+///
+/// The first version of this pass keyed on `first.twin == second`, which is
+/// the innermost flap only. Retiring it exposes another A-B-A one step out
+/// whose two halves are each twinned to a half-edge in a DIFFERENT face, and
+/// on the stator's tab-root fillet that is where three of the four remaining
+/// unpaired edges lived. Keying on the VERTICES instead (the loop returns to
+/// the vertex it came from) sees both.
+///
+/// Dropping such a pair unilaterally is exactly what this module must not do:
+/// the two outside twins would be left unpaired, i.e. the defect traded for
+/// itself. But they do not have to be. `first` runs P→Q and `second` runs
+/// Q→P, so their twins run Q→P and P→Q — opposite senses along the same
+/// edge, which is the definition of a twin pair. So the flap is retired and
+/// the two orphans are married to each other: the slit closes, the faces on
+/// the far side become neighbours directly, and no half-edge loses a partner.
+/// That is why this is a repair and not a deletion.
+///
+/// Fail closed on anything else. Exactly three twin arrangements are sound —
+/// the pair is its own twin, neither side has a twin, or both sides have one
+/// and the two run opposite ways between the same vertices. A flap with one
+/// twinned side and one bare side is left alone: retiring it would strand
+/// the one orphan with nobody to pair it to.
+///
+/// Loops of three or fewer are left alone — removing two from those leaves no
+/// ring at all, and a triangle whose two sides are the same edge is a whole
+/// face that wants deleting, not repairing.
 fn collapse_twin_pair_spurs(topo: &mut Topology) {
     let loop_ids: Vec<_> = topo.loops.keys().collect();
     for loop_id in loop_ids {
+        // Half-edges already rejected as unrepairable, so the rescan below
+        // makes progress instead of re-finding the same flap for ever.
+        let mut refused: std::collections::HashSet<HalfEdgeId> = std::collections::HashSet::new();
         loop {
             let hes: Vec<_> = topo.loop_half_edges(loop_id).collect();
             if hes.len() < 4 {
                 break;
             }
+            // A-B-A by vertex: this half-edge ends where the next one ends up
+            // back at, i.e. `next` retraces `he`.
             let found = hes.iter().enumerate().find_map(|(i, &he)| {
                 let next = hes[(i + 1) % hes.len()];
-                (topo.half_edges[he].twin == Some(next)).then_some((he, next))
+                (!refused.contains(&he) && topo.half_edges[he].origin == topo.half_edge_dest(next))
+                    .then_some((he, next))
             });
             let Some((first, second)) = found else { break };
+            let (t1, t2) = (topo.half_edges[first].twin, topo.half_edges[second].twin);
+            let remarry = match (t1, t2) {
+                // The pair is its own twin, or neither side is paired:
+                // retiring them strands nothing.
+                (Some(a), Some(b)) if a == second && b == first => None,
+                (None, None) => None,
+                // Both paired outside: the orphans can take each other, but
+                // only if they really do run opposite ways between the same
+                // two vertices. Twins are also made positionally
+                // (`pair_half_edges`' second pass), so this is checked and
+                // not assumed.
+                (Some(a), Some(b))
+                    if a != second
+                        && b != first
+                        && topo.half_edges[a].origin == topo.half_edge_dest(b)
+                        && topo.half_edges[b].origin == topo.half_edge_dest(a) =>
+                {
+                    Some((a, b))
+                }
+                _ => {
+                    refused.insert(first);
+                    continue;
+                }
+            };
             // `unlink_half_edge` clears the partner's twin and retires the
             // shared edge, so the second call sees a lone half-edge.
             unlink_half_edge(topo, first);
             unlink_half_edge(topo, second);
+            if let Some((a, b)) = remarry {
+                if topo.half_edges[a].twin.is_none() && topo.half_edges[b].twin.is_none() {
+                    topo.add_edge(a, b);
+                }
+            }
         }
+    }
+}
+
+/// Put every vertex inside a designed tangency's seam back onto its line.
+///
+/// Where a fillet is built tangent to what it blends into, the two carriers
+/// stay within microns of each other over a tenth of a millimetre, and the
+/// splitters sample that seam at whatever parameter each of them reaches it.
+/// On the stator's tab-root fillet three splitters land three vertices
+/// within 0.008 mm of the analytic touch point — each correct to a couple of
+/// parts in 10⁷ *for its own carrier*, and all three genuinely distinct
+/// points on the OD. `sew::merge_nearby_vertices` welds at a flat 1e-6, so
+/// 8 µm is four orders of magnitude too far and the seam keeps three rails.
+/// Unpaired, they ring a sliver of about 1e-7 mm²: four edges per cap, twice
+/// over, which is where the stator's 0.015 mm section gap comes from.
+///
+/// They are not three corners of a feature. Measured against both carriers
+/// they lie on BOTH to 1.8e-05 mm — three samples of one seam — so the
+/// answer is to merge them, not to cover them. Covering would mint a face of
+/// order 1e-07 mm², which is another sliver.
+///
+/// # The radius is measured, not chosen
+///
+/// [`TangencyLine::width`] is the chord `ssi::parallel_cylinders` would have
+/// cut had it not merged the pair: the span over which the two carriers are
+/// genuinely indistinguishable, read off the carriers themselves. For the
+/// stator's tab-root fillet that is 0.0117 mm and for its post-root fillets
+/// 0.0152 mm, which covers the three rails (0, 0.0044, 0.0079 from the
+/// touch) and leaves the nearest real neighbour — the OD's next canonical
+/// grid point at 0.184 mm — fifteen times clear.
+///
+/// # Boundary vertices ONLY, for the same reason the weld below is
+///
+/// Two earlier attempts at this moved every vertex in the seam and both cost
+/// the rana-60 stator the analytic path: 7869.6 mm³ / 642 open / 24 s became
+/// 7852.2 / 93 open / **14762 over-used** and 124 s of triangle soup, because
+/// the union referee (rightly) rejected a post-pair union that had lost
+/// 4.8 mm³. The seam's own `width` is not small — a tangency between two big
+/// cylinders, or a plane against the r 24 bore, has generators 0.1 mm apart —
+/// so "inside the seam" catches interior geometry that is simply near the
+/// touch and has every right to be where it is.
+///
+/// A crack is open on BOTH sides. Restricting the move to vertices that touch
+/// an unpaired half-edge is the same guard `weld_boundary_vertices` carries,
+/// and it is why this pass runs there and not in `sew` before the first weld:
+/// at that point nothing is paired yet and the guard would be vacuous.
+///
+/// # Curved-against-curved ONLY
+///
+/// Even with the boundary guard the stator still fell to soup, and bisecting
+/// it named one union: the 285° round end plus a post cube, against two tab
+/// groups (`[union-tree] L2 vol 420.9 ∪ 376.8`). Collapsing there did not
+/// lose volume — it MINTED it, 707.4 mm³ becoming 948.8 with 1042 over-used
+/// edges and no open boundary at all. The over-used edges are every vertical
+/// generator of the round end's r 3.1 cylinder, each carried by six
+/// triangles: that one face is emitted three times over. The +241 mm³ is its
+/// flux, billed twice.
+///
+/// The seam that did it is a CYLINDER-PLANE touch — the round end against
+/// the tab's flank plane at y = ±3.1 — and the reason is [`span`]. A plane
+/// face is bounded along the cylinder's axis and nowhere else, so on a Z-up
+/// part, where every face shares the same Z range, the span bound is
+/// vacuous in the only direction that matters. Restricted to touches whose
+/// carriers are both curved (`TangencyLine::both_curved`), where `span` is a
+/// real bound, the same union comes back at 707.3893 mm³ `Analytic` — the
+/// no-collapse number to four decimals — and the stator keeps its analytic
+/// path at 24.9 s.
+///
+/// That restriction is also why this pass does NOT close the stator's
+/// 0.015 mm section gap: that gap is at the round end's cylinder-plane
+/// tangency, the family excluded here. See
+/// `docs/boolean-multilump-union-diagnosis.md`.
+fn collapse_tangency_seams(topo: &mut Topology, tangencies: &[crate::tangency::TangencyLine]) {
+    if tangencies.is_empty() || std::env::var_os("VCAD_NO_SEAM_COLLAPSE").is_some() {
+        return;
+    }
+    let mut boundary = std::collections::HashSet::new();
+    for (he_id, he) in &topo.half_edges {
+        if he.loop_id.is_some() && he.twin.is_none() {
+            boundary.insert(he.origin);
+            boundary.insert(topo.half_edge_dest(he_id));
+        }
+    }
+    if boundary.is_empty() {
+        return;
+    }
+    for v_id in boundary {
+        let v = &mut topo.vertices[v_id];
+        let p = v.point;
+        // Nearest seam wins: two tangencies can both reach a vertex where a
+        // fillet touches two carriers, and projecting onto the further one
+        // would move it across the nearer.
+        let Some(line) = tangencies
+            .iter()
+            .filter(|t| t.both_curved && t.distance(&p) <= t.width)
+            .min_by(|x, y| {
+                x.distance(&p)
+                    .partial_cmp(&y.distance(&p))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+        else {
+            continue;
+        };
+        let d = p - line.point;
+        v.point = line.point + line.dir * d.dot(line.dir);
     }
 }
 
@@ -726,6 +895,87 @@ mod tests {
         collapse_twin_pair_spurs(&mut topo);
 
         assert_eq!(topo.loop_half_edges(loop_id).collect::<Vec<_>>(), hes);
+    }
+
+    /// The nested flap: the two halves are NOT each other's twin, each is
+    /// paired into a different face. Retiring them unilaterally would strand
+    /// both partners, so the pass marries the partners to each other instead
+    /// — they run opposite ways between the same two vertices.
+    #[test]
+    fn a_retraced_pair_twinned_outside_marries_its_orphans() {
+        let mut topo = Topology::new();
+        let a = topo.add_vertex(Point3::new(0.0, 0.0, 0.0));
+        let b = topo.add_vertex(Point3::new(1.0, 0.0, 0.0));
+        let c = topo.add_vertex(Point3::new(1.0, 1.0, 0.0));
+        let p = topo.add_vertex(Point3::new(2.0, 2.0, 0.0));
+
+        // Face 1: a -> b -> c -> p -> c -> a. The c..p edge is walked twice.
+        let he_ab = topo.add_half_edge(a);
+        let he_bc = topo.add_half_edge(b);
+        let out = topo.add_half_edge(c);
+        let back = topo.add_half_edge(p);
+        let he_ca = topo.add_half_edge(c);
+        let l1 = topo.add_loop(&[he_ab, he_bc, out, back, he_ca]);
+        topo.add_face(l1, 0, vcad_kernel_topo::Orientation::Forward);
+
+        // Two OTHER faces, each sharing one side of the retraced edge.
+        let g1 = topo.add_half_edge(p); // p -> c, twin of `out`
+        let g1b = topo.add_half_edge(c);
+        let l2 = topo.add_loop(&[g1, g1b]);
+        topo.add_face(l2, 0, vcad_kernel_topo::Orientation::Forward);
+        let g2 = topo.add_half_edge(c); // c -> p, twin of `back`
+        let g2b = topo.add_half_edge(p);
+        let l3 = topo.add_loop(&[g2, g2b]);
+        topo.add_face(l3, 0, vcad_kernel_topo::Orientation::Forward);
+        topo.add_edge(out, g1);
+        topo.add_edge(back, g2);
+
+        collapse_twin_pair_spurs(&mut topo);
+
+        assert_eq!(
+            topo.loop_half_edges(l1).collect::<Vec<_>>(),
+            vec![he_ab, he_bc, he_ca],
+            "the retraced pair should be gone and the rest of the ring intact"
+        );
+        // The orphans must have found each other, not been left unpaired —
+        // an unpaired half-edge IS the defect this module removes.
+        assert_eq!(
+            topo.half_edges[g1].twin,
+            Some(g2),
+            "the two outside partners were not married, so the slit is still open"
+        );
+        assert_eq!(topo.half_edges[g2].twin, Some(g1));
+    }
+
+    /// Fail closed: one side paired, the other bare. Retiring the pair would
+    /// leave the one partner with nobody to take, so nothing is touched.
+    #[test]
+    fn a_half_twinned_retraced_pair_is_left_alone() {
+        let mut topo = Topology::new();
+        let a = topo.add_vertex(Point3::new(0.0, 0.0, 0.0));
+        let b = topo.add_vertex(Point3::new(1.0, 0.0, 0.0));
+        let c = topo.add_vertex(Point3::new(1.0, 1.0, 0.0));
+        let p = topo.add_vertex(Point3::new(2.0, 2.0, 0.0));
+        let he_ab = topo.add_half_edge(a);
+        let he_bc = topo.add_half_edge(b);
+        let out = topo.add_half_edge(c);
+        let back = topo.add_half_edge(p);
+        let he_ca = topo.add_half_edge(c);
+        let l1 = topo.add_loop(&[he_ab, he_bc, out, back, he_ca]);
+        topo.add_face(l1, 0, vcad_kernel_topo::Orientation::Forward);
+        let g1 = topo.add_half_edge(p);
+        let g1b = topo.add_half_edge(c);
+        let l2 = topo.add_loop(&[g1, g1b]);
+        topo.add_face(l2, 0, vcad_kernel_topo::Orientation::Forward);
+        topo.add_edge(out, g1); // only `out` is paired; `back` is bare
+
+        let before: Vec<_> = topo.loop_half_edges(l1).collect();
+        collapse_twin_pair_spurs(&mut topo);
+        assert_eq!(
+            topo.loop_half_edges(l1).collect::<Vec<_>>(),
+            before,
+            "a flap that cannot be repaired without stranding a partner must be left"
+        );
     }
 
     #[test]

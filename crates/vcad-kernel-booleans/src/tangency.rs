@@ -71,10 +71,14 @@ pub(crate) struct TangencyLine {
     /// `MERGE_GENERATORS` by construction (a wider pair is not a tangency and
     /// gets a real intersection curve) and never below `TANGENCY_EPS`: a pair
     /// that genuinely only touches has one seam point and nothing to collapse.
-    // Measured and carried, not yet read: the seam collapse that consumes it
-    // is the next round (see docs/boolean-multilump-union-diagnosis.md).
-    #[allow(dead_code)]
     pub width: f64,
+    /// Are BOTH carriers curved?
+    ///
+    /// A cylinder-plane touch is bounded along the axis like any other, but
+    /// the plane is unbounded ACROSS it, so `span` cannot say where the touch
+    /// stops in the other direction. On a Z-up part every face shares the
+    /// same Z range, which makes that bound vacuous.
+    pub both_curved: bool,
     /// Where the touch actually EXISTS: the parameter range along `dir`,
     /// measured from `point`, over which both carriers are really present.
     ///
@@ -272,6 +276,7 @@ pub(crate) fn cylinder_plane_tangencies(a: &BRepSolid, b: &BRepSolid) -> Vec<Tan
                     dir: axis,
                     width,
                     span: (lo - base, hi - base),
+                    both_curved: false,
                 };
                 if !out.iter().any(|t| {
                     t.dir.cross(line.dir).norm() < 1e-9
@@ -353,6 +358,7 @@ pub(crate) fn cylinder_tangencies(a: &BRepSolid, b: &BRepSolid) -> Vec<TangencyL
                 dir: axa,
                 width,
                 span: (lo - base, hi - base),
+                both_curved: true,
             };
             if !out.iter().any(|t| {
                 t.dir.cross(line.dir).norm() < 1e-9
