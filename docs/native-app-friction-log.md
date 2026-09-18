@@ -630,3 +630,35 @@ and then looking at it.
     survive a move or a rename, and is not in the document a colleague opens.
     The job's own tools are arguably part of the job. Putting them in the
     document needs a schema decision nobody has made yet.
+
+## Integrated app on the stator (2026-09-18, integrator's live look)
+
+68. **A job the tool gate refused said "import an outline" with the outline on
+    screen.** The verification list is driven by `policy.verified`, and a job
+    turned back by the flute-length check never reaches the replay, so
+    `verified` is false and `unverifiedReason` explained it as "there is no
+    part outline to replay this job against" — with `stator-outline.dxf · 4
+    holes` two panels to the left. Fixed: with an outline present the reason
+    says the job was refused before it could be replayed. The rule underneath
+    stands: the reason for an unverified job has to come from why it was not
+    verified, not from a boolean.
+
+69. **Stock thickness defaults to 10 mm on a DXF import, and the first build
+    is refused for it.** A DXF carries no thickness; the stator is 6 mm and
+    its solid was open in the same window. With 10 mm the Ø3.175 tool's 9.52
+    mm flutes refuse both contours (correctly — that gate is doing its job),
+    and the operator's first sight of the verify gate is a refusal about a
+    number they never entered. The solid's Z extent is on hand when a part is
+    open; the thickness should come from it, with the DXF override kept.
+
+70. **Background accessibility cannot type into a SwiftUI number field by
+    position.** Setting the thickness from outside took: find the field by
+    role (`AXTextField`; every title is withheld to a background caller, so
+    the `cnc.*` names are not searchable that way), click it as a raw event,
+    then write to the focused element. Straight `app_type` at the field's
+    coordinate is refused. The `VCAD_SET` path (item 51) is the honest
+    answer for automation; the AX bridge is for assistive clients in front.
+    Same live look, for the record: after the thickness, the stator built to
+    5530 moves / 18:13 / Z −6.000 — identical to the headless dump — and was
+    replayed clean with three warnings (bore slug free, stickout undeclared
+    ×2) holding Run Job until acknowledged.

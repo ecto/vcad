@@ -670,6 +670,12 @@ final class CNCWorkspace {
             }
             return "This program was not generated here and there is no outline to replay it against. Nothing has checked that it makes the part."
         }
+        // A job the tool gate refuses is turned back before the replay runs,
+        // and that is not the same as having nothing to replay it against:
+        // telling someone with an outline on screen to import one is wrong.
+        if outline != nil {
+            return "This job was refused before it could be replayed against the part. Fix the reasons above and rebuild to have it checked."
+        }
         return "There is no part outline to replay this job against. Import one to have the job checked before it runs."
     }
 
