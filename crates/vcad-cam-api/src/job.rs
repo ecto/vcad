@@ -191,6 +191,8 @@ fn default_true() -> bool {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OptionsReq {
+    #[serde(rename = "_", default)]
+    _comment: Option<serde_json::Value>,
     #[serde(default)]
     arc_fit: Option<ArcFitReq>,
     #[serde(default)]
@@ -222,6 +224,7 @@ struct OptionsReq {
 impl Default for OptionsReq {
     fn default() -> Self {
         Self {
+            _comment: None,
             arc_fit: None,
             tool_change: None,
             spin_up_seconds: None,
@@ -368,9 +371,13 @@ struct OperationReq {
 }
 
 // A misspelt `options` key must not be a silent way to drop verification.
+// `_` is the one key that carries nothing: a comment, for request files
+// written by hand (see `docs/cam-fixtures/*.json`).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct JobRequest {
+    #[serde(rename = "_", default)]
+    _comment: Option<serde_json::Value>,
     #[serde(default)]
     name: Option<String>,
     stock: StockReq,

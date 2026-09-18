@@ -26,6 +26,8 @@
 /// `ThermalSpec`, a `DeviceSpec`, a flow spec — resolved against its
 /// parameters. A family is free to record more; it may not record less, and
 /// it may not record nothing.
+// Only the solver families read it; a `cam`-only build (vcad-cli) has none.
+#[allow(dead_code)]
 const SOLVER_BASIS: &[&str] = &["spec"];
 
 macro_rules! family {
