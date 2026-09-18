@@ -15,6 +15,8 @@ for bisecting, never for shipping.
 |---|---|
 | `VCAD_UNION_TRACE=1` | One stderr line per pairwise union in an evaluated chain: fidelity, time, operand and result volumes. The first tool to reach for on a part that solves slowly or wrongly. |
 | `VCAD_NO_UNION_TREE=1` | Evaluate the authored fold as written, instead of letting `vcad-eval` reassociate a stalled union chain. **Also the answer to a confusing bisection**: the reassociation keys off the length of the REMAINING tail, so a pipe truncated after N stages can take a different path than the same prefix inside the full part. Truncating the rana-60 stator after 14–21 of its 57 stages drops those solves to `TriangleSoup` while the whole part stays `Analytic`; set this to compare like with like. |
+| `VCAD_BATCH_BUDGET_MS=<ms>` | Wall-clock budget per boolean batch in `vcad-eval` (`union_tree` / `cut_chain`); read through `EvalOptions.clock`, so it also governs the WASM kernel, which supplies a JS clock. |
+| `VCAD_BATCH_BUDGET_STEPS=<n>` | The clockless fallback: an operation-count budget (default 256) used only when no clock is supplied — never wall-clock on wasm32, where `Instant::now` traps (fixed 2026-09-18; a source-scanning test keeps it out of `vcad-eval`). |
 | `VCAD_NO_UNION_HOIST=1` | Disable hoisting of union operands out of the fold. |
 | `VCAD_NO_UNION_REFEREE=1` | Stop the mesh boolean from refereeing a cracked analytic union, so the analytic result is returned whatever it looks like. |
 | `VCAD_SPLIT_DEBUG=1` | Per-face splitter decisions — which curve cut which face, and why a cut was declined. Needs `--features debug-boolean`; the output is large, so wrap the operation of interest in markers rather than counting occurrences. |

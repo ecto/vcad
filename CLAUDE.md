@@ -431,7 +431,7 @@ target/debug/vcad-render path/to/part.vcad > out.svg
 ```
 
 **MCP Server** (for AI agents):
-- `create_cad_document` — create parts from primitives + operations
+- `create_cad_loon` / `open_document` — create a part from loon source, or open a `.vcad` document
 - `export_cad` — export to STL or GLB
 - `inspect_cad` — get volume, area, bbox, center of mass
 - `check_clearance` — min distance / penetration depth between part groups;
