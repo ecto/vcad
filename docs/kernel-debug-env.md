@@ -51,6 +51,27 @@ for bisecting, never for shipping.
 | `VCAD_STATOR_LOON`, `VCAD_STATOR_OUTLINE` | The rana-60 stator's source and its 2D-CSG plan view, for the `#[ignore]`d `stator_measure` and `stator_section_gate` tests in `vcad-eval`. |
 | `VCAD_FIDELITY_BLESS=1` | Rewrite the torture fidelity baseline instead of checking against it. |
 
+## Backtraces: disable code folding before you believe a function name
+
+A backtrace taken in an optimised build names an **address**, not a function.
+Several splitters in `split.rs`, `cyl_band.rs` and `freeze.rs` end in a
+byte-identical `map(find_or_create_vertex)` closure; the linker folds those
+into one copy and the trace reports whichever symbol survived. That is how a
+vertex on the rana-60 stator — a part with no spheres at all — got attributed
+to `clip_spherical_face_by_circle`, a function whose caller downcasts to
+`SphereSurface` and returns before it can be reached.
+
+Re-run with folding off before naming anything:
+
+```bash
+RUSTFLAGS="-C link-arg=-Wl,-no_deduplicate" cargo test -p <crate> --test <t>
+```
+
+(macOS/ld64. On GNU ld or lld the equivalent is `-Wl,--icf=none`.) Two cheap
+cross-checks that cost nothing: is the named function *reachable* for this
+input at all, and does a census of the inputs contain the surface kind it
+claims to handle?
+
 ## Related
 
 - `docs/torture-track.md` — the adversarial corpus and its (platform-specific) baseline.
