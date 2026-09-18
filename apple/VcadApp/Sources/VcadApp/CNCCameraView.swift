@@ -33,8 +33,16 @@ struct CNCCameraTile: View {
 
     private var frame: some View {
         ZStack {
+            // A semantic colour at a stated opacity, not `.quaternary`: as a
+            // `fill` that style resolved against nothing in particular and
+            // came out invisible over a light panel and solid *white* over a
+            // dark one — a blown-out white rectangle where the picture of the
+            // cut goes, which reads as an overexposed live frame rather than
+            // as no frame at all.
             RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
-                .fill(.quaternary)
+                .fill(Color.secondary.opacity(0.15))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                    .strokeBorder(.separator, lineWidth: 0.5))
             if let shown {
                 Image(nsImage: shown)
                     .resizable().aspectRatio(contentMode: .fit)
@@ -57,13 +65,27 @@ struct CNCCameraTile: View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             HStack(spacing: 6) {
                 Circle().fill(dotColor).frame(width: 7, height: 7)
-                Text(camera.frame == nil ? "no frame" : camera.ageLabel)
+                Text(statusText)
                     .font(.callout.weight(.medium)).monospacedDigit()
                 Spacer(minLength: 0)
                 if camera.grabbing { ProgressView().controlSize(.small) }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Camera, \(camera.frame == nil ? "no frame" : camera.ageLabel)")
+            .accessibilityLabel("Camera, \(statusText)")
+        }
+    }
+
+    /// With a frame, its age — which is the whole point of this line. Without
+    /// one, what the tile is *doing*: the empty frame above already says "no
+    /// frame", and saying it twice told the operator nothing about whether
+    /// anything was trying.
+    private var statusText: String {
+        guard camera.frame == nil else { return camera.ageLabel }
+        switch camera.state {
+        case .off: return camera.hasURL ? "not watching" : "no camera set"
+        case .waiting: return "waiting for the first frame"
+        case .live: return "no frame"
+        case .failed: return "no frame — see below"
         }
     }
 
