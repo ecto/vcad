@@ -136,6 +136,9 @@ enum CNCSkewProbe {
 final class CNCEdgeProbe {
     enum Phase: Equatable, Sendable {
         case idle
+        /// Probe sent, no `PRB:` reply yet. A real controller answers this
+        /// milliseconds to seconds later; only the simulator is instant.
+        case probing
         case first
         case complete
         case failed(String)
@@ -152,6 +155,7 @@ final class CNCEdgeProbe {
     var label: String {
         switch phase {
         case .idle: return "Touch the \(axis) edge twice, \(stationAxis) apart, to measure how the blank sits."
+        case .probing: return "Probing \(axis)…"
         case .first: return "First touch recorded. Move along \(stationAxis) and probe again."
         case .complete:
             guard let skew = skewDegrees else { return "Two touches recorded." }
@@ -163,6 +167,11 @@ final class CNCEdgeProbe {
     func reset() { phase = .idle; contacts = []; skewDegrees = nil }
 
     /// Probe the edge where the tool is standing now.
+    ///
+    /// The contact does not arrive with the command: Grbl pushes `PRB:` when
+    /// the switch closes, which is a whole move later. The result is taken by
+    /// `capture(from:)` — called here when the simulator has already answered,
+    /// and by the view when the reply lands.
     @discardableResult
     func probe(on machine: CNCController, settings: CNCProbeSettings) -> Bool {
         guard machine.canCommand, let work = machine.status.work else { return false }
@@ -170,9 +179,23 @@ final class CNCEdgeProbe {
         let start = axis == "X" ? work.x : work.y
         guard let line = CNCMachineCommands.probe(axis: axis, to: start + sign * settings.travel, feed: settings.feed)
         else { return false }
+        phase = .probing
         machine.runProbeSequence([line])
+        if machine.probeWorkPosition != nil { return capture(from: machine) }
+        if let alarm = machine.alarm, !alarm.positionLost {
+            phase = .failed(alarm.text)
+            return false
+        }
+        return true
+    }
+
+    /// Take the contact the controller has reported, if it is this probe's.
+    @discardableResult
+    func capture(from machine: CNCController) -> Bool {
+        guard phase == .probing else { return false }
         guard let contact = machine.probeWorkPosition else {
-            phase = .failed(machine.alarm?.text ?? "No contact within \(settings.travel.formatted()) mm. Nothing was probed.")
+            guard let alarm = machine.alarm else { return false }
+            phase = .failed(alarm.text)
             return false
         }
         contacts.append(SIMD2<Double>(contact.x, contact.y))

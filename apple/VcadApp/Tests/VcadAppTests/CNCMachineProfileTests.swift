@@ -448,6 +448,18 @@ final class CNCMachineProfileTests: XCTestCase {
         }
     }
 
+    func testEdgeProbeThatMissesSaysSoInsteadOfMeasuringNothing() {
+        let machine = CNCController()
+        machine.connect(simulated: true)
+        defer { machine.disconnect() }
+        let edge = CNCEdgeProbe()
+        machine.simulateProbe(contact: nil, misses: true)
+        XCTAssertFalse(edge.probe(on: machine, settings: CNCProbeSettings()))
+        XCTAssertEqual(edge.phase, .failed(CNCAlarm.probeFailContact.text))
+        XCTAssertNil(edge.skewDegrees)
+        XCTAssertNil(machine.skewDegrees)
+    }
+
     func testEdgeZeroAllowsForTheCutterRadius() {
         // Probing toward +X, the tool touches with its +X flank: the edge is
         // one radius past the centre, so the contact reads −radius.

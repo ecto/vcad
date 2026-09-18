@@ -88,6 +88,10 @@ struct CNCProbeSheet: View {
         }
         .padding(24).frame(width: 600)
         .onChange(of: settings) { _, value in value.save() }
+        // The contact arrives with the controller's `PRB:` reply, a move after
+        // the command; only the simulator answers inside the call.
+        .onChange(of: machine.probePosition) { _, _ in edge.capture(from: machine) }
+        .onChange(of: machine.alarm) { _, _ in edge.capture(from: machine) }
         .confirmationDialog(pending?.title ?? "", isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } })) {
             if let pending {
                 Button(pending.action) { perform(pending); self.pending = nil }
