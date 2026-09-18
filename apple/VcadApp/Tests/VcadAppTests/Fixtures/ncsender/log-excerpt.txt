@@ -1,0 +1,25 @@
+[2026-09-17T12:03:32.289Z] [INFO] [ProbeService] Probe operation started
+[2026-09-17T12:03:32.289Z] [INFO] [CncController] Command sent: (PROBE Z - AUTOZERO TOUCH, AUTO)
+[2026-09-17T12:03:32.334Z] [INFO] [CncController] CNC controller responded: error:1
+[2026-09-17T12:03:32.349Z] [INFO] [CncController] Command sent: G38.2 Z-25 F200
+    Changes: [Status: "Idle" → "Alarm"]
+    Raw: <Alarm|MPos:72.900,-35.100,-100.100,0.000|FS:0,0|Pn:0|WCO:63.900,-31.100,-138.261,0.000>
+[2026-09-17T12:03:35.416Z] [EROR] [ProbeService] Probe operation failed
+[2026-09-17T12:03:35.980Z] [INFO] [CncController] Command sent: $X
+[2026-09-17T12:03:36.016Z] [INFO] [ApiRequest] API POST /api/send-command {"command":"$X","commandId":"1789668215976-b2dda2ac1b185","meta":{"sourceId":"client"}} responded 200 in 36ms
+    Changes: [Status: "Alarm" → "Idle"]
+[2026-09-17T12:09:49.574Z] [INFO] [GcodeFileService] Uploaded file: stator-mdf-d2-9mm.nc
+[2026-09-17T12:09:49.597Z] [INFO] [GcodeFileService] Loaded file: stator-mdf-d2-9mm.nc (27208 lines, est 2036s)
+[2026-09-17T12:50:36.953Z] [INFO] [CncController] Command sent: G10 L20 P1 X31.575 Y31.575
+[2026-09-17T12:51:45.004Z] [INFO] [CncController] Command sent: G10 L20 P1 Z0.1
+[2026-09-17T13:10:07.451Z] [INFO] [CncController] Command sent: N8 G54
+[2026-09-17T13:10:07.461Z] [INFO] [CncController] Command sent: N9 M5
+[2026-09-17T13:10:07.471Z] [INFO] [CncController] Command sent: N10 G0 Z5.000
+[2026-09-17T13:10:07.480Z] [INFO] [CncController] Command sent: N11 M3 S10000
+    Changes: [Status: "Idle" → "Run", SpindleActive: "False" → "True"]
+[2026-09-17T13:11:26.556Z] [INFO] [CncController] Command sent: N648 G0 X30.851 Y11.677 Z5.000
+    Changes: [Status: "Run" → "Hold"]
+[2026-09-17T13:11:29.553Z] [INFO] [JobManager] Job stopped
+[2026-09-17T13:11:29.553Z] [INFO] [WebSocketLayer] Job stopped, sending soft reset
+[2026-09-17T13:11:29.607Z] [INFO] [CncController] Command sent: $G
+    Changes: [Status: "Hold" → "Idle", SpindleActive: "True" → "False"]
