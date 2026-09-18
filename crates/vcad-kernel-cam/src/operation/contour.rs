@@ -327,6 +327,15 @@ impl Contour2D {
         self.spoilboard.map_or(0.0, |s| s.thickness)
     }
 
+    /// How far below the stock top the flutes really go, in mm.
+    ///
+    /// This, not [`Contour2D::depth`], is what the tool-geometry checks have
+    /// to see: a negative allowance is a break-through and sinks the cutter
+    /// *past* the depth asked for.
+    pub fn reached_depth(&self) -> f64 {
+        BottomAllowance(self.bottom_allowance).final_depth(self.depth)
+    }
+
     /// What to do when the cutter is about as wide as the opening.
     pub fn with_thin_slot(mut self, strategy: ThinSlotStrategy) -> Self {
         self.thin_slot = strategy;

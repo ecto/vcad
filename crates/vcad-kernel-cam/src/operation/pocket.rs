@@ -279,6 +279,15 @@ impl Pocket2D {
         self
     }
 
+    /// How far below the stock top the flutes really go, in mm.
+    ///
+    /// This, not [`Pocket2D::depth`], is what the tool-geometry checks have to
+    /// see: a negative allowance is a break-through and sinks the cutter
+    /// *past* the depth asked for.
+    pub fn reached_depth(&self) -> f64 {
+        BottomAllowance(self.bottom_allowance).final_depth(self.depth)
+    }
+
     /// Grid pitch for the areas in the report, in mm.
     pub fn with_measure_grid(mut self, grid: f64) -> Self {
         self.measure_grid = Some(grid);

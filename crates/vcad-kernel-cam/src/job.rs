@@ -1346,6 +1346,51 @@ mod tests {
         );
     }
 
+    /// A break-through is the cut going *deeper*, and the flute check has to
+    /// see that depth. 6.0 mm of cut with a 0.5 mm break-through is 6.5 mm of
+    /// tool in the work; against 6.2 mm of flute that is the shank rubbing,
+    /// and the gate used to wave it through because it read `op.depth`.
+    #[test]
+    fn a_break_through_deeper_than_the_flutes_is_refused() {
+        let mut lib = ToolLibrary::new();
+        lib.add(
+            ToolEntry::new(
+                1,
+                "Ø6 short flat",
+                Tool::FlatEndMill {
+                    diameter: 6.0,
+                    flute_length: 6.2,
+                    flutes: 2,
+                },
+            )
+            .with_geometry(ToolGeometry::new().with_stickout(40.0)),
+        );
+
+        let contour = Contour2D::outside(Contour::rectangle(0.0, 0.0, 50.0, 40.0), 6.0)
+            .with_bottom_allowance(-0.5)
+            .with_spoilboard(3.0);
+        // 6.0 mm of cut fits 6.2 mm of flute, so the depth asked for is fine.
+        assert!((contour.depth - 6.0).abs() < 1e-12);
+        assert!((contour.reached_depth() - 6.5).abs() < 1e-12);
+
+        let job = Job::new("break-through", lib, settings()).with_op(JobOp::new(
+            "Outside profile",
+            1,
+            contour,
+        ));
+        let err = job.assemble().unwrap_err();
+        let JobError::ToolCheckFailed { op, findings, .. } = err else {
+            panic!("{err:?}");
+        };
+        assert_eq!(op, "Outside profile");
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.contains("6.50") && f.contains("6.20")),
+            "{findings:?}"
+        );
+    }
+
     /// Operation-level refusals carry the operation's own message out.
     #[test]
     fn test_assembly_carries_operation_refusals_out() {

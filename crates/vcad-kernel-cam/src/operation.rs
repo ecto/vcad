@@ -111,11 +111,19 @@ impl CamOperation {
     }
 
     /// What this operation asks of its tool, for the tool-geometry checks.
+    ///
+    /// The depth reported is the one the flutes actually reach, not the one
+    /// the operation was asked for: contour and pocket both cut
+    /// `depth - bottom_allowance`, and a break-through allowance is negative.
+    /// Reporting `op.depth` let `with_bottom_allowance(-0.5)` on a 6.0 mm cut
+    /// pass a 6.2 mm flute check and then bury 6.5 mm of tool — the shank in
+    /// the work, which is the very thing this gate exists to stop.
     pub fn cut_context(&self, tool: &Tool) -> Result<CutContext, CamError> {
         Ok(match self {
+            // Facing has no bottom allowance: the depth asked for is the depth.
             CamOperation::Face(op) => CutContext::new(op.depth),
-            CamOperation::Pocket2D(op) => CutContext::new(op.depth),
-            CamOperation::Contour2D(op) => CutContext::new(op.depth),
+            CamOperation::Pocket2D(op) => CutContext::new(op.reached_depth()),
+            CamOperation::Contour2D(op) => CutContext::new(op.reached_depth()),
             // The depth a 3D roughing pass reaches is the height field's to
             // say, and this does not carry one.
             CamOperation::Roughing3D(_) => {
