@@ -1133,9 +1133,16 @@ mod tests {
             "{forward} / {backward}"
         );
         let fitted_len: f64 = prims.iter().map(Prim::length).sum();
+        // An absolute bound, not one that grows with however many primitives
+        // the fit happened to emit: a closed curve re-drawn inside a band of
+        // half-width `t` changes its length by at most `2πt` (the length of a
+        // curve offset by `t` is `2πt` longer), so that is the geometry's own
+        // answer and it does not move when the fitter does. Measured here:
+        // 0.0090 mm against a 0.0314 mm bound.
         assert!(
-            (fitted_len - polyline_length(&pts)).abs() <= options.tolerance * prims.len() as f64,
-            "circumference {fitted_len:.6}"
+            (fitted_len - polyline_length(&pts)).abs() <= TAU * options.tolerance,
+            "circumference {fitted_len:.6} vs {:.6}",
+            polyline_length(&pts)
         );
     }
 
@@ -1305,8 +1312,13 @@ mod tests {
             // different part.
             let fitted_len: f64 = prims.iter().map(Prim::length).sum();
             let original_len = polyline_length(&pts);
+            // The same absolute bound as the bore test: `2πt` for a closed
+            // loop re-drawn inside a band of half-width `t`. Scaling it by
+            // `prims.len()` made it looser exactly when the fitter emitted
+            // more, which is the thing under test. Worst measured on this
+            // fixture: 0.0147 mm against 0.0314 mm.
             assert!(
-                (fitted_len - original_len).abs() <= options.tolerance * prims.len() as f64,
+                (fitted_len - original_len).abs() <= TAU * options.tolerance,
                 "length {fitted_len:.6} vs {original_len:.6} over {} primitives",
                 prims.len()
             );
@@ -1417,10 +1429,7 @@ mod tests {
             pts.push([40.0 * theta.cos(), 40.0 * theta.sin()]);
         }
         let tp = polyline_path(&pts, -1.0, 800.0);
-        let started = std::time::Instant::now();
         let (first, report_a) = fit_arcs_reported(&tp, &options);
-        let elapsed = started.elapsed();
-        println!("30k moves fitted in {elapsed:?}");
         let (second, report_b) = fit_arcs_reported(&tp, &options);
         assert_eq!(report_a, report_b);
         assert_eq!(
@@ -1429,5 +1438,38 @@ mod tests {
         );
         // Three laps at 180° per arc.
         assert_eq!(report_a.arcs_emitted, 6, "{report_a:?}");
+
+        // The name says linearithmic; it used to print the elapsed time and
+        // assert nothing at all, which would have let an O(n²) rewrite through
+        // silently. Timed against four times the input: `grow`'s doubling
+        // makes a primitive covering k points cost O(log k) checks of O(k),
+        // so 4n should cost about 4x, and certainly not 16x.
+        let timed = |n: usize| {
+            let mut pts = Vec::with_capacity(n + 1);
+            for k in 0..=n {
+                let theta = TAU * 3.0 * k as f64 / n as f64;
+                pts.push([40.0 * theta.cos(), 40.0 * theta.sin()]);
+            }
+            let tp = polyline_path(&pts, -1.0, 800.0);
+            // One warm run, then the measured one: the first touches the
+            // allocator for every buffer this will use.
+            let _ = fit_arcs_reported(&tp, &options);
+            let started = std::time::Instant::now();
+            let (_, report) = fit_arcs_reported(&tp, &options);
+            assert_eq!(report.arcs_emitted, 6, "{report:?}");
+            started.elapsed().as_secs_f64()
+        };
+        let small = timed(20_000);
+        let large = timed(80_000);
+        // A generous ceiling on purpose: this is a guard against a change of
+        // complexity class, not a benchmark, and it runs on shared CI. 4x the
+        // input at quadratic cost would be 16x the time; the floor is there so
+        // a timer that reports nothing cannot pass it either.
+        let ratio = large / small.max(1e-9);
+        assert!(
+            (1.0..=10.0).contains(&ratio),
+            "4x the input took {ratio:.1}x the time ({small:.4}s -> {large:.4}s): \
+             quadratic is 16x, and a ratio under 1 means the timer measured nothing"
+        );
     }
 }

@@ -502,9 +502,10 @@ mod tests {
             &mut state,
         );
 
-        // Should have 2 decimal places
-        assert!(out.contains("X10.12"));
-        assert!(out.contains("Y20.99"));
-        assert!(out.contains("Z5.56") || out.contains("Z5.55"));
+        // Exactly two decimals, and exactly the digits Rust's own rounding
+        // gives: `5.555` is 5.5549999999999997 as an f64, so it rounds *down*.
+        // Accepting "Z5.56 or Z5.55" accepted whichever the post happened to
+        // print, which is not a test of anything.
+        assert_eq!(out.trim(), "G0 X10.12 Y20.99 Z5.55");
     }
 }

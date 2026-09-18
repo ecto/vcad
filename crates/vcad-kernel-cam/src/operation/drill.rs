@@ -1486,18 +1486,31 @@ mod tests {
         let bore = HelicalBore::new(7.5, 12.5, 2.5, 1.0, 0.3);
         let toolpath = bore.generate(&tool, &geom, &settings()).unwrap();
 
-        let r = 0.25; // (2.5 - 2) / 2
+        // Both sides of every comparison below come from the operation and
+        // the tool, not from a second copy of the same arithmetic: a literal
+        // asserted against a literal tests the test.
+        let r = bore.finish_radius(&tool);
+        assert!(close(r, 0.25), "(2.5 - 2) / 2 = {r}");
+        let depth = bore.total_depth(&tool);
+        let revolutions = (depth / bore.pitch).ceil() as usize;
+        let quarters = 4;
+
         let arcs: Vec<[f64; 3]> = toolpath
             .segments
             .iter()
             .filter(|s| matches!(s, ToolpathSegment::Arc { .. }))
             .filter_map(|s| s.target())
             .collect();
-        // 4 revolutions of 4 quarters (1.0 / 0.3 rounded up), plus the flat
-        // turn on the floor.
-        assert_eq!(arcs.len(), 4 * 4 + 4, "{} arcs", arcs.len());
+        // Whole revolutions of four quarter-arcs each, plus the flat turn on
+        // the floor.
+        assert_eq!(
+            arcs.len(),
+            revolutions * quarters + quarters,
+            "{} arcs for {revolutions} revolutions",
+            arcs.len()
+        );
         for p in &arcs {
-            let radius = (p[0] - 7.5).hypot(p[1] - 12.5);
+            let radius = (p[0] - bore.x).hypot(p[1] - bore.y);
             assert!(
                 (radius - r).abs() < 1e-12,
                 "arc at radius {radius}, wanted {r}"
@@ -1505,21 +1518,30 @@ mod tests {
         }
 
         // Pitch: Z per revolution, and never more than asked for.
-        let pitch = 1.0 / 4.0;
-        for rev in 0..4 {
-            let top = if rev == 0 { 0.0 } else { arcs[rev * 4 - 1][2] };
-            let bottom = arcs[rev * 4 + 3][2];
+        let pitch = depth / revolutions as f64;
+        for rev in 0..revolutions {
+            let top = if rev == 0 {
+                0.0
+            } else {
+                arcs[rev * quarters - 1][2]
+            };
+            let bottom = arcs[rev * quarters + quarters - 1][2];
             assert!(
                 close(top - bottom, pitch),
                 "revolution {rev} dropped {}, wanted {pitch}",
                 top - bottom
             );
         }
-        assert!(pitch <= 0.3 + 1e-12);
-        assert!(close(arcs[15][2], -1.0), "helix ended at {}", arcs[15][2]);
+        assert!(
+            pitch <= bore.pitch + 1e-12,
+            "used {pitch}, asked for {}",
+            bore.pitch
+        );
+        let last_helix = arcs[revolutions * quarters - 1][2];
+        assert!(close(last_helix, -depth), "helix ended at {last_helix}");
         // The floor turn stays at depth.
-        for p in &arcs[16..] {
-            assert!(close(p[2], -1.0));
+        for p in &arcs[revolutions * quarters..] {
+            assert!(close(p[2], -depth));
         }
     }
 
