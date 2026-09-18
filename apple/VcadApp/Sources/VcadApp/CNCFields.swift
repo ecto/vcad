@@ -64,6 +64,8 @@ extension CNCWorkspace {
         .init(id: "cnc.tabs.width", label: "Metal left", unit: "mm", sample: 4),
         .init(id: "cnc.tabs.height", label: "Tab height", unit: "mm", sample: 0.42),
         .init(id: "cnc.op.thinSlotTolerance", label: "Allowed wall error", unit: "mm", sample: 0.05),
+        .init(id: "cnc.op.peckDepth", label: "Peck depth", unit: "mm", sample: 1.5),
+        .init(id: "cnc.op.drillDwell", label: "Dwell at the bottom", unit: "s", sample: 0.4),
         .init(id: "cnc.machine.jogStep", label: "Jog step", unit: "mm", sample: 10),
         .init(id: "cnc.machine.jogFeed", label: "Jog feed", unit: "mm/min", sample: 600),
     ]
@@ -101,10 +103,49 @@ extension CNCWorkspace {
         case "cnc.tabs.width": return setup.tabWidth
         case "cnc.tabs.height": return setup.tabHeight
         case "cnc.op.thinSlotTolerance": return setup.thinSlotTolerance
+        case "cnc.op.peckDepth": return setup.peckDepth
+        case "cnc.op.drillDwell": return setup.drillDwell
         case "cnc.machine.jogStep": return jogStep
         case "cnc.machine.jogFeed": return jogFeed
+        // `cnc.tool.<n>.<field>` addresses one entry of the tool list. A
+        // family rather than a fixed name, because the list has no fixed
+        // length — the plain `cnc.tool.*` names above stay pointed at the
+        // primary end mill so nothing that already worked stops working.
+        default: return toolFieldValue(id)
+        }
+    }
+
+    /// Split `cnc.tool.<number>.<field>` into its parts, or nil.
+    private func toolField(_ id: String) -> (number: Int, field: String)? {
+        let parts = id.split(separator: ".")
+        guard parts.count == 4, parts[0] == "cnc", parts[1] == "tool",
+              let number = Int(parts[2]) else { return nil }
+        return (number, String(parts[3]))
+    }
+
+    private func toolFieldValue(_ id: String) -> Double? {
+        guard let (number, field) = toolField(id), let tool = tool(number: number) else { return nil }
+        switch field {
+        case "diameter": return tool.diameter
+        case "flutes": return Double(tool.flutes)
+        case "fluteLength": return tool.fluteLength
+        case "stickout": return tool.stickout
         default: return nil
         }
+    }
+
+    private func setToolFieldValue(_ id: String, to value: Double) -> Bool {
+        guard let (number, field) = toolField(id), tool(number: number) != nil else { return false }
+        switch field {
+        case "diameter": updateTool(number: number) { $0.diameter = value }
+        // The stepper's own range, honoured here too, so the two paths to the
+        // same number cannot disagree about what it may be.
+        case "flutes": updateTool(number: number) { $0.flutes = Int(max(1, min(6, value.rounded()))) }
+        case "fluteLength": updateTool(number: number) { $0.fluteLength = value }
+        case "stickout": updateTool(number: number) { $0.stickout = value }
+        default: return false
+        }
+        return true
     }
 
     /// Set a named field. Returns false for a name that is not a field, or a
@@ -149,9 +190,11 @@ extension CNCWorkspace {
         case "cnc.tabs.width": setup.tabWidth = value
         case "cnc.tabs.height": setup.tabHeight = value
         case "cnc.op.thinSlotTolerance": setup.thinSlotTolerance = value
+        case "cnc.op.peckDepth": setup.peckDepth = value
+        case "cnc.op.drillDwell": setup.drillDwell = value
         case "cnc.machine.jogStep": jogStep = value
         case "cnc.machine.jogFeed": jogFeed = value
-        default: return false
+        default: return setToolFieldValue(id, to: value)
         }
         return true
     }
