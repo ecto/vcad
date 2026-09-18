@@ -7545,6 +7545,39 @@ impl Default for RepairPolicy {
     }
 }
 
+/// Which way the shape guard saw a refused pass move the part.
+///
+/// Both directions are failures and neither implies the other. A pass that
+/// deletes a fillet wall loses surface; a pass that bridges a 1.5 mm slot
+/// mouth shut adds it, having lost nothing at all. Bounding only the first is
+/// what let a slit bridge cap a real slot and still report a watertight
+/// export.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SurfaceChange {
+    /// Surface that was handed in and would not have come back — deleted, or
+    /// slid far enough that nothing is left where it was.
+    Lost,
+    /// Surface the pass would have invented: geometry standing where the mesh
+    /// handed in had none. A fill spanning a gap that is really there.
+    Added,
+}
+
+/// A repair pass the shape guard refused, and what it would have cost.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeclinedPass {
+    /// The pass, by name (`"bridge_slits"`, `"snap_rails"`, `"net"` for the
+    /// whole journey).
+    pub pass: &'static str,
+    /// Whether the pass would have taken surface away or made some up.
+    pub change: SurfaceChange,
+    /// How far, mm — the deviation that broke the policy's limit.
+    pub distance: f64,
+    /// Where, in part coordinates. For [`SurfaceChange::Added`] this is a
+    /// point ON the invented surface, so a message can say where the repair
+    /// wanted to put material that the model does not have.
+    pub at: [f64; 3],
+}
+
 /// What [`repair_watertightness_reported`] did, for a caller that must not
 /// present a degraded mesh as a good one (native-app friction log item 30).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -7555,10 +7588,10 @@ pub struct RepairOutcome {
     /// watertight and the caller is holding a degraded part.
     pub defects_after: usize,
     /// Passes refused because they would have moved the part's boundary
-    /// further than the policy allows, as `(pass, mm it would have moved)`.
-    /// A non-empty list with `defects_after > 0` is the honest answer "this
-    /// mesh cannot be repaired without changing the part".
-    pub declined: Vec<(&'static str, f64)>,
+    /// further than the policy allows — in either direction. A non-empty list
+    /// with `defects_after > 0` is the honest answer "this mesh cannot be
+    /// repaired without changing the part".
+    pub declined: Vec<DeclinedPass>,
     /// How far the mesh handed in ended up from the mesh handed back —
     /// surface that was deleted or slid. Under a strict policy this is
     /// bounded by [`SHAPE_TOLERANCE`]; under a permissive one it is the
@@ -7584,24 +7617,54 @@ impl RepairOutcome {
         if self.defects_after == 0 {
             return None;
         }
-        let worst = self.declined.iter().fold(0.0f64, |m, &(_, d)| m.max(d));
-        if self.declined.is_empty() {
-            Some(format!(
+        let Some(worst) = self
+            .declined
+            .iter()
+            .max_by(|a, b| a.distance.total_cmp(&b.distance))
+        else {
+            return Some(format!(
                 "mesh is not watertight: {} defective edge(s) remain",
                 self.defects_after
-            ))
-        } else {
-            Some(format!(
-                "mesh is not watertight: {} defective edge(s) remain; repair declined \
-                 because it would have moved the surface by {worst:.4} mm",
-                self.defects_after
-            ))
-        }
+            ));
+        };
+        // Which way it went is the actionable half. "Lost 0.5 mm" means a
+        // pass wanted to delete part of the model; "added 0.7 mm" means one
+        // wanted to fill a gap that is really in the part — a capped slot
+        // mouth, say — and the machinist needs to know which.
+        let what = match worst.change {
+            SurfaceChange::Lost => "removed surface",
+            SurfaceChange::Added => "invented surface",
+        };
+        Some(format!(
+            "mesh is not watertight: {} defective edge(s) remain; repair declined \
+             ({}) because it would have {what} {:.4} mm from the part, at \
+             [{:.3}, {:.3}, {:.3}]",
+            self.defects_after, worst.pass, worst.distance, worst.at[0], worst.at[1], worst.at[2],
+        ))
+    }
+
+    /// The passes refused for inventing surface — the direction that matters
+    /// to an export, because a fill nobody asked for is a different part that
+    /// reports as watertight.
+    pub fn invented(&self) -> impl Iterator<Item = &DeclinedPass> {
+        self.declined
+            .iter()
+            .filter(|d| d.change == SurfaceChange::Added)
     }
 }
 
-/// Run `pass`; put the mesh back unless it both reduced the defective-edge
-/// count and left the boundary within [`SHAPE_TOLERANCE`] of where it was.
+/// Run `pass`; put the mesh back unless it reduced the defective-edge count
+/// and left the boundary within [`SHAPE_TOLERANCE`] of where it was — in BOTH
+/// directions.
+///
+/// Measuring only `before` against `after` bounds surface the pass took away
+/// and says nothing about surface it made up. Those are different failures.
+/// `bridge_boundary_slits` never deletes a triangle, so under a one-sided
+/// guard it was unbounded by construction: it could span any loop its mean
+/// width gate admitted, up to [`SLIT_MAX_WIDTH`] = 2 mm, which is wider than
+/// a real 1.5 mm slot mouth. The export then came back `is_watertight()` with
+/// an empty `declined` list and a lid over the slot. So the guard asks both
+/// questions, and a pass that fails either is put back.
 fn guarded_pass(
     mesh: &mut TriangleMesh,
     label: &'static str,
@@ -7625,15 +7688,39 @@ fn guarded_pass(
     if mesh.indices == before.indices && mesh.vertices == before.vertices {
         return;
     }
-    let Some(moved) =
-        crate::clearance::surface_moved_beyond(&before, mesh, policy.max_surface_move)
-    else {
+    let limit = policy.max_surface_move;
+    // Lost first, then added: the order only decides which number a
+    // doubly-bad pass reports, and "you deleted part of the model" is the
+    // more specific complaint.
+    let verdict = crate::clearance::surface_moved_beyond(&before, mesh, limit)
+        .map(|(d, at)| (SurfaceChange::Lost, d, at))
+        .or_else(|| {
+            // `VCAD_NO_ADDED_GUARD=1` puts the guard back to its one-sided
+            // form, so the part a two-sided guard refuses can still be
+            // produced and measured without rebuilding — and so the test that
+            // pins this can be mutation-checked from the outside.
+            if std::env::var_os("VCAD_NO_ADDED_GUARD").is_some() {
+                return None;
+            }
+            crate::clearance::surface_moved_beyond(mesh, &before, limit)
+                .map(|(d, at)| (SurfaceChange::Added, d, at))
+        });
+    let Some((change, distance, at)) = verdict else {
         return;
     };
     if std::env::var_os("VCAD_REPAIR_TRACE").is_some() {
-        eprintln!("repair[{label}]: DECLINED — would move the surface {moved:.5} mm");
+        let what = match change {
+            SurfaceChange::Lost => "remove",
+            SurfaceChange::Added => "invent",
+        };
+        eprintln!("repair[{label}]: DECLINED — would {what} surface {distance:.5} mm at {at:?}");
     }
-    outcome.declined.push((label, moved));
+    outcome.declined.push(DeclinedPass {
+        pass: label,
+        change,
+        distance,
+        at,
+    });
     *mesh = before;
 }
 
@@ -7894,18 +7981,36 @@ fn repair_watertightness_inner(
     // away — which is what the stator's export did, losing 0.50 mm of the
     // lead notch with every individual pass inside tolerance. The promise
     // the policy makes is about the part that comes out, so it is checked on
-    // the part that comes out.
-    if let Some(moved) =
-        crate::clearance::surface_moved_beyond(&original, mesh, policy.net_surface_move())
-    {
+    // the part that comes out — both ways, for the same reason each pass is.
+    // Eight iterations of legal sub-tolerance fills add up to a lid just as
+    // eight legal sub-tolerance deletions add up to a tear.
+    let net = policy.net_surface_move();
+    let net_verdict = crate::clearance::surface_moved_beyond(&original, mesh, net)
+        .map(|(d, at)| (SurfaceChange::Lost, d, at))
+        .or_else(|| {
+            if std::env::var_os("VCAD_NO_ADDED_GUARD").is_some() {
+                return None;
+            }
+            crate::clearance::surface_moved_beyond(mesh, &original, net)
+                .map(|(d, at)| (SurfaceChange::Added, d, at))
+        });
+    if let Some((change, distance, at)) = net_verdict {
         if std::env::var_os("VCAD_REPAIR_TRACE").is_some() {
+            let what = match change {
+                SurfaceChange::Lost => "is missing",
+                SurfaceChange::Added => "invents",
+            };
             eprintln!(
-                "repair: DECLINED overall — the repaired mesh is {moved:.5} mm from the \
-                 input (tolerance {:.5})",
-                policy.net_surface_move()
+                "repair: DECLINED overall — the repaired mesh {what} {distance:.5} mm of \
+                 surface at {at:?} (tolerance {net:.5})"
             );
         }
-        outcome.declined.push(("net", moved));
+        outcome.declined.push(DeclinedPass {
+            pass: "net",
+            change,
+            distance,
+            at,
+        });
         *mesh = original;
         return;
     }
