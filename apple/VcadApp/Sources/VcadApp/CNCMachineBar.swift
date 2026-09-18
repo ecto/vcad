@@ -13,11 +13,19 @@ struct CNCMachineBar: View {
     @State private var jogShown = false
     @State private var overridesShown = false
     @State private var probeShown = false
+    @State private var traceShown = false
     @State private var reviewShown = false
     @State private var runShown = false
     @State private var stopShown = false
     @State private var zeroAxes: String?
     private var machine: CNCController { cnc.machine }
+    /// What the machine says about this job: travel, homing, alarms, limits.
+    private var machineFindings: [CNCMachineFinding] { cncMachineFindings(cnc) }
+    private var machineBlocker: String? { machineFindings.first(where: \.blocking)?.text }
+    /// Everything Run waits on: the job's own gate first, then the machine's.
+    /// The job side is the workspace's to answer; travel, homing and alarms
+    /// are the machine's, and a job that leaves travel never reaches Run.
+    private var blocker: String? { cnc.runBlocker ?? machineBlocker }
     private var held: Bool { machine.status.state.hasPrefix("Hold") }
     private var moving: Bool { machine.active || held || ["Run", "Jog", "Home"].contains(machine.status.state) }
     private var canResume: Bool { machine.connected && machine.status.isFresh && machine.status.state == "Hold:0" && !machine.faulted }
@@ -50,13 +58,15 @@ struct CNCMachineBar: View {
             Button("Cancel", role: .cancel) {}.keyboardShortcut(.defaultAction)
         }
         .sheet(isPresented: $probeShown) { CNCProbeSheet(cnc: cnc) }
+        .sheet(isPresented: $traceShown) { CNCTraceSheet(cnc: cnc) }
         .confirmationDialog(machine.demo ? "Run the job in the simulator?" : "Start machining this job?", isPresented: $runShown) {
             Button(machine.demo ? "Run simulated job" : "Start machining") { cnc.startJob() }
             // Return answers Cancel: starting the spindle is a deliberate click,
             // never the key that also commits a number field.
             Button("Cancel", role: .cancel) {}.keyboardShortcut(.defaultAction)
         } message: {
-            Text(cnc.usesImportedProgram ? "\(cnc.importedName) · G54. Verify the installed tool, program and initial travel." : "\(counted(cnc.operations.count, "operation")) · Ø \(cnc.toolDiameter.formatted()) mm tool · G54. The program starts the spindle and cuts to the configured depths.")
+            let dial = cncSpindleInstruction(cnc).map { " " + $0 } ?? ""
+            Text((cnc.usesImportedProgram ? "\(cnc.importedName) · G54. Verify the installed tool, program and initial travel." : "\(counted(cnc.operations.count, "operation")) · Ø \(cnc.toolDiameter.formatted()) mm tool · G54. The program starts the spindle and cuts to the configured depths.") + dial)
         }
         .confirmationDialog("Stop and reset the controller?", isPresented: $stopShown) {
             Button("Stop and reset", role: .destructive) { machine.reset(); cnc.setupConfirmed = false }
@@ -108,7 +118,8 @@ struct CNCMachineBar: View {
         .help("Machine connection")
         .accessibilityLabel("Machine connection, \(machine.summary)")
         .popover(isPresented: $connectionShown, arrowEdge: .top) {
-            CNCConnectionView(cnc: cnc).padding(18).frame(width: 320)
+            ScrollView { CNCMachineConnection(cnc: cnc).padding(18) }
+                .frame(width: 330).frame(maxHeight: 520)
         }
     }
 
@@ -159,6 +170,11 @@ struct CNCMachineBar: View {
                     .disabled(machine.g54Active)
             }.disabled(!machine.canCommand)
             Button("Probe", systemImage: "arrow.down.to.line") { probeShown = true }.disabled(!machine.canCommand)
+            // Item 53: the blank was 10° off and 5 mm out, and the only way
+            // that was ever found was tracing the square by hand.
+            Button("Trace", systemImage: "rectangle.dashed") { traceShown = true }
+                .disabled(!machine.canCommand || cncJobEnvelope(cnc) == nil)
+                .help("Walk the job's bounding rectangle at a safe height")
             Button {
                 overridesShown.toggle()
             } label: {
@@ -211,9 +227,9 @@ struct CNCMachineBar: View {
             } else {
                 Button { reviewShown.toggle() } label: {
                     HStack(spacing: 5) {
-                        Image(systemName: cnc.runBlocker == nil ? "checkmark.circle.fill" : "info.circle")
-                            .foregroundStyle(cnc.runBlocker == nil ? Color.green : Color.secondary)
-                        Text(cnc.runBlocker == nil ? "Ready to machine" : cnc.generating ? "Generating toolpaths…" : "Setup needs attention")
+                        Image(systemName: blocker == nil ? "checkmark.circle.fill" : "info.circle")
+                            .foregroundStyle(blocker == nil ? Color.green : Color.secondary)
+                        Text(blocker == nil ? "Ready to machine" : cnc.generating ? "Generating toolpaths…" : "Setup needs attention")
                             .font(.callout.weight(.medium))
                         Image(systemName: "chevron.down").font(.caption2).foregroundStyle(.tertiary)
                     }
@@ -222,7 +238,7 @@ struct CNCMachineBar: View {
                 .buttonStyle(.plain)
                 .help("Review the job setup")
                 .popover(isPresented: $reviewShown, arrowEdge: .top) { readiness.padding(18).frame(width: 330) }
-                Text(cnc.error ?? machine.error ?? cnc.runBlocker ?? (cnc.usesImportedProgram ? cnc.importedName : "\(counted(cnc.operations.count, "operation")) · est. \(CNCWorkspace.durationLabel(cnc.jobDuration))"))
+                Text(cnc.error ?? machine.error ?? blocker ?? (cnc.usesImportedProgram ? cnc.importedName : "\(counted(cnc.operations.count, "operation")) · est. \(CNCWorkspace.durationLabel(cnc.jobDuration))"))
                     .font(.caption).foregroundStyle((cnc.error ?? machine.error) == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.red))
                     .lineLimit(1).truncationMode(.tail)
             }
@@ -240,7 +256,7 @@ struct CNCMachineBar: View {
                 Label(held ? "Resume" : moving ? "Hold" : "Run Job", systemImage: held ? "play.fill" : moving ? "pause.fill" : "play.fill")
                     .frame(width: 78)
             }.buttonStyle(.borderedProminent).tint(moving ? .orange : .accentColor)
-                .disabled(held ? !canResume : moving ? !machine.connected : cnc.runBlocker != nil)
+                .disabled(held ? !canResume : moving ? !machine.connected : blocker != nil)
                 // No Return-based key equivalent: AppKit advertises any button
                 // whose key is Return as the window's default button, modifiers
                 // or not, so accessibility clients pressed Run Job for "return".
@@ -254,29 +270,10 @@ struct CNCMachineBar: View {
         }.controlSize(.regular).fixedSize()
     }
 
-    /// The readiness checklist: what Run Job is waiting on, and the one
-    /// human confirmation nothing can automate.
+    /// The readiness checklist lives in its own view so the machine's half of
+    /// it can be rendered — and looked at — without a window.
     private var readiness: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.m) {
-            Text("Job readiness").font(.headline)
-            Label(machine.connected ? "Controller connected" : "Controller disconnected", systemImage: machine.connected ? "checkmark.circle" : "circle")
-            Label(cnc.jobCurrent ? "Toolpaths current" : "Toolpaths need generation", systemImage: cnc.jobCurrent ? "checkmark.circle" : "circle")
-            Label(machine.workspace == "G54" ? "G54 selected" : "G54 required", systemImage: machine.workspace == "G54" ? "checkmark.circle" : "circle")
-            Divider()
-            Toggle("I checked the tool, workholding, clearance and G54 zero", isOn: $cnc.setupConfirmed).disabled(machine.active)
-            if let blocker = cnc.runBlocker { Text(blocker).font(.caption).foregroundStyle(.secondary) }
-            if !cnc.jobCurrent && !cnc.usesImportedProgram {
-                Button(cnc.generating ? "Generating…" : "Generate toolpaths") { cnc.generate(all: true) }.disabled(cnc.generating || machine.active)
-            }
-            Divider()
-            HStack {
-                Button("Export job…") { cnc.export(job: true) }.disabled(cnc.jobCode == nil)
-                Spacer()
-                Button("Save park position") { machine.savePark() }.disabled(!machine.canCommand)
-            }
-            Text("No fixture collision or travel-limit verification. Feed hold and soft reset are controller commands, not a hardware E-stop.")
-                .font(.caption2).foregroundStyle(.tertiary)
-        }.font(.callout)
+        CNCReadinessList(cnc: cnc, onTrace: { reviewShown = false; traceShown = true })
     }
 }
 

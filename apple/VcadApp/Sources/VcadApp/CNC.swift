@@ -174,6 +174,47 @@ final class CNCController {
     private var commandBarrier = Date.distantPast
     private var resuming = false
 
+    // MARK: the machine itself
+
+    /// Every `$$` setting the controller has reported this session.
+    private(set) var settings = CNCMachineSettings()
+    /// Whether a homing cycle has completed since this connection opened.
+    /// Grbl never reports it, and anything that loses the position drops it.
+    private(set) var homed = false
+    /// The alarm the controller is sitting in, if any.
+    private(set) var alarm: CNCAlarm?
+    /// The stock rotation measured by the two-point edge probe, degrees CCW.
+    private(set) var skewDegrees: Double?
+    /// The saved `$$` snapshot this machine is compared against.
+    private(set) var baseline: CNCMachineBaseline?
+    /// Settings that differ from that baseline, recomputed as `$$` arrives.
+    private(set) var baselineDiff: [CNCSettingDelta] = []
+    /// Walking the job's bounding rectangle before the cut.
+    let trace = CNCTrace()
+    private var simulatedProbeContact: CNCVector?
+    private var simulatedProbeMisses = false
+
+    /// Which machine the baseline belongs to. The simulator borrows the
+    /// configured host's baseline, so a diff can be exercised without hardware.
+    var baselineMachine: String { host.trimmingCharacters(in: .whitespaces) }
+
+    /// What the app knows about the machine under the job, or nothing at all
+    /// before `$$` has been read. Consumers must treat `nil` as unknown rather
+    /// than as "fine": no profile means nothing has checked the travel.
+    var profile: CNCMachineProfile? {
+        guard connected, !settings.isEmpty else { return nil }
+        var profile = CNCMachineProfile(settings: settings)
+        profile.homed = homed
+        profile.alarm = alarm
+        profile.skewDegrees = skewDegrees
+        profile.workspace = workspace
+        profile.workOffset = status.isFresh ? status.offset : nil
+        profile.baselineName = baseline?.name
+        profile.baselineDiff = baselineDiff
+        profile.simulated = demo
+        return profile
+    }
+
     var active: Bool { stream.phase == .streaming || stream.phase == .draining }
     var canCommand: Bool { connected && initialized && !faulted && !active && pending == nil && status.isFresh && status.state == "Idle" && (status.received ?? .distantPast) > commandBarrier }
     var canHome: Bool { connected && initialized && !faulted && !active && pending == nil && status.isFresh && ["Idle", "Alarm"].contains(status.state) }
@@ -197,11 +238,15 @@ final class CNCController {
         }
         error = nil; faulted = false; demo = simulated; startedAt = Date()
         connecting = true
+        baseline = CNCMachineBaselineStore.load(machine: baselineMachine)
         let token = generation
         if simulated {
             connected = true; connecting = false; initialized = true
             reportScale = 1; workspace = "G54"; demoPosition = .init(); demoOffset = .init(); demoOffsets = [:]
             demoFeedOverride = 100; demoSpindleOverride = 100; demoFlood = false; demoMist = false; demoRPM = 0; demoAbsolute = true; demoScale = 1
+            // The simulator answers `$$` like the machine does, so everything
+            // downstream of the profile can be run without hardware.
+            ingestSettings(CNCAnolexBaseline.dump)
             appendLog("Simulator connected · no hardware commands will be sent")
             reportDemo()
         } else {
@@ -259,6 +304,11 @@ final class CNCController {
         status = CNCStatus(); framer = CNCFramer(); startup = []; pending = nil
         reportScale = nil; parserSeen = false; versionSeen = false; workspace = "Unknown"; manualQueue = []; probePosition = nil; probeWorkspace = nil; probeRequested = false; parkPosition = nil
         held = false; resuming = false; demo = false; commandBarrier = .distantPast
+        // A new connection knows nothing about where the machine is: homing,
+        // the settings and a measured skew all belong to the session that saw
+        // them. Keeping any of them would be inventing a machine state.
+        settings = CNCMachineSettings(); baselineDiff = []; homed = false; alarm = nil; skewDegrees = nil
+        simulatedProbeContact = nil; simulatedProbeMisses = false; trace.reset()
         if active { stream.fail(); jobFinished = Date() }
         tick += 1
     }
@@ -312,6 +362,7 @@ final class CNCController {
             if status.ingest(line, scale: scale) {
                 tick += 1
                 if status.state.hasPrefix("Alarm") || status.state.hasPrefix("Door") {
+                    noteAlarm(CNCAlarm.parse(status.state))
                     if active { abort("Controller reported \(status.state); job aborted") }
                 } else if status.state.hasPrefix("Hold") {
                     held = true
@@ -333,6 +384,9 @@ final class CNCController {
             status = CNCStatus(); return
         }
         if line.hasPrefix("[VER:") { firmware = line; versionSeen = true }
+        // Every `$$` setting is kept, not just the ones this app models: the
+        // setting that ruins the day is the one nobody thought to parse.
+        if settings.ingest(line) { refreshBaselineDiff() }
         if line.hasPrefix("$13=") {
             let value = line.dropFirst(4).split(separator: " ").first
             if value == "0" { reportScale = 1 }
@@ -348,15 +402,29 @@ final class CNCController {
             probePosition = CNCVector.parse(coordinates, scale: scale); probeWorkspace = workspace; probeRequested = false
         }
         if line.hasPrefix("error:") || line.hasPrefix("ALARM:") {
-            sendRaw("!"); abort("\(line). Reconnect after resolving the controller error."); return
+            let alarm = CNCAlarm.parse(line)
+            noteAlarm(alarm)
+            sendRaw("!")
+            // An alarm already says what happened and what to do about it;
+            // repeating the raw code and nothing else is what made "$132=100"
+            // read as a mystery for an afternoon.
+            abort((alarm?.text ?? "\(line).") + " Reconnect after resolving the controller error.")
+            return
         }
         if line == "ok" && !faulted {
             if pending != nil {
+                // Grbl answers `$H` with `ok` only once the cycle has finished,
+                // so this is the one moment the machine position is known.
+                if pending == "$H" { homed = true; alarm = nil }
                 pending = nil
                 commandBarrier = Date()
                 if !initialized { sendStartup() }
                 else if !manualQueue.isEmpty {
                     pending = manualQueue.removeFirst(); pendingSince = Date()
+                    // Every line that reaches the wire is in the terminal: a
+                    // batch whose later moves were invisible is a batch nobody
+                    // can check afterwards.
+                    appendLog("→ " + pending!)
                     sendRaw(pending! + "\n")
                 } else { sendRaw("?") }
             } else if active {
@@ -388,7 +456,13 @@ final class CNCController {
         } else { sendRaw(line + "\n") }
     }
     private func reportDemo() {
-        let state = held ? "Hold:0" : (stream.phase == .streaming ? "Run" : "Idle")
+        // An alarm outranks everything: the simulator has to be able to put the
+        // app in the state a hard limit puts it in, or nothing downstream of an
+        // alarm can be tested without hitting a real switch.
+        // Grbl's status line says "Alarm" with no subcode — the number only
+        // ever arrives in the pushed `ALARM:n`. Reporting "Alarm:1" here would
+        // be a report no controller sends, and `canHome` would not match it.
+        let state = alarm != nil ? "Alarm" : (held ? "Hold:0" : (stream.phase == .streaming ? "Run" : "Idle"))
         _ = status.ingest("<\(state)|MPos:\(demoPosition.x),\(demoPosition.y),\(demoPosition.z)|WCO:\(demoOffset.x),\(demoOffset.y),\(demoOffset.z)|FS:0,\(demoRPM)|Ov:\(demoFeedOverride),100,\(demoSpindleOverride)|A:\(demoFlood ? "F" : "")\(demoMist ? "M" : "")>", scale: 1)
         if !held { stream.status(state); if stream.phase == .complete && jobFinished == nil { jobFinished = Date() } }
         tick += 1
@@ -493,24 +567,135 @@ final class CNCController {
         probePosition = nil; probeWorkspace = workspace; probeRequested = true
         command(String(format: "G21 G90 G38.2 Z%.3f F%.1f", locale: Locale(identifier: "en_US_POSIX"), work.z - distance, feed))
     }
+    // MARK: - The machine's own settings, homing and alarms
+
+    /// Take a whole `$$` listing at once (the simulator, and tests).
+    func ingestSettings(_ dump: String) {
+        for line in dump.components(separatedBy: .newlines) where settings.ingest(line) { continue }
+        refreshBaselineDiff()
+    }
+    private func refreshBaselineDiff() {
+        baselineDiff = baseline?.diff(against: settings) ?? []
+    }
+    private func noteAlarm(_ value: CNCAlarm?) {
+        guard let value else { return }
+        alarm = value
+        // A hard limit or an abort loses the step count. Nothing on screen is
+        // a machine coordinate any more until the machine is homed again.
+        if value.positionLost { homed = false }
+        tick += 1
+    }
+    /// Save what the controller is reporting now as this machine's baseline.
+    func saveBaseline(name: String? = nil) {
+        guard !settings.isEmpty else { return }
+        let saved = CNCMachineBaseline(name: name ?? "\(baselineMachine) · \(Date().formatted(date: .abbreviated, time: .shortened))",
+                                       settings: settings)
+        CNCMachineBaselineStore.save(saved, machine: baselineMachine)
+        baseline = saved
+        refreshBaselineDiff()
+        appendLog("Saved \(counted(settings.numbers.count, "setting")) as the baseline for \(baselineMachine)")
+        tick += 1
+    }
+
+    // MARK: - Setup motion: trace, probe, edge finding
+
+    /// Run a short sequence of setup moves as one batch. Always behind a
+    /// confirmation in the UI; never used for the job itself.
+    func runSetupMoves(_ lines: [String]) {
+        guard canCommand, !lines.isEmpty else { return }
+        commandBatch(lines)
+    }
+    /// The same, but the last line is a probe whose result must survive.
+    func runProbeSequence(_ lines: [String]) {
+        guard canCommand, !lines.isEmpty, lines.contains(where: { $0.contains("G38.2") }) else { return }
+        probePosition = nil; probeWorkspace = workspace; probeRequested = true
+        commandBatch(lines, probing: true)
+    }
+    /// The probe contact in work coordinates. `PRB:` is reported in machine
+    /// coordinates, and every decision made from it is a work-frame one.
+    var probeWorkPosition: CNCVector? {
+        guard let probePosition, probeWorkspace == workspace, let offset = status.offset else { return nil }
+        return probePosition - offset
+    }
+    /// Probe along one axis, toward `distance` millimetres from here.
+    func probe(axis: String, distance: Double, feed: Double) {
+        guard canCommand, !status.probeTriggered, let work = status.work,
+              distance.isFinite, abs(distance) >= 0.01, abs(distance) <= 50,
+              feed.isFinite, (1...500).contains(feed) else { return }
+        let start = axis.uppercased() == "X" ? work.x : axis.uppercased() == "Y" ? work.y : work.z
+        guard let line = CNCMachineCommands.probe(axis: axis, to: start + distance, feed: feed) else { return }
+        runProbeSequence([line])
+    }
+    /// Set a work coordinate at the position the machine is standing at. This
+    /// is the paper touch-off: lower until the slip drags, then say the tool
+    /// is one paper thickness above zero.
+    func setWork(axis: String, value: Double) {
+        guard canCommand, let line = CNCMachineCommands.setWork([(axis, value)], workspace: workspace) else { return }
+        command(line)
+    }
+    /// Set X0 (or Y0) from a probed edge, allowing for the cutter's radius.
+    func applyEdgeZero(axis: String, target: Double, toolDiameter: Double, direction: Double) {
+        guard canCommand, probeWorkPosition != nil,
+              let value = CNCSkewProbe.edgeZero(target: target, toolDiameter: toolDiameter, direction: direction),
+              let line = CNCMachineCommands.setWork([(axis, value)], workspace: workspace) else { return }
+        // The machine is standing where it touched, so the work coordinate set
+        // here is the contact's — and the edge lands one radius beyond it.
+        command(line)
+        probePosition = nil
+    }
+    func setSkew(_ degrees: Double?) {
+        skewDegrees = degrees.flatMap { $0.isFinite && abs($0) <= 90 ? $0 : nil }
+        tick += 1
+    }
+
+    // MARK: - Simulator hooks
+
+    /// Give the simulator a different `$$` set — the point of the baseline
+    /// diff is that a machine can come back configured differently.
+    func simulate(settings dump: String) {
+        guard demo else { return }
+        settings = CNCMachineSettings()
+        ingestSettings(dump)
+    }
+    /// Put the simulator into an alarm, as the controller would report it.
+    func simulate(alarm code: Int) {
+        guard demo, let value = CNCAlarm(rawValue: code) else { return }
+        noteAlarm(value)
+        error = value.text
+        appendLog("ALARM:\(code) (simulated)")
+        reportDemo()
+    }
+    /// Where the simulated probe trips, in work coordinates. `nil` restores
+    /// "contact at the target"; `misses` makes the probe fail like ALARM:5.
+    func simulateProbe(contact: CNCVector?, misses: Bool = false) {
+        guard demo else { return }
+        simulatedProbeContact = contact; simulatedProbeMisses = misses
+    }
+    /// Pretend the machine has been homed (or has not).
+    func simulate(homed value: Bool) {
+        guard demo else { return }
+        homed = value; if value { alarm = nil }
+        tick += 1
+    }
+
     func applyProbe(thickness: Double) {
         guard canApplyProbe, let probePosition, let position = status.machine,
               thickness.isFinite, (0...100).contains(thickness), let index = CNCCommands.workspaces.firstIndex(of: workspace) else { return }
         command(String(format: "G21 G10 L20 P%d Z%.3f", locale: Locale(identifier: "en_US_POSIX"), index + 1, thickness + position.z - probePosition.z))
         self.probePosition = nil
     }
-    private func commandBatch(_ lines: [String]) {
+    private func commandBatch(_ lines: [String], probing: Bool = false) {
         guard canCommand, let first = lines.first else { return }
         manualQueue = Array(lines.dropFirst())
-        command(first)
+        command(first, probing: probing)
     }
-    private func command(_ line: String, allowAlarm: Bool = false) {
+    private func command(_ line: String, allowAlarm: Bool = false, probing: Bool = false) {
         guard (allowAlarm ? canHome : canCommand) else { return }
-        if !line.contains("G38.2") { probePosition = nil; probeRequested = false }
+        if !probing && !line.contains("G38.2") { probePosition = nil; probeRequested = false }
         appendLog("→ " + line)
         if demo {
             simulateCommand(line)
-            for queued in manualQueue { simulateCommand(queued) }
+            for queued in manualQueue { appendLog("→ " + queued); simulateCommand(queued) }
             manualQueue = []; reportDemo(); return
         }
         manualQueue.append("$G")
@@ -553,7 +738,18 @@ final class CNCController {
             if line == "M9" { demoFlood = false; demoMist = false }
             if line == "M8" { demoFlood = true }
             if line == "M7" { demoMist = true }
-            if line == "$H" { demoPosition = .init() }
+            if line == "$H" {
+                // Homing leaves the machine at the pull-off from the switches,
+                // not at machine zero — which is the difference between "Z is
+                // at 0" and "Z is at −3 with 127 mm of travel below it".
+                let homedProfile = CNCMachineProfile(settings: settings)
+                demoPosition = homedProfile.hasTravel
+                    ? CNCVector(x: homedProfile.travelX.homePosition,
+                                y: homedProfile.travelY.homePosition,
+                                z: homedProfile.travelZ.homePosition)
+                    : .init()
+                homed = true; alarm = nil
+            }
             if line.contains("G10") {
                 for word in line.split(separator: " ") {
                     guard let value = Double(word.dropFirst()) else { continue }
@@ -565,13 +761,7 @@ final class CNCController {
                     }
                 }
             }
-            if line.contains("G38.2") {
-                if let word = line.split(separator: " ").first(where: { $0.hasPrefix("Z") }), let z = Double(word.dropFirst()) {
-                    demoPosition.z = z + demoOffset.z
-                    probePosition = demoPosition; probeWorkspace = workspace; probeRequested = false
-                    appendLog("[PRB:\(demoPosition.x),\(demoPosition.y),\(demoPosition.z):1] (simulated)")
-                }
-            }
+            if line.contains("G38.2") { simulateProbeMove(line) }
             if line.hasPrefix("$J=") {
                 for word in line.split(separator: " ") {
                     guard let value = Double(word.dropFirst()) else { continue }
@@ -583,5 +773,46 @@ final class CNCController {
                     }
                 }
             }
+    }
+
+    /// A simulated `G38.2`. The contact is wherever the test says the work
+    /// surface is; with nothing said it is the target, which is the old
+    /// behaviour. A probe that would not reach the surface fails the way the
+    /// controller does — ALARM:5, nothing probed, no zero touched.
+    private func simulateProbeMove(_ line: String) {
+        let words = line.split(separator: " ")
+        guard let word = words.first(where: { "XYZ".contains($0.prefix(1)) && Double($0.dropFirst()) != nil }),
+              let target = Double(word.dropFirst()) else { return }
+        let axis = String(word.prefix(1))
+        let offset = component(demoOffset, axis)
+        let start = component(demoPosition, axis) - offset
+        var contact = target
+        if simulatedProbeMisses {
+            contact = target
+        } else if let expected = simulatedProbeContact {
+            let surface = component(expected, axis)
+            let low = Swift.min(start, target), high = Swift.max(start, target)
+            guard surface >= low - 1e-9, surface <= high + 1e-9 else {
+                set(&demoPosition, axis, target + offset)
+                probePosition = nil; probeRequested = false
+                simulate(alarm: CNCAlarm.probeFailContact.rawValue)
+                return
+            }
+            contact = surface
+        }
+        set(&demoPosition, axis, contact + offset)
+        if simulatedProbeMisses {
+            probePosition = nil; probeRequested = false
+            simulate(alarm: CNCAlarm.probeFailContact.rawValue)
+            return
+        }
+        probePosition = demoPosition; probeWorkspace = workspace; probeRequested = false
+        appendLog("[PRB:\(demoPosition.x),\(demoPosition.y),\(demoPosition.z):1] (simulated)")
+    }
+    private func component(_ v: CNCVector, _ axis: String) -> Double {
+        switch axis { case "X": return v.x; case "Y": return v.y; default: return v.z }
+    }
+    private func set(_ v: inout CNCVector, _ axis: String, _ value: Double) {
+        switch axis { case "X": v.x = value; case "Y": v.y = value; default: v.z = value }
     }
 }
