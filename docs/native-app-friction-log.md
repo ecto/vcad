@@ -6,6 +6,8 @@ Mac app and machine it on the Anolex 4030. Logged 2026-09-16/17. Items marked
 on `claude/vcad-ui-polish-brainstorm-5879d5`, the rest through the CAM
 roadmap's wave-3 app packages and the pass that joined them
 (`cam/w3-app-integrate`, 2026-09-18) — which found items 55–62 of its own.
+The follow-up pass (`cam/w3-app-followups`, 2026-09-18) closed 19, 51 and 55,
+the open caveats on 16 and 45, and found 63–67.
 
 ## Opening files
 
@@ -130,10 +132,16 @@ roadmap's wave-3 app packages and the pass that joined them
     and a disagreement is a warning that has to be acknowledged — not a
     refusal, because a fixture is legitimately not the part. Being unable to
     compare is itself said out loud: silence there would read as agreement.
-    Caveat: the comparison runs at import only, and the cached section is
-    refetched just when it is missing — so editing the solid *after* importing
-    its outline never re-checks. A stale outline is caught; a freshly-staled
-    one is not.
+    The caveat that stood here — *"the comparison runs at import only … a
+    stale outline is caught; a freshly-staled one is not"* — is closed. The
+    comparison runs again whenever the part on screen has changed: on a
+    finished solve, on a change of selected part, and on every build, so a job
+    is never verified against an outline the app has not just re-checked. The
+    part's own bytes are the solve (`camDocument()` hands back the edited
+    JSON), so a hash of them decides and the kernel section is only taken when
+    they differ. The mismatch went into the job key as well — without it, a
+    part edited under an unchanged outline produced an identical key and the
+    warning kept the acknowledgement the *old* comparison had earned.
 17. **Fixed.** "From model…" sets the blank's thickness from the part's own
     height (`CNCSection.suggestedStockThickness`) *and* work Z0 from the part's
     top (`zRange.last`), so the 6 mm stator plate modelled at z 11.1–17.1 comes
@@ -146,13 +154,43 @@ roadmap's wave-3 app packages and the pass that joined them
     rotation into the request — moving the job *and* the part it is verified
     against together, so a placed job is still checked against the metal it
     really cuts.
-19. **Partly.** Holes between one and two cutter diameters are now bored
-    helically, one operation per diameter, so the pilots are machinable the
-    moment a small enough cutter is fitted — and changing the cutter re-decides
-    that without a re-import (item 49). **Still open:** one tool per job. There
-    is no drill op and no tool change in the app, so a job needing both a
-    Ø3.175 profile and Ø2.5 pilots is still two jobs. The kernel has the drill
-    ops and multi-tool assembly; the app does not send them.
+19. **Fixed.** Holes between one and two cutter diameters are bored helically,
+    one operation per diameter, so the pilots are machinable the moment a small
+    enough cutter is fitted — and changing the cutter re-decides that without a
+    re-import (item 49).
+
+    The rest of it — one tool per job, no drill op, no tool change — is done
+    too. `CNCWorkspace.tools` is a list of T1…Tn (diameter, flutes, flute
+    length, stickout, centre-cutting), persisted per document, and it is the
+    single source of truth: `toolDiameter` and its neighbours are now views
+    onto the primary end mill, so the overlay, the named-field table and the
+    envelope all read what the request is built from. Each operation names its
+    tool; every tool reaches the request; the change is
+    `tool_change: manual_pause_reprobe`, carrying the operator's own saved
+    Z-probe macro when there is one and a touch-off instruction in words when
+    there is not. Never `M6` (item 57).
+
+    **A hole is drilled when a drill in the list is its size** — equality
+    within 0.05 mm, not "small enough". A Ø2 drill leaves 0.25 mm a side of a
+    Ø2.5 hole that nothing removes, so that hole stays unmachinable rather
+    than being drilled undersize and called done. Derived, never stored, so
+    fitting the drill re-plans on its own.
+
+    `tool_sequence` and `verification_by_tool` are decoded. The readiness list,
+    the Tool panel and the job outline say the sequence and "this job pauses N
+    times for tool changes — re-zero Z after each", worded once in
+    `CNCToolSequenceNote`; the G-code drawer marks the `M0` lines so the count
+    is checkable against the program.
+
+    The stator with T1 Ø3.175 + T2 Ø2.5 is three operations — the pilots
+    drilled on T2 — one `M0`, and tool sequence **[2, 1]**. Why that order:
+    the kernel sorts by phase (facing, inside features, the profile that frees
+    the part), then keeps a tool's operations together *within* a phase, with
+    a tool group running where its earliest operation asked to. The drill and
+    the Ø27.6 opening are both inside features and the drill is first in the
+    list (item 49), so T2's group leads; the profile is a phase later but
+    still T1, and the assembler only writes a change when the tool number
+    changes, so it joins T1's block without a second stop.
 20. **Fixed.** Roughing/finishing split with stock-to-leave, a configurable
     number of finish stepdowns, an optional spring pass and separate finishing
     feed; ramp-along-contour or straight-down entry with a ramp angle, and
@@ -305,10 +343,13 @@ way, none by looking at the preview.
     of step. `CNCIntegrationTests` pins the enabled state of all ten under an
     unbuilt, a passing and a refused job.
 
-    Still open, narrowly: the readiness *checklist itself* is only rendered in
-    a popover. Its actions and the sentence it leads with are reachable
-    elsewhere — the menu, the machine bar's caption, the `VCAD_STATUS` dump —
-    but the list a screen reader would want to walk is not.
+    The narrow remainder — *"the readiness checklist itself is only rendered
+    in a popover"* — is closed. The Machine stage leads its inspector with
+    `CNCReadinessList`: the same view the popover shows, reading the same
+    `runBlocker` and the same `CNCCommand` predicates, so there is one gate and
+    not a second copy of it. It is mounted outside the group the inspector
+    disables while the machine streams, because that is precisely when the
+    list has to stay readable.
 
     Shortcuts are ⌘ plus a second modifier, never a bare letter (which would
     fire while a number field has focus) and never Return (item 44). The table,
@@ -328,11 +369,13 @@ way, none by looking at the preview.
     | ⌥⌘J | Run Job… | (already the machine bar's, item 44) |
 
     Avoided as already used in-app: ⌃⌘1–3 (workspaces), ⌥⌘1 / ⌥⌘2 / ⌥⌘0
-    (panels), ⌘0–⌘4 (camera), ⌥⌘Z (zebra), ⌥⌘R (ray tracing), ⌥⌘↑ / ⌥⌘↓
-    (reorder operations), ⇧⌘D, ⇧⌘H, ⌥⇧⌘H, ⇧⌘A, ⇧⌘S, ⇧⌘Z. Avoided as
-    system-reserved: ⌥⌘D (Dock), ⌥⌘H (Hide Others), ⌥⌘M (Minimize All), ⌥⌘T
-    (Show Toolbar), ⌥⌘esc. A test asserts every command has a ⌘+modifier
-    shortcut, that none is Return, and that no two collide.
+    (panels), ⌘0–⌘4 (camera), ⇧⌘0 (Frame Selection, moved there by item 55),
+    ⌥⌘Z (zebra), ⌥⌘R (ray tracing), ⌥⌘↑ / ⌥⌘↓ (reorder operations), ⇧⌘D,
+    ⇧⌘H, ⌥⇧⌘H, ⇧⌘A, ⇧⌘S, ⇧⌘Z. Avoided as system-reserved: ⌥⌘D (Dock), ⌥⌘H
+    (Hide Others), ⌥⌘M (Minimize All), ⌥⌘T (Show Toolbar), ⌥⌘esc. A test
+    asserts every command has a ⌘+modifier shortcut, that none is Return, and
+    that no two collide — and `MenuShortcutTests` now does the same for the
+    whole menu bar, which is where the one real collision was.
 46. **Fixed.** `HostWindowHider.HiderView.viewDidMoveToWindow` sets the host
     window's `alphaValue` to zero, clears `isRestorable` and orders it out the
     instant the `WindowGroup` window attaches, and every further document opens
@@ -358,7 +401,7 @@ way, none by looking at the preview.
     or a spoilboard of a given thickness. On a bare bed "break through" is not
     offered at all, and an operation set to it is refused with the reason
     naming what is down there.
-51. **Partly.** Every number is now named in one table
+51. **Fixed.** Every number is now named in one table
     (`CNCWorkspace.fields`) with `fieldValue(_:)` and `setFieldValue(_:to:)`
     going through the same model the bindings do — including the invalidation
     that follows, because a path that changed a number without staling the job
@@ -367,12 +410,42 @@ way, none by looking at the preview.
     `CNCFieldTests` parses the panels' own sources so a field on screen with no
     path through the table is a test failure.
 
-    **Still open, and this is the half the item actually asked for:** nothing
-    bridges that table to `NSAccessibility`. `CNCNumber` exposes its label,
-    identifier and value but no setter, and there is no AX element subclass or
-    scripting hook anywhere in the app — so an assistive tool or a script still
-    cannot *write* a value; only the tests can. The model-side half being done
-    is what makes the bridge small, but it has not been built.
+    **The half the item actually asked for is now built.** Two routes, one
+    model underneath — both through `fieldValue(_:)` / `setFieldValue(_:to:)`,
+    so a value set from outside stales the job exactly as typing it does:
+
+    - `CNCAccessibilityHost` is a real `NSView` in the Manufacture workspace
+      whose accessibility children are one `CNCFieldElement` per named number,
+      each with a role, label, identifier, value and a **setter**. SwiftUI's
+      `.accessibilityValue` is read-only, which is why the fields on screen
+      announced themselves and could not be written to.
+      `isAccessibilitySelectorAllowed` reports read-only while the machine is
+      streaming, so a client is *told* rather than ignored, and a field whose
+      panel is not showing has no value rather than a plausible zero. Per-tool
+      numbers (`cnc.tool.2.diameter`) are built from the list that is loaded,
+      so a second cutter is reachable too; the plain `cnc.tool.*` names stay
+      as aliases onto the primary end mill.
+    - `VCAD_SET` names a file of `field=value` lines that `SIGUSR2` applies —
+      the counterpart of item 31's `VCAD_STATUS`. Item 31 was careful that the
+      dump is *a report, never a control surface*; this **is** one, so it is
+      fenced: it exists only when the env var names a file, it writes only
+      numbers already in the field table, and it refuses every one while the
+      machine is streaming. It cannot build, run, connect, open or save.
+      Everything it did and everything it refused is written back beside the
+      request, because a writer that swallowed a refusal would turn it into a
+      silent no-op — the exact failure the named-field work was for.
+
+    A word handed to either route is refused rather than coerced:
+    `NSString.doubleValue` reads "six" as 0, and a 0 mm stepdown arriving from
+    a misheard dictation is what this app exists to refuse.
+
+    What the tests drive, and what they cannot: `CNCAccessibilityTests` calls
+    the `NSAccessibility` protocol methods on the mounted elements, which is
+    the surface AppKit's accessibility server calls. The *client* side
+    (`AXUIElementSetAttributeValue`) is deliberately not driven — it needs a
+    running, front-most, accessibility-trusted app, so offscreen it would test
+    the grant rather than the bridge. `VCAD_SET` is covered end to end, and is
+    the route a script on this machine can use without a grant.
 52. **Fixed.** "Apply these feeds to all operations" copies the cutting values
     — and only those; geometry stays put. "Recommend feeds" applies to every
     operation at once.
@@ -408,13 +481,25 @@ way, none by looking at the preview.
 Found by wiring the machine, sender, setup and job packages into one workspace
 and then looking at it.
 
-55. **⌥⌘0 is two different menu items.** View ▸ Show/Hide All Panels and
-    Camera ▸ Frame Selection both claim it (`Shell.swift`, the `.sidebar` and
-    `Camera` command groups). AppKit shows both and only one fires. The
-    Manufacture menu's shortcuts were picked around it; this one predates them
-    and is still open. ⌘K is registered twice as well — the menu item and the
-    command bar's invisible accelerator — but both focus the same field, so
-    that one is duplication rather than a conflict.
+55. **Fixed. ⌥⌘0 was two different menu items.** View ▸ Show/Hide All Panels
+    and Camera ▸ Frame Selection both claimed it (`Shell.swift`, the `.sidebar`
+    and `Camera` command groups). AppKit shows both and only one fires.
+
+    **Frame Selection moved to ⇧⌘0**, on two grounds: it is the less-used of
+    the two — it needs a selection at all, and is disabled without one — and
+    it has a near neighbour in ⌘0 Frame All, so ⇧⌘0 reads as "frame, but
+    narrower" beside it. Show/Hide All Panels keeps ⌥⌘0, where it sits with
+    ⌥⌘1 and ⌥⌘2, the other two panel keys. The table in item 45 records ⇧⌘0 as
+    taken.
+
+    `MenuShortcutTests` now scans every source file for literal
+    `keyboardShortcut` calls and fails on any two that share a key and
+    modifiers — the whole menu bar, not just `CNCCommand`, which is what let
+    this one through. Mutation-checked: putting the collision back fails it.
+    ⌘K is still registered twice — the menu item and the command bar's
+    invisible accelerator — but both focus the same field, so it is
+    duplication rather than a conflict; it is listed as a named exception in
+    the test rather than left as a hole in it.
 56. **Fixed. The Simulator refused every job.** Folding the machine's half of
     the gate into `runBlocker` made this visible: the envelope pre-check placed
     the job with the Simulator's work offset, which is whatever nobody set —
@@ -459,7 +544,89 @@ and then looking at it.
     made it worse, and nothing here fixed it; it is worth knowing before
     anything is added to a shared file on the assumption that the Vision target
     still compiles.
+
+    **Still open, and one symbol deeper.** `Shell.swift` is symlinked in too,
+    and already called `VcadStatus` (in the unsymlinked `CNCStatusDump.swift`);
+    the accessibility work added a call to `VcadFieldWriter` (in the
+    unsymlinked `CNCAccessibility.swift`) beside it. Same class of breakage, one
+    more instance of it — the target is already far from compiling, so this
+    changes nothing in practice, but it is one more symbol to resolve whenever
+    someone takes the spike seriously. The fix is a symlink set or a
+    `#if os(macOS)` fence, not a rearrangement of `Shell.swift`.
 62. **`swift test` runs the whole Manufacture suite against the real kernel.**
     Each built job is a second or two of FFI, so the app's test suite is ~55 s
     and a single job test is not cheap to iterate on. Worth a fixture cache if
-    it grows much further.
+    it grows much further. **Still open, and moving the wrong way:** the tool
+    and drilling work took it to 183 tests and ~75 s.
+
+## Multi-tool, drilling and the accessibility bridge (2026-09-18, `cam/w3-app-followups`)
+
+63. **The full-retract peck is refused by our own verifier, and the refusal is
+    right about the rule and wrong about the job.** `DrillCycle::Peck` rapids
+    back *down* into the hole between pecks (`drill.rs`: `rapid(x, y,
+    -previous + peck_clearance)`) — which is ordinary G83, and what every
+    controller does. `verify2d::check_rapids` refuses any rapid that descends
+    below the stock top over the stock, because it replays a *prismatic* job
+    and has no way to know that the hole under the tool is already open. So a
+    peck job is refused: `Rapid descends to Z-5.000, below the stock top`.
+
+    Reproduced across all four cycles on the stator (Ø2.5 × 6 mm deep):
+    `straight` and `chip_break` pass, `peck` is refused, `spot` correctly
+    refuses a 6 mm hole as not a spot. The app therefore defaults to chip
+    break — which is also the better cycle for that hole on a router, short
+    retract, flutes stay engaged — still offers peck, and says in the drill
+    panel what will happen *before* the build rather than after it. Pinned by
+    `CNCToolTests.testTheFullRetractPeckIsRefusedByTheOracle`, so a kernel
+    that learns to allow it, or an app that quietly stops offering it, shows
+    up as a changed test.
+
+    The fix belongs in the oracle, not here: it needs to know which material
+    an earlier pass of the same program already removed. That is the same
+    knowledge `vcad-kernel-stocksim` has, and is out of scope for an app
+    package.
+
+64. **The offscreen snapshot harness draws AppKit control indicators without
+    their state — this is what "all three Work Zero radios looked selected"
+    was.** `cacheDisplay(in:to:)` renders a `Picker(.radioGroup)`'s radios and
+    a `Toggle`'s checkbox as a solid filled shape in dark mode and as nothing
+    at all in light mode, whatever the binding says.
+
+    The falsifier is in the same picture and is asserted rather than described
+    (`CNCJobSnapshotTests.testReadinessSectionSnapshots`): "Cuts on its centre"
+    is **on** and "I checked the tool, workholding…" is **off**, and the render
+    draws them identically. No selection bug can do that. The model-side proof
+    is `CNCFollowupTests.testWorkZeroIsExactlyOneChoice` — `zeroLocation` is a
+    single enum, so exactly one of the three is ever the selection, and each
+    of the three puts the blank's corner somewhere different.
+
+    Worth knowing before reading any of these PNGs: **a control's *state* is
+    not visible in them, only its layout and its text.** Custom rows are fine
+    — the operation list's own selection dot renders correctly — it is
+    specifically AppKit's own indicators that do not. Assert the state in the
+    model; use the PNG for layout, wrapping and wording.
+
+65. **A tool list makes three panels want to say the same sentence.** With two
+    tools, "T2 Ø 2.5 → T1 Ø 3.175" and "this job pauses 1 time for tool
+    changes — re-zero Z after each" appeared in the job outline's footer, the
+    readiness list and the Tool panel at once — three copies on one screen,
+    found by looking at the render rather than by a test. The footer keeps the
+    count only now; the sentence stays where it is acted on. Worth watching as
+    more per-job facts arrive: every panel has a good reason to want them.
+
+66. **The per-tool field family weakened the registry's drift guard, slightly.**
+    `CNCFieldTests` fails when a panel has a number the registry cannot reach.
+    The Tool panel now addresses tools by number (`cnc.tool.2.diameter`), which
+    is an interpolated identifier and so deliberately unmatched by the source
+    scan, and the plain `cnc.tool.*` names became aliases onto the primary end
+    mill rather than any panel's own. They are listed as aliases in the test,
+    with `testTheToolFamilyAddressesEveryToolInTheList` guarding the family
+    instead. That is a decision on the record, not a hole — but the guard is
+    now two tests rather than one, and a third dynamic family would be worth
+    handling properly rather than listing.
+
+67. **The tool list is persisted in `UserDefaults`, keyed by the document's
+    path.** It follows the macros precedent, and it is honest about what it
+    is, but it means a tool list does not travel with a `.vcad` file, does not
+    survive a move or a rename, and is not in the document a colleague opens.
+    The job's own tools are arguably part of the job. Putting them in the
+    document needs a schema decision nobody has made yet.
