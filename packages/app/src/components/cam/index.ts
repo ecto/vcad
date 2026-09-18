@@ -1,4 +1,5 @@
 export { CamPanel } from "./CamPanel";
-export { ToolLibrary } from "./ToolLibrary";
+export { JobSetup } from "./JobSetup";
 export { OperationList } from "./OperationList";
-export { CamSettings } from "./CamSettings";
+export { VerificationPanel } from "./VerificationPanel";
+export { ToolpathPreview } from "./ToolpathPreview";
