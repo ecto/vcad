@@ -301,11 +301,38 @@ One hasher — `vcad_claim_registry::fingerprint_of` — is called by both
 the depositing side and the re-stating side, because two hashers would be
 two answers and the one that disagreed would report a stale job as clean.
 
+**A deposit must name its basis.** `check_deposit` refuses one that records
+no inputs, because a claim with no basis can never be re-stated — it can
+never go `Stale`, and to whoever opens the receipt a month later "never
+moved" is indistinguishable from "still true". The producer is the only
+party that knows what its claims rest on, so the refusal lands at deposit
+time, while it is still around to say. The check has two halves: every key
+in the family's declared `required_basis` (for the solver families, `spec`
+— the resolved model the solve ran on), and, for a family that tracks a
+per-claim basis, every key the *report itself* names. The second is
+stricter and catches a job deposit filed with a gear as its basis, which
+would otherwise read as a permanently fresh claim about a program nobody
+kept. Nothing deposits without inputs today, so this blocks nobody now; it
+is there so the solver families cannot be wired up later without naming
+theirs.
+
 **The merge.** `build_receipt` re-states every deposit against today's
 inputs *before* reading its claims, then folds them into the unified
 ledger. So the staleness story above is now end to end: edit the G-code
 and `cam.job.no_gouge` comes back `unverifiable` (Stale), naming
 `program` as what moved, rather than certifying a program nobody holds.
+
+**`verify_receipt` re-states the same way, through the same function.**
+`restateAll` is literally what `build_receipt` calls, so the two tools
+cannot disagree about whether a job has gone stale — which they could
+before, and in the worst possible direction: the tool an operator reaches
+for to ask *is this still good?* was the one that would not have looked.
+It reports per deposit `Holds` / `Stale` / `Violated`, plus which claims
+went stale and which inputs moved them, because a verdict with no "why"
+sends someone back to diffing G-code by eye. Worst wins across deposits,
+and a violated claim outranks a stale one: "this job cuts into the part"
+is actionable now, where "this job has been edited" is a request to
+re-run.
 A deposit whose family this build does not carry, or whose report will
 not translate, becomes an `unverifiable` claim saying why — never a
 silently dropped one, which is the single outcome that would read clean.

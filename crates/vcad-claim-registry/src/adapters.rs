@@ -17,6 +17,17 @@
 /// Every family's module exposes the same four items — `CLAIM_SCHEMA`,
 /// `RECEIPT_DOMAIN`, `ClaimSet`, `design_claims` — which is what makes one
 /// registry possible at all.
+/// The basis every solver family's claims rest on: the resolved model the
+/// solve ran against.
+///
+/// These families track no per-claim basis of their own (CAM is the only one
+/// that does), so this list is the whole of what a deposit must record. It is
+/// `spec` because that is what every one of them actually takes — a
+/// `ThermalSpec`, a `DeviceSpec`, a flow spec — resolved against its
+/// parameters. A family is free to record more; it may not record less, and
+/// it may not record nothing.
+const SOLVER_BASIS: &[&str] = &["spec"];
+
 macro_rules! family {
     (
         $(#[$meta:meta])*
@@ -54,9 +65,11 @@ macro_rules! family {
                     crate_name: $crate_name,
                     summary: $summary,
                     native_only: false,
+                    required_basis: super::SOLVER_BASIS,
                     to_claims,
                     restate: None,
                     bind: None,
+                    basis_of_report: None,
                 }
             }
         }

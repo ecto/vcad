@@ -6539,6 +6539,10 @@ mod registry_wasm {
                     "native_only": f.native_only,
                     "stale_aware": f.stale_aware(),
                     "bindable": f.bindable(),
+                    // What a deposit of this family must record. Surfaced so a
+                    // depositing tool can be refused with a useful message
+                    // before it writes anything, rather than after.
+                    "required_basis": f.required_basis,
                 })
             })
             .collect();
@@ -6561,20 +6565,57 @@ mod registry_wasm {
         }
     }
 
-    /// Re-state a stored report against the digests of its inputs as they
-    /// stand now. `inputs_json` is `{ "<basis key>": "<input as JSON text>" }`
-    /// — the document's stored inputs, hashed here by the same function that
-    /// hashed them at deposit time.
+    /// Parse `{ "<basis key>": "<input as JSON text>" }`, the shape a
+    /// document's `claim_reports[].inputs` is stored in.
+    fn parse_inputs(
+        inputs_json: &str,
+    ) -> Result<std::collections::BTreeMap<String, String>, String> {
+        if inputs_json.trim().is_empty() {
+            return Ok(Default::default());
+        }
+        serde_json::from_str(inputs_json).map_err(|e| format!("the inputs could not be read: {e}"))
+    }
+
+    /// Check that a deposit records the inputs its claims rest on, before it
+    /// is written anywhere.
+    ///
+    /// Fail-closed: a deposit with no basis is refused. Such a claim can
+    /// never be re-stated, so it can never go stale — it would go on
+    /// certifying a design that has since been edited, and "never moved" is
+    /// indistinguishable from "still true" to whoever reads the receipt next.
+    #[wasm_bindgen(js_name = receiptCheckDeposit)]
+    pub fn receipt_check_deposit(schema: &str, report_json: &str, inputs_json: &str) -> String {
+        let inputs = match parse_inputs(inputs_json) {
+            Ok(v) => v,
+            Err(e) => return fail(e),
+        };
+        match vcad_claim_registry::check_deposit(schema, report_json, &inputs) {
+            Ok(()) => render(serde_json::json!({ "schema": schema, "ok": true })),
+            Err(e) => fail(e),
+        }
+    }
+
+    /// Re-state a stored report against its inputs as they stand now.
+    ///
+    /// `inputs_json` is the document's stored inputs, hashed here by the same
+    /// function that hashed them at deposit time. The answer carries the
+    /// re-stated report plus what went stale and which inputs moved it, so a
+    /// caller reporting Holds-or-Stale never has to diff two reports to
+    /// re-derive an answer the family already gave.
     #[wasm_bindgen(js_name = receiptRestate)]
     pub fn receipt_restate(schema: &str, report_json: &str, inputs_json: &str) -> String {
-        let inputs: std::collections::BTreeMap<String, String> =
-            match serde_json::from_str(inputs_json) {
-                Ok(v) => v,
-                Err(e) => return fail(format!("the inputs could not be read: {e}")),
-            };
-        let current = vcad_claim_registry::fingerprint_of(&inputs);
-        match vcad_claim_registry::restate(schema, report_json, &current) {
-            Ok(report) => render(serde_json::json!({ "schema": schema, "report": report })),
+        let inputs = match parse_inputs(inputs_json) {
+            Ok(v) => v,
+            Err(e) => return fail(e),
+        };
+        match vcad_claim_registry::restate(schema, report_json, &inputs) {
+            Ok(outcome) => match serde_json::to_value(&outcome) {
+                Ok(mut v) => {
+                    v["schema"] = serde_json::json!(schema);
+                    render(v)
+                }
+                Err(e) => fail(e),
+            },
             Err(e) => fail(e),
         }
     }

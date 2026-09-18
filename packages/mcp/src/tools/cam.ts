@@ -33,7 +33,11 @@ import type { Document } from "@vcad/ir";
 import { resetKernelWasm, type Engine } from "@vcad/engine";
 import { getSession } from "./session-core.js";
 import { storeArtifact } from "./artifact-store.js";
-import { depositFrom, depositClaimReport } from "./claim-registry.js";
+import {
+  assertDepositHasBasis,
+  depositClaimReport,
+  depositFrom,
+} from "./claim-registry.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import { err, ok, type ToolResult } from "./tool-result.js";
 
@@ -304,9 +308,15 @@ const SAFETY =
  *
  * The id is stable per job name, so re-posting the same job replaces its
  * claims instead of stacking a second, contradictory set on the document.
+ *
+ * A deposit that does not record the inputs its claims rest on is refused by
+ * the registry — the refusal propagates out of the tool rather than being
+ * swallowed, because a silently-dropped deposit and a successfully-stored one
+ * look identical to the caller, and only one of them ends with a receipt.
  */
 function deposit(
   args: Json,
+  engine: Engine,
   block: unknown,
   idPrefix: string,
   label: string,
@@ -316,6 +326,7 @@ function deposit(
   const slug = label.replace(/[^a-z0-9._-]+/gi, "-").toLowerCase() || "default";
   const entry = depositFrom(block, `${idPrefix}:${slug}`, label);
   if (!entry) return undefined;
+  assertDepositHasBasis(engine, entry);
   depositClaimReport(getSession(documentId), entry);
   const summary = (block as Json).summary;
   return {
@@ -786,6 +797,7 @@ export function camJob(args: Json, engine: Engine): ToolResult {
     // and a ledger that only ever saw passing jobs is a record of nothing.
     const claims = deposit(
       args,
+      engine,
       out.claims,
       "cam.job",
       String(out.name ?? args.name ?? "job"),
@@ -1007,6 +1019,7 @@ export function camGear(args: Json, engine: Engine): ToolResult {
     // rather than just "the teeth are fat".
     const claims = deposit(
       args,
+      engine,
       out.claims,
       "cam.gear",
       String(out.claim_subject ?? "gear"),

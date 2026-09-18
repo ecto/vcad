@@ -105,6 +105,28 @@ pub enum RegistryError {
         /// The family asked.
         schema: String,
     },
+    /// A deposit records none of the inputs its claims rest on.
+    ///
+    /// Fail-closed: a claim with no basis can never be re-stated, so it can
+    /// never go `Stale` — it would go on certifying a design that has since
+    /// been edited. Refusing at deposit time is the only point where the
+    /// producer is still around to say what the claims rest on.
+    #[error(
+        "a {schema:?} deposit must record the inputs its claims rest on, and this one \
+         records {recorded}. Required: [{required}]; missing: [{missing}]. A claim with \
+         no basis can never go stale, so it would keep certifying a design that has \
+         since been edited."
+    )]
+    MissingBasisInputs {
+        /// The family the deposit was filed under.
+        schema: String,
+        /// What the deposit did record, in words ("none" or a key list).
+        recorded: String,
+        /// Every key this deposit had to carry.
+        required: String,
+        /// The ones it did not.
+        missing: String,
+    },
     /// The family's own binder refused the measurement.
     #[error("{0}")]
     Refused(String),
@@ -135,14 +157,49 @@ pub struct BindOutcome {
     pub note: String,
 }
 
+/// What a re-state found.
+///
+/// More than the re-stated report, because the caller usually wants to *act*
+/// on staleness rather than just carry it: `verify_receipt` reports a
+/// Holds/Stale/Violated verdict, and reconstructing that by diffing two
+/// serialized reports would be a second, weaker answer to a question the
+/// family already answered exactly.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RestateOutcome {
+    /// The re-stated report, serialized. Claims whose basis moved now carry
+    /// the family's own stale status.
+    pub report: String,
+    /// Names of the claims this re-state turned stale. Empty when the basis
+    /// is intact.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stale_claims: Vec<String>,
+    /// The basis keys that moved, deduplicated — what to tell a human when
+    /// asked *why* the receipt stopped vouching for the design.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub drifted_inputs: Vec<String>,
+}
+
+impl RestateOutcome {
+    /// Whether anything went stale.
+    pub fn is_stale(&self) -> bool {
+        !self.stale_claims.is_empty()
+    }
+}
+
 /// Turn a family's serialized report into unified receipt claims.
 type ToClaims = fn(&str) -> Result<Vec<ReceiptClaim>, RegistryError>;
 
 /// Re-state a report against the digests of its inputs as they are *now*.
-type Restate = fn(&str, &BTreeMap<String, String>) -> Result<String, RegistryError>;
+type Restate = fn(&str, &BTreeMap<String, String>) -> Result<RestateOutcome, RegistryError>;
 
 /// Bind measurements (and whatever context the family needs) to a report.
 type Bind = fn(&str, &str, &serde_json::Value) -> Result<BindOutcome, RegistryError>;
+
+/// The basis keys a family's *own report* says its claims rest on.
+///
+/// Only families that track a per-claim basis implement this; the rest
+/// declare their requirement statically in [`ClaimFamily::required_basis`].
+type BasisOfReport = fn(&str) -> Result<Vec<String>, RegistryError>;
 
 /// One registered claim family.
 #[derive(Clone)]
@@ -160,9 +217,23 @@ pub struct ClaimFamily {
     /// reachable natively (CLI, FFI) but never from the browser or MCP's
     /// WASM kernel. Registered anyway, and honest about it.
     pub native_only: bool,
+    /// The basis keys a deposit of this family **must** record, at minimum.
+    ///
+    /// A deposit with no basis is a claim that can never go `Stale`: nothing
+    /// can be compared against it, so it would certify a design that has
+    /// since been edited out from under it. That is fail-open, and
+    /// [`check_deposit`] refuses it.
+    ///
+    /// For the solver families this is `["spec"]` — the resolved model the
+    /// claims were computed from. A family may record more than it must
+    /// (CAM's job deposits carry `program`, `outline`, `tool` and `stock`),
+    /// and a family that tracks a per-claim basis is held to *that* too,
+    /// which is stricter than this list.
+    pub required_basis: &'static [&'static str],
     to_claims: ToClaims,
     restate: Option<Restate>,
     bind: Option<Bind>,
+    basis_of_report: Option<BasisOfReport>,
 }
 
 impl std::fmt::Debug for ClaimFamily {
@@ -269,23 +340,97 @@ pub fn claims_for(schema: &str, report_json: &str) -> Result<Vec<ReceiptClaim>, 
     require(schema)?.claims(report_json)
 }
 
+/// Check that a deposit records the inputs its claims rest on.
+///
+/// This is the gate the whole staleness story rests on. A report can be
+/// re-stated only against inputs somebody wrote down; a deposit that records
+/// none is a claim that can never move, and "never moves" is
+/// indistinguishable from "still true" when a receipt reads it a month later.
+/// So an input-less deposit is refused at the one moment the producer is
+/// still there to say what the claims rest on.
+///
+/// Two requirements, and a deposit must satisfy both:
+///
+/// 1. every key in the family's [`ClaimFamily::required_basis`];
+/// 2. for a family that tracks a per-claim basis (CAM), every key the
+///    *report itself* says its claims depend on — which is stricter, and
+///    catches a job deposit that recorded a gear instead of a program.
+///
+/// `inputs` maps basis key → that input's JSON text, exactly as it is stored
+/// on the document.
+pub fn check_deposit(
+    schema: &str,
+    report_json: &str,
+    inputs: &BTreeMap<String, String>,
+) -> Result<(), RegistryError> {
+    let family = require(schema)?;
+
+    let mut required: Vec<String> = family
+        .required_basis
+        .iter()
+        .map(|k| (*k).to_string())
+        .collect();
+    if let Some(basis_of) = family.basis_of_report {
+        for key in basis_of(report_json)? {
+            if !required.contains(&key) {
+                required.push(key);
+            }
+        }
+    }
+    required.sort();
+
+    let missing: Vec<&str> = required
+        .iter()
+        .filter(|k| !inputs.contains_key(*k))
+        .map(String::as_str)
+        .collect();
+    if missing.is_empty() && !inputs.is_empty() {
+        return Ok(());
+    }
+    // A family that declares nothing and whose report declares nothing still
+    // may not deposit empty — see the type-level note on `required_basis`.
+    Err(RegistryError::MissingBasisInputs {
+        schema: schema.to_string(),
+        recorded: if inputs.is_empty() {
+            "none".to_string()
+        } else {
+            inputs.keys().cloned().collect::<Vec<_>>().join(", ")
+        },
+        required: if required.is_empty() {
+            "at least one input".to_string()
+        } else {
+            required.join(", ")
+        },
+        missing: if missing.is_empty() {
+            "—".to_string()
+        } else {
+            missing.join(", ")
+        },
+    })
+}
+
 /// Re-state a stored report against the digests of its inputs as they stand
 /// now, so a claim whose basis moved comes back `Stale`.
 ///
-/// `current` maps the family's own basis keys (for CAM: `program`,
-/// `outline`, `tool`, `stock`, `gear`, `material`, `solid`) to digests —
-/// build it with [`fingerprint_of`] over the same inputs the depositing tool
-/// recorded, so the two sides cannot hash differently.
+/// `inputs` maps the family's own basis keys (for CAM: `program`, `outline`,
+/// `tool`, `stock`, `gear`, `material`, `solid`) to that input's JSON text.
+/// Hashing happens here, with [`fingerprint_of`] — the same function the
+/// depositing side used — so the two cannot hash differently.
+///
+/// [`check_deposit`] runs first: re-stating a basis-less deposit would
+/// cheerfully report that nothing had changed, which is the one answer that
+/// must never be reachable without evidence.
 pub fn restate(
     schema: &str,
     report_json: &str,
-    current: &BTreeMap<String, String>,
-) -> Result<String, RegistryError> {
+    inputs: &BTreeMap<String, String>,
+) -> Result<RestateOutcome, RegistryError> {
     let family = require(schema)?;
     let f = family.restate.ok_or_else(|| RegistryError::NotStaleAware {
         schema: schema.to_string(),
     })?;
-    f(report_json, current)
+    check_deposit(schema, report_json, inputs)?;
+    f(report_json, &fingerprint_of(inputs))
 }
 
 /// Bind measurements of the real part to a family's predicted claims.

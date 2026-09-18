@@ -11071,7 +11071,7 @@
   {
     "name": "verify_receipt",
     "title": "Verify Receipt",
-    "description": "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict — Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff) and mech.clearance claims (re-measured against current geometry); worst verdict wins. Powers the ledger's Re-run button.",
+    "description": "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict — Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff), mech.clearance claims (re-measured against current geometry), and every deposited claim-family report (cam_job / cam_gear — re-stated against the inputs it rests on, so an edited program reads Stale and says which input moved). Worst verdict wins. Powers the ledger's Re-run button.",
     "inputSchema": {
       "type": "object",
       "properties": {
