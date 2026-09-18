@@ -94,14 +94,16 @@ struct CNCOperationInspector: View {
                 Divider()
                 Eyebrow("Roughing and finishing")
                 CNCNumber(label: "Leave on the wall", value: $cnc.setup.stockToLeave,
-                          help: "Metal the roughing passes leave for the finish pass. Zero means no separate roughing phase.")
+                          help: "Metal the roughing passes leave for the finish pass. Zero means no separate roughing phase.",
+                          identifier: "cnc.op.stockToLeave")
                 Stepper(value: $cnc.setup.finishStepdowns, in: 1...20) {
                     KeyValueRow("Finish stepdowns", "\(cnc.setup.finishStepdowns)")
                 }
                 Toggle("Spring pass", isOn: $cnc.setup.springPass)
                     .help("One more pass at the same offset, to take the deflection the last one left.")
                 CNCNumber(label: "Finish feed", value: $cnc.setup.finishFeed, unit: "mm/min",
-                          help: "Zero uses the cutting feed.")
+                          help: "Zero uses the cutting feed.",
+                          identifier: "cnc.op.finishFeed")
                 Divider()
                 Eyebrow("How it cuts")
                 Picker("Direction", selection: $cnc.setup.direction) {
@@ -111,7 +113,8 @@ struct CNCOperationInspector: View {
                     ForEach(CNCEntry.allCases, id: \.self) { Text($0.label).tag($0) }
                 }.labelsHidden().accessibilityLabel("How the cutter gets to depth")
                 if cnc.setup.entry == .ramp {
-                    CNCNumber(label: "Ramp angle", value: $cnc.setup.rampAngle, unit: "°")
+                    CNCNumber(label: "Ramp angle", value: $cnc.setup.rampAngle, unit: "°",
+                              identifier: "cnc.op.rampAngle")
                 }
                 Toggle("Tangential lead-in and out", isOn: $cnc.setup.leadIn)
                     .help("Arc onto the wall instead of stepping onto it, so the entry does not leave a witness mark.")
@@ -178,7 +181,8 @@ struct CNCOperationInspector: View {
                     ForEach(CNCThinSlot.allCases, id: \.self) { Text($0.label).tag($0) }
                 }.labelsHidden().accessibilityLabel("What to do where the cutter is as wide as the opening")
                 if cnc.setup.thinSlot == .centreLine {
-                    CNCNumber(label: "Allowed wall error", value: $cnc.setup.thinSlotTolerance)
+                    CNCNumber(label: "Allowed wall error", value: $cnc.setup.thinSlotTolerance,
+                              identifier: "cnc.op.thinSlotTolerance")
                     if let report = cnc.selectedOperation.contourReport, report.maxWallError > 0 {
                         KeyValueRow("Reported wall error", "\(CNCVerdictText.mm(report.maxWallError, 3)) mm")
                     }

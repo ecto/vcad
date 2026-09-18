@@ -9,23 +9,21 @@ import SwiftUI
 
 struct CNCMachineBar: View {
     @Bindable var cnc: CNCWorkspace
-    @State private var connectionShown = false
+    // Jog and overrides are the bar's own; the connection, the probe, the
+    // trace and the readiness list are workspace state, because the menu bar
+    // opens the same four (friction-log item 45).
     @State private var jogShown = false
     @State private var overridesShown = false
-    @State private var probeShown = false
-    @State private var traceShown = false
-    @State private var reviewShown = false
     @State private var runShown = false
     @State private var stopShown = false
     @State private var zeroAxes: String?
     private var machine: CNCController { cnc.machine }
     /// What the machine says about this job: travel, homing, alarms, limits.
     private var machineFindings: [CNCMachineFinding] { cncMachineFindings(cnc) }
-    private var machineBlocker: String? { machineFindings.first(where: \.blocking)?.text }
-    /// Everything Run waits on: the job's own gate first, then the machine's.
-    /// The job side is the workspace's to answer; travel, homing and alarms
-    /// are the machine's, and a job that leaves travel never reaches Run.
-    private var blocker: String? { cnc.runBlocker ?? machineBlocker }
+    /// Everything Run waits on. The workspace answers all of it now — its own
+    /// gate first, then ncSender's hold on the controller, then the machine's
+    /// travel, homing and alarms — so the bar and the menu cannot disagree.
+    private var blocker: String? { cnc.runBlocker }
     private var held: Bool { machine.status.state.hasPrefix("Hold") }
     private var moving: Bool { machine.active || held || ["Run", "Jog", "Home"].contains(machine.status.state) }
     private var canResume: Bool { machine.connected && machine.status.isFresh && machine.status.state == "Hold:0" && !machine.faulted }
@@ -57,9 +55,9 @@ struct CNCMachineBar: View {
             }
             Button("Cancel", role: .cancel) {}.keyboardShortcut(.defaultAction)
         }
-        .sheet(isPresented: $probeShown) { CNCProbeSheet(cnc: cnc) }
-        .sheet(isPresented: $traceShown) { CNCTraceSheet(cnc: cnc) }
-        .confirmationDialog(machine.demo ? "Run the job in the simulator?" : "Start machining this job?", isPresented: $runShown) {
+        .sheet(isPresented: $cnc.probeShown) { CNCProbeSheet(cnc: cnc) }
+        .sheet(isPresented: $cnc.traceShown) { CNCTraceSheet(cnc: cnc) }
+        .confirmationDialog(machine.demo ? "Run the job in the simulator?" : "Start machining this job?", isPresented: $cnc.runShown) {
             Button(machine.demo ? "Run simulated job" : "Start machining") { cnc.startJob() }
             // Return answers Cancel: starting the spindle is a deliberate click,
             // never the key that also commits a number field.
@@ -100,7 +98,7 @@ struct CNCMachineBar: View {
 
     /// State dot · machine name. Click for the connection.
     private var machineChip: some View {
-        Button { connectionShown.toggle() } label: {
+        Button { cnc.connectionShown.toggle() } label: {
             HStack(spacing: 6) {
                 Image(systemName: machine.faulted ? "exclamationmark.circle.fill" : "circle.fill")
                     .font(.caption2)
@@ -115,9 +113,10 @@ struct CNCMachineBar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("Machine connection")
+        .help("Machine connection (⌥⌘K)")
         .accessibilityLabel("Machine connection, \(machine.summary)")
-        .popover(isPresented: $connectionShown, arrowEdge: .top) {
+        .accessibilityIdentifier("cnc.machine.connection")
+        .popover(isPresented: $cnc.connectionShown, arrowEdge: .top) {
             ScrollView { CNCMachineConnection(cnc: cnc).padding(18) }
                 .frame(width: 330).frame(maxHeight: 520)
         }
@@ -160,6 +159,7 @@ struct CNCMachineBar: View {
         HStack(spacing: 6) {
             Button("Jog", systemImage: "move.3d") { jogShown.toggle() }
                 .disabled(!machine.canCommand && !machine.canHome && machine.status.state != "Jog")
+                .accessibilityIdentifier("cnc.machine.jog")
                 .popover(isPresented: $jogShown, arrowEdge: .top) { CNCJogControls(cnc: cnc).padding(18).frame(width: 290) }
             Menu("Zero", systemImage: "scope") {
                 ForEach(["X", "Y", "Z", "XY", "XYZ"], id: \.self) { axes in
@@ -168,13 +168,19 @@ struct CNCMachineBar: View {
                 Divider()
                 Button("Use G54 work coordinates") { cnc.setupConfirmed = false; machine.selectG54() }
                     .disabled(machine.g54Active)
-            }.disabled(!machine.canCommand)
-            Button("Probe", systemImage: "arrow.down.to.line") { probeShown = true }.disabled(!machine.canCommand)
+            }.disabled(!machine.canCommand).accessibilityIdentifier("cnc.machine.zero")
+            // Every one of these asks `CNCCommand` whether it may run, and so
+            // does the menu item beside it: one predicate, two ways in.
+            Button("Probe", systemImage: "arrow.down.to.line") { CNCCommand.probe.run(cnc) }
+                .disabled(!CNCCommand.probe.isEnabled(cnc))
+                .accessibilityIdentifier("cnc.machine.probe")
+                .help("Touch off with a plate, or measure the blank's skew (⌥⌘P)")
             // Item 53: the blank was 10° off and 5 mm out, and the only way
             // that was ever found was tracing the square by hand.
-            Button("Trace", systemImage: "rectangle.dashed") { traceShown = true }
-                .disabled(!machine.canCommand || cncJobEnvelope(cnc) == nil)
-                .help("Walk the job's bounding rectangle at a safe height")
+            Button("Trace", systemImage: "rectangle.dashed") { CNCCommand.traceBounds.run(cnc) }
+                .disabled(!CNCCommand.traceBounds.isEnabled(cnc))
+                .accessibilityIdentifier("cnc.machine.trace")
+                .help("Walk the job's bounding rectangle at a safe height (⌥⌘G)")
             Button {
                 overridesShown.toggle()
             } label: {
@@ -182,6 +188,7 @@ struct CNCMachineBar: View {
             }
             .disabled(!machine.connected)
             .help("Feed and spindle overrides, coolant")
+            .accessibilityIdentifier("cnc.machine.overrides")
             .popover(isPresented: $overridesShown, arrowEdge: .top) { overrides.padding(18).frame(width: 300) }
         }
         .buttonStyle(.bordered)
@@ -225,7 +232,7 @@ struct CNCMachineBar: View {
                     .font(.callout.weight(.medium))
                 Text("Manual controller activity").font(.caption).foregroundStyle(.secondary)
             } else {
-                Button { reviewShown.toggle() } label: {
+                Button { cnc.readinessShown.toggle() } label: {
                     HStack(spacing: 5) {
                         Image(systemName: blocker == nil ? "checkmark.circle.fill" : "info.circle")
                             .foregroundStyle(blocker == nil ? Color.green : Color.secondary)
@@ -237,7 +244,8 @@ struct CNCMachineBar: View {
                 }
                 .buttonStyle(.plain)
                 .help("Review the job setup")
-                .popover(isPresented: $reviewShown, arrowEdge: .top) { readiness.padding(18).frame(width: 330) }
+                .accessibilityIdentifier("cnc.job.readiness")
+                .popover(isPresented: $cnc.readinessShown, arrowEdge: .top) { readiness.padding(18).frame(width: 330) }
                 Text(cnc.error ?? machine.error ?? blocker ?? (cnc.usesImportedProgram ? cnc.importedName : "\(counted(cnc.operations.count, "operation")) · est. \(CNCWorkspace.durationLabel(cnc.jobDuration))"))
                     .font(.caption).foregroundStyle((cnc.error ?? machine.error) == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.red))
                     .lineLimit(1).truncationMode(.tail)
@@ -251,12 +259,13 @@ struct CNCMachineBar: View {
             Button {
                 if held { machine.resume() }
                 else if moving { machine.hold() }
-                else { runShown = true }
+                else { CNCCommand.runJob.run(cnc) }
             } label: {
                 Label(held ? "Resume" : moving ? "Hold" : "Run Job", systemImage: held ? "play.fill" : moving ? "pause.fill" : "play.fill")
                     .frame(width: 78)
             }.buttonStyle(.borderedProminent).tint(moving ? .orange : .accentColor)
-                .disabled(held ? !canResume : moving ? !machine.connected : blocker != nil)
+                .disabled(held ? !canResume : moving ? !machine.connected : !CNCCommand.runJob.isEnabled(cnc))
+                .accessibilityIdentifier("cnc.job.run")
                 // No Return-based key equivalent: AppKit advertises any button
                 // whose key is Return as the window's default button, modifiers
                 // or not, so accessibility clients pressed Run Job for "return".
@@ -273,7 +282,7 @@ struct CNCMachineBar: View {
     /// The readiness checklist lives in its own view so the machine's half of
     /// it can be rendered — and looked at — without a window.
     private var readiness: some View {
-        CNCReadinessList(cnc: cnc, onTrace: { reviewShown = false; traceShown = true })
+        CNCReadinessList(cnc: cnc, onTrace: { cnc.readinessShown = false; cnc.traceShown = true })
     }
 }
 
@@ -289,9 +298,13 @@ struct CNCJogControls: View {
             Picker("Step", selection: $cnc.jogStep) {
                 Text("0.1 mm").tag(0.1); Text("1 mm").tag(1.0); Text("10 mm").tag(10.0)
             }.pickerStyle(.segmented)
+                .accessibilityLabel("Jog step").accessibilityIdentifier("cnc.machine.jogStep")
+                .accessibilityValue("\(cnc.jogStep.formatted()) millimetres")
             HStack {
                 Text("Feed")
                 TextField("Jog feed", value: $cnc.jogFeed, format: .number).textFieldStyle(.roundedBorder)
+                    .accessibilityLabel("Jog feed").accessibilityIdentifier("cnc.machine.jogFeed")
+                    .accessibilityValue("\(cnc.jogFeed.formatted()) millimetres per minute")
                 Text("mm/min").foregroundStyle(.secondary)
             }.font(.caption)
             Grid(horizontalSpacing: 8, verticalSpacing: 8) {

@@ -305,40 +305,6 @@ enum NcSenderLogFilter {
     }
 }
 
-// MARK: - Preferences
-
-/// Where ncSender lives, and where the camera is. Kept under the same
-/// `vcad.prefs.*` namespace `Prefs` uses; they belong in `Prefs` itself once
-/// that file is not being edited by another package.
-enum NcSenderPrefs {
-    static let baseURLKey = "vcad.prefs.ncsender.url"
-    static let cameraURLKey = "vcad.prefs.camera.url"
-    static let cameraIntervalKey = "vcad.prefs.camera.interval"
-
-    private static var defaults: UserDefaults { .standard }
-
-    static var baseURL: String {
-        get {
-            let stored = defaults.string(forKey: baseURLKey)?.trimmingCharacters(in: .whitespaces) ?? ""
-            return stored.isEmpty ? NcSenderClient.defaultBaseURL : stored
-        }
-        set { defaults.set(newValue, forKey: baseURLKey) }
-    }
-    /// The camera URL carries credentials; it is stored, never logged, and
-    /// shown masked. `UserDefaults` is not a keychain — see the known gaps.
-    static var cameraURL: String {
-        get { defaults.string(forKey: cameraURLKey) ?? "" }
-        set { defaults.set(newValue, forKey: cameraURLKey) }
-    }
-    static var cameraInterval: Double {
-        get {
-            let stored = defaults.double(forKey: cameraIntervalKey)
-            return (2...5).contains(stored) ? stored : 3
-        }
-        set { defaults.set(min(5, max(2, newValue)), forKey: cameraIntervalKey) }
-    }
-}
-
 // MARK: - The session
 
 /// One live conversation with one ncSender: polled state, the send path, and
@@ -370,7 +336,7 @@ final class NcSenderSession {
     }
 
     var baseURLText: String {
-        didSet { NcSenderPrefs.baseURL = baseURLText }
+        didSet { Prefs.ncSenderURL = baseURLText }
     }
     private(set) var state: NcSenderServerState?
     private(set) var firmware: NcSenderFirmware?
@@ -396,7 +362,7 @@ final class NcSenderSession {
 
     init(session: URLSession = .shared, baseURL: String? = nil) {
         self.session = session
-        self.baseURLText = baseURL ?? NcSenderPrefs.baseURL
+        self.baseURLText = baseURL ?? Prefs.ncSenderURL
     }
 
     var client: NcSenderClient? {
@@ -491,6 +457,23 @@ final class NcSenderSession {
         // Firmware is a separate read so a controller that answers state but
         // not $$ still shows a connection instead of one blanket failure.
         if let firmware = try? await client.firmware() { self.firmware = firmware }
+    }
+
+    /// Record a probe result without a sender to probe.
+    ///
+    /// Named for what it does rather than hidden behind `#if DEBUG`: the
+    /// contention guard is the one thing here that stops a machine, and a
+    /// guard whose test needs a live ncSender on the bench is a guard nobody
+    /// runs. Everything it sets is what `testConnection` would have set.
+    func simulate(controllerAddress: String?, reachable: Bool = true,
+                  nativeHost: String, nativePort: String = "23") {
+        var found = Probe()
+        found.reachable = reachable
+        found.controllerAddress = controllerAddress
+        found.detail = reachable ? "Reachable · controller \(controllerAddress ?? "not reported")" : "Not reachable"
+        found.contention = Self.contention(ncSenderHolds: controllerAddress,
+                                           nativeHost: nativeHost, nativePort: nativePort)
+        probe = found
     }
 
     /// Two senders, one controller. ncSender holds the Anolex's telnet session;

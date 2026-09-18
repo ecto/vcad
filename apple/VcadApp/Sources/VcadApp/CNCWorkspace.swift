@@ -208,6 +208,14 @@ struct CNCPreview {
 @MainActor @Observable
 final class CNCWorkspace {
     let machine = CNCController()
+    /// ncSender and the camera tile.
+    ///
+    /// They live on the workspace, not inside the view that shows them: a
+    /// popover body is rebuilt every time it opens, so a session held there
+    /// would drop its poller, its probe and its send state on every close —
+    /// and the camera would forget the frame it had just taken.
+    let ncSender = NcSenderSession()
+    let camera = CNCCameraModel()
     var inspectorTab: CNCInspectorTab = .terminal
     var followSpindle = false
     var autoFit = true
@@ -224,6 +232,21 @@ final class CNCWorkspace {
     var leftPanelShown = true { didSet { onLayoutChange?() } }
     var rightPanelShown = true { didSet { onLayoutChange?() } }
     var bottomPanelShown = false { didSet { onLayoutChange?() } }
+    /// The ncSender column — the send panel and the camera tile.
+    var senderPanelShown = false { didSet { onLayoutChange?() } }
+
+    // Sheets and popovers the machine bar shows. They are workspace state
+    // rather than `@State` in the bar so the menu bar can open the same thing
+    // the bar's button opens; a popover only a button can reach is a popover
+    // a keyboard user cannot reach at all (friction-log item 45).
+    var connectionShown = false
+    var probeShown = false
+    var traceShown = false
+    var readinessShown = false
+    /// The "start machining" confirmation. Workspace state for the same reason:
+    /// Manufacture ▸ Run Job raises the very same dialog the bar's button does,
+    /// so there is one confirmation and not two.
+    var runShown = false
     var shown = false { didSet { if !shown { pausePreview() } } }
     var mode: CNCMode = .setup {
         didSet {
@@ -367,8 +390,36 @@ final class CNCWorkspace {
     var clampsInTheWay: [CNCClamp] { clamps.filter { $0.overlaps(sweepRect) } }
 
     /// The machine's own limits and measured skew, when the machine bar has
-    /// them. Read reflectively so this package does not depend on that one.
+    /// them.
     var machineProfile: CNCJobMachineLimits { CNCJobMachineLimits(machine.profile) }
+
+    // MARK: the skew the machine measured
+
+    /// How far off the machine axes the two-point edge probe found the blank,
+    /// or nothing when it has not run. Derived from the profile, never stored:
+    /// a stale skew is worse than none.
+    var measuredSkewDegrees: Double? {
+        guard let skew = machineProfile.skewDegrees, skew.isFinite else { return nil }
+        return skew
+    }
+    /// Whether "Use the measured skew" has anything left to do.
+    var canApplyMeasuredSkew: Bool {
+        guard !machine.active, !generating, let skew = measuredSkewDegrees else { return false }
+        return CNCSkewProbe.placementRotationDegrees(forSkew: skew) != placement.rotationDeg
+    }
+    /// Lay the job down on the blank as it actually sits.
+    ///
+    /// The sign is `CNCSkewProbe`'s to state and it states it once: the blank
+    /// is not being straightened, the job is being turned to match it, so a
+    /// +10° blank takes a +10° job. Going through
+    /// `placementRotationDegrees(forSkew:)` rather than assigning the skew
+    /// directly is what keeps that convention in one place.
+    @discardableResult
+    func applyMeasuredSkew() -> Bool {
+        guard canApplyMeasuredSkew, let skew = measuredSkewDegrees else { return false }
+        placement.rotationDeg = CNCSkewProbe.placementRotationDegrees(forSkew: skew)
+        return true
+    }
 
     var jogStep = 1.0
     var jogFeed = 300.0
@@ -662,14 +713,37 @@ final class CNCWorkspace {
             return pending.count == 1 ? "Acknowledge: \(first.text)"
                 : "Acknowledge \(counted(pending.count, "warning")), starting with: \(first.text)"
         }
+        // Two senders, one controller. ncSender holds the Anolex's telnet
+        // session; whichever sender connects second either fails outright or —
+        // worse — interleaves its commands into the same stream. So while
+        // ncSender says it is holding this controller, the built-in sender is
+        // not allowed to start, and says why rather than failing on the wire.
+        if let contention = senderContention { return contention }
         if !machine.connected { return "Connect the Anolex or choose Simulator." }
         if machine.faulted { return machine.error ?? "Reconnect after resolving the controller fault." }
         if !machine.status.isFresh { return "Waiting for fresh controller telemetry." }
         if !machine.g54Active { return "Select G54 work coordinates on the controller." }
-        if !machine.canStart { return "Waiting for Idle and a known work position." }
+        if !machine.canStart {
+            // An alarm is why the controller is not Idle, and it says what
+            // happened and what to do about it. "Waiting for Idle and a known
+            // work position" is true and useless beside it.
+            if let alarm = machine.alarm { return alarm.text }
+            return "Waiting for Idle and a known work position."
+        }
         if !setupConfirmed { return "Confirm the tool, workholding, clearance and G54 zero." }
+        // The machine's own half of the gate — travel against this job's
+        // envelope, homing, alarms, limit switches — asked last, because it is
+        // the only half that needs a connected controller to mean anything.
+        if let machineBlocker = cncMachineBlocker(self) { return machineBlocker }
         return nil
     }
+
+    /// What ncSender says about holding this controller, or nothing.
+    ///
+    /// Only a probe that found ncSender pointed at the *same* address the
+    /// built-in sender is configured for produces one — see
+    /// `NcSenderSession.contention`.
+    var senderContention: String? { ncSender.probe?.contention }
 
     /// The program, or nothing at all.
     ///
@@ -941,6 +1015,15 @@ final class CNCWorkspace {
             // default until it was typed in by hand (item 17).
             if section.suggestedStockThickness.isFinite, section.suggestedStockThickness > 0 {
                 stockThickness = (section.suggestedStockThickness * 1000).rounded() / 1000
+            }
+            // …and the stock top is the part's top. Without this the blank was
+            // the right thickness in the wrong place: `importOutline` sets X
+            // and Y from the outline but kept whatever Z was there, so for a
+            // part modelled at z 11.1–17.1 the toolpath was drawn 17 mm below
+            // the solid and "Place at model top" had to be pressed by hand
+            // (items 17, 18 and 47 were all this one line).
+            if let top = section.zRange.last, top.isFinite {
+                origin.z = (top * 1000).rounded() / 1000
             }
             outlineMismatch = nil
             return true
@@ -1409,6 +1492,20 @@ final class CNCWorkspace {
     /// Kept under its old name because the machine bar's readiness popover
     /// calls it; `all` no longer means anything, since a job is one request.
     func generate(all: Bool = false) { build() }
+
+    /// Replay this job against the part it is meant to make, and say so.
+    ///
+    /// For a generated job that *is* the build — the kernel verifies on its way
+    /// out and withholds the G-code when a check fails — so this rebuilds. For
+    /// an imported program there is nothing to build, only the outline to
+    /// replay it against, which may have changed since it was imported.
+    func verify() {
+        guard !generating, !machine.active else { return }
+        guard usesImportedProgram else { build(); return }
+        guard let program = importedProgram else { return }
+        importedVerification = verifyImported(code: program.gcode)
+        revision += 1
+    }
 
     func build() {
         guard !generating, !machine.active else { return }

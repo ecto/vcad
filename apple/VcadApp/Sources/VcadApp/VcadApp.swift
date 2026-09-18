@@ -72,7 +72,10 @@ struct VcadApp: App {
             EditorView(model: model, intent: intent)
         }
         .windowStyle(.automatic)
-        .commands { DocumentCommands(model: model, intent: intent) }
+        .commands {
+            DocumentCommands(model: model, intent: intent)
+            ManufactureCommands(model: model)
+        }
 
         Settings {
             SettingsView()

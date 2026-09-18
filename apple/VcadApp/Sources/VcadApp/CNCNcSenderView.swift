@@ -1,5 +1,37 @@
 import SwiftUI
 
+// MARK: - What stands between this job and ncSender
+//
+// Free functions rather than methods, for the same reason `cncMachineBlocker`
+// is one: the send path needs both the workspace's job and the sender's own
+// state, and neither side should have to know the other's shape. The Send
+// button and Manufacture ▸ Send to ncSender both ask these, so the menu item
+// can never send what the button refuses.
+
+/// The job's swept envelope placed in ncSender's machine coordinates, or
+/// nothing when the job has never been verified and so has no envelope.
+@MainActor func cncSenderEnvelope(_ cnc: CNCWorkspace) -> NcSenderEnvelopeCheck? {
+    guard let verification = cnc.verification else { return nil }
+    return cnc.ncSender.envelopeCheck(workMin: verification.envelope.workMin,
+                                      workMax: verification.envelope.workMax)
+}
+
+/// Everything standing between this job and an upload, in the order it is
+/// worth fixing. Empty means Send is allowed.
+@MainActor func cncSenderBlockers(_ cnc: CNCWorkspace) -> [String] {
+    cnc.ncSender.sendBlockers(jobCurrent: cnc.jobCurrent,
+                              jobBlocked: !cnc.blockers.isEmpty,
+                              hasCode: cnc.jobCode != nil,
+                              envelope: cncSenderEnvelope(cnc))
+}
+
+/// The name this job uploads as. Deterministic, so re-sending overwrites
+/// rather than littering ncSender's file list.
+@MainActor func cncSenderFilename(_ cnc: CNCWorkspace, document: String = "untitled",
+                                  now: Date = Date()) -> String {
+    NcSenderJobPlan.filename(document: document, toolDiameter: cnc.toolDiameter, date: now)
+}
+
 // The ncSender panel: the blessed send path, end to end, in one column.
 //
 // Reading order is the order the work happens in — where the sender is, what
@@ -24,17 +56,8 @@ struct CNCNcSenderPanel: View {
     private var filename: String {
         NcSenderJobPlan.filename(document: documentName, toolDiameter: cnc.toolDiameter, date: now)
     }
-    private var envelope: NcSenderEnvelopeCheck? {
-        guard let verification = cnc.verification else { return nil }
-        return sender.envelopeCheck(workMin: verification.envelope.workMin,
-                                    workMax: verification.envelope.workMax)
-    }
-    private var blockers: [String] {
-        sender.sendBlockers(jobCurrent: cnc.jobCurrent,
-                            jobBlocked: !cnc.blockers.isEmpty,
-                            hasCode: cnc.jobCode != nil,
-                            envelope: envelope)
-    }
+    private var envelope: NcSenderEnvelopeCheck? { cncSenderEnvelope(cnc) }
+    private var blockers: [String] { cncSenderBlockers(cnc) }
     private var loadedHere: Bool {
         if case .loaded(let name, _) = sender.send { return name == sender.job?.filename }
         return false
@@ -210,13 +233,15 @@ struct CNCNcSenderPanel: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Uploads as \(filename)")
             HStack {
+                // Same predicate as Manufacture ▸ Send to ncSender.
                 Button(sending ? "Sending…" : "Send to ncSender") {
                     guard let code = cnc.jobCode else { return }
                     let name = filename
                     Task { await sender.sendJob(gcode: code, filename: name) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!blockers.isEmpty || sender.busy)
+                .disabled(!CNCCommand.sendToNcSender.isEnabled(cnc))
+                .accessibilityIdentifier("cnc.sender.send")
                 Spacer()
             }
             if let first = blockers.first {

@@ -127,13 +127,17 @@ struct CNCPlacementSection: View {
         CNCNumber(label: "Rotation", value: $cnc.placement.rotationDeg, unit: "°",
                   help: "Turns the job about work zero — for a blank that is clamped crooked.",
                   identifier: "cnc.placement.rotation")
-        // Read-only: the machine bar measures skew, this only says what it
-        // found. Copying it into the rotation is the operator's decision.
-        if let skew = cnc.machineProfile.skewDegrees {
+        // The machine bar measures the skew; applying it is one click, and it
+        // goes through `CNCSkewProbe` so the sign is decided in exactly one
+        // place rather than being re-derived at every call site.
+        if let skew = cnc.measuredSkewDegrees {
             KeyValueRow("Measured skew", "\(CNCVerdictText.mm(skew, 2))°")
-            Button("Use the measured skew") { cnc.placement.rotationDeg = skew }
-                .disabled(cnc.machine.active || cnc.generating)
-                .accessibilityIdentifier("cnc.placement.useSkew")
+            Button("Turn the job to match (\(CNCVerdictText.mm(CNCSkewProbe.placementRotationDegrees(forSkew: skew), 2))°)") {
+                cnc.applyMeasuredSkew()
+            }
+            .disabled(!cnc.canApplyMeasuredSkew)
+            .accessibilityIdentifier("cnc.placement.useSkew")
+            .help("The blank is not straightened: the job is turned to lie on it as it sits.")
         } else {
             Text("A two-point probe on the machine bar measures how far the blank is off the axes; it appears here when it has.")
                 .font(.caption).foregroundStyle(.secondary)

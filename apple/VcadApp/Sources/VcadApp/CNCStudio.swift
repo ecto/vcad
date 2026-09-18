@@ -8,7 +8,6 @@ private let cncAccent = Color.accentColor
 
 struct WorkspaceHeader: View {
     @Bindable var model: EditorModel
-    @State private var connectionShown = false
     private var cnc: CNCWorkspace { model.cnc }
     var body: some View {
         @Bindable var cnc = cnc
@@ -26,7 +25,7 @@ struct WorkspaceHeader: View {
                     Spacer(minLength: 0)
                     HStack(spacing: 14) {
                         if model.workspace == .manufacture {
-                            Button { connectionShown.toggle() } label: {
+                            Button { cnc.connectionShown.toggle() } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: "circle.fill")
                                         .font(.caption2)
@@ -34,10 +33,16 @@ struct WorkspaceHeader: View {
                                     Text(cnc.machine.demo ? "Simulator" : "Anolex")
                                     Text(cnc.machine.connected ? cnc.machine.status.state : "Disconnected").foregroundStyle(.secondary)
                                 }.font(.caption).lineLimit(1)
-                            }.buttonStyle(.borderless).help("Machine connection")
+                            }.buttonStyle(.borderless).help("Machine connection (⌥⌘K)")
                                 .accessibilityLabel("Machine connection, \(cnc.machine.summary)")
-                                .popover(isPresented: $connectionShown, arrowEdge: .bottom) {
-                                    CNCConnectionView(cnc: cnc).padding(18).frame(width: 320)
+                                .accessibilityIdentifier("cnc.machine.connection")
+                                // The same view the machine bar shows: the
+                                // header used to carry an older popover that
+                                // knew nothing about travel, limits, or what
+                                // had changed since the machine was last good.
+                                .popover(isPresented: $cnc.connectionShown, arrowEdge: .bottom) {
+                                    ScrollView { CNCMachineConnection(cnc: cnc).padding(18) }
+                                        .frame(width: 330).frame(maxHeight: 520)
                                 }
                         }
                         Menu {
@@ -46,6 +51,7 @@ struct WorkspaceHeader: View {
                                 Toggle("Job Outline", isOn: $cnc.leftPanelShown)
                                 Toggle("Inspector", isOn: $cnc.rightPanelShown)
                                 Toggle("Drawer", isOn: $cnc.bottomPanelShown)
+                                Toggle("ncSender & Camera", isOn: $cnc.senderPanelShown)
                             case .design:
                                 Toggle("Model Navigator", isOn: $model.showsTree)
                                 Toggle("Inspector", isOn: $model.showsInspector)
@@ -107,27 +113,25 @@ struct WorkspaceHeader: View {
     }
 }
 
-struct CNCConnectionView: View {
-    @Bindable var cnc: CNCWorkspace
-    private var machine: CNCController { cnc.machine }
+/// The ncSender column: the blessed send path and the camera watching the cut,
+/// side by side with the job.
+///
+/// Both models live on the workspace, so opening and closing this column never
+/// costs a poller or a frame.
+struct CNCStudioSenderColumn: View {
+    @Bindable var model: EditorModel
+    private var cnc: CNCWorkspace { model.cnc }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Anolex 4030 Ultra 2").font(.headline)
-            Text(machine.firmware).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-            HStack {
-                TextField("Host", text: Binding(get: { machine.host }, set: { machine.host = $0 }))
-                TextField("Port", text: Binding(get: { machine.port }, set: { machine.port = $0 })).frame(width: 55)
-            }.textFieldStyle(.roundedBorder).disabled(machine.connected || machine.connecting)
-            HStack {
-                if machine.connected || machine.connecting {
-                    Button("Disconnect") { machine.disconnect(); cnc.setupConfirmed = false }
-                } else {
-                    Button("Connect") { machine.connect(); cnc.setupConfirmed = false }
-                    Button("Simulator") { machine.connect(simulated: true); cnc.setupConfirmed = false }
-                }
-            }
-            Text(machine.summary).font(.caption)
-            if let error = machine.error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
+        VStack(spacing: Theme.Space.m) {
+            CNCNcSenderPanel(cnc: cnc, sender: cnc.ncSender, camera: cnc.camera,
+                             documentName: model.documentName,
+                             onClose: { cnc.senderPanelShown = false })
+                .frame(width: 330)
+                .panelSurface()
+            CNCCameraTile(camera: cnc.camera)
+                .frame(width: 330)
+                .panelSurface()
         }
     }
 }
@@ -145,8 +149,12 @@ struct CNCStudioOutline: View {
                     // the outline that machines the part should come from the
                     // part, not from a file that may be a different revision
                     // (items 16 and 37).
-                    if cnc.hasModel { Button("From model…") { cnc.importFromModel() } }
-                    Button("Outline (DXF)…") { cnc.importOutlineFile() }
+                    if cnc.hasModel {
+                        Button("From model…") { CNCCommand.outlineFromModel.run(cnc) }
+                            .disabled(!CNCCommand.outlineFromModel.isEnabled(cnc))
+                    }
+                    Button("Outline (DXF)…") { CNCCommand.importOutlineDXF.run(cnc) }
+                        .disabled(!CNCCommand.importOutlineDXF.isEnabled(cnc))
                     Button("G-code…") { cnc.importFile() }
                 } label: { Label("Import", systemImage: "square.and.arrow.down") }
                     .menuStyle(.borderlessButton).fixedSize()
@@ -154,16 +162,18 @@ struct CNCStudioOutline: View {
                     .help("Take the outline from the part on screen, import a DXF, or import a finished G-code program")
                 // …and the same choices as plain buttons, because a pull-down
                 // is not reachable from the keyboard or an assistive tool
-                // (friction-log items 45 and 51).
+                // (friction-log items 45 and 51). Both ask `CNCCommand`, which
+                // is also what the Manufacture menu asks.
                 if cnc.hasModel {
-                    Button("From model") { cnc.importFromModel() }
-                        .disabled(cnc.machine.active || cnc.generating)
+                    Button("From model") { CNCCommand.outlineFromModel.run(cnc) }
+                        .disabled(!CNCCommand.outlineFromModel.isEnabled(cnc))
                         .accessibilityIdentifier("cnc.import.fromModel")
-                        .help("Section the part on screen and machine that outline")
+                        .help("Section the part on screen and machine that outline (⌥⌘O)")
                 }
-                Button("DXF…") { cnc.importOutlineFile() }
-                    .disabled(cnc.machine.active || cnc.generating)
+                Button("DXF…") { CNCCommand.importOutlineDXF.run(cnc) }
+                    .disabled(!CNCCommand.importOutlineDXF.isEnabled(cnc))
                     .accessibilityIdentifier("cnc.import.dxf")
+                    .help("Import a DXF outline (⌥⌘I)")
                 Spacer(minLength: 0)
             }.font(.caption).buttonStyle(.borderless).padding(.horizontal, 12).padding(.bottom, 8)
             if let section = cnc.modelSection, cnc.modelRefusal == nil {
@@ -273,8 +283,11 @@ struct CNCStudioOutline: View {
                     Label(verdictLabel, systemImage: verdictSymbol)
                         .font(.caption).foregroundStyle(verdictColour).lineLimit(2)
                 }
-                Button(cnc.generating ? "Building…" : cnc.jobCurrent ? "Rebuild job" : "Build job") { cnc.build() }
-                    .frame(maxWidth: .infinity).disabled(cnc.generating || cnc.machine.active)
+                Button(CNCCommand.buildJob.title(cnc)) { CNCCommand.buildJob.run(cnc) }
+                    .frame(maxWidth: .infinity)
+                    .disabled(!CNCCommand.buildJob.isEnabled(cnc))
+                    .accessibilityIdentifier("cnc.job.build")
+                    .help("Build the job and replay it against the part (⌥⌘B)")
             }.padding(16)
         }.frame(width: Theme.Width.cncOutline)
     }
@@ -491,8 +504,20 @@ struct CNCStudioInspector: View {
                 // thing on screen was a form that looked fine.
                 CNCVerificationSection(cnc: cnc)
                 Divider()
-                Button(cnc.generating ? "Building…" : cnc.jobCurrent ? "Rebuild and check" : "Build and check the job") { cnc.build() }
-                    .disabled(cnc.machine.active || cnc.generating)
+                HStack {
+                    Button(cnc.generating ? "Building…" : cnc.jobCurrent ? "Rebuild and check" : "Build and check the job") {
+                        CNCCommand.buildJob.run(cnc)
+                    }
+                    .disabled(!CNCCommand.buildJob.isEnabled(cnc))
+                    .accessibilityIdentifier("cnc.job.buildAndCheck")
+                    // Re-replaying without rebuilding is what an imported
+                    // program needs when the outline it is judged against has
+                    // moved under it.
+                    Button("Verify") { CNCCommand.verifyJob.run(cnc) }
+                        .disabled(!CNCCommand.verifyJob.isEnabled(cnc))
+                        .accessibilityIdentifier("cnc.job.verify")
+                        .help("Replay this job against the part it should make (⌥⌘Y)")
+                }
                 Divider()
                 CNCOperationInspector(cnc: cnc)
                 Divider()

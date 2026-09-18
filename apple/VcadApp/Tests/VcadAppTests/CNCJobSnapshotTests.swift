@@ -63,6 +63,69 @@ final class CNCJobSnapshotTests: XCTestCase {
         return model
     }
 
+    /// The Machine stage with everything the merge mounted on it: the machine
+    /// bar, the ncSender panel and the camera tile, and the connection popover
+    /// that the header used to show an older version of.
+    ///
+    ///     VCAD_CNC_SNAPSHOTS=1 swift test --filter CNCJobSnapshotTests
+    func testMachineStageSnapshots() async throws {
+        guard ProcessInfo.processInfo.environment["VCAD_CNC_SNAPSHOTS"] == "1" else {
+            throw XCTSkip("Set VCAD_CNC_SNAPSHOTS=1 to render Manufacture snapshots.")
+        }
+        _ = NSApplication.shared
+        let directory = URL(fileURLWithPath: "/tmp/vcad-manufacture")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let model = try await job(blocked: false)
+        let cnc = model.cnc
+        cnc.machine.connect(simulated: true)
+        defer { cnc.machine.disconnect() }
+        cnc.mode = .machine
+        cnc.senderPanelShown = true
+        // A camera that has never produced a frame is what the tile shows on a
+        // bench with no camera, which is the state worth looking at.
+        cnc.camera.setURL("rtsps://camera.example/stream")
+        defer { cnc.camera.setURL("") }
+
+        for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            let content = VStack(spacing: 12) {
+                WorkspaceHeader(model: model)
+                HStack(alignment: .top, spacing: 12) {
+                    CNCStudioOutline(cnc: cnc).frame(height: 700).panelSurface()
+                    CNCNcSenderPanel(cnc: cnc, sender: cnc.ncSender, camera: cnc.camera,
+                                     documentName: "stator", now: Date(timeIntervalSince1970: 1_758_153_600))
+                        .frame(width: 330, height: 700).panelSurface()
+                    CNCCameraTile(camera: cnc.camera).frame(width: 300).panelSurface()
+                    // The connection view, as the header's and the bar's
+                    // popovers both now show it.
+                    ScrollView { CNCMachineConnection(cnc: cnc).padding(18) }
+                        .frame(width: 330, height: 520).panelSurface()
+                    Spacer(minLength: 0)
+                }
+                CNCStudioTransport(cnc: cnc).panelSurface()
+            }
+            .padding(12)
+            .frame(width: 1500, height: 900)
+            .background(Color(nsColor: .windowBackgroundColor))
+
+            let hosting = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1500, height: 900),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: appearance)
+            window.contentView = hosting; window.orderFront(nil)
+            try? await Task.sleep(for: .milliseconds(400))
+            hosting.layoutSubtreeIfNeeded()
+            XCTAssertLessThanOrEqual(hosting.fittingSize.width, 1501,
+                                     "machine-\(suffix): the panels must fit the window")
+            let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+            let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try data.write(to: directory.appendingPathComponent("machine-\(suffix).png"))
+            XCTAssertGreaterThan(data.count, 10_000)
+            window.orderOut(nil)
+        }
+    }
+
     func testManufactureWorkspaceSnapshots() async throws {
         guard ProcessInfo.processInfo.environment["VCAD_CNC_SNAPSHOTS"] == "1" else {
             throw XCTSkip("Set VCAD_CNC_SNAPSHOTS=1 to render Manufacture snapshots.")

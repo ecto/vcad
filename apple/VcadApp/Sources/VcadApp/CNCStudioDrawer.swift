@@ -19,12 +19,48 @@ struct CNCStudioDrawer: View {
             case .terminal: CNCStudioTerminal(cnc: cnc)
             case .gcode:
                 ScrollView {
-                    Text(cnc.jobCode ?? "Generate the job or import a G-code file.").font(.subheadline.monospaced())
-                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 18).padding(.vertical, 6)
+                    if let code = cnc.jobCode {
+                        Text(code).font(.subheadline.monospaced())
+                            .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 18).padding(.vertical, 6)
+                    } else {
+                        gcodeAbsence
+                    }
                 }
             case .macros: CNCStudioMacros(cnc: cnc)
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Why there is no G-code.
+    ///
+    /// "Generate the job or import a G-code file." was said for a *refused*
+    /// job too — the one case where the absence is the whole point. A job the
+    /// oracle refused has no `gcode` key at all, which is the gate working;
+    /// reading it as "you haven't pressed Generate yet" invites pressing
+    /// Generate again and wondering why nothing changes.
+    @ViewBuilder private var gcodeAbsence: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            if cnc.jobCurrent, !cnc.blockers.isEmpty {
+                Label("This job was refused, so it has no G-code.", systemImage: "xmark.octagon.fill")
+                    .font(.callout.weight(.medium)).foregroundStyle(Color.red)
+                ForEach(cnc.blockers) { blocker in
+                    Text("• " + blocker.text).font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("There is nothing here to export or send: a refused job never becomes a file. Fix the reasons above and build it again.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if cnc.jobCurrent {
+                // Blocked, but every reason is on the imported program's side.
+                Text("This program produced no G-code.").font(.callout)
+            } else {
+                Text("Generate the job or import a G-code file.").font(.callout)
+            }
+        }
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18).padding(.vertical, 6)
     }
 }
 
