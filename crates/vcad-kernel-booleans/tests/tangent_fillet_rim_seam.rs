@@ -118,8 +118,15 @@ fn volume(solid: &BRepSolid) -> f64 {
 /// Measured on `claude/cam-roadmap` (8daf2aa6): 4726.99 mm³ against a closed
 /// form of 4726.99 — and 8 unpaired plus 9 over-used edges, all of them
 /// within 0.007 mm of the tangency corner, four per cap plane.
+///
+/// **Half closed (`cam/w2d-union-seam-3`).** `repair::collapse_tangency_seams`
+/// puts the seam's three rails back on the one line they all belong to, and
+/// `ring ∪ block` now scores 0 unpaired and 0 over-used at 4726.9913 mm³.
+/// `block ∪ ring` still scores 6 over-used, so the test stays ignored: the
+/// two operand orders reach the corner through different splitters and only
+/// one of them is healed. That asymmetry is the remaining work here.
 #[test]
-#[ignore = "known defect: tangent fillet rim leaves the shell open (see module docs)"]
+#[ignore = "known defect: block ∪ ring still doubles the tangency sliver (6 over-used)"]
 fn ring_union_tangent_fillet_block_is_watertight() {
     let (r, b) = (ring(), fillet_block());
     let expected = volume(&r) + volume(&b) - block_ring_overlap();
@@ -151,8 +158,13 @@ fn ring_union_tangent_fillet_block_is_watertight() {
 /// (to ~1e-6) with the fillet arc it just came from,
 /// `repair::split_edges_at_interior_vertices` subdivides that chord at the
 /// arc's own vertices, and the loop revisits them in reverse.
+///
+/// **Closed.** Passes since `repair::collapse_twin_pair_spurs` learned to see
+/// a retraced pair by its VERTICES rather than by `first.twin == second`, and
+/// to marry the two outside partners a nested flap strands. Kept
+/// non-ignored: it is the topology statement of the defect, and it must not
+/// come back.
 #[test]
-#[ignore = "known defect: the cap loop is pinched at the tangency (see module docs)"]
 fn no_face_loop_visits_a_vertex_twice() {
     let out = union(&ring(), &fillet_block());
     for (fid, face) in &out.topology.faces {
@@ -173,8 +185,13 @@ fn no_face_loop_visits_a_vertex_twice() {
 /// union is exact and closed. Adding the two root fillet blocks — tangent to
 /// the ring's OD at r 28.75 — leaves the round end's cap disc covered twice:
 /// 6 unpaired and 43 OVER-USED edges, the over-use being the doubled fan.
+///
+/// **Unpaired half closed (`cam/w2d-union-seam-3`).** The seam collapse takes
+/// this group from 11 unpaired / 35 over-used / 3 pinched loops to **0
+/// unpaired**, 31 over-used and 1 pinched loop, with the volume unchanged at
+/// 4953.4179 mm³. The doubled round-end cap is what is left.
 #[test]
-#[ignore = "known defect: tangent tab-root fillets double the round end's cap"]
+#[ignore = "known defect: tangent tab-root fillets double the round end's cap (31 over-used)"]
 fn tab_group_leaves_no_doubled_cap() {
     let tab_cube = transformed(
         make_cube(4.9, 6.2, H),
