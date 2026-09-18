@@ -1,0 +1,47 @@
+{
+  "_": "rana-60-cnc, the 6:1 planetary of docs/cam-fixtures/gears-60-cnc.json, stated as a vcad_cam_gear request. The subject is the 20T planet; the train is carried so the reachability verdicts have a contact limit to be taken against. Backlash thinning 0.03 mm per gear, as the design note states it. flank_tolerance grades the verdict at 5 um of metal standing proud of the involute, which is the question 'will this part work' rather than 'is this geometry ideal'.",
+  "gear": {
+    "module": 1.0,
+    "teeth": 20,
+    "profile_shift": 0.0,
+    "pressure_angle": 20.0,
+    "backlash_thinning": 0.03,
+    "face_width": 5.0,
+    "tip_radius": 10.89
+  },
+  "cutter_diameter": 1.0,
+  "pin_diameter": 1.4,
+  "span": true,
+  "contours": true,
+  "tooth": 0,
+  "chordal_tolerance": 0.002,
+  "flank_tolerance": 0.005,
+  "planetary": {
+    "sun": {
+      "module": 1.0,
+      "teeth": 10,
+      "profile_shift": 0.47,
+      "backlash_thinning": 0.03,
+      "tip_radius": 6.45,
+      "face_width": 5.0
+    },
+    "planet": {
+      "module": 1.0,
+      "teeth": 20,
+      "profile_shift": 0.0,
+      "backlash_thinning": 0.03,
+      "tip_radius": 10.89,
+      "face_width": 5.0
+    },
+    "ring": {
+      "module": 1.0,
+      "teeth": 50,
+      "internal": true,
+      "profile_shift": 0.47,
+      "backlash_thinning": 0.03,
+      "tip_radius": 24.47,
+      "face_width": 6.0
+    },
+    "planets": 3
+  }
+}

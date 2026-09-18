@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 
 mod app;
+mod cam;
 mod chat_session;
 mod fabprep;
 mod input;
@@ -265,6 +266,26 @@ enum Commands {
     Params {
         #[command(subcommand)]
         command: ParamsCommands,
+    },
+
+    /// CAM: post a job, verify a program, fit a cutter, section a solid,
+    /// look up feeds, work out gear geometry
+    ///
+    /// Every subcommand is a thin wrapper over the one shared CAM
+    /// implementation (`vcad-cam-api`), so this, the app and an agent can
+    /// never disagree about whether a job is safe to run. The request is JSON
+    /// on stdin or `--request <FILE>`; the answer is a human summary by
+    /// default and the whole JSON document with `--json`.
+    ///
+    /// Exit codes: 0 the answer is yes; 1 the request could not be run;
+    /// 2 it ran and the answer is NO — the job is blocked, the program fails
+    /// verification, the cutter does not fit, the section is torn, the
+    /// outlines disagree. A blocked job writes no G-code file.
+    Cam {
+        #[command(subcommand)]
+        command: cam::CamCommand,
+        #[command(flatten)]
+        common: cam::CamCommon,
     },
 
     /// Take a routed .pcb.json to a complete fab package plus a DRC-delta receipt
@@ -682,6 +703,12 @@ fn main() -> Result<()> {
         }
         Some(Commands::Params { command }) => {
             run_params(command)?;
+        }
+        Some(Commands::Cam { command, common }) => {
+            let code = cam::run(&command, &common)?;
+            if code != 0 {
+                std::process::exit(code);
+            }
         }
         Some(Commands::FabPrep {
             input,
