@@ -332,6 +332,9 @@ impl Pocket2D {
                     overcut,
                     spoilboard,
                 },
+                AllowanceRefusal::SpoilboardNotAThickness { declared } => {
+                    CamError::SpoilboardNotAThickness { declared }
+                }
                 AllowanceRefusal::ExceedsDepth { allowance, depth } => {
                     CamError::BottomAllowanceExceedsDepth { allowance, depth }
                 }

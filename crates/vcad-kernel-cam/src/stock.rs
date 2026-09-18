@@ -29,6 +29,58 @@ impl Spoilboard {
     }
 }
 
+/// Why a sink past the underside of the stock is refused.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SpoilboardRefusal {
+    /// Nothing is declared under the stock.
+    NotDeclared {
+        /// How far past the underside the cut would go, in mm.
+        sink: f64,
+    },
+    /// A board is declared but its thickness is not a thickness: NaN,
+    /// infinite, or zero or less.
+    NotAThickness {
+        /// The number that was declared.
+        declared: f64,
+    },
+    /// Declared, and thinner than the sink.
+    TooThin {
+        /// How far past the underside the cut would go, in mm.
+        sink: f64,
+        /// Thickness declared, in mm.
+        thickness: f64,
+    },
+}
+
+/// The break-through rule, in one place: what sinks past the underside of the
+/// stock sinks into a declared board, and no deeper than that board is thick.
+///
+/// There were two copies of this. This one compared `declared < sink` after
+/// `map_or(0.0, …)`, so `Spoilboard::new(f64::NAN)` made the comparison false
+/// and authorised any break-through at all; the drilling copy checked
+/// `is_finite()` and this one did not. One rule, checked once, and a
+/// non-number is a refusal rather than a permission.
+pub fn check_break_through(sink: f64, board: Option<Spoilboard>) -> Result<(), SpoilboardRefusal> {
+    if sink <= 0.0 {
+        return Ok(());
+    }
+    let Some(board) = board else {
+        return Err(SpoilboardRefusal::NotDeclared { sink });
+    };
+    if !board.thickness.is_finite() || board.thickness <= 0.0 {
+        return Err(SpoilboardRefusal::NotAThickness {
+            declared: board.thickness,
+        });
+    }
+    if board.thickness < sink - 1e-9 {
+        return Err(SpoilboardRefusal::TooThin {
+            sink,
+            thickness: board.thickness,
+        });
+    }
+    Ok(())
+}
+
 impl From<f64> for Spoilboard {
     fn from(thickness: f64) -> Self {
         Self::new(thickness)
@@ -226,6 +278,12 @@ pub enum AllowanceRefusal {
         /// Thickness declared, in mm.
         spoilboard: f64,
     },
+    /// A board is declared under the stock but its thickness is not a
+    /// thickness: NaN, infinite, or zero or less.
+    SpoilboardNotAThickness {
+        /// The number that was declared.
+        declared: f64,
+    },
     /// The skin is as thick as the part: nothing would be cut.
     ExceedsDepth {
         /// The allowance asked for, in mm.
@@ -272,14 +330,23 @@ impl BottomAllowance {
         spoilboard: Option<Spoilboard>,
     ) -> Result<f64, AllowanceRefusal> {
         if self.is_break_through() {
-            let overcut = self.overcut();
-            let declared = spoilboard.map_or(0.0, |s| s.thickness);
-            if declared < overcut - 1e-9 {
-                return Err(AllowanceRefusal::BreakThroughWithoutSpoilboard {
-                    overcut,
-                    spoilboard: declared,
-                });
-            }
+            check_break_through(self.overcut(), spoilboard).map_err(|refusal| match refusal {
+                SpoilboardRefusal::NotDeclared { sink } => {
+                    AllowanceRefusal::BreakThroughWithoutSpoilboard {
+                        overcut: sink,
+                        spoilboard: 0.0,
+                    }
+                }
+                SpoilboardRefusal::TooThin { sink, thickness } => {
+                    AllowanceRefusal::BreakThroughWithoutSpoilboard {
+                        overcut: sink,
+                        spoilboard: thickness,
+                    }
+                }
+                SpoilboardRefusal::NotAThickness { declared } => {
+                    AllowanceRefusal::SpoilboardNotAThickness { declared }
+                }
+            })?;
         }
         let final_depth = self.final_depth(depth);
         if final_depth <= 1e-9 {
@@ -338,6 +405,61 @@ mod tests {
             })
         );
         assert_eq!(allowance.check(5.0, Some(Spoilboard::new(3.0))), Ok(5.3));
+    }
+
+    /// A thickness that is not a number authorises nothing. `declared < sink`
+    /// is false for NaN, so `Spoilboard::new(f64::NAN)` used to wave through
+    /// any break-through at all — and the drilling path, which had its own
+    /// copy of the rule with an `is_finite()` in it, disagreed.
+    #[test]
+    fn a_spoilboard_thickness_that_is_not_a_thickness_permits_nothing() {
+        // NaN is not equal to itself, so the refusals are matched on shape and
+        // the number checked separately.
+        let same = |a: f64, b: f64| a == b || (a.is_nan() && b.is_nan());
+        for declared in [f64::NAN, f64::INFINITY, 0.0, -3.0] {
+            let refusal = check_break_through(0.3, Some(Spoilboard::new(declared)));
+            assert!(
+                matches!(refusal, Err(SpoilboardRefusal::NotAThickness { declared: d }) if same(d, declared)),
+                "{declared} was accepted as a board: {refusal:?}"
+            );
+            let refusal =
+                BottomAllowance::break_through(0.3).check(5.0, Some(Spoilboard::new(declared)));
+            assert!(
+                matches!(refusal, Err(AllowanceRefusal::SpoilboardNotAThickness { declared: d }) if same(d, declared)),
+                "{declared} was accepted as a board: {refusal:?}"
+            );
+        }
+        // And the drilling path reads the same rule, in its own words.
+        let tool = crate::Tool::FlatEndMill {
+            diameter: 3.0,
+            flute_length: 20.0,
+            flutes: 2,
+        };
+        let bore = crate::HelicalBore::through_stock(
+            0.0,
+            0.0,
+            5.0,
+            0.3,
+            crate::BreakThrough::new(6.0)
+                .with_allowance(0.3)
+                .over(Spoilboard::new(f64::NAN)),
+        );
+        let err = bore
+            .generate(
+                &tool,
+                &crate::ToolGeometry::new()
+                    .with_flute_length(30.0)
+                    .with_centre_cutting(true),
+                &crate::CamSettings::default(),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::DrillError::InvalidSpoilboard(t) if t.is_nan()),
+            "{err:?}"
+        );
+
+        // A real board still takes it.
+        assert_eq!(check_break_through(0.3, Some(Spoilboard::new(3.0))), Ok(()));
     }
 
     /// A skin as thick as the part leaves nothing to cut.

@@ -2070,7 +2070,14 @@ pub fn read_dxf(text: &str) -> Result<Outline, OutlineError> {
             }
             "42" => {
                 if current.is_some() {
-                    let bulge: f64 = value.parse().unwrap_or(0.0);
+                    // A bulge that cannot be read is not a straight line. This
+                    // used to fall back to 0.0, so an unreadable arc became a
+                    // chord — 1.46 mm of it across an R5 90° fillet, silently
+                    // cut out of the part.
+                    let bulge: f64 = value.parse().map_err(|_| OutlineError::Dxf {
+                        line: line_no,
+                        message: format!("group 42 (vertex bulge) is not a number: {value:?}"),
+                    })?;
                     if bulge.abs() > 1e-12 {
                         return Err(OutlineError::Dxf {
                             line: line_no,
@@ -3027,6 +3034,18 @@ mod tests {
         let bulged = good.replace("10\n10\n20\n0\n", "10\n10\n20\n0\n42\n0.5\n");
         let err = read_dxf(&bulged).unwrap_err();
         assert!(err.to_string().contains("bulge"), "{err}");
+
+        // An unreadable bulge is an unreadable arc, not a straight line. This
+        // used to `unwrap_or(0.0)` and quietly cut the chord: 1.46 mm of it
+        // across an R5 90° fillet.
+        let unreadable = good.replace("10\n10\n20\n0\n", "10\n10\n20\n0\n42\nabc\n");
+        let err = read_dxf(&unreadable).unwrap_err();
+        assert!(
+            err.to_string().contains("bulge") && err.to_string().contains("not a number"),
+            "{err}"
+        );
+        // …and the vertex it was on is not in some half-read outline either.
+        assert!(read_dxf(&unreadable).is_err());
 
         let open = good.replace("70\n1\n", "70\n0\n");
         let err = read_dxf(&open).unwrap_err();

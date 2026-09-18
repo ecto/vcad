@@ -77,6 +77,17 @@ pub enum CamError {
         spoilboard: f64,
     },
 
+    /// A board is declared under the stock, but what was declared is not a
+    /// thickness — and a number that is not a thickness authorises nothing.
+    #[error(
+        "the spoilboard thickness is {declared}, which is not a thickness: declare how much \
+         sacrificial material is under the stock, in mm."
+    )]
+    SpoilboardNotAThickness {
+        /// The number that was declared.
+        declared: f64,
+    },
+
     /// The onion skin is as thick as the part: nothing would be cut.
     #[error("bottom allowance {allowance:.3} mm leaves nothing of the {depth:.3} mm depth to cut")]
     BottomAllowanceExceedsDepth {

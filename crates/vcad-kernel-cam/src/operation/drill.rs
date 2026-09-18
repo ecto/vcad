@@ -178,6 +178,15 @@ pub enum DrillError {
         depth: f64,
     },
 
+    /// A through bore and a depth both claim to set the depth.
+    #[error(
+        "a through bore takes its depth from the stock thickness, but this one also asks for {depth:.2} mm: build it with HelicalBore::through_stock, or drop the break-through"
+    )]
+    ThroughBoreDepthConflict {
+        /// The depth that conflicts.
+        depth: f64,
+    },
+
     /// A spot drill was asked to go through the stock.
     #[error("a spot is a start for a hole, not a hole: use a drill or peck cycle to go through")]
     SpotThroughStock,
@@ -767,7 +776,22 @@ impl HelicalBore {
         self
     }
 
+    /// Bore all the way through: the depth comes from the stock thickness,
+    /// the cutter's tip and the break-through allowance, so none is given
+    /// here.
+    pub fn through_stock(x: f64, y: f64, diameter: f64, pitch: f64, through: BreakThrough) -> Self {
+        Self {
+            depth: 0.0,
+            through: Some(through),
+            ..Self::new(x, y, diameter, 0.0, pitch)
+        }
+    }
+
     /// Make the bore go through the stock.
+    ///
+    /// The depth then comes from the stock, so anything this bore was built
+    /// with is a second answer to the same question and is refused — clear it,
+    /// or start from [`HelicalBore::through_stock`].
     pub fn with_break_through(mut self, through: BreakThrough) -> Self {
         self.through = Some(through);
         self
@@ -964,6 +988,13 @@ impl HelicalBore {
             });
         }
         if let Some(through) = &self.through {
+            // Two answers to one question. A through bore takes its depth from
+            // the stock, so a depth set as well was silently dropped — the
+            // same contradiction `Drill` refuses as `ThroughDepthConflict`,
+            // and it is refused here too rather than quietly resolved.
+            if self.depth != 0.0 {
+                return Err(DrillError::ThroughBoreDepthConflict { depth: self.depth });
+            }
             check_break_through(through, tool)?;
         } else if !self.depth.is_finite() || self.depth <= 0.0 {
             return Err(DrillError::InvalidDepth(self.depth));
@@ -1015,22 +1046,17 @@ fn check_break_through(through: &BreakThrough, tool: &Tool) -> Result<(), DrillE
         return Err(DrillError::InvalidAllowance(through.allowance));
     }
     let sink = tip_length(tool) + through.allowance;
-    if sink <= 0.0 {
-        return Ok(());
-    }
-    let Some(spoilboard) = through.spoilboard else {
-        return Err(DrillError::NoSpoilboard { sink });
-    };
-    if !spoilboard.thickness.is_finite() || spoilboard.thickness <= 0.0 {
-        return Err(DrillError::InvalidSpoilboard(spoilboard.thickness));
-    }
-    if spoilboard.thickness < sink {
-        return Err(DrillError::SpoilboardTooThin {
-            sink,
-            thickness: spoilboard.thickness,
-        });
-    }
-    Ok(())
+    // The rule itself lives in `stock`, written once; this only translates its
+    // refusal into the words a drilling caller already reads.
+    crate::stock::check_break_through(sink, through.spoilboard).map_err(|refusal| match refusal {
+        crate::stock::SpoilboardRefusal::NotDeclared { sink } => DrillError::NoSpoilboard { sink },
+        crate::stock::SpoilboardRefusal::NotAThickness { declared } => {
+            DrillError::InvalidSpoilboard(declared)
+        }
+        crate::stock::SpoilboardRefusal::TooThin { sink, thickness } => {
+            DrillError::SpoilboardTooThin { sink, thickness }
+        }
+    })
 }
 
 /// A hole no deeper than the flutes are long — and a flute length that is
@@ -1617,18 +1643,26 @@ mod tests {
 
         // A flat cutter with no allowance stops at the underside: nothing
         // sinks, so nothing sacrificial is needed.
-        let flush =
-            HelicalBore::new(0.0, 0.0, 2.5, 1.0, 0.3).with_break_through(BreakThrough::new(1.0));
+        let flush = HelicalBore::through_stock(0.0, 0.0, 2.5, 0.3, BreakThrough::new(1.0));
         assert!(flush.generate(&tool, &geom, &settings()).is_ok());
 
-        let past = HelicalBore::new(0.0, 0.0, 2.5, 1.0, 0.3)
-            .with_break_through(BreakThrough::new(1.0).with_allowance(0.2));
+        let past = HelicalBore::through_stock(
+            0.0,
+            0.0,
+            2.5,
+            0.3,
+            BreakThrough::new(1.0).with_allowance(0.2),
+        );
         assert_eq!(
             refusal(past.generate(&tool, &geom, &settings())),
             DrillError::NoSpoilboard { sink: 0.2 }
         );
 
-        let ok = HelicalBore::new(0.0, 0.0, 2.5, 1.0, 0.3).with_break_through(
+        let ok = HelicalBore::through_stock(
+            0.0,
+            0.0,
+            2.5,
+            0.3,
             BreakThrough::new(1.0)
                 .with_allowance(0.2)
                 .over(Spoilboard::new(12.0)),
@@ -1641,6 +1675,40 @@ mod tests {
             .filter_map(|s| Some(s.target()?[2]))
             .fold(f64::INFINITY, f64::min);
         assert!(close(deepest, -1.2), "{deepest}");
+    }
+
+    /// A through bore takes its depth from the stock, so a depth set as well
+    /// is a second answer to the same question. `Drill` refuses that
+    /// (`ThroughDepthConflict`); the bore used to drop the depth on the floor
+    /// and bore to the stock thickness without saying so.
+    #[test]
+    fn a_through_bore_will_not_take_a_depth_as_well() {
+        let tool = endmill(2.0, 10.0);
+        let geom = ToolGeometry::new().with_flute_length(10.0);
+
+        // 1 mm of stock, but the bore was built asking for 4 mm.
+        let contradictory =
+            HelicalBore::new(0.0, 0.0, 2.5, 4.0, 0.3).with_break_through(BreakThrough::new(1.0));
+        assert_eq!(
+            refusal(contradictory.generate(&tool, &geom, &settings())),
+            DrillError::ThroughBoreDepthConflict { depth: 4.0 }
+        );
+
+        // Said once, it bores: 1 mm of stock and a flat cutter, so the floor
+        // is the underside.
+        let through = HelicalBore::through_stock(0.0, 0.0, 2.5, 0.3, BreakThrough::new(1.0));
+        let toolpath = through.generate(&tool, &geom, &settings()).unwrap();
+        let deepest = toolpath
+            .segments
+            .iter()
+            .filter(|s| s.is_cutting())
+            .filter_map(|s| Some(s.target()?[2]))
+            .fold(f64::INFINITY, f64::min);
+        assert!(close(deepest, -1.0), "{deepest}");
+
+        // And a blind bore still takes its depth, as it always did.
+        let blind = HelicalBore::new(0.0, 0.0, 2.5, 4.0, 0.3);
+        assert!(blind.generate(&tool, &geom, &settings()).is_ok());
     }
 
     #[test]

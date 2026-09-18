@@ -1304,6 +1304,8 @@ fn build_op(
         match refusal {
             BreakThroughWithoutSpoilboard { overcut, spoilboard } =>
                 format!("{what} cuts {overcut:.3} mm past the underside of the stock, and the declared spoilboard is {spoilboard:.3} mm thick. Declare a sacrificial board at least that thick, or reduce the break-through."),
+            SpoilboardNotAThickness { declared } =>
+                format!("{what} cuts past the underside of the stock into a spoilboard declared as {declared}, which is not a thickness. Say how much sacrificial material is under the stock, in mm."),
             ExceedsDepth { allowance, depth } =>
                 format!("{what} asks for a {allowance:.3} mm bottom allowance on a {depth:.3} mm cut, which leaves nothing to machine."),
         }
