@@ -768,9 +768,20 @@ fn cylinder_cylinder(a: &CylinderSurface, b: &CylinderSurface) -> IntersectionCu
     let axis_b = b.axis.as_ref();
     let dot_ab = axis_a.dot(*axis_b);
 
-    // Coaxial or parallel axes — bail out (handled elsewhere or unsupported).
+    // Parallel axes: two parallel line generators, or nothing.
+    //
+    // This used to return `Empty` on the reasoning that parallel cylinders
+    // which overlap "will normally also share planar caps that drive the
+    // trimming". They do not when the crossing is in the MIDDLE of a wall.
+    // The rana-60 stator's post-root fillet, drawn 0.01 mm off tangency, is
+    // exactly that: an r 1.05 wall crossing the r 24 bore in two lines 0.16 mm
+    // apart, with no cap anywhere near them. Unsplit, the wall face got one
+    // classification sample, read `Inside`, and was dropped whole — leaving a
+    // 0.98 mm² hole that the divergence theorem billed as +7.87 mm³ of
+    // phantom volume on an otherwise correct part
+    // (`docs/boolean-multilump-union-diagnosis.md`).
     if (1.0 - dot_ab.abs()).abs() < 1e-9 {
-        return IntersectionCurve::Empty;
+        return parallel_cylinders(a, b);
     }
 
     // Only the perpendicular intersecting equal-radii case has a clean
@@ -1308,4 +1319,83 @@ mod tests {
             _ => panic!("Expected Circle intersection at tangent"),
         }
     }
+}
+
+/// Intersection of two cylinders whose axes are parallel.
+///
+/// In the plane perpendicular to the shared axis the problem is two circles;
+/// their crossings, extruded along the axis, are the intersection. So the
+/// answer is `TwoLines`, `Point` for an exact touch, or `Empty` — never a
+/// sampled curve, and never a surprise.
+///
+/// Both degenerate ends are real and both must stay `Empty`/`Point`: coaxial
+/// cylinders (d = 0) coincide or miss entirely and are settled by the
+/// coincident-face logic in classification, and a pair that only touches has
+/// no area to separate.
+fn parallel_cylinders(a: &CylinderSurface, b: &CylinderSurface) -> IntersectionCurve {
+    let axis = *a.axis.as_ref();
+    // Separation measured perpendicular to the shared axis.
+    let between = b.center - a.center;
+    let perp = between - axis * between.dot(axis);
+    let d = perp.norm();
+
+    // Coaxial: coincident (same radius) or nested (different) — either way
+    // there is no curve, and coincident faces are somebody else's job.
+    if d < 1e-12 {
+        return IntersectionCurve::Empty;
+    }
+    let (ra, rb) = (a.radius, b.radius);
+    // Separate, or one strictly inside the other.
+    if d > ra + rb + 1e-12 || d < (ra - rb).abs() - 1e-12 {
+        return IntersectionCurve::Empty;
+    }
+
+    let u = perp / d;
+    // Distance from A's axis to the radical line of the two cross-sections.
+    let t = (d * d + ra * ra - rb * rb) / (2.0 * d);
+    let h_sq = ra * ra - t * t;
+    let base = a.center + u * t;
+    if h_sq <= 0.0 {
+        // Tangent: the cylinders touch along one generator and bound no
+        // region between them. Splitting a wall along it buys nothing and
+        // costs a great deal — see `MERGE_GENERATORS`.
+        return IntersectionCurve::Empty;
+    }
+    let h = h_sq.sqrt();
+    // Two generators closer together than this bound a sliver no splitter
+    // working at 1e-3 tolerances can represent, and cutting the wall on both
+    // mints a face the classifier then has to judge from a sample that is
+    // ill-conditioned by construction — the stator's exactly-tangent root
+    // fillet has them 0.0154 mm apart and lost 0.369 mm3 that way. One line
+    // through the middle still splits the wall, which is the whole point,
+    // without minting the sliver. The near miss this routine exists for has
+    // them 0.294 mm apart, twenty times clear of the bound.
+    // Below this the pair is a DESIGNED tangency that the build missed by
+    // rounding, not a crossing, and it must be left alone. The rana-60
+    // stator is made of them — twelve post-root fillets and six tab-root
+    // fillets, each an r 1.05 wall meant to touch the bore or the OD — and
+    // splitting their walls on generators 0.0154 mm apart took the part from
+    // 7869.6 mm3 to 8222.5, +4.5%, with 1452 unpaired edges against 642 and
+    // twice the solve time. The old `Empty` was right for them.
+    //
+    // What it was wrong for is a genuine crossing: the same fillet drawn
+    // 0.01 mm OFF tangency crosses the bore in two generators 0.294 mm
+    // apart, twenty times clear of this bound, and its wall must be split or
+    // it is classified whole and dropped (+7.87 mm3 of phantom volume, and
+    // a 0.98 mm2 hole in the shell).
+    const MERGE_GENERATORS: f64 = 0.05;
+    if 2.0 * h < MERGE_GENERATORS {
+        return IntersectionCurve::Empty;
+    }
+    let v = axis.cross(u);
+    IntersectionCurve::TwoLines(
+        Line3d {
+            origin: base + v * h,
+            direction: axis,
+        },
+        Line3d {
+            origin: base - v * h,
+            direction: axis,
+        },
+    )
 }
