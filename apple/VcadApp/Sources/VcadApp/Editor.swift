@@ -300,6 +300,7 @@ final class EditorModel {
         guard !restoringLayout else { return }
         LayoutMemory(workspace: workspace.rawValue, showsTree: showsTree, showsInspector: showsInspector,
                      cncLeft: cnc.leftPanelShown, cncRight: cnc.rightPanelShown, cncBottom: cnc.bottomPanelShown,
+                     cncSender: cnc.senderPanelShown,
                      measurementsShown: measurementsShown, windowed: isWindowed).save()
     }
     private func restoreLayout() {
@@ -311,6 +312,7 @@ final class EditorModel {
         cnc.leftPanelShown = m.cncLeft
         cnc.rightPanelShown = m.cncRight
         cnc.bottomPanelShown = m.cncBottom
+        cnc.senderPanelShown = m.cncSender
         measurementsShown = m.measurementsShown
         if let ws = Workspace(rawValue: m.workspace) { workspace = ws }
     }

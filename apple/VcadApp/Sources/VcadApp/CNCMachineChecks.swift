@@ -127,6 +127,15 @@ enum CNCMachineCheck {
         }
         let box = job.inMachineFrame(workOffset: offset)
         var out: [CNCMachineFinding] = []
+        // The Simulator has no table. Its travel is the AnoleX's listing and
+        // its work offset is whatever nobody has set, so a job "outside
+        // travel" there is outside a fiction — and blocking on it meant the
+        // Simulator could never run anything, which is the one thing it is
+        // for. The sentence is still said, in full, with its numbers; it is
+        // the *blocking* that the Simulator does not earn. A real controller
+        // is unchanged: this is friction-log item 48's distinction, applied to
+        // the gate rather than only to the readiness tick.
+        let blocks = !profile.simulated
         for travel in profile.travels {
             let lo = component(box.min, travel.axis), hi = component(box.max, travel.axis)
             // Both ends are checked: a job can hang off the front and the back
@@ -141,13 +150,15 @@ enum CNCMachineCheck {
                 // so rather than leaving the number looking authoritative.
                 // Short, because it is repeated per axis and the not-homed
                 // warning above already says it at length.
-                let caveat = profile.homingEnabled && !profile.homed ? " (not homed: unverified)" : ""
+                let caveat = profile.simulated
+                    ? " (Simulator: no real table, so this is not a refusal)"
+                    : profile.homingEnabled && !profile.homed ? " (not homed: unverified)" : ""
                 out.append(CNCMachineFinding(
                     id: "machine-travel-\(travel.axis)-\(positive ? "max" : "min")",
                     text: "Job reaches \(travel.axis) \(signed(excess)) mm past the \(travel.endName(positive: positive)) of travel "
                         + "(travel \(number(travel.min))…\(number(travel.max)) mm, job \(number(lo))…\(number(hi)) mm). "
                         + "Move the work zero or re-clamp the blank." + caveat,
-                    blocking: true))
+                    blocking: blocks))
             }
         }
         return out

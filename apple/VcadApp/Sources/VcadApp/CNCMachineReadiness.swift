@@ -12,7 +12,8 @@ struct CNCReadinessList: View {
     var onTrace: () -> Void = {}
     private var machine: CNCController { cnc.machine }
     private var findings: [CNCMachineFinding] { cncMachineFindings(cnc) }
-    private var blocker: String? { cnc.runBlocker ?? findings.first(where: \.blocking)?.text }
+    /// The workspace's gate now carries the machine's half too.
+    private var blocker: String? { cnc.runBlocker }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
@@ -35,12 +36,15 @@ struct CNCReadinessList: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !cnc.jobCurrent && !cnc.usesImportedProgram {
-                Button(cnc.generating ? "Generating…" : "Generate toolpaths") { cnc.generate(all: true) }
-                    .disabled(cnc.generating || machine.active)
+                Button(CNCCommand.buildJob.title(cnc)) { CNCCommand.buildJob.run(cnc) }
+                    .disabled(!CNCCommand.buildJob.isEnabled(cnc))
             }
             Divider()
             HStack {
-                Button("Export job…") { cnc.export(job: true) }.disabled(cnc.jobCode == nil)
+                // The same predicate Manufacture ▸ Export Job… asks.
+                Button("Export job…") { CNCCommand.exportJob.run(cnc) }
+                    .disabled(!CNCCommand.exportJob.isEnabled(cnc))
+                    .accessibilityIdentifier("cnc.job.export")
                 Spacer()
                 Button("Save park position") { machine.savePark() }.disabled(!machine.canCommand)
             }

@@ -270,7 +270,7 @@ final class CNCCameraModel: @MainActor CustomStringConvertible, @MainActor Custo
 
     /// The UI's initialiser: 2–5 s, from `Prefs`.
     convenience init() {
-        self.init(url: CNCSecret(NcSenderPrefs.cameraURL), interval: NcSenderPrefs.cameraInterval)
+        self.init(url: CNCSecret(Prefs.cameraURL), interval: Prefs.cameraInterval)
     }
 
     /// `source` overrides backend selection — that is how the tests drive it,
@@ -307,14 +307,14 @@ final class CNCCameraModel: @MainActor CustomStringConvertible, @MainActor Custo
         let wasRunning = loop != nil
         stop()
         url = CNCSecret(text)
-        NcSenderPrefs.cameraURL = url.reveal()
+        Prefs.cameraURL = url.reveal()
         frame = nil; frameAt = nil; state = .off; tick += 1
         if wasRunning, hasURL { start() }
     }
 
     func setInterval(_ seconds: Double) {
         interval = min(bounds.upperBound, max(bounds.lowerBound, seconds))
-        NcSenderPrefs.cameraInterval = interval
+        Prefs.cameraInterval = interval
     }
 
     private func makeSource() -> Result<any CNCCameraSnapshotSource, CNCCameraError> {

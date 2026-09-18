@@ -684,6 +684,15 @@ struct ReleasedOverlayView: View {
                                             .modifier(ChromeRegion(key: "cncOutline"))
                                     }
                                     Spacer(minLength: 0)
+                                    // The send path and the camera, beside the
+                                    // job rather than in a window of their own:
+                                    // on 2026-09-17 the operator watched the
+                                    // cut in one app and polled ncSender in a
+                                    // third.
+                                    if model.cnc.senderPanelShown {
+                                        CNCStudioSenderColumn(model: model)
+                                            .modifier(ChromeRegion(key: "cncSender"))
+                                    }
                                     if model.cnc.rightPanelShown {
                                         CNCStudioInspector(model: model)
                                             .panelSurface()
@@ -702,6 +711,12 @@ struct ReleasedOverlayView: View {
                             }.padding(Theme.Space.m)
                         }
                     }
+                    // ncSender is polled only while Manufacture is on screen.
+                    // It is driven from the view rather than from `cnc.shown`
+                    // on purpose: nothing in a headless test should reach for
+                    // the network just because a workspace was marked shown.
+                    .onAppear { model.cnc.ncSender.startPolling() }
+                    .onDisappear { model.cnc.ncSender.stopPolling() }
             }
         }
         .ignoresSafeArea(.container, edges: .top)

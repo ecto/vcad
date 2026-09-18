@@ -185,6 +185,9 @@ enum Prefs {
     static let gridKey = "vcad.prefs.grid"
     static let triadKey = "vcad.prefs.triad"
     static let presentationKey = "vcad.prefs.presentation"
+    static let ncSenderURLKey = "vcad.prefs.ncsender.url"
+    static let cameraURLKey = "vcad.prefs.camera.url"
+    static let cameraIntervalKey = "vcad.prefs.camera.interval"
 
     private static var defaults: UserDefaults { .standard }
     private static func bool(_ key: String, default value: Bool) -> Bool {
@@ -201,6 +204,38 @@ enum Prefs {
     static var showsTriad: Bool { bool(triadKey, default: true) }
     /// Open new instances in a window rather than released over the desktop.
     static var opensInWindow: Bool { bool(presentationKey, default: false) }
+
+    // MARK: the machine's neighbours
+
+    /// Where ncSender is, when nobody has said otherwise. Spelled out here
+    /// rather than read from `NcSenderClient`: this file is shared with the
+    /// visionOS target, which has no sender. `NcSenderClient.defaultBaseURL`
+    /// is the same string and a test holds the two together.
+    static let ncSenderDefaultURL = "http://pika:8090"
+
+    static var ncSenderURL: String {
+        get {
+            let stored = defaults.string(forKey: ncSenderURLKey)?
+                .trimmingCharacters(in: .whitespaces) ?? ""
+            return stored.isEmpty ? ncSenderDefaultURL : stored
+        }
+        set { defaults.set(newValue, forKey: ncSenderURLKey) }
+    }
+    /// The camera URL carries `user:pass@`, so it is treated as a credential:
+    /// stored here, masked everywhere it is shown, never written to a log.
+    /// `UserDefaults` is not a keychain — see the friction log's known gaps.
+    static var cameraURL: String {
+        get { defaults.string(forKey: cameraURLKey) ?? "" }
+        set { defaults.set(newValue, forKey: cameraURLKey) }
+    }
+    /// Seconds between camera frames, clamped to what the tile offers.
+    static var cameraInterval: Double {
+        get {
+            let stored = defaults.double(forKey: cameraIntervalKey)
+            return (2...5).contains(stored) ? stored : 3
+        }
+        set { defaults.set(min(5, max(2, newValue)), forKey: cameraIntervalKey) }
+    }
 }
 
 /// What the app remembers about its layout between launches: the active
@@ -213,6 +248,7 @@ struct LayoutMemory: Codable, Equatable {
     var cncLeft = true
     var cncRight = true
     var cncBottom = false
+    var cncSender = false
     var measurementsShown = false
     var windowed = false
 
