@@ -106,6 +106,10 @@ impl PostProcessor for LinuxCncPost {
         crate::ProgramEnd::M2
     }
 
+    fn dialect(&self) -> &'static str {
+        "the LinuxCNC post"
+    }
+
     fn preamble(&self, opts: &ProgramOptions, state: &mut PostState) -> String {
         let mut output = String::new();
 
@@ -125,6 +129,12 @@ impl PostProcessor for LinuxCncPost {
         output.push_str("G17\n"); // XY plane for arcs
         output.push_str("G40\n"); // Cancel cutter compensation
         output.push_str("G49\n"); // Cancel tool length compensation
+                                  // Arc centres are written relative to the start point. RS274NGC has
+                                  // both modes and remembers the last one, so a control left in `G90.1`
+                                  // by the previous program reads every I/J/K as an absolute machine
+                                  // coordinate and swings every arc about the origin. Saying it costs
+                                  // one line.
+        output.push_str("G91.1\n"); // Arc centres are incremental
         state.plane = Some(ArcPlane::Xy);
 
         // The work offset belongs to the job, not to this post.
@@ -260,11 +270,6 @@ impl PostProcessor for LinuxCncPost {
                     state.plane = Some(*plane);
                 }
 
-                // LinuxCNC uses absolute IJ by default with G90.1
-                // or incremental with G91.1. We use incremental (relative to start).
-                let i = center[0];
-                let j = center[1];
-
                 let mut parts = vec![arc_code.to_string()];
 
                 parts.push(format!("X{}", self.coord(to[0])));
@@ -274,8 +279,14 @@ impl PostProcessor for LinuxCncPost {
                     parts.push(format!("Z{}", self.coord(to[2])));
                 }
 
-                parts.push(format!("I{}", self.coord(i)));
-                parts.push(format!("J{}", self.coord(j)));
+                // The centre is stored incrementally and the preamble commands
+                // `G91.1` to say so. The words name axes, not slots: G17 is
+                // I/J, G18 is I/K and G19 is J/K. Writing I/J after a G18 fed
+                // the control the X and Y offsets of an arc that sweeps in X
+                // and Z.
+                for (word, axis) in super::arc_offset_words(*plane) {
+                    parts.push(format!("{word}{}", self.coord(center[axis])));
+                }
 
                 if !self.modal_feed || (*feed - state.feed).abs() > 1e-6 {
                     parts.push(format!("F{:.1}", feed));

@@ -1,6 +1,6 @@
 //! GRBL post-processor for 3-axis CNC mills.
 
-use super::{format_coord, PostProcessor, PostState, ProgramOptions};
+use super::{arc_offset_words, format_coord, PostProcessor, PostState, ProgramOptions};
 use crate::{ArcDir, ArcPlane, CoolantMode, SpindleDir, ToolEntry, ToolpathSegment};
 
 /// GRBL post-processor configuration.
@@ -72,6 +72,16 @@ impl GrblPost {
 }
 
 impl PostProcessor for GrblPost {
+    /// Stock Grbl 1.1 answers `error:20` to `M6` and the sender stops there,
+    /// mid-program.
+    fn supports_m6(&self) -> bool {
+        false
+    }
+
+    fn dialect(&self) -> &'static str {
+        "the Grbl post"
+    }
+
     fn preamble(&self, opts: &ProgramOptions, state: &mut PostState) -> String {
         let mut output = String::new();
 
@@ -110,14 +120,20 @@ impl PostProcessor for GrblPost {
         output
     }
 
+    /// A tool change on a machine with no changer: name the tool, select it,
+    /// and stop. **No `M6`** — see [`GrblPost::supports_m6`].
     fn tool_change(&self, tool: &ToolEntry, state: &mut PostState) -> String {
         let mut output = String::new();
 
         if self.include_comments {
-            output.push_str(&format!("(Tool {}: {})\n", tool.number, tool.name));
+            output.push_str(&format!(
+                "(Tool {}: {} — fit it, re-establish Z, then resume)\n",
+                tool.number, tool.name
+            ));
         }
 
-        output.push_str(&format!("T{} M6\n", tool.number));
+        output.push_str(&format!("T{}\n", tool.number));
+        output.push_str(&self.format_line("M0", state));
         state.tool_number = tool.number;
 
         output
@@ -206,10 +222,6 @@ impl PostProcessor for GrblPost {
                     ArcDir::Ccw => "G3",
                 };
 
-                // GRBL uses incremental IJ values (relative to start)
-                let i = center[0]; // Already relative in our representation
-                let j = center[1];
-
                 let mut parts = vec![arc_code.to_string()];
 
                 parts.push(format!("X{}", self.coord(to[0])));
@@ -219,8 +231,14 @@ impl PostProcessor for GrblPost {
                     parts.push(format!("Z{}", self.coord(to[2])));
                 }
 
-                parts.push(format!("I{}", self.coord(i)));
-                parts.push(format!("J{}", self.coord(j)));
+                // Grbl takes the centre incrementally, which is how it is
+                // stored — but the *words* name axes, not slots: G17 is I/J,
+                // G18 is I/K and G19 is J/K. Writing I/J after a G18 fed the
+                // control the X and Y offsets of an arc that sweeps in X and
+                // Z, so the plane word was right and the arc was not.
+                for (word, axis) in arc_offset_words(*plane) {
+                    parts.push(format!("{word}{}", self.coord(center[axis])));
+                }
 
                 if !self.modal_feed || (*feed - state.feed).abs() > 1e-6 {
                     parts.push(format!("F{:.0}", feed));
@@ -269,8 +287,15 @@ impl PostProcessor for GrblPost {
             }
 
             ToolpathSegment::ToolChange { tool_number } => {
+                // Never `M6` on this control (see `supports_m6`). A whole
+                // program asking for the changer strategy is refused by
+                // `Program::to_gcode`; a lone segment posted on its own still
+                // has to come out as something Grbl will run, so it selects
+                // the tool and stops for the operator.
                 state.tool_number = *tool_number;
-                self.format_line(&format!("T{} M6", tool_number), state)
+                let mut output = format!("T{}\n", tool_number);
+                output.push_str(&self.format_line("M0", state));
+                output
             }
 
             ToolpathSegment::Comment { text } => {

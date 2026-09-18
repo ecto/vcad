@@ -98,6 +98,17 @@ pub enum JobError {
     /// The park height is not a usable number.
     #[error("invalid park Z: {0} (must be finite and > 0, above the stock top)")]
     InvalidParkZ(f64),
+
+    /// The control does not understand the tool-change word the strategy uses.
+    #[error(
+        "the {strategy} tool-change strategy cannot be posted by {post}: this control has no {strategy}, and a sender streaming the file would stop on it part-way through the job. Use the manual pause strategy, or post for a control that has a changer"
+    )]
+    PostRejectsToolChange {
+        /// The word the strategy needs, e.g. `M6`.
+        strategy: String,
+        /// The post that will not write it.
+        post: String,
+    },
 }
 
 /// Work coordinate system the program runs in.
@@ -748,8 +759,19 @@ impl Program {
     /// `ToolpathSegment` had no way to say "stop and wait". Both holes are
     /// closed: the pause is a [`ToolpathSegment::Pause`] like any other
     /// segment, and the preamble and postamble are the post's.
-    pub fn to_gcode<P: PostProcessor + ?Sized>(&self, post: &P) -> String {
-        post.program(&self.options(), &self.toolpath)
+    pub fn to_gcode<P: PostProcessor + ?Sized>(&self, post: &P) -> Result<String, JobError> {
+        // Fail closed on a word the control does not have. Stock Grbl 1.1
+        // answers `error:20` to `M6`; a sender streaming the file stops there,
+        // part-way through the job, with the spindle running and the tool in
+        // the work. Better to refuse here than to hand over a program that
+        // aborts itself.
+        if matches!(self.strategy, ToolChangeStrategy::M6) && !post.supports_m6() {
+            return Err(JobError::PostRejectsToolChange {
+                strategy: "M6".into(),
+                post: post.dialect().to_string(),
+            });
+        }
+        Ok(post.program(&self.options(), &self.toolpath))
     }
 }
 
@@ -944,7 +966,8 @@ mod tests {
             .with_strategy(ToolChangeStrategy::ManualPauseReprobe { probe_macro: None })
             .assemble()
             .unwrap()
-            .to_gcode(&post);
+            .to_gcode(&post)
+            .unwrap();
         assert_eq!(manual.matches("\nM0\n").count(), 1);
         assert!(!manual.contains("M6"));
         assert!(manual.contains("re-establish Z for T1"), "{manual}");
@@ -957,20 +980,156 @@ mod tests {
             })
             .assemble()
             .unwrap()
-            .to_gcode(&post);
+            .to_gcode(&post)
+            .unwrap();
         let pause = probed.find("\nM0\n").expect("a pause");
         let probe = probed.find("G38.2").expect("the probe macro");
         assert!(probe > pause, "the probe has to run on resume");
 
-        let changer = job()
+        // A changer strategy posts `M6` — on a control that has one. Stock
+        // Grbl does not, so the Grbl post refuses the whole program rather
+        // than handing over a file that aborts on `error:20` part-way in.
+        let program = job()
             .with_op(outside_profile())
             .with_op(pilot_holes())
             .with_strategy(ToolChangeStrategy::M6)
             .assemble()
-            .unwrap()
-            .to_gcode(&post);
+            .unwrap();
+        let err = program.to_gcode(&post).unwrap_err();
+        let JobError::PostRejectsToolChange { strategy, post: p } = &err else {
+            panic!("{err:?}");
+        };
+        assert_eq!(strategy, "M6");
+        assert_eq!(p, "the Grbl post");
+
+        let changer = program
+            .to_gcode(&crate::post::LinuxCncPost::default())
+            .unwrap();
         assert!(!changer.contains("M0\n"), "{changer}");
         assert_eq!(changer.matches("M6").count(), 1);
+    }
+
+    /// Nothing the Grbl post writes is `M6`, whichever door the tool change
+    /// comes through — the strategy, the trait method, or a lone segment.
+    #[test]
+    fn the_grbl_post_never_writes_m6() {
+        let post = GrblPost::default();
+        let mut state = crate::post::PostState::default();
+
+        // The trait method a caller with a tool library reaches for.
+        let entry = ToolEntry::new(
+            7,
+            "Ø6 flat",
+            Tool::FlatEndMill {
+                diameter: 6.0,
+                flute_length: 20.0,
+                flutes: 2,
+            },
+        );
+        let changed = post.tool_change(&entry, &mut state);
+        assert!(!changed.contains("M6"), "{changed}");
+        assert!(changed.contains("T7"), "{changed}");
+        assert!(changed.contains("M0"), "{changed}");
+        assert_eq!(state.tool_number, 7);
+
+        // And a bare segment.
+        let seg = post.segment(&ToolpathSegment::tool_change(3), &mut state);
+        assert!(!seg.contains("M6"), "{seg}");
+        assert!(seg.contains("T3") && seg.contains("M0"), "{seg}");
+
+        // The whole manual-pause program, end to end.
+        let text = job()
+            .with_op(outside_profile())
+            .with_op(pilot_holes())
+            .with_strategy(ToolChangeStrategy::ManualPauseReprobe { probe_macro: None })
+            .assemble()
+            .unwrap()
+            .to_gcode(&post)
+            .unwrap();
+        assert!(!text.contains("M6"), "{text}");
+    }
+
+    /// An arc that leaves XY takes different centre words. The posts wrote
+    /// `I`/`J` after every plane word, so a `G18` arc was handed the X and Y
+    /// offsets of an arc that sweeps in X and Z.
+    #[test]
+    fn an_out_of_plane_arc_takes_the_offset_words_of_its_plane() {
+        use crate::post::{LinuxCncPost, PostState};
+        use crate::{ArcDir, ArcPlane};
+
+        // Centre is stored per absolute axis, relative to the start point.
+        let xz = ToolpathSegment::Arc {
+            to: [10.0, 0.0, -5.0],
+            center: [5.0, 0.0, -2.0],
+            plane: ArcPlane::Xz,
+            dir: ArcDir::Cw,
+            feed: 300.0,
+        };
+        let yz = ToolpathSegment::Arc {
+            to: [0.0, 10.0, -5.0],
+            center: [0.0, 4.0, -3.0],
+            plane: ArcPlane::Yz,
+            dir: ArcDir::Ccw,
+            feed: 300.0,
+        };
+
+        let grbl = GrblPost::default();
+        let mut state = PostState::default();
+        let out = grbl.segment(&xz, &mut state);
+        assert!(out.contains("G18"), "{out}");
+        assert!(out.contains("I5.000"), "{out}");
+        assert!(out.contains("K-2.000"), "{out}");
+        assert!(!out.contains('J'), "an XZ arc has no J word: {out}");
+
+        let out = grbl.segment(&yz, &mut state);
+        assert!(out.contains("G19"), "{out}");
+        assert!(out.contains("J4.000"), "{out}");
+        assert!(out.contains("K-3.000"), "{out}");
+        assert!(!out.contains('I'), "a YZ arc has no I word: {out}");
+
+        let lcnc = LinuxCncPost::default().without_line_numbers();
+        let mut state = PostState::default();
+        let out = lcnc.segment(&xz, &mut state);
+        assert!(out.contains("G18") && out.contains("I5.0000") && out.contains("K-2.0000"));
+        assert!(!out.contains('J'), "{out}");
+        let out = lcnc.segment(&yz, &mut state);
+        assert!(out.contains("G19") && out.contains("J4.0000") && out.contains("K-3.0000"));
+        assert!(!out.contains('I'), "{out}");
+
+        // XY is unchanged: I and J, no K.
+        let xy = ToolpathSegment::Arc {
+            to: [10.0, 0.0, 0.0],
+            center: [5.0, 1.0, 0.0],
+            plane: ArcPlane::Xy,
+            dir: ArcDir::Cw,
+            feed: 300.0,
+        };
+        let mut state = PostState {
+            plane: Some(ArcPlane::Xy),
+            ..PostState::default()
+        };
+        let out = grbl.segment(&xy, &mut state);
+        assert!(out.contains("I5.000") && out.contains("J1.000"), "{out}");
+        assert!(!out.contains('K'), "{out}");
+    }
+
+    /// RS274NGC remembers `G90.1`/`G91.1` between programs. The LinuxCNC post
+    /// writes arc centres relative to the start point, so it has to say so —
+    /// a control left in `G90.1` by the last job swings every arc about the
+    /// machine origin.
+    #[test]
+    fn the_linuxcnc_preamble_says_arc_centres_are_incremental() {
+        use crate::post::{LinuxCncPost, PostState};
+        let post = LinuxCncPost::default();
+        let text = post.header("test", &CamSettings::default());
+        assert!(
+            text.lines().any(|l| l.trim() == "G91.1"),
+            "no G91.1 in:\n{text}"
+        );
+        // Grbl has neither word and errors on both; it is left alone.
+        let grbl = GrblPost::default().header("test", &CamSettings::default());
+        assert!(!grbl.contains("G90.1") && !grbl.contains("G91.1"), "{grbl}");
+        let _ = PostState::default();
     }
 
     /// The outside profile runs last however the operations are given, and a
@@ -1085,7 +1244,7 @@ mod tests {
             .with_end(ProgramEnd::M30)
             .assemble()
             .unwrap();
-        let gcode = program.to_gcode(&GrblPost::default());
+        let gcode = program.to_gcode(&GrblPost::default()).unwrap();
 
         let header: Vec<&str> = gcode.lines().take(9).collect();
         assert_eq!(
@@ -1123,7 +1282,7 @@ mod tests {
             .assemble()
             .unwrap();
         assert_eq!(program.tool_sequence(), vec![2, 1], "two tools, in order");
-        let gcode = program.to_gcode(&GrblPost::default());
+        let gcode = program.to_gcode(&GrblPost::default()).unwrap();
 
         // 1. Exactly one stop, and the POST wrote it: the assembled toolpath
         //    carries a Pause segment, and nothing outside the post emits M0.
@@ -1177,7 +1336,8 @@ mod tests {
             })
             .assemble()
             .unwrap()
-            .to_gcode(&GrblPost::default());
+            .to_gcode(&GrblPost::default())
+            .unwrap();
 
         let stop = gcode.find("\nM0\n").expect("a pause");
         let reason = gcode

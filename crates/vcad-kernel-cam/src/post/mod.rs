@@ -96,6 +96,22 @@ pub trait PostProcessor {
         ProgramEnd::M30
     }
 
+    /// Whether this control understands `M6`.
+    ///
+    /// Stock Grbl 1.1 does not: it answers `error:20` and most senders abort
+    /// the stream there, part-way through a job, with the spindle running.
+    /// A job that asks for the `M6` tool-change strategy against a post that
+    /// says `false` here is refused rather than posted.
+    fn supports_m6(&self) -> bool {
+        true
+    }
+
+    /// The name this post is known by, for a message that has to say which
+    /// control refused something.
+    fn dialect(&self) -> &'static str {
+        "this post"
+    }
+
     /// Post a whole program.
     fn program(&self, opts: &ProgramOptions, toolpath: &Toolpath) -> String {
         let mut output = String::new();
@@ -137,6 +153,20 @@ pub trait PostProcessor {
         let mut opts = ProgramOptions::standalone(job_name, settings);
         opts.end = self.default_end();
         self.program(&opts, toolpath)
+    }
+}
+
+/// The two centre-offset words an arc in `plane` takes, with the axis of
+/// `ToolpathSegment::Arc::center` each one reads.
+///
+/// The words name axes: `I` is always X, `J` is always Y, `K` is always Z. So
+/// G17 (XY) takes I/J, G18 (XZ) takes I/K and G19 (YZ) takes J/K. Both posts
+/// used to write I/J whatever plane they had just commanded.
+pub fn arc_offset_words(plane: crate::ArcPlane) -> [(&'static str, usize); 2] {
+    match plane {
+        crate::ArcPlane::Xy => [("I", 0), ("J", 1)],
+        crate::ArcPlane::Xz => [("I", 0), ("K", 2)],
+        crate::ArcPlane::Yz => [("J", 1), ("K", 2)],
     }
 }
 

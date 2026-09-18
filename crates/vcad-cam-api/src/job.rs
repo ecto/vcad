@@ -614,7 +614,11 @@ fn build(req: JobRequest) -> Result<Value, String> {
             ))
         }
     };
-    let gcode = program.to_gcode(post.as_ref());
+    // Posting can refuse: a changer strategy against a control with no `M6`
+    // is a file that stops itself part-way through the job.
+    let gcode = program
+        .to_gcode(post.as_ref())
+        .map_err(|e| format!("the job could not be posted: {e}"))?;
 
     // ---- preview polyline and block ranges ------------------------------
     let limits = req.machine.limits()?;
