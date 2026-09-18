@@ -670,7 +670,9 @@ the rest are **nested**: removing the inner flap exposes another A-B-A one
 step out whose halves are twinned to half-edges *outside* the loop, which no
 pass may drop unilaterally. Generalising it is the open piece.
 
-That, and not the tangency machinery, is why the seam collapse is not landed.
+That, and not the tangency machinery, is why the seam collapse was not landed
+in round 2. It is landed now, for curved carriers only — see **Round 3**
+below, which supersedes this paragraph and the section above it.
 
 The earlier guess, now superseded: welding three consecutive loop
 vertices into one leaves a zero-length half-edge, and
@@ -680,6 +682,154 @@ is the `… v77 v78 v79 v175 v79 v78 v77 …` pathology from the w1 section, min
 here on purpose. Closing this item means collapsing the seam *and* repairing
 the loops it degenerates, which is a larger change than a weld and needs its
 own gates.
+
+## Round 3 (`cam/w2d-union-seam-3`): the seam collapse IS landed, for curved carriers only — and the stator's own gap is not in that family
+
+Round 2 left two open pieces: generalise the flap retirement, then land the
+collapse. Both were done. The collapse is in the tree
+(`repair::collapse_tangency_seams`, off with `VCAD_NO_SEAM_COLLAPSE=1`), it
+closes both reproducer families, and it leaves the stator `Analytic` at its
+old solve time. **It does not close the stator's 0.015 mm section gap**, and
+the reason is the finding of this round.
+
+### The flap generalisation, and why a unilateral drop is wrong
+
+The nested flap round 2 could not retire has its two halves paired into two
+*different* faces, so `first.twin == second` never sees it. Key on the
+VERTICES instead — the loop returns to the vertex it came from — and it is
+found. Dropping it then strands both partners, which is the very defect this
+module removes; but it does not have to. `first` runs P→Q and `second` runs
+Q→P, so their twins run Q→P and P→Q: opposite senses along one edge, which is
+the definition of a twin pair. **Retire the flap and marry the two orphans to
+each other.** The slit closes, the faces beyond become neighbours directly,
+and no half-edge loses a partner. That is the invariant a correct pass needs,
+and it is what makes this a repair rather than a deletion.
+
+Exactly three twin arrangements are sound: the pair is its own twin, neither
+side is paired, or both are paired outside and really do run opposite ways
+between the same two vertices (checked, not assumed — `pair_half_edges` also
+pairs positionally). A flap with one twinned side and one bare side is **left
+alone**: retiring it would leave the one partner with nobody to take.
+`repair.rs` carries a unit test for each, both mutation-checked.
+
+On its own the generalisation is a **no-op** on every fixture in this
+document — the nested flaps only exist once something welds the seam. It is
+the prerequisite, not the fix.
+
+### The collapse: boundary vertices, measured radius, curved carriers
+
+Three guards, each bought with a measurement:
+
+1. **Boundary vertices only.** Rounds 1–2 moved every vertex inside a seam
+   and both cost the part its analytic path (7852.2 mm³, 93 open, **14762
+   over-used**, 124 s of soup). A seam's `width` is not small — a plane
+   against the r 24 bore has generators 0.14 mm apart — so "inside the seam"
+   catches interior geometry that is simply near a touch. A crack is open on
+   *both* sides, so the move is restricted to vertices on an unpaired
+   half-edge, the same guard `weld_boundary_vertices` carries. This is also
+   why the pass runs there and not in `sew` before the first weld: at that
+   point nothing is paired and the guard would be vacuous.
+2. **The radius is `TangencyLine::width`** — the chord `parallel_cylinders`
+   would have cut had it not merged the pair, read off the carriers rather
+   than chosen. 0.0117 mm at the tab root, 0.0152 at the post roots; it
+   covers the three rails (0, 0.0044, 0.0079 from the touch) and leaves the
+   OD's next canonical grid point, at 0.184 mm, fifteen times clear.
+3. **Both carriers must be curved** — the new finding, below.
+
+### The finding: a cylinder–plane seam has no usable `span`, and collapsing it TRIPLES a face
+
+With guard 1 in place the stator *still* fell to soup. Bisecting the union
+trace named one union, and it now reproduces in **0.4 s** as
+`zz_seam_probe.rs::probe_stator_l2`: two multi-lump operands, (285° round end
+∪ a 0° post cube) against (165° tab group ∪ 285° tab group) —
+`[union-tree] L2 vol 420.9 ∪ 376.8`.
+
+Collapsing there does not *lose* 4.8 mm³. It **mints 241**:
+
+| | volume | open | over-used | tris | faces | fidelity |
+|---|---|---|---|---|---|---|
+| no collapse | 707.3893 | 16 | 2 | 2134 | 86 | `Analytic` |
+| collapse, all seams | **948.8000** | 1044 | **1042** | 3168 | 86 | soup (`VolumeDisagreement`) |
+| collapse, `both_curved` only | **707.3893** | 16 | 2 | 2134 | 86 | `Analytic` |
+
+Note the raw undirected boundary is **zero** in the bad row: `open_edges` is
+a net directed count and this is doubled surface, not a crack. Listing the
+over-used edges puts every one of them on a vertical generator of the round
+end's r 3.1 cylinder, each carried by **six** triangles — that one face is
+emitted three times over, and the +241 mm³ is its flux billed twice. (The
+earlier "4.8 mm³ destroyed" was the *mesh fallback's* answer, 702.5 against
+707.3; the analytic result the referee was condemning was the 948.8.)
+
+The seam that does it is a **cylinder–plane** touch: the round end against
+the tab's flank plane at y = ±3.1. The cause is `TangencyLine::span`. A plane
+face is bounded along the cylinder's axis and nowhere else, so span bounds
+the touch in Z — and on a Z-up part where every face spans the same
+z 11.1…17.1, that bound is vacuous in the only direction that matters.
+`cylinder_tangencies` does not have this problem: both carriers are cylinders
+and both extents are real. Hence `TangencyLine::both_curved`, and the
+collapse consults only those.
+
+**The trap, stated generally:** `span` looks like a bound on where a tangency
+exists, and for cylinder–cylinder it is one. For cylinder–plane it bounds
+one direction out of two. Do not read "the line is bounded" as "the line is
+bounded where it matters" without checking which direction the unbounded
+carrier runs in.
+
+### Measured, round 3
+
+| | HEAD (`dbf3096e`) | this branch |
+|---|---|---|
+| `ring ∪ post-root block` | 0 open, 6 over-used | **0 / 0** |
+| `block ∪ ring` | 10 open, 0 over-used | 0 open, **6 over-used** |
+| OD tab group, ∪ blk A | 8 open | **0** |
+| OD tab group, ∪ blk B | 11 open, 35 over, 3 pinched | **0 open**, 31 over, 1 pinched |
+| rana-60 stator | `Analytic` 501 f / 12154 t / 642 open / 55 over / 7869.618 / 24.2 s | `Analytic` 12144 t / **642 open** / **49 over** / 7869.625 / 24.9 s |
+| section at z 11.4 / 13.0 / 16.8 | refused, 2 gaps of 0.0151 mm | **unchanged** |
+
+Boolean suite, tessellate suite and `twelve_filleted_posts_stay_analytic` are
+green; `no_face_loop_visits_a_vertex_twice` is un-ignored because it passes.
+
+### The exact next step
+
+**The stator's own gap is a cylinder–plane tangency — the family this round
+had to exclude.** The two gap endpoints, `(5.391332, −32.098347)` and
+`(5.387465, −32.083771)`, are both at radius 3.100000 from the 285° round
+end's centre `(8.3857, −31.296)`; the collapse, run unrestricted, merges
+exactly those two and closes the gap. It is not a coincidence that this is
+also the seam whose collapse triples the round-end face.
+
+(This supersedes the round-2 section above, "The tab corner is NOT the
+cylinder–plane family". That bisection was right that the crack *opens* when
+the tab-root fillet blocks are unioned on, and right that the cylinder–plane
+rails already agree on the corner vertex at `(32.400000, ±3.100000)`. What it
+concluded from that — that the cylinder–plane family is not involved — is
+wrong: the gap ends are on the round end's cylinder, 0.015 mm from that
+corner, and they are what the collapse merges.)
+
+So the next step is not another guard on the collapse. It is:
+
+1. **Give `TangencyLine` a real span for a planar carrier.** A plane face is
+   a bounded polygon; `plane_faces` already collects its boundary points. The
+   touch exists only where the cylinder's surface is *inside* that polygon,
+   which is a second interval — along the line, but derived from the polygon
+   rather than from the axis projection. Store it, and `distance` will reject
+   the round end's far side the way it already rejects points past the end of
+   a cylinder. Then lift the `both_curved` restriction and re-run
+   `probe_stator_l2`: it must stay at 707.3893 `Analytic`.
+2. **Then check the tripling directly**, because a bounded span may not be
+   the whole story. The failure to reproduce is a cylindrical face emitted
+   three times with no open boundary. Whatever consumes a trimmed cylindrical
+   face's loop is reading a loop the collapse shortened — most likely into a
+   closed full circle, at which point the whole cylinder is emitted instead
+   of the trimmed patch. `probe_stator_l2` isolates it in 0.4 s; dump that
+   face's loop before and after the weld rather than reasoning about it.
+3. **`block ∪ ring` is the other half.** `ring ∪ block` now reaches 0/0 and
+   the reversed order keeps 6 over-used, so the two orders still reach the
+   corner through different splitters. That asymmetry is what
+   `ring_union_tangent_fillet_block_is_watertight` is still ignored for.
+
+Do not lower `MERGE_GENERATORS` to reach any of this; that branch is ruled
+out above and costs the part +4.5 % and 1452 open edges.
 
 ## Open item: the mesh fallback moves intermediate solids by millimetres
 
@@ -696,6 +846,19 @@ The numbers are pinned in
 so a change shows up as a number. Closing it means either making the analytic
 path handle these arrangements, or carrying the degradation forward as
 provenance so a chain can refuse to build on a solid that moved this far.
+
+## What landed on `cam/w2d-union-seam-3` (round 3)
+
+* `repair::collapse_tangency_seams` — the seam collapse, boundary vertices
+  only, radius `TangencyLine::width`, curved carriers only.
+  `VCAD_NO_SEAM_COLLAPSE=1` turns it off for bisecting.
+* `repair::collapse_twin_pair_spurs` — generalised to see a retraced pair by
+  its vertices and to marry the orphans a nested flap strands, with two
+  mutation-checked unit tests.
+* `tangency::TangencyLine::both_curved`, and `width` finally read.
+* `crates/vcad-kernel-booleans/tests/zz_seam_probe.rs` — the sub-second
+  reproducers, `probe_stator_l2` chief among them.
+* `no_face_loop_visits_a_vertex_twice` un-ignored.
 
 ## What landed on `cam/w1-union`
 
