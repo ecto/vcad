@@ -921,6 +921,18 @@ pub struct VerifyOptions {
     pub tolerance: f64,
     /// Least metal a tab may leave (mm).
     pub min_tab_metal: f64,
+    /// How far above a pass's own depth the cutter has to ride before that
+    /// stretch counts as a tab at all (mm).
+    ///
+    /// Every lift used to qualify, down to `1e-9`. A 2 µm Z wobble at a
+    /// pocket's centre became a "tab" leaving −0.998 mm of metal, and a ramped
+    /// tooth-space entry minted twenty of them from 0.007 mm stubs — 581
+    /// violations that also drowned the three real tabs. The default is
+    /// 0.05 mm: five times `depth_tolerance`, so nothing the depth check
+    /// already reads as *the same depth* can read as a tab here, and far below
+    /// any tab a machinist would cut (tab heights start around 0.4 mm — the
+    /// stator's were 0.42).
+    pub min_tab_lift: f64,
     /// Height above the stock top a rapid must clear before it moves in XY.
     pub safe_rapid_z: f64,
     /// Plunge feed above which a straight entry into material is flagged.
@@ -953,6 +965,7 @@ impl Default for VerifyOptions {
         Self {
             tolerance: 0.02,
             min_tab_metal: 1.5,
+            min_tab_lift: 0.05,
             safe_rapid_z: 0.5,
             max_plunge_feed: 500.0,
             max_examples: 8,
@@ -2042,13 +2055,17 @@ fn check_tabs(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> TabAudit 
         // ramp starts with a stub at the previous pass's floor — unless it
         // joins a lifted stretch at the end of the lap, which is one tab
         // sitting across the seam.
+        //
+        // And a *real* lift: see `VerifyOptions::min_tab_lift`. A cutter that
+        // rides 2 µm above its own depth has not stepped over anything.
+        let lift = opts.min_tab_lift.max(opts.depth_tolerance);
         let mut runs: Vec<LiftedRun> = Vec::new();
         let mut run: Option<LiftedRun> = None;
         let mut reached = false;
         for &i in g {
             let m = &moves[i];
             let level = (m.to[2] - m.from[2]).abs() < 1e-9;
-            let lifted = level && m.to[2] > depth + 1e-9 && m.to[2] < 0.0;
+            let lifted = level && m.to[2] > depth + lift && m.to[2] < 0.0;
             if lifted && m.xy_len() > 1e-12 {
                 match run.as_mut() {
                     Some(r) => {
@@ -2095,6 +2112,14 @@ fn check_tabs(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> TabAudit 
             ..
         } in runs
         {
+            // A lifted stretch shorter than the cutter is wholly inside the
+            // cutter's own sweep: there is no metal under it to measure, so
+            // this is not a tab that leaves −0.99 mm, it is not a tab. A job
+            // that *declared* tabs still fails, on the count below: three
+            // declared against none cut says more than 581 impossible widths.
+            if len <= spec.tool_diameter {
+                continue;
+            }
             let chord = (end[0] - start[0]).hypot(end[1] - start[1]);
             let straightness = if len > 0.0 { chord / len } else { 1.0 };
             obs.push(TabObservation {
@@ -2871,6 +2896,146 @@ mod tests {
         );
         assert_eq!(tabs.tab_count, 0, "{:?}", tabs.observations);
         assert!(tabs.check.pass);
+    }
+
+    /// A 2 µm Z wobble in the middle of a pocket pass is not a tab. Found on
+    /// the planet rehearsal: the lift test was `> depth + 1e-9`, so a
+    /// 0.002 mm blip at the pocket centre became a tab leaving −0.998 mm of
+    /// metal, 31 violations on a job that cuts a good part.
+    #[test]
+    fn a_micro_lift_in_the_middle_of_a_pass_is_not_a_tab() {
+        // Ø2 cutter, a lap round a 40 mm square at Z-2 with a 2 µm rise held
+        // for 5 mm in the middle of the bottom edge.
+        let tabs = square_job(
+            "G0 X-1 Y-1\nG1 Z-2 F100\nG1 X15 Y-1 F400\nG1 X15 Y-1 Z-1.998\n\
+             G1 X20 Y-1\nG1 X20 Y-1 Z-2\nG1 X41 Y-1\nG1 X41 Y41\nG1 X-1 Y41\nG1 X-1 Y-1\n",
+        );
+        assert_eq!(tabs.tab_count, 0, "{:?}", tabs.observations);
+        assert!(tabs.observations.is_empty(), "{:?}", tabs.observations);
+        assert!(tabs.check.pass, "{:?}", tabs.check.examples);
+
+        // Lift it by a real tab height at the same place and it is a tab
+        // again, with the metal it really leaves: 5 mm of lift less the Ø2
+        // cutter is 3 mm.
+        let tabs = square_job(
+            "G0 X-1 Y-1\nG1 Z-2 F100\nG1 X15 Y-1 F400\nG1 X15 Y-1 Z-1.5\n\
+             G1 X20 Y-1\nG1 X20 Y-1 Z-2\nG1 X41 Y-1\nG1 X41 Y41\nG1 X-1 Y41\nG1 X-1 Y-1\n",
+        );
+        assert_eq!(tabs.tab_count, 1, "{:?}", tabs.observations);
+        assert!((tabs.observations[0].metal_width - 3.0).abs() < 1e-9);
+    }
+
+    /// A lift high enough to be real but shorter than the cutter leaves no
+    /// metal at all — the cutter's own sweep covers the whole of it. That is
+    /// not a tab leaving −1.5 mm of metal; there is no such thing. It is
+    /// dropped, and a job that *declared* tabs fails on the count instead,
+    /// which says something a machinist can act on.
+    #[test]
+    fn a_lift_narrower_than_the_cutter_is_not_a_tab_with_negative_metal() {
+        // Ø2 cutter, 0.5 mm of lift at Z-1.5 on a pass at Z-2.
+        let lap = "G0 X-1 Y-1\nG1 Z-2 F100\nG1 X15 Y-1 F400\nG1 X15 Y-1 Z-1.5\n\
+                   G1 X15.5 Y-1\nG1 X15.5 Y-1 Z-2\nG1 X41 Y-1\nG1 X41 Y41\n\
+                   G1 X-1 Y41\nG1 X-1 Y-1\n";
+        let tabs = square_job(lap);
+        assert_eq!(tabs.tab_count, 0, "{:?}", tabs.observations);
+        assert!(
+            tabs.observations.iter().all(|o| o.metal_width > 0.0),
+            "{:?}",
+            tabs.observations
+        );
+        assert!(tabs.check.pass);
+
+        // Declare three tabs against the same program and it is refused, by
+        // count rather than by an impossible width.
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [40.0, 0.0], [40.0, 40.0], [0.0, 40.0]],
+            vec![],
+        )
+        .unwrap();
+        let mut spec = JobSpec::new(part, 3.0, 2.0);
+        spec.declared_tabs = (0..3)
+            .map(|_| DeclaredTab {
+                width: 4.0,
+                height: 0.5,
+            })
+            .collect();
+        let gcode = format!("G21 G90 G94 G17 G54\nM3 S10000\nG0 Z5\n{lap}G0 Z5\nM5\nM2\n");
+        let rep = verify_gcode(&gcode, &spec, &VerifyOptions::default()).unwrap();
+        assert!(!rep.tabs.check.pass);
+        assert!(
+            rep.tabs.check.examples[0]
+                .what
+                .contains("3 tabs were declared but 0 are cut"),
+            "{}",
+            rep.tabs.check.examples[0].what
+        );
+    }
+
+    /// A ramped entry leaves a 0.007 mm stub at the previous pass's floor. On
+    /// a job with three real tabs, twenty of those stubs became twenty more
+    /// "tabs" at −0.993 mm of metal, and the three real ones were lost in the
+    /// noise. The audit reports three, at the three places they were cut.
+    #[test]
+    fn ramp_stubs_do_not_outnumber_the_real_tabs() {
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [50.0, 0.0], [50.0, 40.0], [0.0, 40.0]],
+            vec![],
+        )
+        .unwrap();
+        let rect = [-3.175, -3.175, 53.175, 43.175];
+        let mut spec = JobSpec::new(part, 3.0, 3.175);
+        spec.declared_tabs = (0..3)
+            .map(|_| DeclaredTab {
+                width: 4.0,
+                height: 1.0,
+            })
+            .collect();
+
+        // Three tabs at 4 mm of metal each (4 mm + the Ø3.175 cutter of lift),
+        // on every pass that goes below their Z-2 top. Every pass also carries
+        // a 4 mm level stretch 0.007 mm above its own depth, part-way round —
+        // the ramp stub, met after the cutter has already been at depth, so
+        // the existing entry rule does not cover it.
+        let lifts = [(5.0, 4.0 + 3.175), (20.0, 4.0 + 3.175), (35.0, 4.0 + 3.175)];
+        let mut tp = Toolpath::new();
+        for k in 1..=6 {
+            let z = -0.5 * k as f64;
+            tp.push(ToolpathSegment::rapid(rect[0], rect[1], 5.0));
+            tp.push(ToolpathSegment::linear(rect[0], rect[1], z, 100.0));
+            if z < -2.0 - 1e-9 {
+                for (at, run) in lifts {
+                    tp.push(ToolpathSegment::linear(at, rect[1], z, 400.0));
+                    tp.push(ToolpathSegment::linear(at, rect[1], -2.0, 400.0));
+                    tp.push(ToolpathSegment::linear(at + run, rect[1], -2.0, 400.0));
+                    tp.push(ToolpathSegment::linear(at + run, rect[1], z, 400.0));
+                }
+            }
+            tp.push(ToolpathSegment::linear(rect[2], rect[1], z, 400.0));
+            // The stub, up the right-hand edge.
+            tp.push(ToolpathSegment::linear(rect[2], 10.0, z, 400.0));
+            tp.push(ToolpathSegment::linear(rect[2], 10.0, z + 0.007, 400.0));
+            tp.push(ToolpathSegment::linear(rect[2], 14.0, z + 0.007, 400.0));
+            tp.push(ToolpathSegment::linear(rect[2], 14.0, z, 400.0));
+            tp.push(ToolpathSegment::linear(rect[2], rect[3], z, 400.0));
+            tp.push(ToolpathSegment::linear(rect[0], rect[3], z, 400.0));
+            tp.push(ToolpathSegment::linear(rect[0], rect[1], z, 400.0));
+            tp.push(ToolpathSegment::rapid(rect[0], rect[1], 5.0));
+        }
+
+        let rep = verify_toolpath(&tp, &spec, &VerifyOptions::default()).unwrap();
+        assert_eq!(rep.tabs.tab_count, 3, "{:?}", rep.tabs.observations);
+        let mut xs: Vec<f64> = rep.tabs.observations.iter().map(|o| o.xy[0]).collect();
+        xs.sort_by(f64::total_cmp);
+        xs.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+        assert_eq!(xs.len(), 3, "{xs:?}");
+        for (got, want) in xs.iter().zip([8.5875, 23.5875, 38.5875]) {
+            assert!((got - want).abs() < 1e-6, "{xs:?}");
+        }
+        // Every observation leaves real metal; none is an impossible width.
+        for o in &rep.tabs.observations {
+            assert!((o.metal_width - 4.0).abs() < 1e-9, "{o:?}");
+        }
+        assert!(rep.tabs.check.pass, "{:?}", rep.tabs.check.examples);
     }
 
     /// A tab sitting across the seam is met twice in one lap — at its start and
