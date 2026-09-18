@@ -453,12 +453,19 @@ Bisecting the tab by unioning its pieces onto the ring one at a time
 The corner survives the round end intact. Both operands put the corner vertex
 at exactly `(32.400000, ±3.100000)` — *the cylinder–plane rails already
 agree*. The shell is still closed after the round end goes in. The crack opens
-only when the **tab-root fillet blocks** are unioned on, and it opens at a
-corner those blocks do not touch: afterwards the round-end cylinder faces
-`FaceId(21v1)` / `FaceId(22v1)` carry a vertex at `(32.476078, ±3.099066)`
-that is absent from the clean case. That point is on the r 3.1 circle to
-1e-6 — it is the cylinder's own canonical arc-grid neighbour of the corner,
-minted as a *second* corner beside the exact one.
+only when the **tab-root fillet blocks** are unioned on.
+
+**Retracted:** the first version of this section said the fillet-block union
+mints a stray vertex at `(32.476078, ±3.099066)` on the round-end cylinder,
+"absent from the clean case". That is wrong, and it was wrong because I listed
+the vertices of two named faces rather than all of them. Dumping every vertex
+near the corner shows the whole arc grid — `32.171950, 32.247890, 32.323922,
+32.400000, 32.476078, 32.552110, 32.628050` — is **already there after the
+round end**, when the shell is still closed. `32.476078` is just the
+cylinder's ordinary canonical neighbour of 90°, and the corner's vertex set is
+byte-identical before and after the blocks go in. **Nothing happens at the tab
+corner at all.** Locating a defect by eye on a face listing is how that
+mistake was made; the section below locates it by unpaired edge instead.
 
 And the tab-root fillet block is the same designed-tangency family the rest of
 this document is about, not a new one. Its cutter is an r 1.05 cylinder at
@@ -475,16 +482,84 @@ and no generator is cut. The union is then decided by classification alone
 along a 29.8 mm-radius seam where the two surfaces are parallel to within a
 rounding error, and *that* is what perturbs the neighbouring round-end face.
 
-So the next step is not a cylinder–plane rail. It is: **why does a correctly
-suppressed tangency in one region re-split a face 2.6 mm away?** The handle is
-the `(32.476078, ±3.099066)` vertex — find which splitter mints it
-(`VCAD_SPLIT_DEBUG=1 --features debug-boolean`, tracing the round-end
-cylinder face through stage 2.5), because it is created by the fillet-block
-union and nothing else in the sequence creates it.
-
 Do not "fix" this by lowering `MERGE_GENERATORS` to cut the tab-root
 tangency: that is the branch the table above the previous section rules out,
-and it costs the stator +4.5 % and 1452 open edges.
+and it costs the stator +4.5 % and 1452 open edges. The merge is working
+correctly here — the generator separation is `2h = 0.0117 mm` (and
+`0.0152 mm` for the post-root fillets), four times inside the 0.05 threshold.
+
+### Where the unpaired edges actually are
+
+Reporting each open edge's endpoints instead of guessing from face listings
+puts them in two places, neither of them the tab corner:
+
+* **r = 28.7500, θ ≈ 7.82° and 7.99°, on BOTH caps** — the OD × tab-root
+  fillet seam. The cutter's touch point is at θ = atan2(4.15, 29.5096) =
+  **8.005°**. This is the crack.
+* **x = 24.4000, top cap only (z = 17.10)** — a second, independent defect on
+  the tab cube's back plane, five edges, unrelated to any tangency.
+
+### Who mints what, at the block's edge y = 4.0038
+
+A backtrace on every `Topology::add_vertex` landing within 0.012 of the seam
+(a temporary watch keyed on an env var, not committed) attributes each
+candidate corner to the splitter that made it. The exact geometry there:
+
+```
+tangency point (OD ∩ fillet arc)  = (28.469848, 4.003777)
+OD circle   at y = 4.0038       x =  28.469845
+fillet arc  at y = 4.0038       x =  28.469828
+```
+
+| minted x | error vs its own surface | who mints it |
+|---|---|---|
+| 28.469845 | **2.0e-07** (OD circle) | `cyl_band::split_wavy_band_by_line` |
+| 28.469828 | **1.2e-07** (fillet arc) | `split_planar_face` → `split_face_by_curve`, and band-by-line |
+| 28.468892 | −9.4e-04 | `split_planar_face` → `split_face_by_curve` |
+| 28.470458 | +6.3e-04 | `split::clip_spherical_face_by_circle` |
+
+The first two are each **correct to a couple of parts in 10⁷ for their own
+surface**, and they are `1.72e-05 mm` apart — *exactly* the amount by which
+the design misses exact tangency (`d − (R+r) = 1.691e-05`). `sew` welds with
+`merge_nearby_vertices` at a flat **1e-6**, so 17 nm is 17× too far and the
+seam keeps two rails.
+
+### Tried and reverted: snapping both rails onto the analytic tangency line
+
+`tangency::cylinder_tangencies` **already finds this line** — its
+`TANGENCY_EPS` is 1e-4 and the miss is 1.7e-5 — and `sew_faces_with_tangencies`
+already receives it. So the obvious narrow fix is to project any vertex
+already within `TANGENCY_EPS` of a tangency line perpendicularly onto it,
+before the weld: an analytic gate rather than a tolerance bump, with the move
+bounded by 1e-4 mm (200× under the 0.02 mm export floor) and no effect on any
+vertex outside a designed tangency.
+
+It does exactly what it says. The two rails collapse to a single vertex at
+`(28.469848, 4.003777)`, the analytic touch point, and the −9.4e-04 stray goes
+with them. **It closes none of the open edges** — 13 before, 13 after — so it
+was reverted rather than kept. A change that improves a number nobody is
+measuring is not yet a fix, and keeping it would have meant paying the torture
+track for a benefit I could not demonstrate.
+
+### What is actually broken: an unpaired sliver loop on each cap
+
+With the rails welded or not, each cap carries this ring of unpaired edges —
+four vertices, all on r = 28.750000 ± 1.3e-5, i.e. all *legitimately distinct
+points on the OD*:
+
+```
+A (28.469849, 4.003778)  the tangency point            A→B   7.9e-03
+B (28.470964, 3.995933)  OD canonical grid             B→C   3.5e-03
+C (28.470459, 3.999438)  clip_spherical_face_by_circle D→C   1.8e-01
+D (28.494835, 3.821896)  OD canonical grid             A→D   1.8e-01
+```
+
+`A→B→C→D→A` appears **once**, on the top cap and the bottom cap. It is a
+sliver of the cap that one side bounds and the other never covers — the same
+"uncovered cap sliver" class as the post-root fillets in the w1 section above,
+not a rail-duplication problem and not a weld-tolerance problem. `C` coming
+from the *spherical* clipper on a part with no spheres is the thread worth
+pulling next.
 
 ## Open item: the mesh fallback moves intermediate solids by millimetres
 
