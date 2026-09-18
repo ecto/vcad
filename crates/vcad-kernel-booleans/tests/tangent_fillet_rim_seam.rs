@@ -277,7 +277,6 @@ fn a_fillet_clear_of_the_bore_is_closed() {
 /// it: the bound is on volume, and volume is precisely what the hole
 /// corrupts.
 #[test]
-#[ignore = "known defect: a near-tangent fillet is +0.167% and reports Analytic; the buried-face check does NOT catch it — see the doc comment"]
 fn a_near_miss_fillet_is_not_silently_wrong() {
     let r = ring();
     let d = 0.01;

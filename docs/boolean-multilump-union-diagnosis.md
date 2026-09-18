@@ -305,9 +305,44 @@ never noticed (the bound is on volume, and volume is exactly what the defect
 corrupts), and why the six unpaired edges are the rim of the hole rather than
 an incidental sliver.
 
-The remaining question is a classification one, and narrow: why is the wall
-dropped over a stretch that spans a near-tangent crossing of two curves? Not
-the cap splitter — the caps are right.
+### Fixed: parallel-axis cylinders had no SSI
+
+The wall was never *classified* wrongly — it was never **split**. `ssi.rs`'s
+`cylinder_cylinder` bailed out for parallel axes, by design and with a stated
+reason:
+
+> Coaxial / parallel axes → `Empty`. […] for parallel-but-distinct axes the
+> SSI is either two parallel line generators or empty, but our downstream
+> consumers only call this for face pairs whose AABBs already overlap, and
+> parallel-axis cylinders that overlap will normally also share planar caps
+> that drive the trimming.
+
+The assumption fails when the crossing is in the **middle of a wall**. The
+fillet's r 1.05 wall crosses the r 24 bore in two generators 0.294 mm apart,
+with no cap anywhere near them; the face spanning the crossing got one
+classification sample at r = 24.006 — correctly `Inside` for that sample,
+wrong for half its area — and was dropped whole.
+
+`parallel_cylinders` now returns the two generators. The near miss:
+
+| | before | after |
+|---|---|---|
+| volume | 4734.783 | **4726.913** (2D-CSG truth 4726.58) |
+| unpaired edges | 6 | **0** |
+| section at 11.4 / 14.1 / 16.8 | refused, 0.164 mm gap | **closes with no healing**, max boundary 0.00499 mm |
+
+**And a designed tangency must still return `Empty`.** Emitting a generator
+for one cost the stator dearly — 7869.6 → 8222.5 mm³ (+4.5 %), 1452 unpaired
+edges against 642, twice the solve time — because the part is *made* of them:
+twelve post-root fillets and six tab-root fillets, each an r 1.05 wall meant
+to touch the bore or the OD, each missing it by rounding and so crossing in
+two generators 0.0154 mm apart. Splitting a wall on those mints a sliver the
+classifier cannot judge. `MERGE_GENERATORS = 0.05 mm` separates the two
+populations by a factor of twenty on one side and three on the other; below
+it the old `Empty` stands. With that in, the stator is byte-identical to
+before: 501 faces, 12 186 triangles, 7869.618 mm³, 642/95.
+
+The tab corner did **not** close for free — it is a different mechanism.
 
 ### The buried-face check: calibrated, sound, and not the tool for this
 
