@@ -858,6 +858,39 @@ impl JobSpec {
         -(self.stock_thickness - self.bottom_allowance)
     }
 
+    /// The bottom allowance has to be a real distance inside the stock.
+    ///
+    /// Nothing used to bound it, so an allowance of `+7` on 6 mm of stock put
+    /// `floor_z` *above* the stock top: a floor the cutter reaches by not
+    /// switching on. Every depth reading then fails, and on a program with no
+    /// cutting move the depth check had no move to name and panicked.
+    ///
+    /// The bound is the geometry's own: a skin may not be as thick as the
+    /// stock (there would be nothing left to cut) and a break-through past one
+    /// whole stock thickness is a second job, not an allowance — a cutter that
+    /// far under the work is machining the bed.
+    pub fn check_allowance(&self) -> Result<(), VerifyError> {
+        if !self.bottom_allowance.is_finite() {
+            return Err(VerifyError::BadInput(format!(
+                "bottom allowance {} is not a number",
+                self.bottom_allowance
+            )));
+        }
+        if self.bottom_allowance >= self.stock_thickness {
+            return Err(VerifyError::BadInput(format!(
+                "bottom allowance {:.3} mm leaves nothing to cut in {:.3} mm of stock",
+                self.bottom_allowance, self.stock_thickness
+            )));
+        }
+        if self.bottom_allowance < -self.stock_thickness {
+            return Err(VerifyError::BadInput(format!(
+                "bottom allowance {:.3} mm sinks more than the {:.3} mm stock thickness past the underside: declare a thicker spoilboard and a shallower break-through",
+                self.bottom_allowance, self.stock_thickness
+            )));
+        }
+        Ok(())
+    }
+
     /// The blank, `[min_x, min_y, max_x, max_y]`.
     ///
     /// Defaulting this to the part bounds plus one tool diameter put the stock
@@ -1591,6 +1624,15 @@ pub fn verify_moves(
             spec.stock_thickness
         )));
     }
+    spec.check_allowance()?;
+    if moves.is_empty() {
+        // Nothing to replay is not a clean bill of health. Every check below
+        // would pass vacuously and the caller would read that as "this program
+        // is safe", which is the failure mode this whole module exists to stop.
+        return Err(VerifyError::BadInput(
+            "this program contains no moves: there is nothing to verify".into(),
+        ));
+    }
     let part = spec.part.poly()?;
     let r = spec.tool_diameter / 2.0;
 
@@ -1696,6 +1738,40 @@ fn segment_clearance(
     worst
 }
 
+/// Does the XY segment `a`–`b` touch the axis-aligned rectangle
+/// `[min_x, min_y, max_x, max_y]` anywhere along its length?
+///
+/// Liang–Barsky: the parameter interval of the segment is clipped by each
+/// slab in turn, and what survives is the stretch that lies over the
+/// rectangle. A segment whose ends are both outside can still cross it, which
+/// is exactly the case an endpoints-only test misses.
+fn segment_over_rect(a: [f64; 2], b: [f64; 2], rect: [f64; 4]) -> bool {
+    let d = [b[0] - a[0], b[1] - a[1]];
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    for axis in 0..2 {
+        let (lo, hi) = (rect[axis], rect[axis + 2]);
+        if d[axis].abs() <= 1e-12 {
+            // Parallel to this slab: either inside it for the whole length or
+            // never.
+            if a[axis] < lo || a[axis] > hi {
+                return false;
+            }
+            continue;
+        }
+        let mut near = (lo - a[axis]) / d[axis];
+        let mut far = (hi - a[axis]) / d[axis];
+        if near > far {
+            std::mem::swap(&mut near, &mut far);
+        }
+        t0 = t0.max(near);
+        t1 = t1.min(far);
+        if t0 > t1 {
+            return false;
+        }
+    }
+    true
+}
+
 /// 3. Rapids that travel in XY too low over the stock, or dive into it.
 fn check_rapids(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> CheckReport {
     let mut rep = CheckReport::new(
@@ -1713,9 +1789,14 @@ fn check_rapids(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> CheckRe
         if !m.rapid {
             continue;
         }
+        // Testing the two ends alone lets a rapid *cross* the blank: a G0 from
+        // (-20, 50) to (120, 50) over a 100 mm square starts and ends in free
+        // air and drags the cutter through the middle of the part. `check_gouge`
+        // does not cover it either — it skips rapids on purpose. So the whole
+        // XY segment is clipped against the blank, not just its endpoints.
         if m.xy_len() > 1e-9
             && m.min_z() < opts.safe_rapid_z
-            && (over_stock(m.from) || over_stock(m.to))
+            && segment_over_rect(m.a(), m.b(), stock)
         {
             rep.hit(
                 Violation {
@@ -1795,15 +1876,21 @@ fn check_depth(moves: &[Move], spec: &JobSpec, opts: &VerifyOptions) -> DepthRep
             format!("cuts {past:.3} mm past the declared floor")
         };
         if !(through && spec.spoilboard && spec.bottom_allowance <= 0.0) {
-            let m = moves
+            // A program with no cutting move at all has no place to point at.
+            // It is still a violation — the floor was never reached — so it is
+            // reported against the program rather than swallowed.
+            let deepest_move = moves
                 .iter()
                 .filter(|m| !m.rapid)
-                .min_by(|a, b| a.min_z().total_cmp(&b.min_z()))
-                .unwrap();
+                .min_by(|a, b| a.min_z().total_cmp(&b.min_z()));
+            let (index, xy) = match deepest_move {
+                Some(m) => (m.index, m.b()),
+                None => (0, [0.0, 0.0]),
+            };
             rep.hit(
                 Violation {
-                    index: m.index,
-                    xy: m.b(),
+                    index,
+                    xy,
                     z: deepest,
                     value: past,
                     what,
@@ -3315,6 +3402,107 @@ mod tests {
         let rep = verify_toolpath(&dive, &spec, &opts).unwrap();
         assert!(!rep.rapids.pass);
         assert!(rep.rapids.examples[0].what.contains("below the stock top"));
+    }
+
+    /// A rapid whose two ends are both clear of the blank but which crosses it
+    /// end to end. Both endpoints pass an endpoints-only test, and
+    /// `check_gouge` skips rapids on purpose, so nothing else in the oracle
+    /// would have seen a cutter dragged straight through the part at Z-5.
+    #[test]
+    fn a_rapid_that_crosses_the_stock_without_landing_on_it_is_flagged() {
+        let part = PartRegion::new(
+            vec![[10.0, 10.0], [90.0, 10.0], [90.0, 90.0], [10.0, 90.0]],
+            vec![],
+        )
+        .unwrap();
+        let mut spec = JobSpec::new(part, 6.0, 3.0);
+        spec.stock_bbox = Some([0.0, 0.0, 100.0, 100.0]);
+        let opts = VerifyOptions::default();
+
+        let mut tp = Toolpath::new();
+        // A real cut, so the program has something to verify.
+        tp.push(ToolpathSegment::rapid(20.0, 20.0, 5.0));
+        tp.push(ToolpathSegment::linear(20.0, 20.0, -1.0, 100.0));
+        tp.push(ToolpathSegment::linear(25.0, 20.0, -1.0, 400.0));
+        tp.push(ToolpathSegment::rapid(25.0, 20.0, 5.0));
+        // Off the blank on the left…
+        tp.push(ToolpathSegment::rapid(-20.0, 50.0, -5.0));
+        // …straight across it to free air on the right, 5 mm under the top.
+        tp.push(ToolpathSegment::rapid(120.0, 50.0, -5.0));
+
+        let rep = verify_toolpath(&tp, &spec, &opts).unwrap();
+        assert!(!rep.rapids.pass, "{:?}", rep.rapids);
+        // 0.5 mm safe height minus Z-5: the cutter is 5.5 mm below where a
+        // rapid may travel.
+        assert!(
+            (rep.rapids.worst - 5.5).abs() < 1e-9,
+            "{:?}",
+            rep.rapids.worst
+        );
+        assert!(
+            rep.rapids
+                .examples
+                .iter()
+                .any(|e| e.what.contains("140.00 mm in XY")),
+            "{:?}",
+            rep.rapids.examples
+        );
+
+        // A rapid at the same depth that passes well clear of the blank is
+        // still fine: the check clips against the stock, it does not ban low
+        // rapids outright.
+        let mut clear = Toolpath::new();
+        clear.push(ToolpathSegment::rapid(20.0, 20.0, 5.0));
+        clear.push(ToolpathSegment::linear(20.0, 20.0, -1.0, 100.0));
+        clear.push(ToolpathSegment::linear(25.0, 20.0, -1.0, 400.0));
+        clear.push(ToolpathSegment::rapid(25.0, 20.0, 5.0));
+        clear.push(ToolpathSegment::rapid(-20.0, 150.0, 5.0));
+        clear.push(ToolpathSegment::rapid(-20.0, 150.0, -5.0));
+        clear.push(ToolpathSegment::rapid(120.0, 150.0, -5.0));
+        assert!(verify_toolpath(&clear, &spec, &opts).unwrap().rapids.pass);
+    }
+
+    /// A bottom allowance bigger than the stock puts the floor above the stock
+    /// top. That used to sail through and then panic in the depth check on a
+    /// program with no cutting move; it is a refusal now, and the message says
+    /// which number is wrong.
+    #[test]
+    fn a_bottom_allowance_outside_the_stock_is_refused() {
+        let part = PartRegion::new(
+            vec![[0.0, 0.0], [50.0, 0.0], [50.0, 40.0], [0.0, 40.0]],
+            vec![],
+        )
+        .unwrap();
+        let opts = VerifyOptions::default();
+        let mut rapids_only = Toolpath::new();
+        rapids_only.push(ToolpathSegment::rapid(5.0, 5.0, 5.0));
+        rapids_only.push(ToolpathSegment::rapid(40.0, 30.0, 5.0));
+
+        let mut spec = JobSpec::new(part.clone(), 6.0, 3.0);
+        spec.bottom_allowance = 7.0;
+        let err = verify_toolpath(&rapids_only, &spec, &opts).unwrap_err();
+        assert!(
+            err.to_string().contains("leaves nothing to cut"),
+            "{err}: {}",
+            spec.floor_z()
+        );
+
+        // A skin exactly as thick as the stock is the same nothing.
+        spec.bottom_allowance = 6.0;
+        assert!(verify_toolpath(&rapids_only, &spec, &opts).is_err());
+
+        // And a break-through deeper than the stock is thick.
+        spec.bottom_allowance = -6.5;
+        let err = verify_toolpath(&rapids_only, &spec, &opts).unwrap_err();
+        assert!(err.to_string().contains("past the underside"), "{err}");
+
+        // A legitimate 0.15 mm skin still verifies.
+        spec.bottom_allowance = 0.15;
+        assert!(verify_toolpath(&rapids_only, &spec, &opts).is_ok());
+
+        // An empty program is a refusal too, not a vacuous pass.
+        let err = verify_toolpath(&Toolpath::new(), &spec, &opts).unwrap_err();
+        assert!(err.to_string().contains("nothing to verify"), "{err}");
     }
 
     /// Friction item 40 and 50: 10 mm of cut in 6 mm of stock is a cut into

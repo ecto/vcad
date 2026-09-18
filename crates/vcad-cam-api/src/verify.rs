@@ -62,8 +62,28 @@ pub fn verify_gcode_request(input: &str) -> Result<Value, String> {
     let stock = req.stock.build()?;
     let part = req.part.build()?;
     let tool_diameter = positive("tool_diameter", req.tool_diameter)?;
+    // Finite is not enough: the allowance has to be a distance *inside* this
+    // stock. `+7` on 6 mm of plate puts the floor above the stock top, which
+    // every depth reading then fails against — and on a program with no
+    // cutting move the oracle had no move to name. The rule itself lives on
+    // `JobSpec`; this repeats it here only to name the request field.
     let allowance = BottomAllowance(match req.bottom_allowance {
-        Some(a) => crate::types::finite("bottom_allowance", a)?,
+        Some(a) => {
+            let a = crate::types::finite("bottom_allowance", a)?;
+            if a >= stock.thickness {
+                return Err(format!(
+                    "bottom_allowance {a} leaves nothing to cut in {} mm of stock: a skin has to be thinner than the plate.",
+                    stock.thickness
+                ));
+            }
+            if a < -stock.thickness {
+                return Err(format!(
+                    "bottom_allowance {a} sinks more than the {} mm stock thickness past the underside: that is a cut into the bed, not an allowance.",
+                    stock.thickness
+                ));
+            }
+            a
+        }
         None => 0.0,
     });
 
