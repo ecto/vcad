@@ -1824,7 +1824,12 @@ fn checks(v: &JobVerification) -> Vec<&CheckReport> {
 
 /// Which failed checks block and which only warn, after the caller's
 /// overrides. Returns `(blocked_by, warnings)`, both named by check.
-fn policy(
+///
+/// Shared with [`crate::verify`]: a program posted under a policy has to be
+/// re-verifiable under the same policy, or the two entry points answer
+/// differently about the same file, which is the one thing this crate exists
+/// to stop.
+pub(crate) fn policy(
     v: &JobVerification,
     overrides: &std::collections::BTreeMap<String, String>,
 ) -> Result<(Vec<String>, Vec<String>), String> {

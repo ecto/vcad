@@ -208,6 +208,18 @@ pub fn run(input: &str) -> Result<Value, String> {
         });
     }
 
+    // The tolerance the reachability verdict is taken at, when one was asked
+    // for. Without it the verdict is strict — the flank has to be exactly
+    // involute everywhere contact happens — which is the right answer to "is
+    // this geometry ideal" and the wrong one to "will this part work on my
+    // machine". A gear whose fillet stands 1 µm proud of the involute fails
+    // the first question and passes the second, so the caller has to be able
+    // to say which one it is asking.
+    let flank_tolerance = match req.flank_tolerance {
+        Some(t) => Some(positive("flank_tolerance", t)?),
+        None => None,
+    };
+
     if let Some(p) = &req.planetary {
         let train = PlanetaryTrain::new(
             p.sun.build("planetary.sun")?,
@@ -218,17 +230,19 @@ pub fn run(input: &str) -> Result<Value, String> {
         let mesh = train
             .mesh()
             .map_err(|e| format!("this planetary train does not mesh: {e}"))?;
+        let reports = match flank_tolerance {
+            Some(limit) => train.reports_within(cutter, limit),
+            None => train.reports(cutter),
+        }
+        .map_err(|e| format!("the train's gears cannot all be cut with Ø{cutter}: {e}"))?;
         out["planetary"] = json!({
             "train": train,
             "mesh": mesh,
-            "reports": train
-                .reports(cutter)
-                .map_err(|e| format!("the train's gears cannot all be cut with Ø{cutter}: {e}"))?,
+            "reports": reports,
         });
     }
 
-    if let Some(t) = req.flank_tolerance {
-        let limit = positive("flank_tolerance", t)?;
+    if let Some(limit) = flank_tolerance {
         out["flank_deviation_tolerance"] = json!(limit);
     }
 

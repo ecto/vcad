@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use vcad_kernel_cam::verify2d::{DeclaredTab, VerifyOptions};
 use vcad_kernel_cam::{fit_contour, verify_gcode, BottomAllowance, ContourSide, FitOptions};
 
+use crate::placement::PlacementReq;
 use crate::types::{loop_points, non_negative, positive, MachineReq, PartReq, StockReq};
 
 // ---------------------------------------------------------------------------
@@ -22,6 +23,7 @@ use crate::types::{loop_points, non_negative, positive, MachineReq, PartReq, Sto
 ///    "tool_diameter": 2.0, "bottom_allowance": 0.15,
 ///    "machine": { "travel": …, "work_offset": … },
 ///    "tabs": [{ "width": 4, "height": 0.42 }],
+///    "placement": { "dx": 15, "dy": 15, "rotation_deg": 0 },
 ///    "centre_cutting": true, "tolerance": 0.02 }`
 #[derive(Debug, Clone, Deserialize)]
 struct VerifyRequest {
@@ -29,6 +31,14 @@ struct VerifyRequest {
     part: PartReq,
     stock: StockReq,
     tool_diameter: f64,
+    /// Where the part sits on the stock, exactly as `job`'s
+    /// `options.placement` means it. A program posted from a placed job is in
+    /// stock coordinates while the part is stated in its own frame, so
+    /// without this the replay checks the file against a part that is not
+    /// where the cutter is and every cut reads as a gouge. Defaults to the
+    /// identity, which is what a job with no placement posts.
+    #[serde(default)]
+    placement: Option<PlacementReq>,
     #[serde(default)]
     bottom_allowance: Option<f64>,
     #[serde(default)]
@@ -39,6 +49,16 @@ struct VerifyRequest {
     centre_cutting: Option<bool>,
     #[serde(default)]
     tolerance: Option<f64>,
+    /// Per-check severity override, `{"loose_pieces": "warning"}`, exactly as
+    /// `job`'s `verify_policy` means it.
+    ///
+    /// Without it a program that a job posted under a stated policy could not
+    /// be re-verified from disk under that policy: the job says ready, the
+    /// replay of its own output says blocked, and the two answers are both
+    /// this crate's. An empty map is the oracle's own severities, which is
+    /// what every caller got before.
+    #[serde(default)]
+    verify_policy: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -60,7 +80,10 @@ pub fn verify_gcode_request(input: &str) -> Result<Value, String> {
         return Err("the G-code is empty: there is nothing to verify.".into());
     }
     let stock = req.stock.build()?;
-    let part = req.part.build()?;
+    let part = match &req.placement {
+        Some(p) => req.part.placed(&p.build("placement")?)?,
+        None => req.part.build()?,
+    };
     let tool_diameter = positive("tool_diameter", req.tool_diameter)?;
     let allowance = BottomAllowance(match req.bottom_allowance {
         Some(a) => crate::types::finite("bottom_allowance", a)?,
@@ -92,25 +115,14 @@ pub fn verify_gcode_request(input: &str) -> Result<Value, String> {
 
     let report = verify_gcode(&req.gcode, &spec, &opts)
         .map_err(|e| format!("this G-code could not be replayed: {e}"))?;
-    let blocked_by: Vec<String> = [
-        &report.gouge,
-        &report.material_left.check,
-        &report.rapids,
-        &report.depth.check,
-        &report.tabs.check,
-        &report.envelope.check,
-        &report.loose.check,
-        &report.plunges,
-    ]
-    .iter()
-    .filter(|c| !c.pass && c.severity == vcad_kernel_cam::verify2d::Severity::Error)
-    .map(|c| c.name.clone())
-    .collect();
+    let (blocked_by, warnings) = crate::job::policy(&report, &req.verify_policy)?;
 
     Ok(json!({
+        // `pass` is the oracle's own verdict, untouched by the policy: a
+        // caller that wants to know whether anything failed at all still can.
         "pass": report.pass,
         "blocked": !blocked_by.is_empty(),
-        "policy": { "verified": true, "blocked_by": blocked_by },
+        "policy": { "verified": true, "blocked_by": blocked_by, "warnings": warnings },
         "verification": report,
     }))
 }

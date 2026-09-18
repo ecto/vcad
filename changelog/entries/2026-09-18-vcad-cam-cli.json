@@ -1,0 +1,15 @@
+{
+  "id": "2026-09-18-vcad-cam-cli",
+  "version": "0.10.0",
+  "date": "2026-09-18",
+  "category": "feat",
+  "title": "vcad cam: the whole CAM surface on the command line",
+  "summary": "Nine subcommands take a job, a program, a solid or a gear from JSON to an answer — and a blocked job exits 2 with no .nc file anywhere, so there is nothing to send by accident.",
+  "details": "CAM was reachable from the desktop app, the browser and an agent, but not from a terminal or a script. `vcad cam <job|verify|fit|outline|compare|materials|recommend|check-feeds|gear>` is that door: JSON in on stdin or `--request`, a human summary out by default and the whole answer document with `--json`. Every subcommand is a thin wrapper over the shared `vcad-cam-api`, so the CLI, the app's C ABI, the browser's WASM and an agent's MCP tools cannot disagree about whether a job is safe to run. Exit codes mean something a shop script can branch on: 0 the answer is yes, 1 the request could not be read at all, 2 it was read and the answer is no — a failed check, a cut past the stock, a cutter that does not fit, a torn section, outlines that disagree. `cam job --gcode out.nc` writes the program ONLY when the job is not blocked, and names the failed checks on stderr in the oracle's own words when it is. `cam outline` takes a .vcad, .loon or STL and sections the raw tessellation of the B-rep rather than the repaired export mesh — the repair moves vertices onto their analytic carriers and sections up to 0.4 mm from the wall a cutter follows — and refuses a torn solid with its gaps rather than healing them away. `cam compare` puts a DXF against a sectioned solid, which is the check that stops a stale outline machining the wrong part. Three gaps in the shared surface closed with it: the gear request's `flank_tolerance` was accepted and then ignored, so a reachability verdict was always the strict one; and `verify_gcode` had neither `placement` nor `verify_policy`, so a program posted from a placed job replayed against a part still at the origin and read as gouging everywhere, and a program posted under a policy could not be re-verified under that policy.",
+  "features": [
+    "cam",
+    "cli",
+    "manufacturing",
+    "gears"
+  ]
+}
