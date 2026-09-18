@@ -38,6 +38,12 @@ struct EditorView: View {
                     // Installed here rather than at launch because this is
                     // where the model first exists.
                     VcadStatus.installSignalHandler(model)
+                    // …and its write counterpart, which exists only when
+                    // `VCAD_SET` names a request file (item 51). The dump is a
+                    // report and stays one; this is the one way in, it writes
+                    // named numbers and nothing else, and it refuses while the
+                    // machine is streaming.
+                    VcadFieldWriter.installSignalHandler(model)
                     // Offline native CNC smoke hook. Never contacts hardware.
                     if env["VCAD_CNC_DEMO"] == "1" {
                         model.workspace = .manufacture
