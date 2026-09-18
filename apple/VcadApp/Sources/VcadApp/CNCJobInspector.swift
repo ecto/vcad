@@ -47,6 +47,31 @@ struct CNCOperationInspector: View {
         Group {
             Eyebrow("Cut")
             KeyValueRow("Shape", shapeSummary)
+            // Which cutter runs this operation (item 19). The kernel keeps a
+            // tool's operations together inside a phase, so this is also what
+            // decides where the job stops for a tool change.
+            if cnc.tools.count > 1 {
+                Picker("Tool", selection: $cnc.setup.toolNumber) {
+                    ForEach(cnc.tools) { Text($0.label).tag($0.number) }
+                }.pickerStyle(.menu).labelsHidden()
+                    .accessibilityLabel("Which tool cuts this operation")
+                    .accessibilityIdentifier("cnc.op.tool")
+                if kind.isContour || kind == .pocket || kind == .face,
+                   cnc.tool(number: cnc.setup.toolNumber)?.kind == .drill {
+                    // A drill cuts on its point; it cannot walk a wall. The
+                    // kernel refuses this too, but after a build — saying it
+                    // here is the difference between a choice and a mystery.
+                    Text("A drill cuts on its point only and cannot follow a wall. This operation needs an end mill.")
+                        .font(.caption).foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if kind == .drill {
+                Divider()
+                CNCDrillSection(cnc: cnc)
+                Divider()
+                Eyebrow("Cut")
+            }
             CNCNumber(label: "Cut depth", value: $cnc.setup.depth, identifier: "cnc.op.depth")
             CNCNumber(label: "Roughing stepdown", value: $cnc.setup.stepdown, identifier: "cnc.op.stepdown")
             if kind == .face || kind == .pocket {
@@ -236,6 +261,7 @@ struct CNCOperationInspector: View {
         switch s.kind {
         case .face: return "\(cnc.stockWidth.formatted()) × \(cnc.stockHeight.formatted()) mm"
         case .helicalBore: return "\(s.bores.count) × Ø\(s.boreDiameter.formatted()) mm"
+        case .drill: return "\(counted(s.bores.count, "hole")) drilled Ø\(s.boreDiameter.formatted()) mm"
         case .pocket, .contourInside, .contourOutside:
             return s.contour.isEmpty ? "the whole blank" : "\(counted(s.contour.count, "point")) closed loop"
         }

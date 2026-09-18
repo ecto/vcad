@@ -108,6 +108,30 @@ over pins within tolerance.
   tabs at ramp starts, an oracle that failed the job that was actually cut, an
   export repair that tore the stator by 0.68 mm under a 1 % volume check.
 
+## Status (2026-09-18, afternoon)
+
+- **Merged today:** web CAM panel (typed `@vcad/engine` client, a refused job
+  types its `gcode` as `never`); receipt follow-ups (deposits refuse a missing
+  basis, one re-state path for both receipt tools); planet rehearsal +
+  `vcad cam <job|verify|fit|outline|compare|materials|recommend|check-feeds|gear>`
+  (exit 2 is an honest no; nothing exiting 2 leaves a program on disk);
+  two-sided export shape guard; union round 2 (twin-pair flap collapse,
+  over-used edges 95 → 55); app follow-ups (tool list + drills + one `M0`,
+  NSAccessibility bridge, readiness in the Machine stage); the integrator's
+  live look (friction 68–70: refusal wording, thickness from the solid).
+- **The real stator, at this tip:** `vcad cam outline stator.loon` refuses at
+  every height — two 0.014–0.015 mm gaps at the tab roots, a full-height
+  crack in the wall — so the DXF path is the only way to machine it until the
+  seam lands (union round 3). Through the DXF the app builds 5530 moves,
+  18:13, replayed clean; `verify_nc` on the headless dump passes.
+- **Planet milestone** (`docs/planet-milestone.md`): the 20T brass planet
+  cannot hang on tabs (tip land 0.79 mm) and must be held by a screw through
+  the bore, which there is no way to declare except downgrading
+  `loose_pieces` to a warning. Peck drilling is refused by the oracle (G83's
+  rapid back down the hole is a "rapid below stock top"). Both are oracle
+  work, in the review-fix round.
+- **In flight:** `cam/w3-review-fixes`, `cam/w2d-union-seam-3`.
+
 ## Review (2026-09-18)
 
 An independent read of `crates/` on the branch (~42k lines) found 23 items.

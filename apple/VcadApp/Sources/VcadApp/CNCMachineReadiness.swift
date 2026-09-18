@@ -25,6 +25,15 @@ struct CNCReadinessList: View {
                   systemImage: machine.connected ? (machine.demo ? "desktopcomputer" : "checkmark.circle") : "circle")
             Label(cnc.jobCurrent ? "Toolpaths current" : "Toolpaths need generation",
                   systemImage: cnc.jobCurrent ? "checkmark.circle" : "circle")
+            // Item 19: a job that stops for a tool change asks something of
+            // the operator that a one-tool job does not, and the readiness
+            // list is where what the operator has to do is read.
+            if let warning = cnc.toolChangeWarning {
+                CNCToolSequenceNote(cnc: cnc, warning: warning)
+            } else {
+                Label("One tool · \(cnc.toolSequenceLabel)", systemImage: "wrench.adjustable")
+                    .accessibilityIdentifier("cnc.tools.sequence")
+            }
             Label(machine.workspace == "G54" ? "G54 selected" : "G54 required",
                   systemImage: machine.workspace == "G54" ? "checkmark.circle" : "circle")
             machineSection

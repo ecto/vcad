@@ -13,15 +13,24 @@ import XCTest
 @MainActor
 final class CNCJobSnapshotTests: XCTestCase {
 
-    private func job(blocked: Bool, setup: Bool = false) async throws -> EditorModel {
+    private func job(blocked: Bool, setup: Bool = false, twoTool: Bool = false) async throws -> EditorModel {
         let model = EditorModel()
         model.workspace = .manufacture
         let cnc = model.cnc
         cnc.shown = true
-        cnc.toolDiameter = 2
+        if twoTool {
+            // The stator as it really wants to be cut: a Ø3.175 for the
+            // profile and the bore, a Ø2.5 drill for the three pilots that no
+            // end mill in the list fits into (item 19).
+            cnc.tools = [CNCTool(number: 1, kind: .flatEndMill, diameter: 3.175,
+                                 flutes: 2, fluteLength: 10, stickout: 20),
+                         CNCTool(number: 2, kind: .drill, diameter: 2.5,
+                                 flutes: 2, fluteLength: 20, stickout: 30)]
+        } else {
+            cnc.toolDiameter = 2
+        }
         cnc.stockThickness = blocked ? 0.8 : 1.0
-        cnc.toolStickout = 18
-        cnc.toolFluteLength = 6
+        if !twoTool { cnc.toolStickout = 18; cnc.toolFluteLength = 6 }
         try cnc.importOutline(try CNCOutline.parseDXF(try CNCJobTests.statorDXF(),
                                                       name: "stator-outline.dxf"))
         for operation in cnc.operations {
@@ -121,6 +130,90 @@ final class CNCJobSnapshotTests: XCTestCase {
             hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
             let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
             try data.write(to: directory.appendingPathComponent("machine-\(suffix).png"))
+            XCTAssertGreaterThan(data.count, 10_000)
+            window.orderOut(nil)
+        }
+    }
+
+    /// The Machine stage with the readiness checklist mounted as a section
+    /// (item 3), and a two-tool job's readiness list beside it — where the
+    /// tool sequence and the "pauses N times" sentence are read (item 19).
+    ///
+    ///     VCAD_CNC_SNAPSHOTS=1 swift test --filter CNCJobSnapshotTests
+    func testReadinessSectionSnapshots() async throws {
+        guard ProcessInfo.processInfo.environment["VCAD_CNC_SNAPSHOTS"] == "1" else {
+            throw XCTSkip("Set VCAD_CNC_SNAPSHOTS=1 to render Manufacture snapshots.")
+        }
+        _ = NSApplication.shared
+        let directory = URL(fileURLWithPath: "/tmp/vcad-manufacture")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let model = try await job(blocked: false, twoTool: true)
+        let cnc = model.cnc
+        cnc.machine.connect(simulated: true)
+        defer { cnc.machine.disconnect() }
+        cnc.mode = .machine
+
+        XCTAssertTrue(cnc.blockers.isEmpty, "blocked: \(cnc.blockers.map(\.text))")
+        XCTAssertEqual(cnc.toolSequence, [2, 1])
+        XCTAssertEqual(cnc.toolChangeCount, 1, "the sentence under test has to have something to say")
+
+        // **Why the Work Zero radios look wrong in these PNGs, and why that is
+        // the harness rather than the app (item 6).**
+        //
+        // `cacheDisplay(in:to:)` draws AppKit's control indicators without
+        // their state: in dark mode every radio and checkbox comes out a solid
+        // filled shape, in light mode none of them is drawn at all. So all
+        // three Work Zero radios look selected — and the integrate pass could
+        // not tell whether that was real.
+        //
+        // These two are the falsifier, and they are asserted rather than
+        // described: they hold *opposite* values in this very snapshot, and
+        // the render draws them identically. No selection bug can do that.
+        // The model-side proof that exactly one zero is ever chosen is in
+        // `CNCFollowupTests.testWorkZeroIsExactlyOneChoice`.
+        XCTAssertTrue(cnc.toolCentreCutting, "\"Cuts on its centre\" is on…")
+        XCTAssertFalse(cnc.setupConfirmed, "…and \"I checked the tool…\" is off, in the same picture")
+        XCTAssertEqual(CNCZeroLocation.allCases.filter { $0 == cnc.zeroLocation }.count, 1,
+                       "one zero is selected however many the PNG appears to show")
+
+        for (appearance, suffix) in [(NSAppearance.Name.aqua, "light"), (.darkAqua, "dark")] {
+            let content = VStack(spacing: 12) {
+                WorkspaceHeader(model: model)
+                HStack(alignment: .top, spacing: 12) {
+                    CNCStudioOutline(cnc: cnc).frame(height: 700).panelSurface()
+                    // The readiness list as the Machine stage now shows it:
+                    // a section in the inspector, not a popover.
+                    CNCStudioInspector(model: model).frame(height: 700).panelSurface()
+                    // …and the Tool panel beside it, where the list lives.
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            CNCToolListSection(cnc: cnc)
+                            Divider()
+                            CNCZeroSection(cnc: cnc)
+                        }.padding(14).controlSize(.small)
+                    }.frame(width: 320, height: 700).panelSurface()
+                    Spacer(minLength: 0)
+                }
+                CNCStudioTransport(cnc: cnc).panelSurface()
+            }
+            .padding(12)
+            .frame(width: 1400, height: 900)
+            .background(Color(nsColor: .windowBackgroundColor))
+
+            let hosting = NSHostingView(rootView: content)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+            window.appearance = NSAppearance(named: appearance)
+            window.contentView = hosting; window.orderFront(nil)
+            try? await Task.sleep(for: .milliseconds(400))
+            hosting.layoutSubtreeIfNeeded()
+            XCTAssertLessThanOrEqual(hosting.fittingSize.width, 1401,
+                                     "readiness-\(suffix): the panels must fit the window")
+            let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+            let data = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+            try data.write(to: directory.appendingPathComponent("readiness-\(suffix).png"))
             XCTAssertGreaterThan(data.count, 10_000)
             window.orderOut(nil)
         }

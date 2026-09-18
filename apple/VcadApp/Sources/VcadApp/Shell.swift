@@ -38,6 +38,12 @@ struct EditorView: View {
                     // Installed here rather than at launch because this is
                     // where the model first exists.
                     VcadStatus.installSignalHandler(model)
+                    // …and its write counterpart, which exists only when
+                    // `VCAD_SET` names a request file (item 51). The dump is a
+                    // report and stays one; this is the one way in, it writes
+                    // named numbers and nothing else, and it refuses while the
+                    // machine is streaming.
+                    VcadFieldWriter.installSignalHandler(model)
                     // Offline native CNC smoke hook. Never contacts hardware.
                     if env["VCAD_CNC_DEMO"] == "1" {
                         model.workspace = .manufacture
@@ -274,8 +280,15 @@ struct DocumentCommands: Commands {
             Button("Top") { model.animateCamera(to: .top) }.keyboardShortcut("4")
             Divider()
             Button("Frame All") { model.resetCamera(animated: true) }.keyboardShortcut("0")
+            // Item 55: this and View ▸ Show/Hide All Panels both claimed ⌥⌘0.
+            // AppKit shows both and only one fires. Frame Selection is the one
+            // that moved, on two grounds: it is the less-used of the two (it
+            // needs a selection at all, and is disabled without one), and it
+            // has a near neighbour here — ⌘0 Frame All — so ⇧⌘0 reads as
+            // "frame, but narrower" beside it. Show/Hide All Panels keeps
+            // ⌥⌘0, where it sits with ⌥⌘1 and ⌥⌘2, the other two panel keys.
             Button("Frame Selection") { ReleaseWindowController.shared.frameSelection() }
-                .keyboardShortcut("0", modifiers: [.command, .option]).disabled(!model.hasSelection)
+                .keyboardShortcut("0", modifiers: [.command, .shift]).disabled(!model.hasSelection)
         }
         CommandGroup(replacing: .help) {
             Button("vcad Help") { NSWorkspace.shared.open(URL(string: "https://vcad.io/docs")!) }
