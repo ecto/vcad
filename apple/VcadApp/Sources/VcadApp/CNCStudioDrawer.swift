@@ -20,9 +20,7 @@ struct CNCStudioDrawer: View {
             case .gcode:
                 ScrollView {
                     if let code = cnc.jobCode {
-                        Text(code).font(.subheadline.monospaced())
-                            .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 18).padding(.vertical, 6)
+                        CNCGcodeListing(code: code)
                     } else {
                         gcodeAbsence
                     }
@@ -61,6 +59,66 @@ struct CNCStudioDrawer: View {
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 18).padding(.vertical, 6)
+    }
+}
+
+/// The job's G-code, with the operator stops marked.
+///
+/// A tool change on this machine is an `M0`: the controller stops dead and
+/// waits for a cycle start. Item 19 — a job that pauses is a job that asks
+/// something of the operator, and reading three thousand lines to find out
+/// where is not a way to learn it. The marked lines are also what makes the
+/// count in the readiness list checkable against the program itself.
+struct CNCGcodeListing: View {
+    var code: String
+
+    /// The stop lines, by their 1-based number in the program.
+    static func stopLines(in code: String) -> [Int] {
+        code.split(separator: "\n", omittingEmptySubsequences: false).enumerated()
+            .compactMap { index, line in isStop(String(line)) ? index + 1 : nil }
+    }
+
+    /// `M0` and `M1`, with or without a leading line number, and never `M0…`
+    /// as a prefix of something else (`M03` is a spindle start, which would be
+    /// a bad thing to call a pause).
+    static func isStop(_ line: String) -> Bool {
+        let bare = line.split(separator: "(").first.map(String.init) ?? line
+        for word in bare.split(whereSeparator: { $0 == " " || $0 == "\t" }) {
+            let w = word.uppercased()
+            guard w.hasPrefix("M") else { continue }
+            let digits = w.dropFirst()
+            guard !digits.isEmpty, digits.allSatisfy(\.isNumber), let code = Int(digits) else { continue }
+            if code == 0 || code == 1 { return true }
+        }
+        return false
+    }
+
+    var body: some View {
+        let lines = code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let stops = Set(Self.stopLines(in: code))
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                let isStop = stops.contains(index + 1)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    if isStop {
+                        Image(systemName: "pause.circle.fill").font(.caption)
+                            .foregroundStyle(.orange)
+                            .accessibilityHidden(true)
+                    }
+                    Text(line).font(.subheadline.monospaced())
+                        .foregroundStyle(isStop ? Color.orange : .primary)
+                        .fontWeight(isStop ? .semibold : .regular)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, isStop ? 3 : 0)
+                .background(isStop ? Color.orange.opacity(0.12) : .clear)
+                .accessibilityLabel(isStop ? "Tool change stop: \(line)" : line)
+            }
+        }
+        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 6)
     }
 }
 

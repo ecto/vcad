@@ -309,6 +309,12 @@ export {
 } from "./parts.js";
 export type { PartManifestEntry, PartParam, PartXref } from "./parts.js";
 
+// CAM: the typed client over the shared `vcad-cam-api` surface. The raw
+// `camJob`/`camFit`/… methods on `Engine` below stay as they are — this is the
+// layer that turns `{"error": …}` into a throw and types a blocked job so its
+// absent G-code cannot be reached.
+export * from "./cam.js";
+
 // Analyze mode (#592): off-main-thread solver studies
 export { AnalyzeClient, getAnalyzeClient } from "./analyze.js";
 export type {
@@ -799,6 +805,12 @@ export interface KernelModule {
   receiptFamilies?: () => string;
   /** One family's serialized report → unified `vcad.receipt/1` claims. */
   receiptClaimsFor?: (schema: string, reportJson: string) => string;
+  /** Refuse a deposit that records none of the inputs its claims rest on. */
+  receiptCheckDeposit?: (
+    schema: string,
+    reportJson: string,
+    inputsJson: string,
+  ) => string;
   /** Re-state a report against the digests of its inputs as they stand now. */
   receiptRestate?: (
     schema: string,
@@ -1398,6 +1410,7 @@ export class Engine {
       camGear: (wasmModule as Record<string, unknown>).camGear as KernelModule["camGear"],
       receiptFamilies: (wasmModule as Record<string, unknown>).receiptFamilies as KernelModule["receiptFamilies"],
       receiptClaimsFor: (wasmModule as Record<string, unknown>).receiptClaimsFor as KernelModule["receiptClaimsFor"],
+      receiptCheckDeposit: (wasmModule as Record<string, unknown>).receiptCheckDeposit as KernelModule["receiptCheckDeposit"],
       receiptRestate: (wasmModule as Record<string, unknown>).receiptRestate as KernelModule["receiptRestate"],
       receiptBind: (wasmModule as Record<string, unknown>).receiptBind as KernelModule["receiptBind"],
       camOutlineFromDocument: (wasmModule as Record<string, unknown>).camOutlineFromDocument as KernelModule["camOutlineFromDocument"],
@@ -2166,11 +2179,35 @@ export class Engine {
   }
 
   /**
+   * Check that a deposit records the inputs its claims rest on, before it is
+   * written anywhere. A deposit with no basis is refused: such a claim can
+   * never be re-stated, so it can never go stale, and would keep certifying a
+   * design that has since been edited.
+   */
+  receiptCheckDeposit<T = Record<string, unknown>>(
+    schema: string,
+    reportJson: string,
+    inputs: Record<string, string>,
+  ): T {
+    const fn = this.kernel.receiptCheckDeposit;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "receiptCheckDeposit is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return JSON.parse(fn(schema, reportJson, JSON.stringify(inputs))) as T;
+  }
+
+  /**
    * Re-state a stored report against the inputs as they stand now, so a claim
    * whose basis moved comes back `Stale`. `inputs` maps each of the family's
    * basis keys to that input's JSON **text**, exactly as the depositing tool
    * recorded it — the kernel hashes it with the same function the deposit
    * used, so the two sides cannot disagree.
+   *
+   * The answer carries the re-stated report plus `stale_claims` and
+   * `drifted_inputs`, so a caller reporting Holds-or-Stale never has to diff
+   * two reports to re-derive what the family already worked out.
    */
   receiptRestate<T = Record<string, unknown>>(
     schema: string,

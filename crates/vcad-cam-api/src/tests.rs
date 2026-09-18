@@ -715,6 +715,37 @@ fn sectioning_an_extruded_stator_gives_back_the_outline_it_was_extruded_from() {
     );
 }
 
+/// A torn solid still has a height. The refusal keeps its gaps (that is the
+/// point of it), and now also says how tall the part is, because the blank's
+/// thickness is a fact about the mesh, not about whether the section closed
+/// (friction item 69: a DXF over the torn stator kept a 10 mm default).
+#[test]
+fn a_torn_section_still_says_how_tall_the_part_is() {
+    let dxf = read_dxf(&fixture("stator-outline.dxf")).unwrap();
+    let (positions, mut indices) = extrude(&dxf, 11.1, 17.1);
+    // Tear one wall: drop the first two triangles (one quad of the outer loop).
+    indices.drain(0..6);
+    let out = call(
+        super::outline_from_mesh,
+        &json!({ "positions": positions, "indices": indices, "auto_z": true }),
+    );
+    let message = out["error"].as_str().expect("a torn wall is refused");
+    assert!(message.contains("does not close"), "{message}");
+    assert!(!out["gaps"].as_array().unwrap().is_empty());
+    assert!(
+        out.get("regions").is_none(),
+        "nothing is healed into a region"
+    );
+    let range = out["z_range"]
+        .as_array()
+        .expect("the refusal carries the Z range");
+    assert!((f(&range[0]) - 11.1).abs() < 1e-9 && (f(&range[1]) - 17.1).abs() < 1e-9);
+    assert!(
+        (f(&out["suggested_stock_thickness"]) - 6.0).abs() < 1e-9,
+        "the blank is as thick as the part is tall, torn or not"
+    );
+}
+
 #[test]
 fn a_stale_outline_is_caught_before_it_machines_the_wrong_part() {
     // Item 16, in one call: the same part with one pilot missing is not the

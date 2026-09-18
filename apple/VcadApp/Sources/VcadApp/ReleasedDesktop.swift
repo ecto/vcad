@@ -709,6 +709,17 @@ struct ReleasedOverlayView: View {
                                 }.panelSurface()
                                     .modifier(ChromeRegion(key: "cncBottom"))
                             }.padding(Theme.Space.m)
+                            // Every named number, as something an assistive
+                            // client can read *and write* (item 51). Mounted
+                            // beside the panels rather than inside one,
+                            // because the fields belong to the workspace and
+                            // not to whichever panel is showing. Draws
+                            // nothing and takes no clicks.
+                            .background(
+                                CNCAccessibilityBridge(cnc: model.cnc,
+                                                       toolSignature: model.cnc.tools.map(\.number))
+                                    .frame(width: 0, height: 0)
+                                    .allowsHitTesting(false))
                         }
                     }
                     // ncSender is polled only while Manufacture is on screen.

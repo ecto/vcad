@@ -1,0 +1,15 @@
+{
+  "id": "2026-09-18-web-cam-verified-job",
+  "version": "0.10.0",
+  "date": "2026-09-18",
+  "category": "breaking",
+  "title": "The web CAM panel cannot export an unverified job",
+  "summary": "The browser's CAM panel now builds one whole job, replays it against the part, and has no G-code to export when the oracle refuses it.",
+  "details": "The panel used to drive the kernel's granular CAM bindings one operation at a time — generate a face, generate a pocket, generate a contour, post each toolpath, concatenate — with nothing checking the result against the part it was meant to make. It was the last surface that could still hand over a program nobody had replayed, and its contour and pocket offsets were offsets of the bounding box rather than the contour. It now posts the whole job to the same verified API the desktop app reaches through its C ABI and an agent reaches through MCP. The contour is sectioned out of the part itself, from the B-rep's raw tessellation rather than the repaired export mesh that can tear a tangent fillet by a few tenths; a section that does not close is shown with its gaps rather than healed. The operations are the cuts the outline implies — a hole narrower than two cutter diameters is bored helically, a wider opening is cut out, the outside profile runs last on tabs, and a hole no wider than the cutter is refused by name instead of quietly skipped. The job comes back with eight checks and a verdict, and blockers read as sentences with millimetres and a place rather than check names. Export turns on only when the job was not refused and every warning has been acknowledged one at a time; editing anything drops the acknowledgements. Removed from the panel: the hand-typed rectangular operations, the parallel tool library, and the separate settings block.",
+  "features": [
+    "cam",
+    "web-app",
+    "verification",
+    "g-code"
+  ]
+}

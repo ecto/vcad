@@ -7186,6 +7186,7 @@ dependencies = [
  "tokio",
  "tower-http",
  "vcad-app",
+ "vcad-cam-api",
  "vcad-chat",
  "vcad-crdt",
  "vcad-diff",

@@ -100,11 +100,28 @@ struct WorkspaceHeader: View {
             // screen, so it needs the same bytes the editor evaluates. Handing
             // it a closure rather than the model keeps the workspace testable
             // without an editor (items 16 and 37).
-            .onAppear { model.cnc.modelDocument = { [weak model] in model?.camDocument() } }
+            .onAppear {
+                model.cnc.modelDocument = { [weak model] in model?.camDocument() }
+                // The tool list belongs to the job, not to the bench: the same
+                // machine cuts one part with a Ø1 and the next with a Ø6. It
+                // is keyed on the document, and read back when one opens.
+                model.cnc.documentKey = { [weak model] in model?.documentURL?.path }
+                model.cnc.loadTools()
+            }
+            .onChange(of: model.documentURL) { _, _ in model.cnc.loadTools() }
             // The outline comes from the part the user has selected, or the
             // first one when nothing is selected.
             .onChange(of: model.selectedPartIndex) { _, index in
                 model.cnc.modelPartIndex = index ?? 0
+                model.cnc.recheckOutlineAgainstModel()
+            }
+            // Item 16's caveat: a part edited after its outline was imported
+            // never re-checked. A finished solve is the moment the part on
+            // screen is a different part, so the comparison runs again — and
+            // `build()` runs it too, so a job is never verified against an
+            // outline the app has not just re-checked.
+            .onChange(of: model.solving) { _, solving in
+                if !solving { model.cnc.recheckOutlineAgainstModel() }
             }
     }
     private var documentLocation: String {
@@ -207,7 +224,7 @@ struct CNCStudioOutline: View {
                     // answered again every time the tool changes, without a
                     // re-import, because it is derived and never stored.
                     ForEach(cnc.unmachinableHoles, id: \.index) { hole in
-                        Label("Ø \(hole.diameter.formatted(.number.precision(.fractionLength(0...2)))) hole · not machinable with T1 Ø \(cnc.toolDiameter.formatted())",
+                        Label("Ø \(hole.diameter.formatted(.number.precision(.fractionLength(0...2)))) hole · no end mill fits and no drill is that size",
                               systemImage: "exclamationmark.triangle")
                             .font(.caption).foregroundStyle(.orange).lineLimit(2)
                     }
@@ -226,7 +243,7 @@ struct CNCStudioOutline: View {
             Eyebrow("Job setup").padding(Theme.Space.m)
             item("Stock", detail: "\(cnc.stockWidth.formatted()) × \(cnc.stockHeight.formatted()) × \(cnc.stockThickness.formatted()) mm · \(cnc.underStock.label)", symbol: "shippingbox", selection: .stock)
             item("Work origin", detail: "G54 · stock top", symbol: "move.3d", selection: .origin)
-            item("Tool", detail: "T1 · Ø \(cnc.toolDiameter.formatted()) mm", symbol: "wrench.adjustable", selection: .tool)
+            item("Tools", detail: cnc.toolSequenceLabel, symbol: "wrench.adjustable", selection: .tool)
             Divider().padding(.horizontal, 16).padding(.vertical, 8)
             HStack(spacing: Theme.Space.xs) {
                 Eyebrow("Operations")
@@ -276,7 +293,12 @@ struct CNCStudioOutline: View {
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
-                Text("1 tool · \(counted(cnc.operations.count, "operation"))").font(.caption).foregroundStyle(.secondary)
+                // The count only. What a tool change *asks of the operator* is
+                // said in the readiness list and in the Tool panel, which are
+                // the two places it is acted on; a third copy here put the
+                // same two sentences on screen three times at once.
+                Text("\(counted(cnc.tools.count, "tool")) · \(counted(cnc.operations.count, "operation"))")
+                    .font(.caption).foregroundStyle(.secondary)
                 if cnc.jobCurrent {
                     Text("~\(CNCWorkspace.durationLabel(cnc.jobDuration)) with acceleration")
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
@@ -293,8 +315,9 @@ struct CNCStudioOutline: View {
     }
 
     private func operationDetail(_ operation: CNCOperation) -> String {
-        guard cnc.jobCurrent, operation.seconds > 0 else { return "T1 · not built" }
-        return "T1 · \(CNCWorkspace.durationLabel(operation.seconds))"
+        let tool = "T\(operation.setup.toolNumber)"
+        guard cnc.jobCurrent, operation.seconds > 0 else { return "\(tool) · not built" }
+        return "\(tool) · \(CNCWorkspace.durationLabel(operation.seconds))"
     }
     private var verdictLabel: String {
         if !cnc.blockers.isEmpty { return "Refused · \(counted(cnc.blockers.count, "reason"))" }
@@ -377,7 +400,7 @@ struct CNCStudioViewportChrome: View {
                 VStack(alignment: .leading, spacing: 5) {
                     Text(cnc.mode == .setup ? "Stock & work origin" : cnc.mode == .machine ? "Machine position" : cnc.previewTitle)
                         .font(.callout.weight(.medium))
-                    Text(cnc.mode == .machine ? (cnc.machine.demo ? "Simulated telemetry" : "Reported position · G54") : "T1 · Ø \(cnc.toolDiameter.formatted()) mm flat end mill")
+                    Text(cnc.mode == .machine ? (cnc.machine.demo ? "Simulated telemetry" : "Reported position · G54") : cnc.toolSequenceLabel)
                         .font(.caption).foregroundStyle(.secondary)
                     if cnc.mode == .toolpaths && !cnc.jobCurrent { Text("Setup changed · showing the last job that was built").font(.caption).foregroundStyle(.orange) }
                     if cnc.mode == .toolpaths, cnc.jobCurrent, let first = cnc.blockers.first {
@@ -454,6 +477,21 @@ struct CNCStudioInspector: View {
             PanelHeader(title: title, systemImage: symbol, onClose: { cnc.rightPanelShown = false })
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.m) {
+                    // The Machine stage leads with the readiness checklist.
+                    // It was rendered in a popover and nowhere else — item
+                    // 45's narrow remainder: its actions and its headline
+                    // sentence were reachable from the menu, the bar's caption
+                    // and the status dump, but the *list* a screen reader
+                    // would walk was not. Same view, same `runBlocker`, same
+                    // `CNCCommand` predicates: one source of truth, shown in
+                    // two places. Outside the group below on purpose, because
+                    // that group is disabled while the machine streams and
+                    // this list is exactly what has to stay readable then.
+                    if cnc.mode == .machine {
+                        CNCReadinessList(cnc: cnc, onTrace: { cnc.traceShown = true })
+                            .accessibilityIdentifier("cnc.readiness.section")
+                        Divider()
+                    }
                     if cnc.usesImportedProgram { imported } else { selected }
                     if let error = cnc.error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
                 }
@@ -463,15 +501,17 @@ struct CNCStudioInspector: View {
     }
 
     private var title: String {
+        if cnc.mode == .machine { return "Machine" }
         if cnc.usesImportedProgram { return cnc.importedName }
         switch cnc.selection {
         case .stock: return "Stock"
         case .origin: return "Work origin"
-        case .tool: return "Tool"
+        case .tool: return "Tools"
         case .operation: return cnc.selectedOperation.name
         }
     }
     private var symbol: String {
+        if cnc.mode == .machine { return "gauge.with.dots.needle.bottom.50percent" }
         if cnc.usesImportedProgram { return "doc.text" }
         switch cnc.selection {
         case .stock: return "shippingbox"
@@ -589,27 +629,14 @@ struct CNCStudioInspector: View {
             case .tool:
                 CNCSetupSummary(cnc: cnc)
                 Divider()
-                Eyebrow("T1 · flat end mill")
-                CNCNumber(label: "Diameter", value: $cnc.toolDiameter, identifier: "cnc.tool.diameter")
-                Stepper(value: $cnc.toolFlutes, in: 1...6) { KeyValueRow("Flutes", "\(cnc.toolFlutes)") }
-                    .accessibilityLabel("Flutes").accessibilityIdentifier("cnc.tool.flutes")
-                    .accessibilityValue("\(cnc.toolFlutes)")
-                CNCNumber(label: "Flute length", value: $cnc.toolFluteLength,
-                          help: "Usable cutting length. Zero means undeclared, and the job cannot check the cut against it.",
-                          identifier: "cnc.tool.fluteLength")
-                CNCNumber(label: "Stickout", value: $cnc.toolStickout,
-                          help: "How far the tool stands out of the collet. Zero means undeclared, and holder clearance over the stock cannot be checked.",
-                          identifier: "cnc.tool.stickout")
-                Toggle("Cuts on its centre", isOn: $cnc.toolCentreCutting)
-                    .help("A cutter that does not cut across its own centre cannot plunge; the job checks every entry against this.")
-                    .accessibilityIdentifier("cnc.tool.centreCutting")
+                CNCToolListSection(cnc: cnc)
                 Divider()
                 CNCFeedsSection(cnc: cnc)
                 if !cnc.unmachinableHoles.isEmpty {
-                    Text("\(counted(cnc.unmachinableHoles.count, "hole")) in this outline is too small for this cutter. Fit a smaller one and they come back on their own.")
+                    Text("\(counted(cnc.unmachinableHoles.count, "hole")) in this outline is too small for every end mill in the list, and no drill in it is that size. Fit a smaller cutter, or add the drill, and they come back on their own.")
                         .font(.caption).foregroundStyle(.orange)
                 }
-                Text("One installed centre-cutting tool for the entire job. Set feed and spindle speed per operation.")
+                Text("Feed and spindle speed are set per operation. This machine has no changer, so every tool change is an operator stop and a re-zero.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

@@ -1,0 +1,20 @@
+{
+  "id": "2026-09-18-stale-jobs-read-stale-from-either-tool",
+  "version": "0.10.0",
+  "date": "2026-09-18",
+  "category": "fix",
+  "title": "Re-checking a receipt notices an edited job",
+  "summary": "Asking whether a design's claims still hold now looks at whether the job behind them has changed — and re-checking a mechanical receipt works at all.",
+  "details": "Building a receipt re-checked whether a machining job's claims still described the job on the document; re-verifying that receipt afterwards did not. That is backwards: the tool you reach for to ask 'is this still good?' was the one that would not have noticed the program had been edited underneath it, so it would answer that everything holds. Both now go through the same code, so they cannot give different answers, and re-verification reports which claims went stale and which input moved them rather than just a verdict. While fixing that: re-verifying a receipt never received the geometry engine, so any receipt carrying a clearance assertion failed with an internal-sounding error instead of being re-measured — those work now. Separately, a claim report filed without recording what its claims rest on is refused. Such a claim can never be detected as out of date, and to anyone reading the receipt later 'never changed' looks exactly like 'still true'. Nothing files reports that way today, so nothing is blocked; it is there so the remaining analysis tools cannot be connected later without saying what their results depend on.",
+  "features": [
+    "receipts",
+    "verification",
+    "cam"
+  ],
+  "mcpTools": [
+    "verify_receipt",
+    "build_receipt",
+    "cam_job",
+    "cam_gear"
+  ]
+}

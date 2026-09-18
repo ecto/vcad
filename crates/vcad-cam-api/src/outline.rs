@@ -247,7 +247,12 @@ fn section(
                 "mesh_source": mesh_source,
                 "z": z,
                 "gaps": gaps,
-            }))
+                // How tall the part is does not depend on the section closing,
+                // and the blank's thickness is that height (friction item 69:
+                // a DXF over a torn solid was left at the 10 mm default).
+                "z_range": [z_min, z_max],
+                "suggested_stock_thickness": z_max - z_min,
+            }));
         }
         Err(e) => return Err(format!("the part could not be sectioned: {e}")),
     };

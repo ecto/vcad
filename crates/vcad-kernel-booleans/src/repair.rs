@@ -45,6 +45,7 @@ fn repair_topology_impl(
 ) {
     collapse_degenerate_half_edges(topo, tolerance);
     cleanup_loop_spikes(topo, tolerance);
+    collapse_twin_pair_spurs(topo);
     collapse_degenerate_half_edges(topo, tolerance);
     split_edges_at_interior_vertices(topo, tolerance, tangencies);
     pair_half_edges(topo, tolerance);
@@ -73,8 +74,56 @@ fn repair_topology_impl(
         }
         collapse_degenerate_half_edges(topo, tolerance);
         cleanup_loop_spikes(topo, tolerance);
+        collapse_twin_pair_spurs(topo);
         split_edges_at_interior_vertices(topo, tolerance, tangencies);
         pair_half_edges(topo, tolerance);
+    }
+}
+
+/// Retire a half-edge that its own loop immediately follows with its TWIN.
+///
+/// Such a pair walks out to a vertex and straight back along the same edge:
+/// `… → A → B → A → …`. It encloses no area, so it contributes nothing to
+/// the face, and the loop it sits in visits one vertex twice — which means
+/// the ring is not a simple boundary and the face cannot be trusted.
+///
+/// Neither existing pass removes it. `collapse_degenerate_half_edges` only
+/// looks at half-edges whose two ENDS coincide, and these are full length
+/// (0.034 mm on the case below); `cleanup_loop_spikes` does look for the
+/// A-B-A shape but skips any half-edge carrying a twin, which both of these
+/// do — they are each other's.
+///
+/// Welding produces them. When two vertices a loop visits are merged — a
+/// designed tangency's over-sampled seam put back on one line, an operand
+/// edge inherited whole through `sew::copy_loop_with_he_map` — the edge
+/// between them folds flat while keeping the pairing it came in with.
+/// Measured on the stator's post-root fillet (r 1.05 internally tangent to
+/// the r 24 bore) one such pair left 7 unpaired edges and two loops with a
+/// repeated vertex, against 0 and none before the weld.
+///
+/// Both sides go, never one: dropping a single side would leave the other
+/// unpaired, which is the defect this module exists to remove. Loops of
+/// three or fewer are left alone — removing two from those leaves no ring at
+/// all, and a triangle whose two sides are the same edge is a whole face
+/// that wants deleting, not repairing.
+fn collapse_twin_pair_spurs(topo: &mut Topology) {
+    let loop_ids: Vec<_> = topo.loops.keys().collect();
+    for loop_id in loop_ids {
+        loop {
+            let hes: Vec<_> = topo.loop_half_edges(loop_id).collect();
+            if hes.len() < 4 {
+                break;
+            }
+            let found = hes.iter().enumerate().find_map(|(i, &he)| {
+                let next = hes[(i + 1) % hes.len()];
+                (topo.half_edges[he].twin == Some(next)).then_some((he, next))
+            });
+            let Some((first, second)) = found else { break };
+            // `unlink_half_edge` clears the partner's twin and retires the
+            // shared edge, so the second call sees a lone half-edge.
+            unlink_half_edge(topo, first);
+            unlink_half_edge(topo, second);
+        }
     }
 }
 
@@ -607,6 +656,76 @@ mod tests {
         assert!(topo.half_edges[he1].loop_id.is_none());
         assert_eq!(topo.half_edges[he0].next, Some(he2));
         assert_eq!(topo.half_edges[he2].prev, Some(he0));
+    }
+
+    /// A loop that walks out along an edge and straight back along its twin
+    /// visits one vertex twice, so it is not a boundary — and both existing
+    /// passes let it through: the edges are full length, so
+    /// `collapse_degenerate_half_edges` never looks, and both carry twins, so
+    /// `cleanup_loop_spikes` skips them.
+    #[test]
+    fn a_loop_that_retraces_an_edge_loses_both_halves() {
+        let mut topo = Topology::new();
+        let a = topo.add_vertex(Point3::new(0.0, 0.0, 0.0));
+        let b = topo.add_vertex(Point3::new(1.0, 0.0, 0.0));
+        let c = topo.add_vertex(Point3::new(1.0, 1.0, 0.0));
+        let spur = topo.add_vertex(Point3::new(2.0, 2.0, 0.0));
+
+        // a -> b -> c -> spur -> c -> a: the c..spur edge is walked twice.
+        let he_ab = topo.add_half_edge(a);
+        let he_bc = topo.add_half_edge(b);
+        let out = topo.add_half_edge(c);
+        let back = topo.add_half_edge(spur);
+        let he_ca = topo.add_half_edge(c);
+        let loop_id = topo.add_loop(&[he_ab, he_bc, out, back, he_ca]);
+        topo.add_face(loop_id, 0, vcad_kernel_topo::Orientation::Forward);
+        // The two halves of the retraced edge are each other's twin, which is
+        // exactly what makes the existing passes refuse them.
+        topo.add_edge(out, back);
+
+        collapse_twin_pair_spurs(&mut topo);
+
+        let ring: Vec<_> = topo.loop_half_edges(loop_id).collect();
+        assert_eq!(
+            ring,
+            vec![he_ab, he_bc, he_ca],
+            "the retraced pair should be gone and the rest of the ring intact"
+        );
+        for he in [out, back] {
+            assert!(topo.half_edges[he].loop_id.is_none(), "still in a loop");
+            assert!(topo.half_edges[he].twin.is_none(), "still paired");
+        }
+        assert!(topo.edges.is_empty(), "the shared edge should be retired");
+
+        let visited: Vec<_> = ring.iter().map(|&h| topo.half_edges[h].origin).collect();
+        let mut unique = visited.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(
+            visited.len(),
+            unique.len(),
+            "a vertex is still visited twice"
+        );
+    }
+
+    /// A ring with no retraced edge is left exactly as it was.
+    #[test]
+    fn an_ordinary_loop_is_untouched_by_the_spur_pass() {
+        let mut topo = Topology::new();
+        let a = topo.add_vertex(Point3::new(0.0, 0.0, 0.0));
+        let b = topo.add_vertex(Point3::new(1.0, 0.0, 0.0));
+        let c = topo.add_vertex(Point3::new(1.0, 1.0, 0.0));
+        let d = topo.add_vertex(Point3::new(0.0, 1.0, 0.0));
+        let hes: Vec<_> = [a, b, c, d]
+            .into_iter()
+            .map(|v| topo.add_half_edge(v))
+            .collect();
+        let loop_id = topo.add_loop(&hes);
+        topo.add_face(loop_id, 0, vcad_kernel_topo::Orientation::Forward);
+
+        collapse_twin_pair_spurs(&mut topo);
+
+        assert_eq!(topo.loop_half_edges(loop_id).collect::<Vec<_>>(), hes);
     }
 
     #[test]

@@ -106,6 +106,39 @@ final class CNCFieldTests: XCTestCase {
         XCTAssertEqual(cnc.setup.tabPositions.count, 12, "…and they were placed, not just counted")
     }
 
+    /// `cnc.tool.<n>.<field>` reaches every tool in the list, and the plain
+    /// `cnc.tool.<field>` names still mean the primary end mill.
+    func testTheToolFamilyAddressesEveryToolInTheList() throws {
+        let cnc = CNCWorkspace()
+        cnc.tools = [CNCTool(number: 1, kind: .flatEndMill, diameter: 3.175),
+                     CNCTool(number: 2, kind: .drill, diameter: 2.5)]
+
+        for tool in cnc.tools {
+            for (field, sample) in [("diameter", 4.5), ("fluteLength", 7.0), ("stickout", 21.0)] {
+                let id = "cnc.tool.\(tool.number).\(field)"
+                XCTAssertNotNil(cnc.fieldValue(id), "\(id) does not read")
+                XCTAssertTrue(cnc.setFieldValue(id, to: sample), "\(id) does not set")
+                XCTAssertEqual(try XCTUnwrap(cnc.fieldValue(id)), sample, accuracy: 1e-9, id)
+            }
+            XCTAssertTrue(cnc.setFieldValue("cnc.tool.\(tool.number).flutes", to: 99))
+            XCTAssertEqual(cnc.fieldValue("cnc.tool.\(tool.number).flutes"), 6,
+                           "the stepper's own upper bound, whichever way the value arrives")
+        }
+
+        // The alias: the plain name is the primary end mill, which is T1.
+        let drillBefore = try XCTUnwrap(cnc.fieldValue("cnc.tool.2.diameter"))
+        XCTAssertTrue(cnc.setFieldValue("cnc.tool.diameter", to: 6))
+        XCTAssertEqual(cnc.fieldValue("cnc.tool.1.diameter"), 6)
+        XCTAssertEqual(cnc.fieldValue("cnc.tool.diameter"), 6)
+        XCTAssertEqual(cnc.fieldValue("cnc.tool.2.diameter"), drillBefore,
+                       "the plain name is the end mill's; the drill is untouched")
+
+        // A tool that is not in the list is not a field, rather than a zero.
+        XCTAssertNil(cnc.fieldValue("cnc.tool.7.diameter"))
+        XCTAssertFalse(cnc.setFieldValue("cnc.tool.7.diameter", to: 3))
+        XCTAssertNil(cnc.fieldValue("cnc.tool.1.colour"))
+    }
+
     // MARK: - drift
 
     /// Every `CNCNumber` in the panels names itself, and every name it uses is
@@ -139,6 +172,15 @@ final class CNCFieldTests: XCTestCase {
         // way an accessibility modifier does rather than as an argument.
         found.formUnion(["cnc.tool.flutes", "cnc.tabs.count",
                          "cnc.machine.jogStep", "cnc.machine.jogFeed"])
+        // The tool panel addresses tools by number now that there is a list of
+        // them (`cnc.tool.2.diameter`), which is an interpolated family and so
+        // deliberately unmatched above. The plain `cnc.tool.*` names are kept
+        // as aliases onto the primary end mill — that is what they always
+        // meant, and a script or an assistive tool that already used them goes
+        // on working. `testTheToolFamilyAddressesEveryToolInTheList` is what
+        // guards them; this list records that they are alias names rather than
+        // a panel's own.
+        found.formUnion(["cnc.tool.diameter", "cnc.tool.fluteLength", "cnc.tool.stickout"])
         XCTAssertEqual(found.subtracting(known), [],
                        "these fields are on screen but cannot be set by name")
         XCTAssertEqual(known.subtracting(found), [],
