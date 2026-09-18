@@ -264,32 +264,78 @@ other; a buried one has material on both. Containment is judged against the
 operand meshes (valid solids) by the same three-ray parity vote the mesh
 boolean trusts.
 
-**It works on the case it was built for** — caught at depth 0.0120 mm, routed
-to the fallback, `a_near_miss_fillet_is_not_silently_wrong` passes with
-`VCAD_BURIED_FACE_CHECK=1`. **It is off by default** because it still reports
-six known-good coplanar-contact results in this crate's own suite as buried:
+### Calibrated, sound — and it does not catch the near miss
 
-    overhanging_teeth_have_no_doubled_surface
-    a_contained_coplanar_patch_does_not_double_the_larger_face
-    boss_ring_overhanging_the_bore
-    stacked_rings_face_to_face
-    stacked_rings_interpenetrating
-    zz_blade_union_no_duplicate_faces
+The check is now clean: **zero false positives** across the whole boolean
+suite with `VCAD_BURIED_FACE_CHECK=1`. Getting there took two structural
+fixes, neither of them a tolerance:
 
-Shipping it on would trade one silent wrong answer for six correct results
-turned to soup — the same trade the earlier probe-grid oracle was removed for
-(see `ValidityError::BadVolume`'s doc comment).
+1. **Sample in parameter space, not in 3D.** The obvious construction —
+   centroids of a fan over the loop vertices — puts the sample on a *chord*,
+   which on a cylinder of any size is deep inside the solid. Dumping the
+   firing face on `stacked_rings_face_to_face` showed a sample at
+   (30.697, 0.202, 0.417) with `MeshDistance` reading **0.417 mm to its own
+   operand** — it was never on the face. Averaging the loop vertices' UVs and
+   evaluating the surface there lands on the surface by construction, for
+   planes and quadrics alike. This removed six of the eight false positives
+   in one change.
+2. **Never use the loop winding to pick an outward direction.** A face on the
+   boundary has material on one side and void on the other; a buried one has
+   it on both. That needs a normal *line*, not a normal *direction*. The
+   first attempt used the winding and reported every second face.
 
-Two false-positive causes have already been found and fixed, and they are the
-pattern for the rest: samples built from loop vertices are **chord interiors
-on a curved face**, inside the solid by the chordal sag (fixed by projecting
-each sample onto its face's own surface — this alone recovered
-`twelve_filleted_posts_stay_analytic`), and a sample resting ON the other
-operand is not inside it (fixed by `CONTACT_TOL`). What remains is the
-coplanar-contact family, where both sides of a legitimately retained face are
-operand material. The next step is to dump, for one of those six, which face
-and which sample fires — the same way the post-root corner was pinned to
-three specific resolutions — rather than to widen a tolerance.
+(`CONTACT_TOL`, which excludes a sample resting *on* the other operand rather
+than inside it, survives as a guard but was not what was firing.)
+
+**And with all of that right, it does not fire on the near miss at all.**
+
+That is the finding, and it retracts an earlier claim of mine: the "catch" I
+reported first — a buried face at (23.73, 3.59, **12.1**) — was itself a
+chord-interior artifact. z = 12.1 is not on any face of a part whose features
+run z 11.1…17.1; it is the fan centroid of a wall. The check was firing on its
+own sampling bug, which happened to land on that case.
+
+So the near miss's +0.167 % is **not** a face with material on both sides, and
+the missing-trim model of it is wrong. Whatever puts 7.9 mm³ into that union
+does not leave a buried face behind. The next move is to locate the extra
+volume directly — rasterise the result's caps against the 2D CSG at the
+fillet, the way the stator's lost volume was located — rather than to guess
+at another invariant.
+
+The check stays opt-in until it earns its keep on a case it actually catches.
+It is sound, and the invariant is real; it just has no demonstrated catch yet.
+
+## Retracted: the tangency snap's cost is the snapping, not the lookup
+
+An earlier note here blamed `split::snap_tangential_crossings` for
+re-deriving the tangent carriers from the geometry store on every arc split,
+and proposed handing it the pipeline's once-per-boolean lines instead. That
+was wrong, and the fix made it worse.
+
+Measured on the stator's 57 stages, debug profile, load ~8:
+
+| | solve |
+|---|---|
+| snap off | **30.6 s** |
+| snap on, re-deriving per split | 79.0 s |
+| snap on, consuming the precomputed lines | **104.7 s** |
+
+The re-plumb is a real improvement in structure — the splitter and the repair
+pass now read one set of tangencies instead of deriving it twice, and it
+covers cylinder–plane tangencies the old scan never saw — but it is *slower*,
+because it fires more often. **The cost is the snapping itself**: pinning a
+crossing moves where a face is cut, which makes more sub-faces and more work
+for everything downstream. No amount of making the lookup cheaper touches it.
+
+So the snap is now **opt-in** (`VCAD_TANGENCY_SNAP=1`), and the stator is back
+to 29.8 s. What it buys, on the two-operand reproducer, is `block ∪ ring`
+going from 10 unpaired edges to 6; `ring ∪ block` reaches 0 without it, on the
+repair-side tangency zone alone. A 3.4x solve for four edges is not a trade
+this part can make.
+
+The idea is still right and the machinery is kept: a cheaper form would pin
+only the crossings a tangency actually makes ill-conditioned, rather than
+every crossing near one.
 
 ## Open item: the mesh fallback moves intermediate solids by millimetres
 

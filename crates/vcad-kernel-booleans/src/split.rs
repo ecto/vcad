@@ -1902,7 +1902,6 @@ const TANGENCY_SNAP: f64 = 0.02;
 /// within [`TANGENCY_SNAP`] of it.
 #[allow(clippy::too_many_arguments)]
 fn snap_tangential_crossings(
-    brep: &BRepSolid,
     circle: &vcad_kernel_geom::Circle3d,
     loop_verts: &[Point3],
     poly_2d: &[(f64, f64)],
@@ -1912,45 +1911,54 @@ fn snap_tangential_crossings(
     v_axis: vcad_kernel_math::Vec3,
     intersections: &mut Vec<CirclePolygonIntersection>,
 ) {
-    if intersections.is_empty() || std::env::var_os("VCAD_NO_TANGENCY_SNAP").is_some() {
+    // OPT-IN. Measured on the rana-60 stator's 57 stages, debug profile,
+    // same machine and load:
+    //
+    //     snap off   30.6 s
+    //     snap on   104.7 s
+    //
+    // and it is the snapping that costs, not finding the tangencies — pinning
+    // a crossing moves where the face is cut, which makes more sub-faces and
+    // more work for everything downstream. What it buys, on the two-operand
+    // reproducer, is `block ∪ ring` going from 10 unpaired edges to 6;
+    // `ring ∪ block` reaches 0 without it, on the repair-side tangency zone
+    // alone. A 3.4x solve for four edges is not a trade this part can make.
+    //
+    // Kept because the idea is right and the measurement is the useful part
+    // of it: a cheaper form would pin only the crossings that a tangency
+    // actually makes ill-conditioned, rather than every crossing near one.
+    if intersections.is_empty() || std::env::var_os("VCAD_TANGENCY_SNAP").is_none() {
         return;
     }
     let normal = circle.normal.into_inner();
     let r_big = circle.radius;
 
-    for surface in &brep.geometry.surfaces {
-        let Some(cyl) = surface
-            .as_any()
-            .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
-        else {
-            continue;
-        };
-        // Only a cylinder whose axis is perpendicular to the circle's plane
-        // meets that plane in a circle at all.
-        if cyl.axis.into_inner().cross(normal).norm() > 1e-9 {
-            continue;
-        }
-        // The cylinder's axis, in the face's 2D frame.
-        let d = cyl.center - origin_3d;
-        let axis_2d = (d.dot(u_axis), d.dot(v_axis));
-        let (ax, ay) = (axis_2d.0 - center_2d.0, axis_2d.1 - center_2d.1);
-        let sep = (ax * ax + ay * ay).sqrt();
-        if sep < 1e-12 {
-            continue; // concentric: never tangent
-        }
-        let tangent = (sep - (r_big + cyl.radius)).abs() <= TANGENCY_EPS
-            || (sep - (r_big - cyl.radius).abs()).abs() <= TANGENCY_EPS;
-        if !tangent {
-            continue;
-        }
-        // The touch point lies on the ray from the cutting circle's centre
-        // through the other axis, at the cutting radius — for an internal
-        // tangency as much as for an external one.
-        let touch = (
-            center_2d.0 + r_big * ax / sep,
-            center_2d.1 + r_big * ay / sep,
-        );
+    // The lines the pipeline already found for this boolean, rather than a
+    // fresh scan of the geometry store. Re-deriving them here ran once per
+    // arc split against every surface of a solid that grows to ~500 of them,
+    // and cost the rana-60 stator 79 s against 28.8 s. Same answer, and now
+    // the splitter and the repair pass look at one set of tangencies instead
+    // of two derivations of it.
+    let touches: Vec<(f64, f64)> = crate::tangency::with_current(|lines| {
+        lines
+            .iter()
+            .filter_map(|line| {
+                // Only a touch line parallel to the circle's axis meets this
+                // plane in a point, and only one on the circle matters.
+                if line.dir.cross(normal).norm() > 1e-9 {
+                    return None;
+                }
+                let d = line.point - origin_3d;
+                let p2 = (d.dot(u_axis), d.dot(v_axis));
+                let (dx, dy) = (p2.0 - center_2d.0, p2.1 - center_2d.1);
+                let on_circle =
+                    ((dx * dx + dy * dy).sqrt() - r_big).abs() <= crate::tangency::TANGENCY_EPS;
+                on_circle.then_some(p2)
+            })
+            .collect()
+    });
 
+    for touch in touches {
         // The loop vertex that already represents this corner.
         let Some((vi, vp)) = poly_2d
             .iter()
@@ -2213,7 +2221,6 @@ pub fn split_planar_face_by_arc(
     // the crossing it just computed is meaningless — pin it to the analytic
     // touch point instead. See `snap_tangential_crossings`.
     snap_tangential_crossings(
-        brep,
         circle,
         &loop_verts,
         &poly_2d,
