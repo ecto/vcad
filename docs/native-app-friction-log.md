@@ -130,14 +130,22 @@ roadmap's wave-3 app packages and the pass that joined them
     and a disagreement is a warning that has to be acknowledged — not a
     refusal, because a fixture is legitimately not the part. Being unable to
     compare is itself said out loud: silence there would read as agreement.
+    Caveat: the comparison runs at import only, and the cached section is
+    refetched just when it is missing — so editing the solid *after* importing
+    its outline never re-checks. A stale outline is caught; a freshly-staled
+    one is not.
 17. **Fixed.** "From model…" sets the blank's thickness from the part's own
-    height (`CNCSection.suggestedStockThickness`), so the 6 mm stator plate no
-    longer stays at the 10 mm default; "Place at model top" puts G54 at the
-    part's top whatever height it was modelled at.
-18. **Fixed.** The import sets the stock frame's origin from the outline, and
-    `CNCPlacement` carries the shift and rotation into the request — moving
-    the job *and* the part it is verified against together, so a placed job is
-    still checked against the metal it really cuts.
+    height (`CNCSection.suggestedStockThickness`) *and* work Z0 from the part's
+    top (`zRange.last`), so the 6 mm stator plate modelled at z 11.1–17.1 comes
+    in 6 mm thick with its top at Z0 rather than 10 mm thick at Z0 = 0.
+    **Still open:** "Use model bounds" on the Stock panel is unchanged — it
+    reads RealityKit `visualBounds`, not the section — and a DXF import still
+    leaves the thickness alone, because a DXF has no height to read.
+18. **Fixed.** The import sets the stock frame's origin from the outline in X
+    and Y and from the section in Z, and `CNCPlacement` carries the shift and
+    rotation into the request — moving the job *and* the part it is verified
+    against together, so a placed job is still checked against the metal it
+    really cuts.
 19. **Partly.** Holes between one and two cutter diameters are now bored
     helically, one operation per diameter, so the pilots are machinable the
     moment a small enough cutter is fitted — and changing the cutter re-decides
@@ -159,7 +167,9 @@ roadmap's wave-3 app packages and the pass that joined them
 22. **Fixed (kernel).** A contour whose inward offset collapses because the
     cutter does not fit is an error, not a silently shorter path; the app
     offers "refuse" or "follow the centre line" with a stated wall tolerance,
-    and the cutter-fit report gives the slot clearance per side.
+    and the cutter-fit report gives the slot clearance per side. Caveat: the
+    job's own `notes` come back decoded and are mined only for the spindle
+    dial — the kernel's other warnings are on the wire and never shown.
 23. **Fixed.** `CNCSetupSummary` shows operations, moves, time with
     acceleration and the deepest Z on every Setup panel, with the verification
     verdict under it.
@@ -295,6 +305,11 @@ way, none by looking at the preview.
     of step. `CNCIntegrationTests` pins the enabled state of all ten under an
     unbuilt, a passing and a refused job.
 
+    Still open, narrowly: the readiness *checklist itself* is only rendered in
+    a popover. Its actions and the sentence it leads with are reachable
+    elsewhere — the menu, the machine bar's caption, the `VCAD_STATUS` dump —
+    but the list a screen reader would want to walk is not.
+
     Shortcuts are ⌘ plus a second modifier, never a bare letter (which would
     fire while a number field has focus) and never Return (item 44). The table,
     and what each was checked against:
@@ -318,17 +333,17 @@ way, none by looking at the preview.
     system-reserved: ⌥⌘D (Dock), ⌥⌘H (Hide Others), ⌥⌘M (Minimize All), ⌥⌘T
     (Show Toolbar), ⌥⌘esc. A test asserts every command has a ⌘+modifier
     shortcut, that none is Return, and that no two collide.
-46. Probably fixed, not verified here. `HostWindowHider` sets the host
-    window's alpha to zero and orders it out as soon as it attaches, and every
-    further document opens its own *process* rather than another window in this
-    one, so there should be no blank window and no tabs. Left open because
-    confirming it means watching a running app, not reading the code — and the
-    tabbing mode is still never set explicitly.
+46. **Fixed.** `HostWindowHider.HiderView.viewDidMoveToWindow` sets the host
+    window's `alphaValue` to zero, clears `isRestorable` and orders it out the
+    instant the `WindowGroup` window attaches, and every further document opens
+    its own *process* rather than another window in this one — so there is no
+    blank window to see and no tab to accrue.
 47. **Fixed.** Everything the CNC overlay draws hangs off a `cncRoot` placed at
-    `cnc.origin` — where G54 sits in the model — and the outline import sets
-    that origin from the outline, so the toolpath is drawn *on* the part rather
-    than beside it. "Place at model top" puts it at the part's own top for a
-    part modelled somewhere other than the origin.
+    `cnc.origin` — where G54 sits in the model. X and Y come from the outline;
+    Z comes from the section's own top, which is the line that was missing:
+    without it the blank was the right thickness in the wrong place and the
+    path was drawn 17 mm below the stator until "Place at model top" was
+    pressed by hand. Items 17, 18 and 47 were all that one line.
 48. **Fixed.** The readiness list says "Simulator connected · no machine" when
     it is the Simulator, and the machine bar and header say so too. The
     distinction now reaches the run gate as well: see item 56.
@@ -343,16 +358,21 @@ way, none by looking at the preview.
     or a spoilboard of a given thickness. On a bare bed "break through" is not
     offered at all, and an operation set to it is refused with the reason
     naming what is down there.
-51. **Fixed.** Number fields did not accept accessibility value-setting;
-    typing only worked with the window frontmost, and the sidebar summary
-    ("T1 · Ø …") was the only confirmation that a value took. Every number is
-    now named in one table (`CNCWorkspace.fields`) with `fieldValue(_:)` and
-    `setFieldValue(_:to:)` going through the same model the bindings do —
-    including the invalidation that follows, because a path that changed a
-    number without staling the job would be worse than no path. Four fields in
-    the operation inspector had no identifier at all and fell back to their
-    labels; they are named now. `CNCFieldTests` parses the panels' own sources
-    and fails when a field on screen has no path through the table.
+51. **Partly.** Every number is now named in one table
+    (`CNCWorkspace.fields`) with `fieldValue(_:)` and `setFieldValue(_:to:)`
+    going through the same model the bindings do — including the invalidation
+    that follows, because a path that changed a number without staling the job
+    would be worse than no path. Four fields in the operation inspector had no
+    identifier at all and fell back to their labels; they are named now, and
+    `CNCFieldTests` parses the panels' own sources so a field on screen with no
+    path through the table is a test failure.
+
+    **Still open, and this is the half the item actually asked for:** nothing
+    bridges that table to `NSAccessibility`. `CNCNumber` exposes its label,
+    identifier and value but no setter, and there is no AX element subclass or
+    scripting hook anywhere in the app — so an assistive tool or a script still
+    cannot *write* a value; only the tests can. The model-side half being done
+    is what makes the bridge small, but it has not been built.
 52. **Fixed.** "Apply these feeds to all operations" copies the cutting values
     — and only those; geometry stays put. "Recommend feeds" applies to every
     operation at once.

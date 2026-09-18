@@ -1016,6 +1016,15 @@ final class CNCWorkspace {
             if section.suggestedStockThickness.isFinite, section.suggestedStockThickness > 0 {
                 stockThickness = (section.suggestedStockThickness * 1000).rounded() / 1000
             }
+            // …and the stock top is the part's top. Without this the blank was
+            // the right thickness in the wrong place: `importOutline` sets X
+            // and Y from the outline but kept whatever Z was there, so for a
+            // part modelled at z 11.1–17.1 the toolpath was drawn 17 mm below
+            // the solid and "Place at model top" had to be pressed by hand
+            // (items 17, 18 and 47 were all this one line).
+            if let top = section.zRange.last, top.isFinite {
+                origin.z = (top * 1000).rounded() / 1000
+            }
             outlineMismatch = nil
             return true
         } catch {

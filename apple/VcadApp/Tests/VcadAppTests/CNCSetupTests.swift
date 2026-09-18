@@ -86,11 +86,38 @@ final class CNCSetupTests: XCTestCase {
                        "a part with a B-rep is sectioned from the solid, not the export mesh")
         XCTAssertFalse(section.prismaticVerdict.isEmpty)
 
+        // …and in the right place. The blank being the right thickness in the
+        // wrong place is items 17, 18 and 47: the stock top is Z0, so work Z0
+        // has to land on the part's *top*, or the toolpath is drawn below the
+        // solid and "Place at model top" has to be pressed by hand.
+        let top = try XCTUnwrap(section.zRange.last)
+        XCTAssertEqual(cnc.origin.z, top, accuracy: 0.001,
+                       "work Z0 is the part's top, not wherever Z happened to be")
+        XCTAssertEqual(cnc.origin.z - cnc.stockThickness,
+                       try XCTUnwrap(section.zRange.first), accuracy: 0.01,
+                       "and the blank's underside is the part's underside")
+
         // And it builds a job that is not refused.
         await build(cnc)
         XCTAssertTrue(cnc.blockers.isEmpty, "blocked by: \(cnc.blockers.map(\.text))")
         XCTAssertTrue(cnc.verified, "an outline from the part is something to verify against")
         XCTAssertNotNil(cnc.jobCode)
+    }
+
+    /// The same, for a part modelled away from the origin — the stator's case,
+    /// at z 11.1–17.1 rather than 0–6. This is the one the default Z hid.
+    func testWorkZeroFollowsAPartModelledAwayFromTheOrigin() throws {
+        let cnc = try plateWorkspace()
+        XCTAssertTrue(cnc.importFromModel(), cnc.error ?? "no error")
+        let section = try XCTUnwrap(cnc.modelSection)
+        let top = try XCTUnwrap(section.zRange.last)
+        // The fixture sits on the origin; what matters is that Z came from the
+        // section rather than from the default, so nudging it and re-importing
+        // must land back on the part's top rather than keeping the nudge.
+        cnc.origin.z = top + 25
+        XCTAssertTrue(cnc.importFromModel(), cnc.error ?? "no error")
+        XCTAssertEqual(cnc.origin.z, top, accuracy: 0.001,
+                       "a re-import re-reads the part's top; it does not inherit a stale Z")
     }
 
     /// A torn solid is refused with its gap count and width, and no outline is
