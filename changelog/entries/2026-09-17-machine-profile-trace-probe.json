@@ -1,0 +1,14 @@
+{
+  "id": "2026-09-17-machine-profile-trace-probe",
+  "version": "0.10.0",
+  "date": "2026-09-17",
+  "category": "feat",
+  "title": "The app knows the machine: $$ baseline, travel, trace, skew",
+  "summary": "Manufacture reads the controller's settings on connect, diffs them against a saved baseline, checks the job against travel in machine coordinates, and can trace the bounds and measure how the blank sits.",
+  "details": "On the first real cut the afternoon went to four things the app could not see: the sender's wizard had written $132=100 over a 130 mm Z travel and turned hard limits off, the G54 Z offset was stale and outside travel, the blank was clamped about 10° off the axes, and a clamp was hidden behind the router. The controller answered $$ on every connect and the app threw it in the log. It is now parsed and kept whole: travel per axis, soft and hard limits, pull-off, maximum rates and acceleration, and a diff against a per-machine baseline (the AnoleX's is shipped as data) that names each changed setting with both values — \"$132 Z maximum travel, mm · 130 → 100\". Before Run is enabled the job's swept envelope is placed in machine coordinates through the current work offset and checked against that travel, so \"Job reaches Y +12 mm past the back of travel\" blocks the job instead of being discovered by a limit switch; a machine that has not been homed says that soft limits mean nothing until it is, and ALARM:1 blocks the run until it is homed again, with ALARM:2 and the two probe failures explained in a sentence each. Trace bounds walks the job's rectangle corner by corner at a chosen safe height, pausing at each one with an optional dip to +1, every step behind its own confirmation and feed hold live throughout. Probing now knows what it is touching: a plate or puck of a declared thickness, a slip of paper, or the metal; edges set X0/Y0 with the cutter's radius taken off; and two touches on one edge measure how far the blank is rotated, offered as the job's placement rotation. The readiness list also says when the controller is the Simulator, and which number to set the router's dial to.",
+  "features": [
+    "cam",
+    "manufacturing",
+    "native-app"
+  ]
+}
