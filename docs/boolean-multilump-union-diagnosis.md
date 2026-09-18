@@ -331,6 +331,21 @@ wrong for half its area — and was dropped whole.
 | unpaired edges | 6 | **0** |
 | section at 11.4 / 14.1 / 16.8 | refused, 0.164 mm gap | **closes with no healing**, max boundary 0.00499 mm |
 
+#### Do not lower `MERGE_GENERATORS`
+
+Two populations, measured on this part, and the threshold sits between them
+with room on both sides. If a future arrangement seems to want a smaller
+number, it is asking for a sliver split, and the stator is the counter-example:
+
+| arrangement | generator separation | what it needs |
+|---|---|---|
+| fillet drawn 0.01 mm **off** tangency (a genuine crossing) | **0.294 mm** | two generators — split the wall |
+| fillet drawn **on** tangency, missed by 4-decimal rounding | **0.0154 mm** | `Empty` — leave the wall alone |
+| `MERGE_GENERATORS` | **0.05 mm** | 5.9× below the first, 3.2× above the second |
+
+Lowering it to admit the second population costs +4.5 % of the stator's
+volume and 810 extra unpaired edges. That measurement is below.
+
 **And a designed tangency must still return `Empty`.** Emitting a generator
 for one cost the stator dearly — 7869.6 → 8222.5 mm³ (+4.5 %), 1452 unpaired
 edges against 642, twice the solve time — because the part is *made* of them:
