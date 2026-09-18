@@ -113,6 +113,15 @@ struct WorkspaceHeader: View {
             // first one when nothing is selected.
             .onChange(of: model.selectedPartIndex) { _, index in
                 model.cnc.modelPartIndex = index ?? 0
+                model.cnc.recheckOutlineAgainstModel()
+            }
+            // Item 16's caveat: a part edited after its outline was imported
+            // never re-checked. A finished solve is the moment the part on
+            // screen is a different part, so the comparison runs again — and
+            // `build()` runs it too, so a job is never verified against an
+            // outline the app has not just re-checked.
+            .onChange(of: model.solving) { _, solving in
+                if !solving { model.cnc.recheckOutlineAgainstModel() }
             }
     }
     private var documentLocation: String {
@@ -284,12 +293,12 @@ struct CNCStudioOutline: View {
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
+                // The count only. What a tool change *asks of the operator* is
+                // said in the readiness list and in the Tool panel, which are
+                // the two places it is acted on; a third copy here put the
+                // same two sentences on screen three times at once.
                 Text("\(counted(cnc.tools.count, "tool")) · \(counted(cnc.operations.count, "operation"))")
                     .font(.caption).foregroundStyle(.secondary)
-                if let warning = cnc.toolChangeWarning {
-                    Text(warning).font(.caption).foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
                 if cnc.jobCurrent {
                     Text("~\(CNCWorkspace.durationLabel(cnc.jobDuration)) with acceleration")
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
@@ -468,6 +477,21 @@ struct CNCStudioInspector: View {
             PanelHeader(title: title, systemImage: symbol, onClose: { cnc.rightPanelShown = false })
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Space.m) {
+                    // The Machine stage leads with the readiness checklist.
+                    // It was rendered in a popover and nowhere else — item
+                    // 45's narrow remainder: its actions and its headline
+                    // sentence were reachable from the menu, the bar's caption
+                    // and the status dump, but the *list* a screen reader
+                    // would walk was not. Same view, same `runBlocker`, same
+                    // `CNCCommand` predicates: one source of truth, shown in
+                    // two places. Outside the group below on purpose, because
+                    // that group is disabled while the machine streams and
+                    // this list is exactly what has to stay readable then.
+                    if cnc.mode == .machine {
+                        CNCReadinessList(cnc: cnc, onTrace: { cnc.traceShown = true })
+                            .accessibilityIdentifier("cnc.readiness.section")
+                        Divider()
+                    }
                     if cnc.usesImportedProgram { imported } else { selected }
                     if let error = cnc.error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
                 }
@@ -477,15 +501,17 @@ struct CNCStudioInspector: View {
     }
 
     private var title: String {
+        if cnc.mode == .machine { return "Machine" }
         if cnc.usesImportedProgram { return cnc.importedName }
         switch cnc.selection {
         case .stock: return "Stock"
         case .origin: return "Work origin"
-        case .tool: return "Tool"
+        case .tool: return "Tools"
         case .operation: return cnc.selectedOperation.name
         }
     }
     private var symbol: String {
+        if cnc.mode == .machine { return "gauge.with.dots.needle.bottom.50percent" }
         if cnc.usesImportedProgram { return "doc.text" }
         switch cnc.selection {
         case .stock: return "shippingbox"

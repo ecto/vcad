@@ -195,6 +195,15 @@ struct CNCJobKey: Equatable, Sendable {
     /// acknowledged with one clamp on the blank is not the same job with
     /// another one added.
     var clamps: [[Double]]
+    /// Whether the outline still agrees with the part on screen, and what the
+    /// disagreement says.
+    ///
+    /// In the key because the warning has to be acknowledged again when it
+    /// changes. Without it, a part edited after its outline was imported kept
+    /// the acknowledgement the *old* comparison earned — the outline and the
+    /// clamps are identical, so the key was identical — and a freshly-staled
+    /// outline would have run with a tick beside it (item 16's caveat).
+    var mismatch: String?
 }
 
 /// Timed interpolation of the generated path, independent of controller state.
@@ -595,7 +604,8 @@ final class CNCWorkspace {
                   holes: outline?.holes.map { $0.points.map { [$0.x, $0.y] } } ?? [],
                   placement: effectivePlacement,
                   zero: zeroLocation,
-                  clamps: clamps.map { [$0.x, $0.y, $0.width, $0.height] })
+                  clamps: clamps.map { [$0.x, $0.y, $0.width, $0.height] },
+                  mismatch: outlineMismatch)
     }
     var jobCurrent: Bool {
         if usesImportedProgram { return importedProgram != nil }
@@ -1218,14 +1228,52 @@ final class CNCWorkspace {
     /// is not the part — but one that has to be acknowledged (item 16).
     private(set) var outlineMismatch: String?
 
+    /// What the part on screen was when the outline was last compared against
+    /// it: the document's own bytes and which part was sectioned. The bytes
+    /// are the solve — `camDocument()` hands back the edited JSON, so a
+    /// re-solved part is different bytes — which is why this is the signal
+    /// rather than a revision counter the workspace would have to be told
+    /// about.
+    private var comparedModelDigest: Int?
+
+    /// The part on screen right now, as a number to compare with the above.
+    private func modelDigest() -> Int? {
+        guard let document = modelDocument?() else { return nil }
+        var hasher = Hasher()
+        hasher.combine(document.data)
+        hasher.combine(modelPartIndex)
+        return hasher.finalize()
+    }
+
+    /// Re-run the outline↔solid comparison when the part has changed under an
+    /// outline that was already checked against it.
+    ///
+    /// Item 16 closed the case where the outline was stale at import. Its own
+    /// caveat was the other direction: *"editing the solid after importing its
+    /// outline never re-checks. A stale outline is caught; a freshly-staled
+    /// one is not."* This is that direction. It runs on every build, so the
+    /// answer beside a job is always about the part the job was built from.
+    ///
+    /// Cheap when nothing moved: a hash of the document's bytes decides, and
+    /// the section — which is a kernel call — is only taken when they differ.
+    func recheckOutlineAgainstModel() {
+        guard let outline, modelDocument?() != nil else { return }
+        let digest = modelDigest()
+        guard digest != comparedModelDigest else { return }
+        // The cached section is of the *old* part, so it goes: comparing
+        // against it would be the very mistake this is here to catch.
+        modelSection = nil
+        compareWithModel(outline)
+    }
+
     /// Compare an imported outline against the part on screen, if there is
     /// one. Silent when there is nothing to compare against.
     private func compareWithModel(_ outline: CNCOutline) {
         outlineMismatch = nil
+        comparedModelDigest = modelDigest()
         // A section of the part on screen, taken now: comparing against a
         // stale one would be the very mistake this is here to catch.
-        if modelDocument?() != nil, modelSection == nil,
-           let document = modelDocument?(),
+        if modelSection == nil, let document = modelDocument?(),
            let section = try? CNCCam.section(document, partIndex: modelPartIndex),
            !section.isTorn {
             modelSection = section
@@ -1682,6 +1730,11 @@ final class CNCWorkspace {
 
     func build() {
         guard !generating, !machine.active else { return }
+        // Item 16's caveat: the outline was compared against the solid at
+        // import and never again, so a part edited afterwards machined its old
+        // outline without a word. A build is the moment the answer has to be
+        // about the part the job is really being built from.
+        recheckOutlineAgainstModel()
         guard let request = makeRequest() else { return }
         let key = currentKey
         generating = true; error = nil; setupConfirmed = false; pausePreview(); clearMark()
