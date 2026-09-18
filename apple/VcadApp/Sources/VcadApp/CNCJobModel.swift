@@ -24,10 +24,34 @@ enum CNCOpKind: String, Codable, Sendable, CaseIterable {
     case contourOutside = "contour_outside"
     case contourInside = "contour_inside"
     case helicalBore = "helical_bore"
+    case drill
 
     var isContour: Bool { self == .contourOutside || self == .contourInside }
     /// A cut inside the part outline, rather than the profile that frees it.
-    var isInside: Bool { self == .contourInside || self == .pocket || self == .helicalBore }
+    var isInside: Bool {
+        self == .contourInside || self == .pocket || self == .helicalBore || self == .drill
+    }
+}
+
+/// How a drill gets to depth. The kernel's four cycles, by the names it takes.
+enum CNCDrillCycle: String, Codable, Sendable, CaseIterable, Identifiable {
+    case spot
+    case straight
+    case peck
+    case chipBreak = "chip_break"
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .spot: return "Spot only"
+        case .straight: return "Straight to depth"
+        case .peck: return "Peck · full retract"
+        case .chipBreak: return "Chip break · short retract"
+        }
+    }
+    /// Whether the cycle needs a peck depth. The kernel refuses one that asks
+    /// to peck without saying how deep each peck goes.
+    var needsPeckDepth: Bool { self == .peck || self == .chipBreak }
 }
 
 /// Which way round the cutter walks the wall.
@@ -99,6 +123,12 @@ struct CNCJobOperationRequest: Encodable, Sendable {
     var bottomAllowance: Double?
     var thinSlot: ThinSlot?
     var through: Bool?
+    /// Hole centres for a `drill` op. One operation drills every hole in the
+    /// list, unlike a helical bore, which is one request per hole.
+    var holes: [[Double]]?
+    var cycle: String?
+    var peckDepth: Double?
+    var dwell: Double?
     var order: Int?
     var role: String?
     /// When this operation runs, lower first. An operation without one keeps
@@ -128,7 +158,8 @@ struct CNCJobOperationRequest: Encodable, Sendable {
         case tabHeight = "tab_height"
         case bottomAllowance = "bottom_allowance"
         case thinSlot = "thin_slot"
-        case through, order, role, phase, islands
+        case peckDepth = "peck_depth"
+        case through, holes, cycle, dwell, order, role, phase, islands
     }
 }
 
@@ -144,6 +175,19 @@ struct CNCJobToolRequest: Encodable, Sendable {
         case number, kind, diameter, flutes, stickout
         case fluteLength = "flute_length"
         case centreCutting = "centre_cutting"
+    }
+
+    /// The request body for one entry of the app's tool list.
+    init(_ tool: CNCTool) {
+        number = tool.number
+        kind = tool.kind.rawValue
+        diameter = tool.diameter
+        flutes = tool.flutes
+        // Zero means undeclared, and an absent key is what tells the kernel to
+        // use its own default rather than believing a zero flute length.
+        fluteLength = tool.fluteLength > 0 ? tool.fluteLength : nil
+        stickout = tool.stickout > 0 ? tool.stickout : nil
+        centreCutting = tool.centreCutting
     }
 }
 
@@ -213,7 +257,19 @@ struct CNCJobOptionsRequest: Encodable, Sendable {
     struct ArcFit: Encodable, Sendable { var tolerance: Double }
     /// No changer on this machine: a tool change is an operator stop and a
     /// re-probe, never an `M6` the controller would silently ignore.
-    struct ToolChange: Encodable, Sendable { var type = "manual_pause_reprobe" }
+    ///
+    /// `probeMacro` is the machine profile's own Z-probe sequence when it has
+    /// one. Absent, the kernel writes a comment telling the operator to touch
+    /// off by hand — which is the right default: a macro that is not this
+    /// machine's would drive the spindle into the work.
+    struct ToolChange: Encodable, Sendable {
+        var type = "manual_pause_reprobe"
+        var probeMacro: String?
+        enum CodingKeys: String, CodingKey {
+            case type
+            case probeMacro = "probe_macro"
+        }
+    }
 
     enum CodingKeys: String, CodingKey {
         case arcFit = "arc_fit"
@@ -483,6 +539,20 @@ struct CNCReportEntry<Body: Decodable & Sendable>: Decodable, Sendable {
     var report: Body
 }
 
+/// One tool's own replay of its own passes.
+///
+/// A multi-tool job cannot be judged at one cutter radius: a wall the Ø3.175
+/// profile finished reads as unreached when it is measured against what a Ø2.5
+/// could have got into. So the kernel replays each tool's passes at that
+/// tool's diameter and reports them separately, and the combined verdict
+/// demotes `material_left` to a warning. Showing the per-tool answer is what
+/// makes that demotion legible instead of looking like a check that went soft.
+struct CNCToolVerification: Decodable, Sendable {
+    var tool = 1
+    var diameter = 0.0
+    var verification = CNCVerification()
+}
+
 /// What `vcad_cam_job` answered. Three shapes arrive through this one type:
 /// a validation refusal (`error`, nothing else), a tool-geometry refusal
 /// (`blocked`, `error`, `toolChecks`), and a built job (everything), whose
@@ -503,6 +573,12 @@ struct CNCJobResult: Decodable, Sendable {
     var tabPlacement: [CNCTabPlacement] = []
     var islandClearance: [CNCIslandClearance] = []
     var notes: [CNCJobNote] = []
+    /// The tools this program starts, in the order it starts them. The kernel
+    /// owns the ordering rule — phase first, then tool groups within a phase —
+    /// so this is read, never re-derived.
+    var toolSequence: [Int] = []
+    /// Each tool's own replay, on a job that uses more than one.
+    var verificationByTool: [CNCToolVerification] = []
 
     init() {}
 
@@ -528,11 +604,15 @@ struct CNCJobResult: Decodable, Sendable {
         tabPlacement = try c.decodeIfPresent([CNCTabPlacement].self, forKey: .tabPlacement) ?? []
         islandClearance = try c.decodeIfPresent([CNCIslandClearance].self, forKey: .islandClearance) ?? []
         notes = try c.decodeIfPresent([CNCJobNote].self, forKey: .notes) ?? []
+        toolSequence = try c.decodeIfPresent([Int].self, forKey: .toolSequence) ?? []
+        verificationByTool = try c.decodeIfPresent([CNCToolVerification].self,
+                                                   forKey: .verificationByTool) ?? []
     }
 
     private enum CodingKeys: String, CodingKey {
         case name, blocked, error, gcode, moves, opRanges, duration, toolChecks
         case verification, policy, fit, report, notes, tabPlacement, islandClearance
+        case toolSequence, verificationByTool
     }
 
     /// True when the oracle refused the job, or the request never got that far.

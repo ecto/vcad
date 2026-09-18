@@ -9,6 +9,10 @@ import UniformTypeIdentifiers
 /// how five operations ended up disagreeing about the stock thickness.
 struct CNCSetup: Codable, Equatable, Sendable {
     var kind: CNCOpKind = .face
+    /// Which tool in the job's list cuts this operation (item 19). The kernel
+    /// groups operations by tool inside each phase, so this decides where the
+    /// `M0` pauses fall as much as it decides the cutter.
+    var toolNumber = 1
     var depth = 1.0
     var stepdown = 0.5
     var stepover = 1.5
@@ -20,8 +24,27 @@ struct CNCSetup: Codable, Equatable, Sendable {
     /// Closed polyline in the stock frame, for a contour or a shaped pocket.
     var contour: [[Double]] = []
     /// Bore centres for a helical-bore group, and the bore each one cuts.
+    /// A `drill` op reuses both: the centres are the holes it sinks and the
+    /// diameter is the drill's own, which is the hole it makes.
     var bores: [[Double]] = []
     var boreDiameter = 0.0
+
+    // Drilling (item 19). A hole that matches a drill in the tool list is
+    // sunk on its centre rather than milled round its wall.
+    //
+    // Chip break is the default rather than the full-retract peck, and not
+    // only because it is the better cycle for a 2.5 mm hole in 6 mm of metal
+    // on a router. A full-retract peck rapids back *down* into the hole
+    // between pecks, which is ordinary G83 — but the 2D oracle refuses any
+    // rapid that descends below the stock top, because it has no way to know
+    // the hole is already open. Peck is still offered; it is simply refused,
+    // in the oracle's own words, rather than shipped unverified (item 63).
+    var drillCycle: CNCDrillCycle = .chipBreak
+    /// How deep each peck goes. Zero follows the roughing stepdown, which is
+    /// the number the operator already set for this material and cutter.
+    var peckDepth = 0.0
+    /// Seconds to pause at the bottom of the hole, for a flat-bottomed spot.
+    var drillDwell = 0.0
 
     // Roughing and finishing.
     /// Metal the roughing passes leave on the wall for the finish pass to take.
@@ -111,6 +134,11 @@ enum CNCOpSource: Hashable, Codable, Sendable {
     case opening(hole: Int)
     /// All the circular holes of one diameter, bored in one operation.
     case pilots(key: Int)
+    /// All the circular holes of one diameter that a drill in the list makes,
+    /// sunk in one operation (item 19). A separate case from `pilots` so that
+    /// fitting the drill moves a hole from one to the other instead of
+    /// silently reusing a helical bore's settings for a plunge.
+    case drilled(key: Int)
     case manual
 }
 
@@ -134,6 +162,7 @@ struct CNCOperation: Identifiable, Equatable {
         case .contourOutside: return "circle.dashed"
         case .contourInside: return "circle.dashed.inset.filled"
         case .helicalBore: return "smallcircle.filled.circle"
+        case .drill: return "circle.bottomhalf.filled"
         case .face: return "square.3.layers.3d"
         }
     }
@@ -153,11 +182,10 @@ struct CNCJobKey: Equatable, Sendable {
     var height: Double
     var margin: Double
     var spoilboard: Double?
-    var diameter: Double
-    var flutes: Int
-    var fluteLength: Double
-    var stickout: Double
-    var centreCutting: Bool
+    /// The whole tool list, not just the installed cutter: a job built with a
+    /// Ø2.5 drill in the list is not the same job once it is taken out, even
+    /// when the end mill has not moved.
+    var tools: [CNCTool]
     var outer: [[Double]]
     var holes: [[[Double]]]
     /// Where the part sits on the blank, and where the operator zeroes.
@@ -296,14 +324,89 @@ final class CNCWorkspace {
     var stockMargin: Double? { didSet { setupConfirmed = false; revision += 1 } }
     /// What the blank is sitting on. A bare bed refuses a break-through.
     var underStock: CNCUnderStock = .machineBed { didSet { setupConfirmed = false; revision += 1 } }
-    var toolDiameter = 3.175 {
+    /// The job's tool list (item 19). One entry per cutter the operator will
+    /// fit; the kernel groups operations by tool and writes an `M0` between
+    /// the groups, because this machine has no changer.
+    ///
+    /// The list is the single source of truth: `toolDiameter` and its
+    /// neighbours below are views onto the primary end mill, so the panels,
+    /// the named-field table and the overlay all read the same numbers the
+    /// request is built from.
+    var tools: [CNCTool] = [CNCTool(number: 1, kind: .flatEndMill, diameter: 3.175)] {
         didSet {
-            guard toolDiameter != oldValue else { return }
+            guard tools != oldValue else { return }
             setupConfirmed = false; revision += 1
-            // Item 49: changing the cutter re-decides which holes can be
-            // machined, without a re-import and without losing settings.
+            saveTools()
+            // Item 49, now with a list: changing *any* cutter re-decides which
+            // holes can be machined and which are drilled, without a re-import
+            // and without losing the settings on what survives.
             reconcileOutlineOperations()
             refreshFeedNotes()
+        }
+    }
+    /// Which tool the Tool panel is editing.
+    var selectedToolNumber = 1
+
+    /// How this document's tool list is keyed in defaults. Set by the studio
+    /// from the editor's own document, so a workspace can be driven without
+    /// one in a test.
+    var documentKey: (() -> String?)?
+
+    /// The primary cutter: the first end mill in the list, or the first tool
+    /// if somehow there is no end mill. Everything that used to mean "the one
+    /// installed tool" means this.
+    var primaryToolIndex: Int {
+        tools.firstIndex { $0.kind.mills } ?? 0
+    }
+
+    /// Edit a tool by number, through one path so the `didSet` above fires
+    /// once per edit rather than per field.
+    func updateTool(number: Int, _ change: (inout CNCTool) -> Void) {
+        guard let index = tools.firstIndex(where: { $0.number == number }) else { return }
+        var copy = tools
+        change(&copy[index])
+        tools = copy
+    }
+
+    /// Add a tool and select it. Returns the number it was given.
+    @discardableResult
+    func addTool(kind: CNCToolKind = .drill, diameter: Double = 2.5) -> Int {
+        let number = nextToolNumber
+        var copy = tools
+        copy.append(CNCTool(number: number, kind: kind, diameter: diameter))
+        tools = copy.sorted { $0.number < $1.number }
+        selectedToolNumber = number
+        return number
+    }
+
+    /// Remove a tool. The last one cannot go — an operation with no tool is
+    /// not a thing the job can be asked to build.
+    @discardableResult
+    func removeTool(number: Int) -> Bool {
+        guard tools.count > 1, tools.contains(where: { $0.number == number }) else { return false }
+        // Operations move to a tool that exists rather than being left pointing
+        // at one that does not: the kernel refuses an unknown tool by name, and
+        // an operation silently keeping a dead number would refuse the whole
+        // job with a message about a tool nobody can see.
+        let fallback = tools.first { $0.number != number }?.number ?? 1
+        for i in operations.indices where operations[i].setup.toolNumber == number {
+            operations[i].setup.toolNumber = fallback
+        }
+        tools.removeAll { $0.number == number }
+        if selectedToolNumber == number { selectedToolNumber = tools[0].number }
+        job = nil; builtKey = nil
+        return true
+    }
+
+    /// The primary end mill's diameter. Kept as a property rather than a
+    /// lookup at every call site because it is read from the overlay, the
+    /// field table, the envelope and the status dump.
+    var toolDiameter: Double {
+        get { tools.indices.contains(primaryToolIndex) ? tools[primaryToolIndex].diameter : 3.175 }
+        set {
+            guard tools.indices.contains(primaryToolIndex),
+                  tools[primaryToolIndex].diameter != newValue else { return }
+            tools[primaryToolIndex].diameter = newValue
         }
     }
 
@@ -330,16 +433,30 @@ final class CNCWorkspace {
     /// What the kernel makes of the numbers in the selected operation right
     /// now — the second opinion beside hand-typed feeds.
     private(set) var feedNotes: [CNCFeedNote] = []
-    var toolFlutes = 2 { didSet { setupConfirmed = false; revision += 1; refreshFeedNotes() } }
-    /// Whether the cutter cuts across its own centre. A tool that does not
-    /// cannot plunge, and the job says so rather than finding out in metal.
-    var toolCentreCutting = true { didSet { setupConfirmed = false; revision += 1 } }
-    /// Usable cutting length. Zero means "not declared", and the job says so
+    /// The primary end mill's flutes, cutting length, stickout and whether it
+    /// cuts on its centre — views onto the tool list, as `toolDiameter` is.
+    /// Zero means "not declared" for the two lengths, and the job says so
     /// rather than assuming the flutes are long enough for the cut.
-    var toolFluteLength = 0.0 { didSet { setupConfirmed = false; revision += 1 } }
-    /// How far the tool stands out of the holder. Same rule: undeclared means
-    /// the holder-into-stock check cannot run, and the job warns.
-    var toolStickout = 0.0 { didSet { setupConfirmed = false; revision += 1 } }
+    var toolFlutes: Int {
+        get { tools.indices.contains(primaryToolIndex) ? tools[primaryToolIndex].flutes : 2 }
+        set { guard tools.indices.contains(primaryToolIndex) else { return }
+              tools[primaryToolIndex].flutes = newValue }
+    }
+    var toolCentreCutting: Bool {
+        get { tools.indices.contains(primaryToolIndex) ? tools[primaryToolIndex].centreCutting : true }
+        set { guard tools.indices.contains(primaryToolIndex) else { return }
+              tools[primaryToolIndex].centreCutting = newValue }
+    }
+    var toolFluteLength: Double {
+        get { tools.indices.contains(primaryToolIndex) ? tools[primaryToolIndex].fluteLength : 0 }
+        set { guard tools.indices.contains(primaryToolIndex) else { return }
+              tools[primaryToolIndex].fluteLength = newValue }
+    }
+    var toolStickout: Double {
+        get { tools.indices.contains(primaryToolIndex) ? tools[primaryToolIndex].stickout : 0 }
+        set { guard tools.indices.contains(primaryToolIndex) else { return }
+              tools[primaryToolIndex].stickout = newValue }
+    }
 
     /// The margin the blank needs when the user has not set one: enough for the
     /// cutter to run right around the part and still stand on material.
@@ -473,11 +590,7 @@ final class CNCWorkspace {
                   width: stockWidth, height: stockHeight,
                   margin: effectiveMargin,
                   spoilboard: underStock.thickness,
-                  diameter: toolDiameter,
-                  flutes: toolFlutes,
-                  fluteLength: toolFluteLength,
-                  stickout: toolStickout,
-                  centreCutting: toolCentreCutting,
+                  tools: tools,
                   outer: outline?.outer.points.map { [$0.x, $0.y] } ?? [],
                   holes: outline?.holes.map { $0.points.map { [$0.x, $0.y] } } ?? [],
                   placement: effectivePlacement,
@@ -789,6 +902,7 @@ final class CNCWorkspace {
         case .contourOutside: return "Outside profile"
         case .contourInside: return "Inside profile"
         case .helicalBore: return "Bore"
+        case .drill: return "Drill"
         }
     }
     func removeSelectedOperation() {
@@ -816,13 +930,31 @@ final class CNCWorkspace {
 
     private(set) var outline: CNCOutline?
 
-    /// Circular holes too small for the installed cutter. Derived, never
-    /// stored: change the tool and this answer changes with it.
+    /// Circular holes no cutter in the list can mill *and* no drill in it can
+    /// make. Derived, never stored: change a tool and this answer changes with
+    /// it (item 49), and adding the right drill empties it (item 19).
+    ///
+    /// The rule in one sentence: a hole narrower than the smallest end mill
+    /// has to be drilled, so it is unmachinable exactly when the list has no
+    /// drill that size.
     var unmachinableHoles: [(index: Int, diameter: Double)] {
         guard let outline else { return [] }
+        let millFloor = smallestEndMill?.diameter ?? toolDiameter
         return outline.circularHoles
-            .filter { $0.diameter <= toolDiameter + 1e-9 }
+            .filter { $0.diameter <= millFloor + 1e-9 && drill(for: $0.diameter) == nil }
             .map { (index: $0.index, diameter: $0.diameter) }
+    }
+
+    /// Circular holes that are drilled: too small to mill, but matching a
+    /// drill in the tool list. Same derivation, opposite answer.
+    var drilledHoles: [(index: Int, diameter: Double, tool: Int)] {
+        guard let outline else { return [] }
+        let millFloor = smallestEndMill?.diameter ?? toolDiameter
+        return outline.circularHoles.compactMap { hole in
+            guard hole.diameter <= millFloor + 1e-9,
+                  let bit = drill(for: hole.diameter) else { return nil }
+            return (index: hole.index, diameter: hole.diameter, tool: bit.number)
+        }
     }
 
     func importOutlineFile() {
@@ -876,18 +1008,53 @@ final class CNCWorkspace {
         var base = CNCSetup()
         base.apply(values)
         base.depth = stockThickness
+        let mill = smallestEndMill
+        let millDiameter = mill?.diameter ?? toolDiameter
+        base.toolNumber = mill?.number ?? tools.first?.number ?? 1
         // A pass cannot step over further than the cutter's radius without
         // moving through metal no earlier pass reached, so the default follows
         // the tool rather than a number left over from another job.
-        base.stepover = min(base.stepover, 0.45 * toolDiameter)
+        base.stepover = min(base.stepover, 0.45 * millDiameter)
         var ops: [CNCOperation] = []
+
+        // A hole no end mill fits into, that a drill in the list makes, is
+        // drilled: one operation per drill, however many holes share it
+        // (item 19). This runs before the bores because it claims the holes
+        // that are too small to mill, which is exactly the set the helical
+        // bore could never reach.
+        let circles = outline.circularHoles
+        var claimed = Set<Int>()
+        var drillGroups: [Int: [(index: Int, centre: CGPoint, diameter: Double)]] = [:]
+        let drilled = drilledHoles
+        for c in circles where drilled.contains(where: { $0.index == c.index }) {
+            drillGroups[Int((c.diameter * 100).rounded()), default: []].append(c)
+        }
+        for key in drillGroups.keys.sorted() {
+            let group = drillGroups[key]!
+            let size = group.map(\.diameter).reduce(0, +) / Double(group.count)
+            guard let bit = drill(for: size) else { continue }
+            var spec = base
+            spec.kind = .drill
+            spec.toolNumber = bit.number
+            spec.bores = group.map { [Double($0.centre.x), Double($0.centre.y)] }
+            // The hole is the drill's own size, not the outline's rounding of
+            // it: the drill is what makes the hole, and the request has to say
+            // the same number the tool list does or the kernel's fit check
+            // compares a tool against a hole it was never going to cut.
+            spec.boreDiameter = bit.diameter
+            // Through the plate and into the spoilboard only if one is
+            // declared — the same rule every other through cut follows
+            // (item 50). On a bare bed the drill stops at the underside.
+            spec.bottomAllowance = 0
+            group.forEach { claimed.insert($0.index) }
+            ops.append(CNCOperation(setup: spec, source: .drilled(key: key),
+                                    label: Self.drillLabel(diameter: bit.diameter, count: group.count)))
+        }
 
         // Circles wider than the cutter but narrower than two of it are bored
         // helically: one operation per diameter, however many holes share it.
-        let circles = outline.circularHoles
-        var bored = Set<Int>()
         var groups: [Int: [(index: Int, centre: CGPoint, diameter: Double)]] = [:]
-        for c in circles where c.diameter > toolDiameter + 1e-9 && c.diameter < 2 * toolDiameter {
+        for c in circles where c.diameter > millDiameter + 1e-9 && c.diameter < 2 * millDiameter {
             groups[Int((c.diameter * 100).rounded()), default: []].append(c)
         }
         for key in groups.keys.sorted() {
@@ -896,14 +1063,14 @@ final class CNCWorkspace {
             spec.kind = .helicalBore
             spec.bores = group.map { [Double($0.centre.x), Double($0.centre.y)] }
             spec.boreDiameter = group.map(\.diameter).reduce(0, +) / Double(group.count)
-            group.forEach { bored.insert($0.index) }
+            group.forEach { claimed.insert($0.index) }
             ops.append(CNCOperation(setup: spec, source: .pilots(key: key),
                                     label: Self.pilotLabel(diameter: spec.boreDiameter, count: group.count)))
         }
 
         // Everything else inside the part is an opening, cut out by default.
         let tooSmall = Set(unmachinableHoles.map(\.index))
-        for (i, hole) in outline.holes.enumerated() where !bored.contains(i) && !tooSmall.contains(i) {
+        for (i, hole) in outline.holes.enumerated() where !claimed.contains(i) && !tooSmall.contains(i) {
             var spec = base
             spec.kind = .contourInside
             spec.contour = hole.points.map { [Double($0.x), Double($0.y)] }
@@ -952,6 +1119,10 @@ final class CNCWorkspace {
     static func pilotLabel(diameter: Double, count: Int) -> String {
         let size = ((diameter * 100).rounded() / 100).formatted()
         return count == 1 ? "Pilot Ø\(size)" : "Pilot Ø\(size) × \(count)"
+    }
+    static func drillLabel(diameter: Double, count: Int) -> String {
+        let size = ((diameter * 100).rounded() / 100).formatted()
+        return count == 1 ? "Drill Ø\(size)" : "Drill Ø\(size) × \(count)"
     }
     static func openingLabel(_ hole: CNCLoop) -> String {
         if let circle = hole.circle {
@@ -1099,7 +1270,9 @@ final class CNCWorkspace {
         switch kind {
         case .face: return "profile"
         case .pocket: return "pocket"
-        case .helicalBore: return "slot"
+        // A drill sinks on its own centre, which is the deepest, most
+        // buried cut in the table: a slot is the right entry for it too.
+        case .helicalBore, .drill: return "slot"
         case .contourInside, .contourOutside: return "slot"
         }
     }
@@ -1581,6 +1754,12 @@ final class CNCWorkspace {
         guard !requests.isEmpty else { error = "Add an operation before building the job."; return nil }
 
         var options = CNCJobOptionsRequest()
+        // No changer on this machine, so every tool change is an operator stop
+        // and a re-probe (item 19). The probe macro comes from the machine
+        // profile when it has one; without it the kernel writes the touch-off
+        // instruction as a comment, which is the safe default — a macro from
+        // another machine would drive the spindle into the work.
+        options.toolChange = CNCJobOptionsRequest.ToolChange(probeMacro: toolChangeProbeMacro)
         // One job, one safe height: the tallest clearance any operation asks
         // for, so a travel move never crosses at another operation's lower one.
         let clearance = operations.map(\.setup.clearance).filter { $0.isFinite && $0 > 0 }.max() ?? 5
@@ -1621,12 +1800,29 @@ final class CNCWorkspace {
                                       margin: effectiveMargin,
                                       spoilboard: underStock.thickness),
             machine: machineRequest,
-            tools: [CNCJobToolRequest(diameter: toolDiameter, flutes: toolFlutes,
-                                      fluteLength: toolFluteLength > 0 ? toolFluteLength : nil,
-                                      stickout: toolStickout > 0 ? toolStickout : nil,
-                                      centreCutting: toolCentreCutting)],
+            // Every tool in the list, not just the one an operation happens to
+            // name: the kernel refuses an operation whose tool it cannot find,
+            // and sending the list is also what lets it write the change
+            // prompt with the next cutter's real name.
+            tools: tools.map(CNCJobToolRequest.init),
             operations: requests,
             options: options)
+    }
+
+    /// The machine profile's own Z-probe sequence, for the tool-change pause.
+    ///
+    /// Taken from a saved macro named for probing, because that is where this
+    /// app already keeps a machine-specific command the operator wrote and
+    /// trusts. Nothing is invented: with no such macro the job says "touch off
+    /// and set G54 Z0 before resuming" in words instead.
+    var toolChangeProbeMacro: String? {
+        let wanted = macros.first {
+            let name = $0.name.lowercased()
+            return name.contains("probe") && name.contains("z")
+        }
+        guard let command = wanted?.command.trimmingCharacters(in: .whitespacesAndNewlines),
+              !command.isEmpty else { return nil }
+        return command
     }
 
     private func requestBodies(for operation: CNCOperation, at position: Int) -> [CNCJobOperationRequest] {
@@ -1635,6 +1831,9 @@ final class CNCWorkspace {
             var r = CNCJobOperationRequest(name: name, kind: kind,
                                            depth: s.depth, stepdown: s.stepdown,
                                            feed: s.feed, plunge: s.plunge, rpm: s.rpm)
+            // Which cutter runs this operation. The kernel groups by it, so
+            // this is also what decides where the `M0` pauses fall.
+            r.tool = tool(number: s.toolNumber) != nil ? s.toolNumber : (tools.first?.number ?? 1)
             r.stepover = kind == .face || kind == .pocket ? s.stepover : nil
             r.bottomAllowance = s.bottomAllowance
             r.order = position
@@ -1696,6 +1895,27 @@ final class CNCWorkspace {
             }
             r.thinSlot = .init(strategy: s.thinSlot.rawValue,
                                tolerance: s.thinSlot == .centreLine ? s.thinSlotTolerance : nil)
+            return [r]
+        case .drill:
+            // One operation drills every hole in the list, unlike a helical
+            // bore, which is one request per hole — so `requestCount` says 1
+            // and the moves for all of them come back under one range.
+            let centres = s.bores.filter { $0.count >= 2 }
+            guard !centres.isEmpty else { return [] }
+            var r = common(.drill, name: operation.name)
+            r.holes = centres
+            r.diameter = s.boreDiameter > 0 ? s.boreDiameter : nil
+            r.cycle = s.drillCycle.rawValue
+            // A peck depth of zero means "follow the roughing stepdown", which
+            // is the number already set for this material and cutter. The
+            // kernel refuses a peck cycle with no depth, so it is filled in
+            // here rather than left for it to reject.
+            if s.drillCycle.needsPeckDepth {
+                let peck = s.peckDepth > 0 ? s.peckDepth : s.stepdown
+                r.peckDepth = peck > 0 ? peck : nil
+            }
+            r.dwell = s.drillDwell > 0 ? s.drillDwell : nil
+            r.through = s.bottomAllowance < 0 ? true : nil
             return [r]
         case .helicalBore:
             let centres = s.bores
