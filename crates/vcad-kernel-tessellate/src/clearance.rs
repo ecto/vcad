@@ -893,20 +893,28 @@ fn dist_sq(a: [f64; 3], b: [f64; 3]) -> f64 {
 
 /// Does `from`'s surface stay within `limit` of `to`'s?
 ///
-/// Returns `Some(distance)` for the first sample that does not — the caller
-/// only needs to know whether a pass went too far, so there is no reason to
-/// finish measuring a surface that has already failed. On the answer the
-/// repair loop actually wants (a pass that behaved) this costs the same as
+/// Returns `Some((distance, point))` for the first sample that does not — the
+/// caller only needs to know whether a pass went too far, so there is no
+/// reason to finish measuring a surface that has already failed. On the answer
+/// the repair loop actually wants (a pass that behaved) this costs the same as
 /// the full scan; on one that tore, it stops at the first torn triangle.
 /// Worth the asymmetry: the full scan over every pass of every iteration put
 /// the torture corpus's `chain-13` over its 20 s budget.
+///
+/// The direction is the whole meaning. `(before, after)` asks "is any of the
+/// surface I had still missing?" — surface LOST. `(after, before)` asks "is
+/// any of the surface I now have somewhere nothing was?" — surface ADDED, a
+/// fill spanning a gap that is really there. The shape guard runs both: one
+/// alone is blind to half of what a repair can do to a part, which is how a
+/// slit bridge could cap a 1.5 mm slot mouth and report a watertight export.
+/// The returned point is where it failed, so a message can say where.
 pub(crate) fn surface_moved_beyond(
     from: &TriangleMesh,
     to: &TriangleMesh,
     limit: f64,
-) -> Option<f64> {
+) -> Option<(f64, [f64; 3])> {
     let Some(bvh) = TriBvh::build(to) else {
-        return (!from.indices.is_empty()).then_some(f64::INFINITY);
+        return (!from.indices.is_empty()).then_some((f64::INFINITY, [0.0; 3]));
     };
     let v = |i: u32| -> [f64; 3] {
         let k = i as usize * 3;
@@ -926,7 +934,7 @@ pub(crate) fn surface_moved_beyond(
         for p in [a, b, c, centroid] {
             let d = point_mesh_closest(p, &bvh).0;
             if d > limit {
-                return Some(d);
+                return Some((d, p));
             }
         }
     }
