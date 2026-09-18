@@ -307,6 +307,56 @@ enum SolidRepr {
 /// A 3D solid geometry object.
 ///
 /// Solids can be created from primitives, combined with CSG boolean operations,
+/// A volume, and whether the shell it was measured from can support it.
+///
+/// The divergence theorem needs a closed surface. Given an open one it
+/// still returns a number, wrong by the flux through the hole — and that
+/// error scales with the hole's distance from the origin, not with its size,
+/// so a sliver of missing wall far from centre can be worth several cubic
+/// millimetres. Carrying the closedness with the number is what makes the
+/// "right part, wrong number" class visible instead of silent.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VolumeReport {
+    /// Volume in mm³, by the divergence theorem over the tessellation.
+    pub volume: f64,
+    /// Directed edges with no opposite-direction partner. Zero for a closed,
+    /// consistently oriented surface.
+    pub open_edges: usize,
+    /// Undirected edges shared by more than two triangles — doubled surface,
+    /// which the signed volume hides because the two copies cancel.
+    pub over_used_edges: usize,
+    /// Triangles the measurement was taken over.
+    pub triangles: usize,
+}
+
+impl VolumeReport {
+    /// Is the shell closed, so the volume is exact for this tessellation?
+    pub fn closed(&self) -> bool {
+        self.open_edges == 0
+    }
+
+    /// One line for a user, or `None` when the volume needs no qualification.
+    ///
+    /// Consumers that show a volume, a mass or a price should print this
+    /// beside it rather than the bare figure.
+    pub fn caveat(&self) -> Option<String> {
+        if self.closed() && self.over_used_edges == 0 {
+            return None;
+        }
+        let mut parts = Vec::new();
+        if self.open_edges > 0 {
+            parts.push(format!("{} open edge(s)", self.open_edges));
+        }
+        if self.over_used_edges > 0 {
+            parts.push(format!("{} doubled edge(s)", self.over_used_edges));
+        }
+        Some(format!(
+            "shell not closed ({}): volume is approximate",
+            parts.join(", ")
+        ))
+    }
+}
+
 /// and transformed. The tessellation to triangle meshes is done on demand.
 #[derive(Debug, Clone)]
 pub struct Solid {
@@ -1587,9 +1637,37 @@ impl Solid {
     }
 
     /// Compute the volume of the solid from its triangle mesh.
+    ///
+    /// Returns the number and nothing else, which is why
+    /// [`Solid::volume_report`] exists: a volume from an unclosed shell is a
+    /// guess, and every consumer that shows one to a user should say so.
     pub fn volume(&self) -> f64 {
         let mesh = self.to_mesh(self.segments);
         compute_volume(&mesh)
+    }
+
+    /// Volume, with whether the shell it was measured from is closed.
+    ///
+    /// The divergence theorem needs a closed surface. Given an open one it
+    /// still returns a number, and the number is wrong by the flux through
+    /// the hole — which is not small and not random: a missing wall of
+    /// 0.98 mm² at r 24 on the rana-60 stator's near-tangent fillet made a
+    /// 4726.91 mm³ union report 4734.78, +0.167 %, while the part's actual
+    /// shape was right to 0.005 mm (`docs/boolean-multilump-union-diagnosis.md`).
+    ///
+    /// That class — right part, wrong number — is invisible unless the number
+    /// travels with its provenance. Anything that puts a volume, a mass or a
+    /// quote in front of a user should call this and pass
+    /// [`VolumeReport::caveat`] on.
+    pub fn volume_report(&self) -> VolumeReport {
+        let mesh = self.to_mesh(self.segments);
+        let report = vcad_kernel_booleans::mesh_report(&mesh);
+        VolumeReport {
+            volume: compute_volume(&mesh),
+            open_edges: report.open_edges,
+            over_used_edges: report.overused_edges,
+            triangles: report.triangles,
+        }
     }
 
     /// Compute the surface area of the solid from its triangle mesh.
