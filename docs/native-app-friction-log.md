@@ -2,8 +2,10 @@
 
 Beta-user notes from one real job: open the rana-60-cnc stator in the native
 Mac app and machine it on the Anolex 4030. Logged 2026-09-16/17. Items marked
-**fixed** landed on `claude/vcad-ui-polish-brainstorm-5879d5`; everything else
-is open.
+**fixed** are done and say how; everything else is open. The first ones landed
+on `claude/vcad-ui-polish-brainstorm-5879d5`, the rest through the CAM
+roadmap's wave-3 app packages and the pass that joined them
+(`cam/w3-app-integrate`, 2026-09-18) — which found items 55–62 of its own.
 
 ## Opening files
 
@@ -121,33 +123,50 @@ is open.
     width × height); the part's outline was never used. Contour operations
     (outside/inside along a closed polyline, with holding tabs) now exist, fed
     by a DXF outline import.
-16. The outline is a separate file from the part. Nothing checks the DXF
-    against the loaded solid (same bounds, same holes), so a stale outline
-    machines silently.
-17. Stock and origin are manual. Importing an outline sets stock X/Y from its
-    extents but leaves thickness at the 10 mm default (the stator plate is
-    6 mm); "Use model bounds" reads RealityKit bounds, and the stator is
-    modelled at z 11.1–17.1 (its place in the can), so stock top ≠ part top
-    until "Place at model top".
-18. Part coordinates are centred on the origin while CAM assumes XY lower-left
-    at 0 with stock top Z0. Nothing translates the part into the stock frame;
-    the outline import does it for the DXF only.
-19. Single tool only: the three M3 pilots (Ø2.5) are smaller than the Ø3.175
-    end mill and there is no drill op, so they cannot be machined in the app.
-    The import now refuses them with a message rather than dropping them.
-20. Contour CAM cuts the full stock thickness in 0.5 mm stepdowns (12 passes,
-    about 17.5 min for the stator). No roughing/finishing split, no
-    stock-to-leave, no ramp or helix entry, no lead-in; the estimate treats
-    rapids at a fixed 3000 mm/min.
-21. Tabs are a count (3 × 4 mm × 1 mm by default) placed by the kernel; the
-    user cannot see or move them in the viewport before cutting.
-22. Bore-and-slots is one inside contour. The 5 mm slots between posts are only
-    1.8 mm wider than the cutter, and nothing warns when a slot is narrower
-    than the tool — it would simply not be cut.
-23. The toolpath preview is reachable only after Generate, in the Toolpaths
-    stage; Setup gives no summary of what was generated (moves, time, depth).
-24. Nothing confirms an import succeeded except a small caption in the
-    outline; the inspector should jump to the new operation.
+16. **Fixed.** The outline was a separate file from the part and nothing
+    checked the DXF against the loaded solid, so a stale outline machined
+    silently. Every import is now compared against a section of the part on
+    screen (`CNCWorkspace.compareWithModel`, via `vcad_cam_compare_outline`),
+    and a disagreement is a warning that has to be acknowledged — not a
+    refusal, because a fixture is legitimately not the part. Being unable to
+    compare is itself said out loud: silence there would read as agreement.
+17. **Fixed.** "From model…" sets the blank's thickness from the part's own
+    height (`CNCSection.suggestedStockThickness`), so the 6 mm stator plate no
+    longer stays at the 10 mm default; "Place at model top" puts G54 at the
+    part's top whatever height it was modelled at.
+18. **Fixed.** The import sets the stock frame's origin from the outline, and
+    `CNCPlacement` carries the shift and rotation into the request — moving
+    the job *and* the part it is verified against together, so a placed job is
+    still checked against the metal it really cuts.
+19. **Partly.** Holes between one and two cutter diameters are now bored
+    helically, one operation per diameter, so the pilots are machinable the
+    moment a small enough cutter is fitted — and changing the cutter re-decides
+    that without a re-import (item 49). **Still open:** one tool per job. There
+    is no drill op and no tool change in the app, so a job needing both a
+    Ø3.175 profile and Ø2.5 pilots is still two jobs. The kernel has the drill
+    ops and multi-tool assembly; the app does not send them.
+20. **Fixed.** Roughing/finishing split with stock-to-leave, a configurable
+    number of finish stepdowns, an optional spring pass and separate finishing
+    feed; ramp-along-contour or straight-down entry with a ramp angle, and
+    tangential lead-in/out. The time estimate is the kernel's accel-aware one
+    (`duration.accelAwareS`), not rapids at a flat 3000 mm/min.
+21. **Fixed.** Tab handles are drawn on the contour (`cncTabHandle-…` in
+    `syncCNCOverlay`) and can be dragged in the viewport; the same positions
+    are typed as fractions in the inspector, and both go through
+    `CNCWorkspace.moveTab`. Where a tab *landed* is read back from the job's
+    own tab audit, because the kernel settles tabs onto straight stretches and
+    the drawn contour and the cutter's offset loop are a rotation apart.
+22. **Fixed (kernel).** A contour whose inward offset collapses because the
+    cutter does not fit is an error, not a silently shorter path; the app
+    offers "refuse" or "follow the centre line" with a stated wall tolerance,
+    and the cutter-fit report gives the slot clearance per side.
+23. **Fixed.** `CNCSetupSummary` shows operations, moves, time with
+    acceleration and the deepest Z on every Setup panel, with the verification
+    verdict under it.
+24. **Fixed.** An import selects the first operation it created
+    (`select(.operation(operations[0].id))`), which brings the inspector to it;
+    a refusal and an outline mismatch are shown in the job outline rather than
+    as a caption.
 25. **Fixed.** The bottom panel said "Disconnected" three times and carried the
     connection form, overrides and setup checklist twice each. It is now one
     machine bar (state, position, WCS, jog/zero/probe/overrides, readiness,
@@ -175,10 +194,18 @@ is open.
     triangle soup (faces no longer selectable) opens and the viewport says nothing;
     the kernel already records the loss (`Solid::provenance`,
     `BooleanReport`), the app just never surfaces it.
-31. Verifying the app blind is slow: the editor window is borderless, so it
-    has no accessibility window, no Window-menu entry and no title to query.
-    A `VCAD_STATUS` dump (document, workspace, solve state) on a signal or a
-    debug menu item would have saved an hour here.
+31. **Fixed.** Verifying the app blind was slow: the editor window is
+    borderless, so it has no accessibility window, no Window-menu entry and no
+    title to query. `kill -USR1 <pid>`, or Help ▸ Debug ▸ Dump Status, now
+    writes one JSON document and prints its path to stderr: document and solve
+    state, the workspace, the job (operations, blocked, blockers, warnings, the
+    verification headline, whether there is any G-code, and why Run will not
+    go), the machine (connection, the `$$` profile, homed, what changed since
+    baseline, the alarm) and ncSender. `VCAD_STATUS` names the file; without it
+    the name carries the pid, so two instances cannot overwrite each other's.
+    It is a report, never a control surface — nothing in it moves a machine,
+    changes a setting or starts a build — and the camera URL, which carries
+    `user:pass@`, is never in it.
 
 ## Getting ready to cut (2026-09-17, second session)
 
@@ -217,30 +244,32 @@ way, none by looking at the preview.
     nothing; it is now an error. The stator's slot mouths are 3.87 mm: a
     Ø3.175 cutter passes with 0.35 mm a side, anything from Ø3.9 up does not.
     (Item 22's "5 mm slots" is the post width; the gap is what matters.)
-37. There is no way to get the outline out of the solid. The lost DXF was
-    regenerated by evaluating the loon source in 2D with shapely, outside
-    vcad (`~/Documents/ChatGPT/home/cnc/stator/loon_outline.py`). A
-    "section at Z → DXF/contour" in the kernel would close this and item 16.
-38. The part was drawn for a Ø2 cutter (R1.05 inside fillets). With Ø3.175,
-    24 inside corners and 8 outside ones keep up to 0.29 mm of extra metal
-    (10.8 mm² in all). Nothing reports corners the cutter cannot reach; the
-    eight outside ones are where the clocking tabs meet the ring, i.e. on a
-    mating surface.
-39. Inside contours get no tabs and there is no pocketing of the waste, so
-    the stator's Ø27.6 bore slug comes free on the last pass next to a
-    Ø3.175 cutter.
-40. A through cut stops exactly at the stock's underside; a depth greater
-    than the thickness is rejected, so there is no break-through allowance
-    short of lying about the thickness.
-41. Work zero is the lower-left of the outline's bounding box, which is
-    inside the stock, and the stock box is drawn at exactly the outline's
-    extents. The cutter sweeps −3.2…66.3 mm in X and Y for a 63.15 mm part;
-    nothing shows the margin the blank needs or where zero sits on it.
-42. `M3` is followed straight away by motion (no spin-up dwell; the 3 s
-    plunge from Z5 is all that covers a relay-switched router), and the
-    spindle stops and restarts between operations.
-43. The inside contour climb-mills and the outside one conventional-mills
-    (both loops run counter-clockwise); there is no choice of direction.
+37. **Fixed.** "From model…" sections the part on screen and machines *that*
+    outline, so the outline no longer has to be regenerated outside vcad. It
+    is offered first in the Import menu, and first for a reason: the outline
+    that machines the part should come from the part, not from a file that may
+    be a different revision. A solid torn at the section plane is refused with
+    the gaps that caused it rather than healed into a guess (item 30's signal).
+38. **Fixed.** The cutter-fit report names the corners the cutter cannot
+    reach, their count, the total metal left there and how far it stands
+    proud, per operation, in the inspector.
+39. **Fixed.** Tabs are offered on inside cuts too, and pocketing with islands
+    clears the waste while keeping declared material. The verification's
+    "pieces that come free" check counts what comes loose and whether a skin
+    holds it.
+40. **Fixed.** `bottom_allowance` is signed: positive leaves a skin, negative
+    breaks through — and a break-through is only offered when a spoilboard is
+    declared, because on a bare bed the cut would be into the machine.
+41. **Fixed.** The blank has an explicit margin round the part (following the
+    cutter by default), work zero is a choice of part corner / stock corner /
+    stock centre, and the panel states the blank's corner and the part's corner
+    as distances from zero. The sweep rectangle — the outline plus a cutter
+    radius, turned and placed with the job — is drawn on the stock.
+42. **Fixed.** `spin_up_seconds` puts a `G4 P3000` dwell after `M3`, and one
+    job is one program with one spindle start whatever the operation list holds
+    (asserted in `CNCStudioTests`).
+43. **Fixed.** Climb or conventional is a per-operation choice
+    (`CNCCutDirection`), sent as the request's `direction`.
 44. **Fixed. Run Job was the window's default button.** Its shortcut was
     ⌥⌘Return, and AppKit advertises any button whose key is Return as the
     window's default button, modifiers or not. A physical Return did not
@@ -250,38 +279,90 @@ way, none by looking at the preview.
     machining" as its Return-default, as did Home, Move to, Set zero and Run
     macro. The shortcut is now ⌥⌘J, and every dialog that starts motion has
     Cancel as the default. Stop-and-reset keeps Return = stop.
-45. Import and Export job exist only inside a pull-down and a popover. Neither
-    is in the menu bar (File ▸ Export offers STL/USDZ only), and the readiness
-    popover's contents are not in the window's accessibility tree, so neither
-    a keyboard user nor an assistive tool can reach "Export job…". Opening the
-    `.dxf` with `open -a` was the only scriptable import.
-46. A blank 900 × 450 window titled "vcad" sits on screen behind the editor
-    (the SwiftUI host), and it grows a tab for every file opened.
-47. The toolpath is drawn in the stock frame (lower-left at the origin) while
-    the part stays where it was modelled (centred, z 11.1–17.1), so the path
-    floats beside the part instead of on it (item 18, now visible).
-48. "Controller connected" is ticked when the controller is the Simulator; the
-    readiness list does not say which.
-49. Changing the tool diameter does not re-evaluate which holes are
-    machinable: the three pilots refused at Ø3.175 stayed refused at Ø2 until
-    the outline was imported again. The four resulting operations are all
-    named "Inside contour" — the bore and a Ø2.5 pilot are indistinguishable
-    in the list, and pilots are ordered after the bore (largest first).
-50. No "leave a skin" / bottom-allowance option, and nothing knows what is
-    under the stock. On a bare aluminium bed the only safe through-cut is one
-    the user shortens by hand.
-51. Number fields do not accept accessibility value-setting; typing only
-    works with the window frontmost, and the sidebar summary ("T1 · Ø …")
-    is the only confirmation that a value took.
-52. Feeds, plunge and stepdown are per operation with no "apply to all". With
-    five operations the only quick way to change material was to edit the
-    selected operation and import the outline again, because the import copies
-    the selected operation's settings into every new one.
-53. Nothing helps place the job on the real stock. The blank was clamped about
-    10° off the machine axes and 5 mm off centre; that was found by tracing
-    the bounding square by hand from the sender while watching a camera. A
-    "trace bounds at safe Z" action, and the sweep square (tool included)
-    drawn on the stock, would have shown it in the app.
+45. **Fixed.** Import and Export job existed only inside a pull-down and a
+    popover. Neither was in the menu bar (File ▸ Export offered STL/USDZ only),
+    and the readiness popover's contents are not in the window's accessibility
+    tree, so neither a keyboard user nor an assistive tool could reach "Export
+    job…". There is now a **Manufacture** menu carrying every one of them, and
+    the popovers and sheets it opens moved from the machine bar's `@State` onto
+    the workspace so the menu and the button open the same one.
+
+    The rule that matters more than the menu: **a menu item must never do what
+    the button beside it refuses.** Every action is named once, in
+    `CNCCommand`, with one `isEnabled` and one `run`; the buttons in the job
+    outline, the inspector, the readiness list, the ncSender panel and the
+    machine bar all ask it, so there is no second copy of the rule to fall out
+    of step. `CNCIntegrationTests` pins the enabled state of all ten under an
+    unbuilt, a passing and a refused job.
+
+    Shortcuts are ⌘ plus a second modifier, never a bare letter (which would
+    fire while a number field has focus) and never Return (item 44). The table,
+    and what each was checked against:
+
+    | Manufacture | | Already taken |
+    |---|---|---|
+    | ⌥⌘O | Outline From Model | ⌘O Open… |
+    | ⌥⌘I | Import Outline (DXF)… | ⇧⌘I Isolate |
+    | ⌥⌘B | Generate / Rebuild Job | — |
+    | ⌥⌘Y | Verify | — |
+    | ⌃⌘E | Export Job… | ⌘E Export STL…, ⇧⌘E Export USDZ… |
+    | ⌥⌘N | Send to ncSender | ⌘N New Document |
+    | ⌥⌘G | Trace Bounds… | — |
+    | ⌥⌘P | Probe… | — |
+    | ⌥⌘K | Connect… / Disconnect | ⌘K Describe a Part… |
+    | ⌥⌘J | Run Job… | (already the machine bar's, item 44) |
+
+    Avoided as already used in-app: ⌃⌘1–3 (workspaces), ⌥⌘1 / ⌥⌘2 / ⌥⌘0
+    (panels), ⌘0–⌘4 (camera), ⌥⌘Z (zebra), ⌥⌘R (ray tracing), ⌥⌘↑ / ⌥⌘↓
+    (reorder operations), ⇧⌘D, ⇧⌘H, ⌥⇧⌘H, ⇧⌘A, ⇧⌘S, ⇧⌘Z. Avoided as
+    system-reserved: ⌥⌘D (Dock), ⌥⌘H (Hide Others), ⌥⌘M (Minimize All), ⌥⌘T
+    (Show Toolbar), ⌥⌘esc. A test asserts every command has a ⌘+modifier
+    shortcut, that none is Return, and that no two collide.
+46. Probably fixed, not verified here. `HostWindowHider` sets the host
+    window's alpha to zero and orders it out as soon as it attaches, and every
+    further document opens its own *process* rather than another window in this
+    one, so there should be no blank window and no tabs. Left open because
+    confirming it means watching a running app, not reading the code — and the
+    tabbing mode is still never set explicitly.
+47. **Fixed.** Everything the CNC overlay draws hangs off a `cncRoot` placed at
+    `cnc.origin` — where G54 sits in the model — and the outline import sets
+    that origin from the outline, so the toolpath is drawn *on* the part rather
+    than beside it. "Place at model top" puts it at the part's own top for a
+    part modelled somewhere other than the origin.
+48. **Fixed.** The readiness list says "Simulator connected · no machine" when
+    it is the Simulator, and the machine bar and header say so too. The
+    distinction now reaches the run gate as well: see item 56.
+49. **Fixed.** Which holes the installed cutter can machine is derived, never
+    stored, so changing the tool diameter re-decides it without a re-import and
+    without losing the settings on the operations that survive. Operations are
+    named from the geometry they came from ("Pilot Ø2.5 × 3", "Bore Ø27.6",
+    "Opening 47.4 × 47.4", "Outside profile") and ordered so the small holes
+    run before the profile that frees the part.
+50. **Fixed.** "Leave a skin" / "break through" is a per-operation choice with
+    a stated allowance, and the blank declares what is under it — machine bed
+    or a spoilboard of a given thickness. On a bare bed "break through" is not
+    offered at all, and an operation set to it is refused with the reason
+    naming what is down there.
+51. **Fixed.** Number fields did not accept accessibility value-setting;
+    typing only worked with the window frontmost, and the sidebar summary
+    ("T1 · Ø …") was the only confirmation that a value took. Every number is
+    now named in one table (`CNCWorkspace.fields`) with `fieldValue(_:)` and
+    `setFieldValue(_:to:)` going through the same model the bindings do —
+    including the invalidation that follows, because a path that changed a
+    number without staling the job would be worse than no path. Four fields in
+    the operation inspector had no identifier at all and fell back to their
+    labels; they are named now. `CNCFieldTests` parses the panels' own sources
+    and fails when a field on screen has no path through the table.
+52. **Fixed.** "Apply these feeds to all operations" copies the cutting values
+    — and only those; geometry stays put. "Recommend feeds" applies to every
+    operation at once.
+53. **Fixed.** "Trace bounds…" walks the job's bounding rectangle at a safe
+    height with an optional dip at the corners, from the machine bar or
+    Manufacture ▸ Trace Bounds (⌥⌘G). The sweep square, cutter radius
+    included, is drawn on the stock, turned and shifted with the job; clamps
+    are drawn with it and go red when the cutter would sweep through them.
+    The two-point edge probe measures how far the blank is off the axes and
+    one click turns the job to match (see the machine side of item 41).
 54. First cut (2026-09-17): a 1 mm copper plate (teal-coated; taken for
     aluminium from the camera until the owner said otherwise) on a
     doubled-MDF riser, Ø2 2-flute, F250 / plunge F40 / 0.17 mm passes,
@@ -292,3 +373,73 @@ way, none by looking at the preview.
     that is just the cut metal, so whether the skin held is unverified.
     Nothing came loose. The app has no material setting at all — feeds were
     typed by hand for a material that turned out to be a different one.
+
+    **Fixed (the material part).** The blank names what it is made of, from the
+    kernel's table, and nothing is assumed: with no material chosen the app
+    offers no feeds at all, because numbers for the wrong material are worse
+    than none. "Recommend feeds" fills feed, plunge, stepdown, stepover and
+    spindle from material × cutter × machine class, says which **dial** to set
+    (the S word does nothing on this router), and has a "first cut on this
+    machine: use 60 %" derate. Hand-typed numbers get a second opinion from the
+    same table. Whether the skin held on that first cut is still unverified.
+
+## Joining the four packages (2026-09-18, `cam/w3-app-integrate`)
+
+Found by wiring the machine, sender, setup and job packages into one workspace
+and then looking at it.
+
+55. **⌥⌘0 is two different menu items.** View ▸ Show/Hide All Panels and
+    Camera ▸ Frame Selection both claim it (`Shell.swift`, the `.sidebar` and
+    `Camera` command groups). AppKit shows both and only one fires. The
+    Manufacture menu's shortcuts were picked around it; this one predates them
+    and is still open. ⌘K is registered twice as well — the menu item and the
+    command bar's invisible accelerator — but both focus the same field, so
+    that one is duplication rather than a conflict.
+56. **Fixed. The Simulator refused every job.** Folding the machine's half of
+    the gate into `runBlocker` made this visible: the envelope pre-check placed
+    the job with the Simulator's work offset, which is whatever nobody set —
+    zero — and Grbl's travel runs `-$13x…0`, so work zero sits at the *far
+    corner* and any +X move is "outside travel". Every simulated job was
+    refused, by a check about a table that does not exist. The finding is still
+    reported in full, with its numbers; it is the *refusal* the Simulator does
+    not earn (item 48's distinction, applied to the gate).
+
+    It had been true before the merge too — the machine bar combined the two
+    halves itself — but only the Run button could see it, so nothing said why.
+57. **Fixed. The app could not import its own exported job.** Two reasons, both
+    in vcad's own output: `M0` (the operator stop the job assembler puts
+    between tools, because this machine has no changer) was not on the accepted
+    M list, and the comment stripper `\([^)]*\)` stopped at the first `)` —
+    so `(T1 Ø3.175 flat end mill (Ø3.17) at 10000 rpm)` left ` at 10000 rpm)`
+    on the line and the parser called it unrecognised G-code. `G55`–`G59`,
+    `G61`/`G64` are accepted now; `G53` *with motion* is still refused and says
+    why. `M6` stays refused on purpose: a changer-less controller ignores it
+    silently and carries on cutting with whatever is in the collet.
+58. **Fixed. The camera tile's empty frame was a white rectangle.**
+    `.fill(.quaternary)` resolved against nothing in particular — invisible
+    over a light panel, solid white over a dark one, which reads as an
+    overexposed live frame exactly where the picture of the cut goes. The
+    status line under it also said "no frame" while the frame said "no frame";
+    it now says what the tile is *doing* (not watching / waiting for the first
+    frame / the frame's age).
+59. **Fixed. The G-code drawer said "Generate the job or import a G-code
+    file." for a refused job** — the one case where the absence of G-code is
+    the whole point of the pipeline, read as "you have not pressed Generate
+    yet". It now says the job was refused, lists the reasons, and says there is
+    nothing to export or send.
+60. **An alarm reported the wrong sentence.** With the controller in ALARM:1
+    the gate said "Waiting for Idle and a known work position", which is true
+    and useless beside "a limit switch was hit during motion … re-home before
+    running". **Fixed:** the alarm's own text wins. Open: the ordering is still
+    hand-written, and a new machine-side blocker could land behind a generic
+    controller-state message the same way.
+61. **The visionOS spike cannot build.** `VcadVision` symlinks `Editor.swift`
+    into its target, and `EditorModel` holds a `CNCWorkspace` — but no `CNC*`
+    file is symlinked in, and several now import AppKit. Nothing in this pass
+    made it worse, and nothing here fixed it; it is worth knowing before
+    anything is added to a shared file on the assumption that the Vision target
+    still compiles.
+62. **`swift test` runs the whole Manufacture suite against the real kernel.**
+    Each built job is a second or two of FFI, so the app's test suite is ~55 s
+    and a single job test is not cheap to iterate on. Worth a fixture cache if
+    it grows much further.
