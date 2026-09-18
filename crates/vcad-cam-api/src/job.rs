@@ -712,6 +712,7 @@ fn build(req: JobRequest) -> Result<Value, String> {
         response["policy"] =
             json!({ "verified": false, "blocked_by": ["island_gouge"], "warnings": [] });
         response["notes"] = json!(notes);
+        drop_machine_coordinates(&mut response);
         return Ok(response);
     }
 
@@ -918,7 +919,26 @@ fn build(req: JobRequest) -> Result<Value, String> {
     );
 
     response["notes"] = json!(notes);
+    if blocked {
+        drop_machine_coordinates(&mut response);
+    }
     Ok(response)
+}
+
+/// Take the toolpath out of a refused answer.
+///
+/// Withholding `gcode` was only half the gate: `moves` is the same program in
+/// machine coordinates, and a client that can read it can re-post it. The
+/// answer keeps everything that says *why* the job was refused —
+/// `verification`, `policy`, `notes`, `report`, `fit` — and loses the two keys
+/// a machine could be driven from. `op_ranges` indexes `moves`, so it goes
+/// with it.
+fn drop_machine_coordinates(response: &mut Value) {
+    if let Some(object) = response.as_object_mut() {
+        object.remove("moves");
+        object.remove("op_ranges");
+        object.remove("gcode");
+    }
 }
 
 // ---------------------------------------------------------------------------

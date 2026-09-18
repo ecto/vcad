@@ -297,6 +297,12 @@ fn cutting_past_the_underside_with_nothing_beneath_is_refused_and_no_gcode_comes
         out.get("gcode").is_none(),
         "a blocked job must not carry a gcode key at all"
     );
+    // …and nothing to re-post either. `moves` is the same program in machine
+    // coordinates; withholding only the G-code left the door open.
+    assert!(
+        out.get("moves").is_none(),
+        "a blocked job must not carry the moves either"
+    );
     assert!(
         out["verification"].is_object(),
         "a blocked job still has to say what it found"
@@ -316,6 +322,7 @@ fn leaving_options_out_does_not_turn_verification_off() {
     assert_eq!(out["policy"]["verified"], json!(true), "{}", out["policy"]);
     assert_eq!(out["blocked"], json!(true), "{}", out["policy"]);
     assert!(out.get("gcode").is_none());
+    assert!(out.get("moves").is_none());
 
     // And a misspelt key is refused rather than ignored: `option: { verify:
     // false }` must not be a way to get an unverified program either.
@@ -418,6 +425,7 @@ fn an_inside_contour_offset_the_wrong_way_is_refused_for_gouging() {
         "the refusal has to name the gouge check, got {blocked_by:?}"
     );
     assert!(out.get("gcode").is_none());
+    assert!(out.get("moves").is_none());
     let worst = f(&out["verification"]["gouge"]["worst"]);
     assert!(
         (1.0..=3.5).contains(&worst),
@@ -1123,6 +1131,7 @@ fn a_refused_job_still_says_which_claim_it_violated() {
     // No G-code, and a claim set that says exactly why — a receipt that only
     // ever saw passing jobs would be a record of nothing.
     assert!(out.get("gcode").is_none() || out["gcode"].is_null());
+    assert!(out.get("moves").is_none());
     let set = claim_set(&out["claims"]);
     assert_eq!(status(&set, "job.no_gouge"), "Violated");
     let gouge = set.find("job.no_gouge", None).unwrap();
@@ -1432,6 +1441,10 @@ fn a_placed_job_checked_against_the_unplaced_part_is_refused() {
     assert!(
         out.get("gcode").is_none(),
         "a blocked job must not carry a gcode key at all"
+    );
+    assert!(
+        out.get("moves").is_none(),
+        "a blocked job must not carry the moves either"
     );
     let blocked_by: Vec<String> =
         serde_json::from_value(out["policy"]["blocked_by"].clone()).unwrap();
