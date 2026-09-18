@@ -10,10 +10,28 @@ enum CNCCommands {
               !value.contains(where: { "?!~".contains($0) }) else { return false }
         return !value.hasPrefix("$") || ["$$", "$G", "$I", "$#"].contains(value.uppercased())
     }
+    /// Strip parenthesised comments, counting depth.
+    ///
+    /// `\([^)]*\)` stopped at the first `)`, which is right by RS-274 — where
+    /// comments do not nest — and wrong for what vcad's own post writes:
+    /// `(T1 Ø3.175 flat end mill (Ø3.17) at 10000 rpm)` left ` at 10000 rpm)`
+    /// behind, and the importer rejected the app's own job as unrecognised
+    /// G-code. Counting depth reads that line and is identical on every line
+    /// that does not nest.
+    static func stripComments(_ line: String) -> String {
+        var out = ""
+        var depth = 0
+        for character in line {
+            if character == "(" { depth += 1; continue }
+            if character == ")" { depth = max(0, depth - 1); continue }
+            if depth == 0 { out.append(character) }
+        }
+        return out
+    }
+
     static func programLines(_ code: String) throws -> [String] {
         let lines = code.components(separatedBy: .newlines).map {
-            $0.replacingOccurrences(of: #"\([^)]*\)"#, with: "", options: .regularExpression)
-                .components(separatedBy: ";")[0].trimmingCharacters(in: .whitespaces)
+            stripComments($0).components(separatedBy: ";")[0].trimmingCharacters(in: .whitespaces)
         }.filter { !$0.isEmpty && $0 != "%" }
         guard !lines.isEmpty else { throw CNCError.message("The program contains no commands.") }
         for (index, line) in lines.enumerated() {
