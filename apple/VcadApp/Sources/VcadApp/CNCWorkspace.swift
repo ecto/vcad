@@ -32,13 +32,12 @@ struct CNCSetup: Codable, Equatable, Sendable {
     // Drilling (item 19). A hole that matches a drill in the tool list is
     // sunk on its centre rather than milled round its wall.
     //
-    // Chip break is the default rather than the full-retract peck, and not
-    // only because it is the better cycle for a 2.5 mm hole in 6 mm of metal
-    // on a router. A full-retract peck rapids back *down* into the hole
-    // between pecks, which is ordinary G83 — but the 2D oracle refuses any
-    // rapid that descends below the stock top, because it has no way to know
-    // the hole is already open. Peck is still offered; it is simply refused,
-    // in the oracle's own words, rather than shipped unverified (item 63).
+    // Chip break is the default rather than the full-retract peck: it is the
+    // better cycle for a 2.5 mm hole in 6 mm of metal on a router. A peck
+    // rapids back *down* into the hole between pecks (ordinary G83); the
+    // oracle allows that rapid only where this program has already cut to
+    // that depth, on the hole's own centre, and refuses it anywhere else
+    // (item 63, closed on the kernel side).
     var drillCycle: CNCDrillCycle = .chipBreak
     /// How deep each peck goes. Zero follows the roughing stepdown, which is
     /// the number the operator already set for this material and cutter.
@@ -770,6 +769,15 @@ final class CNCWorkspace {
     /// that operation's problem, and selecting it is how the user gets to it.
     func operation(near violation: CNCViolation?) -> UUID? {
         guard let violation, violation.xy.count >= 2 else { return nil }
+        // The oracle names the move it objected to, and the operation ranges
+        // index moves — so the cut is known exactly, and it is known on a
+        // refused job too, which carries no moves at all (a blocked answer
+        // keeps its ranges and loses its coordinates).
+        if let op = operations.first(where: { op in
+            op.ranges.contains { $0.start <= violation.index && violation.index < $0.end }
+        }) {
+            return op.id
+        }
         let target = SIMD2<Double>(violation.xy[0], violation.xy[1])
         let moves = jobMoves
         var best: (id: UUID, distance: Double)?

@@ -279,16 +279,17 @@ final class CNCToolTests: XCTestCase {
                        "a peck depth of zero follows the roughing stepdown already set")
     }
 
-    /// **The full-retract peck is refused, and that is the gate working.**
+    /// **The full-retract peck is allowed, because the oracle now knows the
+    /// hole is open.**
     ///
     /// Ordinary G83 rapids back down into the hole between pecks. The 2D
-    /// oracle refuses any rapid that descends below the stock top, because it
-    /// replays a prismatic job and has no way to know the hole under the tool
-    /// is already open — so a peck job is refused rather than shipped
-    /// unverified. Pinned here so that a kernel that learns to allow it, or an
-    /// app that quietly stops offering it, shows up as a changed test rather
-    /// than as a surprise at the machine. See friction-log item 63.
-    func testTheFullRetractPeckIsRefusedByTheOracle() async throws {
+    /// oracle used to refuse any rapid that descends below the stock top
+    /// (item 63); it now allows one where this very program has already cut
+    /// to that depth on the hole's own centre, and still refuses it anywhere
+    /// else. Pinned here so a kernel that goes back to refusing every peck,
+    /// or an app that quietly stops offering it, shows up as a changed test
+    /// rather than as a surprise at the machine.
+    func testTheFullRetractPeckIsVerifiedNotRefused() async throws {
         let cnc = try twoToolStator()
         for operation in cnc.operations where operation.setup.kind == .drill {
             cnc.select(.operation(operation.id))
@@ -296,9 +297,10 @@ final class CNCToolTests: XCTestCase {
         }
         await build(cnc)
 
-        XCTAssertFalse(cnc.blockers.isEmpty, "a peck cycle is refused, not shipped")
-        XCTAssertTrue(cnc.blockers.contains { $0.text.lowercased().contains("rapid descends") },
-                      "and refused for the rapid back into the hole: \(cnc.blockers.map(\.text))")
-        XCTAssertNil(cnc.jobCode, "a refused job has no G-code — that absence is the gate")
+        XCTAssertFalse(cnc.blockers.contains { $0.text.lowercased().contains("rapid") },
+                       "the rapid back down the hole is the program's own hole: \(cnc.blockers.map(\.text))")
+        XCTAssertEqual(cnc.policy?.verified, true, "the peck job was replayed, not waved through")
+        XCTAssertNotNil(cnc.jobCode, "and it posts")
+        XCTAssertTrue(try XCTUnwrap(cnc.jobCode).contains("G0 Z"), "a peck cycle retracts between pecks")
     }
 }

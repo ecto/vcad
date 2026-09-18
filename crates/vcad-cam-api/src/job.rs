@@ -910,11 +910,25 @@ fn build(req: JobRequest) -> Result<Value, String> {
     //
     // `program` is the G-code even when the toolpath was what got replayed —
     // the program is the artifact that runs, so it is the thing whose change
-    // has to invalidate the claims.
+    // has to invalidate the claims. On a refused job it is withheld here as
+    // well: a deposit carrying the program text is the program, wherever it
+    // sits in the answer. Its digest and size stand in, so the claims still
+    // settle onto a stable basis and a re-state says the program was not kept.
+    let program_basis = if blocked {
+        let digest = vcad_claim_registry::fingerprint_of(&std::collections::BTreeMap::from([(
+            "program".to_string(),
+            gcode.clone(),
+        )]))
+        .remove("program")
+        .unwrap_or_default();
+        json!({ "withheld": "refused job", "bytes": gcode.len(), "digest": digest })
+    } else {
+        json!(gcode)
+    };
     response["claims"] = crate::claims::deposit(
         vcad_kernel_cam::receipt::job_claims(&verification, &whole_spec, &opts),
         crate::claims::Inputs::new()
-            .with(vcad_kernel_cam::receipt::BASIS_PROGRAM, &gcode)
+            .with(vcad_kernel_cam::receipt::BASIS_PROGRAM, &program_basis)
             .with(vcad_kernel_cam::receipt::BASIS_OUTLINE, &whole_spec.part)
             .with(
                 vcad_kernel_cam::receipt::BASIS_TOOL,
@@ -938,12 +952,12 @@ fn build(req: JobRequest) -> Result<Value, String> {
 /// machine coordinates, and a client that can read it can re-post it. The
 /// answer keeps everything that says *why* the job was refused —
 /// `verification`, `policy`, `notes`, `report`, `fit` — and loses the two keys
-/// a machine could be driven from. `op_ranges` indexes `moves`, so it goes
-/// with it.
+/// a machine could be driven from. `op_ranges` stays: it is move indices, not
+/// coordinates, and it is how a violation's `index` is traced to the
+/// operation that made it once the moves themselves are gone.
 fn drop_machine_coordinates(response: &mut Value) {
     if let Some(object) = response.as_object_mut() {
         object.remove("moves");
-        object.remove("op_ranges");
         object.remove("gcode");
     }
 }
@@ -1488,7 +1502,13 @@ fn build_op(
                 Some(p) => positive(&format!("{what}.pitch"), p)?,
                 None => settings.stepdown,
             };
-            let mut b = HelicalBore::new(x, y, bore, final_depth, pitch);
+            // A through bore takes its depth from the stock, so it is built
+            // without one: the kernel refuses a bore that carries both.
+            let mut b = if op.through.unwrap_or(false) {
+                HelicalBore::through_stock(x, y, bore, pitch, break_through(stock, &allowance))
+            } else {
+                HelicalBore::new(x, y, bore, final_depth, pitch)
+            };
             if let Some(c) = op.clearance {
                 b = b.with_clearance(positive(&format!("{what}.clearance"), c)?);
             }
@@ -1497,9 +1517,6 @@ fn build_op(
             }
             if op.finish_pass == Some(false) {
                 b = b.without_finish_pass();
-            }
-            if op.through.unwrap_or(false) {
-                b = b.with_break_through(break_through(stock, &allowance));
             }
             CamOperation::HelicalBore(b)
         }

@@ -474,17 +474,17 @@ final class CNCJobTests: XCTestCase {
         let id = try XCTUnwrap(finding.operationID, "a violation with a place has to name a cut")
         XCTAssertEqual(cnc.selectedOperation.id, id)
 
-        // …and it has to be the right cut: the operation it names must have a
-        // move that really passes through the place the oracle reported, or
-        // the red mark is pointing at the wrong row.
+        // …and it has to be the right cut. A refused job carries no moves
+        // (the answer keeps its ranges and loses its coordinates), so the
+        // operation it names must own the move index the oracle objected to,
+        // or the red mark is pointing at the wrong row.
         let xy = try XCTUnwrap(finding.xy)
-        let moves = cnc.jobMoves
+        XCTAssertTrue(cnc.jobMoves.isEmpty, "a refused job hands back no machine coordinates")
         let named = try XCTUnwrap(cnc.operations.first { $0.id == id })
-        let nearest = named.ranges.flatMap { range -> [Double] in
-            guard range.start < range.end, range.end <= moves.count else { return [] }
-            return moves[range.start..<range.end].map { hypot($0.to[0] - xy[0], $0.to[1] - xy[1]) }
-        }.min() ?? .greatestFiniteMagnitude
-        XCTAssertLessThan(nearest, 0.05,
-                          "\(named.name) is named for a violation at \(xy) but its nearest move is \(nearest) mm away")
+        let verification = try XCTUnwrap(cnc.verification)
+        let example = try XCTUnwrap(verification.checks.flatMap(\.examples).first { $0.xy == xy },
+                                    "the finding's place comes from an oracle example")
+        XCTAssertTrue(named.ranges.contains { $0.start <= example.index && example.index < $0.end },
+                      "\(named.name) is named for move #\(example.index) at \(xy) but its ranges are \(named.ranges.map { "\($0.start)..<\($0.end)" })")
     }
 }
