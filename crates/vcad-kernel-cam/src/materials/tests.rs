@@ -636,6 +636,119 @@ fn check_flags_a_rubbing_chipload() {
     assert!(!notes.iter().any(|n| n.text.contains("rubbing floor")));
 }
 
+/// `check` compared the operator's chipload against a recommendation it asked
+/// for with `.ok()`, so when the recommendation could not be made — an
+/// unusable spindle, a machine with no declared feed ceiling — the comparison
+/// was skipped in silence and a check that could not run read exactly like a
+/// check that passed.
+#[test]
+fn check_says_when_it_could_not_get_a_recommendation_to_compare_against() {
+    let al = material(ids::ALUMINIUM_6061_T6).unwrap();
+    let s = settings(1000.0, 250.0, 17_000.0, 0.3, 1.0);
+    // A machine with no feed ceiling: `recommend` refuses it, `check` does not
+    // validate it, so this is exactly the gap.
+    let broken = Machine {
+        name: "unconfigured".into(),
+        class: MachineClass::Hobby,
+        max_feed_mm_min: 0.0,
+        max_plunge_mm_min: 800.0,
+    };
+    assert!(recommend(
+        al,
+        &tool(3.175),
+        OpKind::Slot,
+        &broken,
+        &Spindle::vfd_spindle()
+    )
+    .is_err());
+
+    let notes = check(
+        &s,
+        al,
+        &tool(3.175),
+        OpKind::Slot,
+        &broken,
+        &Spindle::vfd_spindle(),
+    );
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.text.contains("could not be compared") && n.level >= NoteLevel::Warning),
+        "no note about the missing recommendation in {notes:#?}"
+    );
+    // And it says why, in the recommender's own words.
+    assert!(notes.iter().any(|n| n.text.contains("feed")), "{notes:#?}");
+
+    // With a usable machine the comparison happens and there is no such note.
+    let notes = check(
+        &s,
+        al,
+        &tool(3.175),
+        OpKind::Slot,
+        &Machine::anolex_ultra2(),
+        &Spindle::vfd_spindle(),
+    );
+    assert!(!notes
+        .iter()
+        .any(|n| n.text.contains("could not be compared")));
+}
+
+/// When the feed is pinned at the machine's ceiling and the chipload is under
+/// the rubbing floor, `recommend` drops the spindle speed to get back above
+/// it. On a spindle that will not go that slow it cannot, and `clamped_low`
+/// said so and was thrown away: the note read "so each tooth takes 0.0075 mm"
+/// as though it had fixed something, with the floor at 0.02.
+#[test]
+fn a_speed_drop_that_cannot_reach_the_floor_says_so() {
+    let al = material(ids::ALUMINIUM_6061_T6).unwrap();
+    assert!(
+        (al.min_chipload_mm - 0.004).abs() < 1e-12,
+        "the fixture assumes 6061's rubbing floor: {}",
+        al.min_chipload_mm
+    );
+    // A machine that will not feed faster than 100 mm/min, and a spindle that
+    // will not turn slower than 10 000 rpm. 100 / (2 × 10 000) = 0.005 —
+    // above 6061's floor — so squeeze harder: four flutes.
+    let crawler = Machine {
+        name: "crawler".into(),
+        class: MachineClass::Benchtop,
+        max_feed_mm_min: 100.0,
+        max_plunge_mm_min: 50.0,
+    };
+    let four_flute = ToolSpec::new(3.175, 4, ToolKind::FlatEndMill, 10.0);
+    let r = recommend(
+        al,
+        &four_flute,
+        OpKind::Slot,
+        &crawler,
+        &Spindle::router_dial(),
+    )
+    .unwrap();
+    // 100 / (4 × 10 000) = 0.0025 mm/tooth, still under the 0.004 floor.
+    assert!(
+        r.chipload_mm < al.min_chipload_mm,
+        "this fixture no longer exercises the clamp: {:.5} vs floor {:.5}",
+        r.chipload_mm,
+        al.min_chipload_mm
+    );
+    assert!(
+        r.notes.iter().any(|n| n
+            .text
+            .contains("no feed and speed here that cuts instead of rubbing")
+            && n.level >= NoteLevel::Danger),
+        "the note has to say the drop did not reach the floor: {:#?}",
+        r.notes
+    );
+    // It must not claim the speed drop fixed it.
+    assert!(
+        !r.notes
+            .iter()
+            .any(|n| n.text.contains("so each tooth takes")),
+        "{:#?}",
+        r.notes
+    );
+}
+
 /// A chipload far above the recommendation is the loud way to ruin a cutter.
 #[test]
 fn check_flags_an_overloaded_chipload() {

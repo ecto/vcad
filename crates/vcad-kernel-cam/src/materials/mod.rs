@@ -1271,15 +1271,26 @@ pub fn recommend(
             let rpm_needed = feed / (flutes * floor);
             let slower = spindle.resolve_at_most(rpm_needed);
             let new_chipload = feed / (flutes * slower.rpm);
-            notes.push(Note::warning(format!(
-                "at {:.0} rpm the clamped feed is only {chipload:.4} mm/tooth, below the {floor:.4} rubbing floor. Speed dropped to {}{:.0} rpm so each tooth takes {new_chipload:.4} mm — or keep the speed and use a cutter with fewer flutes.",
-                setting.rpm,
-                match &slower.dial {
-                    Some(l) => format!("dial {l}, "),
-                    None => String::new(),
-                },
-                slower.rpm
-            )));
+            let dial = match &slower.dial {
+                Some(l) => format!("dial {l}, "),
+                None => String::new(),
+            };
+            // `resolve_at_most` cannot always get there: a spindle with a
+            // minimum, or a dial whose slowest position is still faster than
+            // the speed this needs, comes back `clamped_low` and the chipload
+            // is *still* under the floor. Saying "so each tooth takes
+            // 0.0075 mm" when the floor is 0.02 reads as a fix; it is not one.
+            if slower.clamped_low || new_chipload < floor {
+                notes.push(Note::danger(format!(
+                    "at {:.0} rpm the clamped feed is only {chipload:.4} mm/tooth, below the {floor:.4} rubbing floor, and this spindle will not go slower than {}{:.0} rpm — at which each tooth still takes only {new_chipload:.4} mm. There is no feed and speed here that cuts instead of rubbing: use a cutter with fewer flutes, a smaller diameter, or a machine that will feed faster than {feed:.0} mm/min.",
+                    setting.rpm, dial, slower.rpm
+                )));
+            } else {
+                notes.push(Note::warning(format!(
+                    "at {:.0} rpm the clamped feed is only {chipload:.4} mm/tooth, below the {floor:.4} rubbing floor. Speed dropped to {}{:.0} rpm so each tooth takes {new_chipload:.4} mm — or keep the speed and use a cutter with fewer flutes.",
+                    setting.rpm, dial, slower.rpm
+                )));
+            }
             setting = slower;
             chipload = new_chipload;
             achieved_vc = std::f64::consts::PI * d * setting.rpm / 1000.0;
@@ -1511,9 +1522,19 @@ pub fn check(
     // --- chipload ---------------------------------------------------------
     if settings.spindle_rpm > 0.0 && settings.feed_rate > 0.0 {
         let actual = settings.feed_rate / (flutes * settings.spindle_rpm);
-        let reference = recommend(material, tool, op, machine, spindle)
-            .ok()
-            .map(|r| r.chipload_mm);
+        // `.ok()` here dropped the reason and then silently skipped the whole
+        // comparison, so a check that could not be made read exactly like a
+        // check that passed.
+        let reference = match recommend(material, tool, op, machine, spindle) {
+            Ok(r) => Some(r.chipload_mm),
+            Err(e) => {
+                notes.push(Note::warning(format!(
+                    "your feed and speed could not be compared with a recommendation for {} here: {e}. Everything below still applies; the chipload ratio does not.",
+                    material.name
+                )));
+                None
+            }
+        };
 
         notes.push(Note::info(format!(
             "your chipload = {:.0} mm/min ÷ ({} flutes × {:.0} rpm) = {actual:.4} mm/tooth",
