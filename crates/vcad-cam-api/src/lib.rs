@@ -42,6 +42,15 @@
 //! | [`check_feeds`] | a second opinion on numbers the operator has |
 //! | [`gear`] | gear geometry, contours, over-pins, compensation |
 //!
+//! # Claims ride along
+//!
+//! [`job`] and [`gear`] also answer a `claims` block — a
+//! `vcad.cam-claims/1` claim set plus the live inputs it rests on
+//! ([`claims::deposit`]). Store it on a document and `build_receipt` merges
+//! it into the unified receipt; edit the program or the outline and the same
+//! claims come back `Stale` instead of `Holds`. Nothing is gated on it: a
+//! caller that ignores the block gets exactly the response it got before.
+//!
 //! A caller that holds a solid rather than a mesh — the C ABI's scene, the
 //! WASM kernel's B-rep — tessellates it itself and calls [`section_mesh`],
 //! which is the same code path [`outline_from_mesh`] runs.
@@ -50,6 +59,7 @@
 
 use serde_json::Value;
 
+pub mod claims;
 mod feeds;
 mod gearing;
 mod job;

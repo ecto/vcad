@@ -50,6 +50,10 @@ import {
   pruneOutlineConstraints,
   verifyConstraintClaims,
 } from "./constraint-claims.js";
+import {
+  claimReports,
+  registryReceiptClaims,
+} from "./claim-registry.js";
 import { getNodePcb, getPcbNodeIds, buildEntry, agentView, diffViolations } from "@vcad/core";
 import {
   computeRatsnest,
@@ -13181,13 +13185,23 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const clearanceSpecs = ctx.doc.clearance_specs ?? [];
+  // Deposited claim-family reports (cam_job, cam_gear, …) certify alongside
+  // the three families this tool has always known about. Every one is
+  // re-stated against its inputs as they stand now first, so a job whose
+  // G-code was edited reads Stale rather than certifying a program nobody
+  // holds any more.
+  const deposits = claimReports(ctx.doc);
   if (!pcb) {
-    if (clearanceSpecs.length === 0 && (ctx.doc.constraints ?? []).length === 0) {
+    if (
+      clearanceSpecs.length === 0 &&
+      (ctx.doc.constraints ?? []).length === 0 &&
+      deposits.length === 0
+    ) {
       return {
         content: [
           {
             type: "text" as const,
-            text: "Error: Document has no PCB, no clearance specs, and no design constraints — nothing to certify. (Persist assertions with check_clearance + label or add_constraint first.)",
+            text: "Error: Document has no PCB, no clearance specs, no design constraints, and no claim reports — nothing to certify. (Persist assertions with check_clearance + label or add_constraint, or run an oracle that deposits claims such as cam_job, first.)",
           },
         ],
         isError: true,
@@ -13201,6 +13215,7 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
       claims: [
         ...clearanceReceiptClaims(ctx.doc, engine),
         ...(await constraintReceiptClaims(ctx.doc)),
+        ...registryReceiptClaims(ctx.doc, engine),
       ],
     };
     return {
@@ -13276,6 +13291,11 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
   // Design constraints certify as constraint.* claims in the same ledger.
   if ((ctx.doc.constraints ?? []).length > 0) {
     unified.claims.push(...(await constraintReceiptClaims(ctx.doc)));
+  }
+  // …and so does every deposited claim-family report, so one receipt can
+  // cover a board, its enclosure and the job that machines the enclosure.
+  if (deposits.length > 0) {
+    unified.claims.push(...registryReceiptClaims(ctx.doc, engine));
   }
 
   // The receipt rides in structuredContent so the inline viewer renders it

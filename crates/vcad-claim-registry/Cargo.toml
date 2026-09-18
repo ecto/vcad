@@ -1,0 +1,69 @@
+[package]
+name = "vcad-claim-registry"
+description = "Registry of vcad claim families: schema id → family metadata and the adapter that turns that family's serialized report into unified receipt claims"
+readme = "README.md"
+keywords = ["cad", "receipt", "verification", "claims"]
+categories = ["science", "simulation"]
+include = ["src/**/*", "README.md"]
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vcad-receipt = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# One optional dependency per claim family. Everything in `default` is
+# wasm32-clean and already inside the kernel bundle's dependency graph
+# (`vcad-kernel` depends on all of them), so registering a family costs the
+# shipped WASM nothing but the adapter itself.
+vcad-kernel-cam = { workspace = true, optional = true }
+vcad-kernel-tolerance = { workspace = true, optional = true }
+vcad-kernel-thermal = { workspace = true, optional = true }
+vcad-kernel-em = { workspace = true, optional = true }
+vcad-kernel-photonics = { workspace = true, optional = true }
+vcad-kernel-antenna = { workspace = true, optional = true }
+vcad-kernel-neutronics = { workspace = true, optional = true }
+vcad-kernel-acoustics = { workspace = true, optional = true }
+vcad-kernel-particle = { workspace = true, optional = true }
+vcad-kernel-fea = { workspace = true, optional = true }
+vcad-kernel-flow = { workspace = true, optional = true }
+vcad-kernel-optics = { workspace = true, optional = true }
+vcad-kernel-orbit = { workspace = true, optional = true }
+vcad-ecad-sim = { workspace = true, optional = true }
+
+[features]
+default = [
+    "cam",
+    "tolerance",
+    "thermal",
+    "em",
+    "photonics",
+    "antenna",
+    "neutronics",
+    "acoustics",
+    "particle",
+    "fea",
+    "flow",
+    "optics",
+    "orbit",
+]
+cam = ["dep:vcad-kernel-cam"]
+tolerance = ["dep:vcad-kernel-tolerance"]
+thermal = ["dep:vcad-kernel-thermal"]
+em = ["dep:vcad-kernel-em"]
+photonics = ["dep:vcad-kernel-photonics"]
+antenna = ["dep:vcad-kernel-antenna"]
+neutronics = ["dep:vcad-kernel-neutronics"]
+acoustics = ["dep:vcad-kernel-acoustics"]
+particle = ["dep:vcad-kernel-particle"]
+fea = ["dep:vcad-kernel-fea"]
+flow = ["dep:vcad-kernel-flow"]
+optics = ["dep:vcad-kernel-optics"]
+orbit = ["dep:vcad-kernel-orbit"]
+# Off by default: `vcad-ecad-sim` is behind the kernel bundle's own `ecad`
+# feature, so the registry only registers SPICE when its host does too.
+spice = ["dep:vcad-ecad-sim"]

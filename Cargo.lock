@@ -7120,6 +7120,7 @@ version = "0.10.0"
 dependencies = [
  "serde",
  "serde_json",
+ "vcad-claim-registry",
  "vcad-kernel-cam",
 ]
 
@@ -7138,6 +7139,30 @@ dependencies = [
  "tokio",
  "vcad-ir",
  "vcad-kernel",
+]
+
+[[package]]
+name = "vcad-claim-registry"
+version = "0.10.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "vcad-ecad-sim",
+ "vcad-kernel-acoustics",
+ "vcad-kernel-antenna",
+ "vcad-kernel-cam",
+ "vcad-kernel-em",
+ "vcad-kernel-fea",
+ "vcad-kernel-flow",
+ "vcad-kernel-neutronics",
+ "vcad-kernel-optics",
+ "vcad-kernel-orbit",
+ "vcad-kernel-particle",
+ "vcad-kernel-photonics",
+ "vcad-kernel-thermal",
+ "vcad-kernel-tolerance",
+ "vcad-receipt",
 ]
 
 [[package]]
@@ -8096,6 +8121,7 @@ dependencies = [
  "vcad-app",
  "vcad-cam-api",
  "vcad-chat",
+ "vcad-claim-registry",
  "vcad-crdt",
  "vcad-design-constraints",
  "vcad-diff",

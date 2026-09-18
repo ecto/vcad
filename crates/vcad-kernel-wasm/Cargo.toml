@@ -15,6 +15,24 @@ crate-type = ["cdylib", "rlib"]
 vcad-kernel = { workspace = true }
 vcad-kernel-calibration = { workspace = true }
 vcad-receipt = { workspace = true }
+# The claim-family registry, with the families this bundle serves named
+# explicitly. Every one of these crates is already in `vcad-kernel`'s
+# dependency graph, so registering a family costs the shipped WASM its
+# adapter and nothing else. `spice` is added by the `ecad` feature below,
+# because `vcad-ecad-sim` only enters the bundle with it.
+vcad-claim-registry = { workspace = true, features = [
+    "cam",
+    "tolerance",
+    "thermal",
+    "em",
+    "photonics",
+    "antenna",
+    "neutronics",
+    "acoustics",
+    "particle",
+    "fea",
+    "flow",
+] }
 vcad-kernel-drafting = { workspace = true }
 vcad-kernel-sheet = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
@@ -63,7 +81,7 @@ physics = ["dep:vcad-kernel-physics"]
 atoms = ["dep:vcad-kernel-atoms", "vcad-kernel-atoms/wasm"]
 slicer = ["dep:vcad-slicer", "dep:vcad-slicer-gcode", "dep:vcad-slicer-bambu"]
 cam = ["dep:vcad-kernel-cam", "dep:vcad-cam-api"]
-ecad = ["dep:vcad-design-constraints", "dep:vcad-ecad-pcb", "dep:vcad-ecad-fabprep", "dep:vcad-ecad-schematic", "dep:vcad-ecad-sim", "dep:vcad-ecad-export", "dep:vcad-ecad-symbols", "dep:vcad-ecad-parts", "dep:vcad-ecad-verify"]
+ecad = ["dep:vcad-design-constraints", "dep:vcad-ecad-pcb", "dep:vcad-ecad-fabprep", "dep:vcad-ecad-schematic", "dep:vcad-ecad-sim", "dep:vcad-ecad-export", "dep:vcad-ecad-symbols", "dep:vcad-ecad-parts", "dep:vcad-ecad-verify", "vcad-claim-registry/spice"]
 embroidery = ["dep:vcad-embroidery", "dep:vcad-embroidery-pes", "dep:vcad-embroidery-dst"]
 ts-rs = ["dep:ts-rs"]
 
