@@ -185,7 +185,11 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+// Not `derive(Default)`: serde's field defaults only run when the `options`
+// map is present. A request without one took the derived default, and that
+// derived `verify: false` returned unverified G-code with `blocked: false`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct OptionsReq {
     #[serde(default)]
     arc_fit: Option<ArcFitReq>,
@@ -213,6 +217,24 @@ struct OptionsReq {
     /// still verifies against the skewed part. See [`crate::placement`].
     #[serde(default)]
     placement: Option<PlacementReq>,
+}
+
+impl Default for OptionsReq {
+    fn default() -> Self {
+        Self {
+            arc_fit: None,
+            tool_change: None,
+            spin_up_seconds: None,
+            park_z: None,
+            safe_z: None,
+            wcs: None,
+            end: None,
+            post: None,
+            verify: true,
+            part: None,
+            placement: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -345,7 +367,9 @@ struct OperationReq {
     phase: Option<i32>,
 }
 
+// A misspelt `options` key must not be a silent way to drop verification.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct JobRequest {
     #[serde(default)]
     name: Option<String>,

@@ -236,8 +236,12 @@ impl PostProcessor for GrblPost {
             }
 
             ToolpathSegment::Dwell { seconds } => {
-                let ms = (seconds * 1000.0) as u32;
-                self.format_line(&format!("G4 P{}", ms), state)
+                // Grbl's `G4 P` is seconds, like LinuxCNC's — not the
+                // milliseconds of Fanuc-style controls. Written as ms, the
+                // 3 s spin-up became a 50-minute park with the spindle on.
+                let text = format!("{:.3}", seconds);
+                let text = text.trim_end_matches('0').trim_end_matches('.');
+                self.format_line(&format!("G4 P{}", text), state)
             }
 
             ToolpathSegment::Spindle { rpm, dir } => {
@@ -450,9 +454,17 @@ mod tests {
         let post = GrblPost::default();
         let mut state = PostState::default();
 
+        // Grbl reads P in seconds. `P1500` here would be 25 minutes.
         let out = post.segment(&ToolpathSegment::dwell(1.5), &mut state);
-        assert!(out.contains("G4"));
-        assert!(out.contains("P1500")); // 1.5 seconds = 1500ms
+        assert_eq!(out.trim(), "G4 P1.5");
+        let out = post.segment(&ToolpathSegment::dwell(3.0), &mut state);
+        assert_eq!(out.trim(), "G4 P3");
+        let out = post.segment(&ToolpathSegment::dwell(0.0005), &mut state);
+        assert_eq!(
+            out.trim(),
+            "G4 P0.001",
+            "a sub-ms dwell rounds, it does not vanish"
+        );
     }
 
     #[test]

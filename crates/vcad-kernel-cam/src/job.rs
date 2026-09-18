@@ -1103,7 +1103,8 @@ mod tests {
         assert_eq!(gcode.matches("M3 S").count(), 2);
         for (i, line) in gcode.lines().enumerate() {
             if line.starts_with("M3 S") {
-                assert_eq!(gcode.lines().nth(i + 1).unwrap(), "G4 P3000");
+                // Grbl's P is seconds; "P3000" was a 50-minute park.
+                assert_eq!(gcode.lines().nth(i + 1).unwrap(), "G4 P3");
             }
         }
     }

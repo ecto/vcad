@@ -303,6 +303,32 @@ fn cutting_past_the_underside_with_nothing_beneath_is_refused_and_no_gcode_comes
     );
 }
 
+/// The same refusal with no `options` at all. serde's field defaults only run
+/// when the map is present; a derived `Default` on the options struct made a
+/// request without one skip verification and hand back G-code as `blocked:
+/// false`. Verification is on unless it is turned off by name.
+#[test]
+fn leaving_options_out_does_not_turn_verification_off() {
+    let mut req = stator_job(0.0, 0.8, None);
+    req.as_object_mut().unwrap().remove("options");
+    let out = call(super::job, &req);
+    ok(&out);
+    assert_eq!(out["policy"]["verified"], json!(true), "{}", out["policy"]);
+    assert_eq!(out["blocked"], json!(true), "{}", out["policy"]);
+    assert!(out.get("gcode").is_none());
+
+    // And a misspelt key is refused rather than ignored: `option: { verify:
+    // false }` must not be a way to get an unverified program either.
+    let mut req = stator_job(0.0, 0.8, None);
+    let object = req.as_object_mut().unwrap();
+    object.remove("options");
+    object.insert("option".into(), json!({ "verify": false }));
+    let out = call(super::job, &req);
+    let message = out["error"].as_str().expect("an unknown key is an error");
+    assert!(message.contains("option"), "{message}");
+    assert!(out.get("gcode").is_none());
+}
+
 #[test]
 fn a_break_through_needs_a_board_under_it_and_pecks_when_it_is_told_to() {
     // Item 40 and item 50 in one job: a cut that goes past the underside is
