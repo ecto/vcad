@@ -118,6 +118,28 @@ final class CNCFollowupTests: XCTestCase {
         XCTAssertEqual(cnc.currentKey, key, "a no-op re-check does not stale the job")
     }
 
+    // MARK: - Item 69: a DXF over a part takes its thickness from the part
+
+    /// **A DXF says where the part ends in X and Y; the solid on screen says
+    /// so in Z.** The stator's DXF over its own solid kept the 10 mm default
+    /// and the first build was refused (9.52 mm flutes) for a number nobody
+    /// typed. The plate is 6 mm tall, so the blank is 6 mm and its top is the
+    /// plate's top.
+    func testImportingADXFOverAPartTakesTheThicknessFromThePart() throws {
+        let cnc = CNCWorkspace()
+        let data = try plateData()
+        cnc.modelDocument = { [data] in self.documentBox(data) }
+        cnc.toolDiameter = 3.175
+        XCTAssertEqual(cnc.stockThickness, 10, "the default, before anything is known")
+        let square = "0\nLWPOLYLINE\n70\n1\n10\n0\n20\n0\n10\n80\n20\n0\n10\n80\n20\n50\n10\n0\n20\n50\n0\nEOF\n"
+        try cnc.importOutline(try CNCOutline.parseDXF(square, name: "plate.dxf"))
+        XCTAssertEqual(cnc.stockThickness, 6, accuracy: 1e-6, "the plate is 6 mm tall")
+        let section = try CNCCam.section(try XCTUnwrap(cnc.modelDocument?()), partIndex: cnc.modelPartIndex)
+        XCTAssertEqual(cnc.origin.z, try XCTUnwrap(section.zRange.last), accuracy: 1e-6,
+                       "the stock top is the part's top")
+        XCTAssertEqual(cnc.operations.map(\.setup.depth), [6], "the through-cut follows")
+    }
+
     private func documentBox(_ data: Data) -> CNCModelDocument { document(data) }
 
     // MARK: - Item 6: the Work Zero radio group

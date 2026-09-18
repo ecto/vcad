@@ -1280,9 +1280,18 @@ final class CNCWorkspace {
         // A section of the part on screen, taken now: comparing against a
         // stale one would be the very mistake this is here to catch.
         if modelSection == nil, let document = modelDocument?(),
-           let section = try? CNCCam.section(document, partIndex: modelPartIndex),
-           !section.isTorn {
-            modelSection = section
+           let section = try? CNCCam.section(document, partIndex: modelPartIndex) {
+            if !section.isTorn { modelSection = section }
+            // The blank is as thick as the part is tall, and its top is the
+            // part's top — whether or not the section closed (item 69: a DXF
+            // over the torn stator kept the 10 mm default and the first build
+            // was refused for a number nobody typed). The DXF says where the
+            // part ends in X and Y; the solid on screen says so in Z.
+            if section.zRange.count == 2, let bottom = section.zRange.first, let top = section.zRange.last,
+               top.isFinite, bottom.isFinite, top - bottom > 0 {
+                stockThickness = ((top - bottom) * 1000).rounded() / 1000
+                origin.z = (top * 1000).rounded() / 1000
+            }
         }
         guard let loops = modelLoops() else { return }
         let imported = [outline.outer.points.map { [Double($0.x), Double($0.y)] }]
