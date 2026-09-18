@@ -432,6 +432,60 @@ The idea is still right and the machinery is kept: a cheaper form would pin
 only the crossings a tangency actually makes ill-conditioned, rather than
 every crossing near one.
 
+## The tab corner is NOT the cylinder–plane family — bisected to the tab-root fillet
+
+The remaining 0.014 mm gaps on the stator sit at `(±5.39, ∓32.10)` in part
+coordinates, which is `(32.400, ∓3.100)` in the tab frame — the corner where
+the round end's r 3.1 cylinder meets the tab's flank plane. The obvious
+reading is a cylinder–plane tangency that the two operands trim differently,
+and that is what I set out to fix. **It is not what the geometry says.**
+
+Bisecting the tab by unioning its pieces onto the ring one at a time
+(`vol / open / over-used / tris / faces`):
+
+| after | vol | open | over-used | tris | faces |
+|---|---|---|---|---|---|
+| ring ∪ cube | 4860.7503 | **0** | 0 | 2944 | 19 |
+| ∪ round end | 4951.3133 | **0** | 0 | 3960 | 24 |
+| ∪ tab-root fillet block A | 4952.3664 | **8** | 0 | 4284 | 55 |
+| ∪ tab-root fillet block B | 4953.4179 | **11** | **36** | 4585 | 77 |
+
+The corner survives the round end intact. Both operands put the corner vertex
+at exactly `(32.400000, ±3.100000)` — *the cylinder–plane rails already
+agree*. The shell is still closed after the round end goes in. The crack opens
+only when the **tab-root fillet blocks** are unioned on, and it opens at a
+corner those blocks do not touch: afterwards the round-end cylinder faces
+`FaceId(21v1)` / `FaceId(22v1)` carry a vertex at `(32.476078, ±3.099066)`
+that is absent from the clean case. That point is on the r 3.1 circle to
+1e-6 — it is the cylinder's own canonical arc-grid neighbour of the corner,
+minted as a *second* corner beside the exact one.
+
+And the tab-root fillet block is the same designed-tangency family the rest of
+this document is about, not a new one. Its cutter is an r 1.05 cylinder at
+`(29.5096, ±4.15)`; the OD is r 28.75 at the origin:
+
+```
+d = 29.799983     R + r = 29.800000     miss = 1.7e-05 mm
+```
+
+Externally tangent to 17 nanometres — the same order as the post-root
+fillets' `2.6e-05` internal tangency, and two thousand times inside
+`MERGE_GENERATORS = 0.05`, so `parallel_cylinders` correctly returns `Empty`
+and no generator is cut. The union is then decided by classification alone
+along a 29.8 mm-radius seam where the two surfaces are parallel to within a
+rounding error, and *that* is what perturbs the neighbouring round-end face.
+
+So the next step is not a cylinder–plane rail. It is: **why does a correctly
+suppressed tangency in one region re-split a face 2.6 mm away?** The handle is
+the `(32.476078, ±3.099066)` vertex — find which splitter mints it
+(`VCAD_SPLIT_DEBUG=1 --features debug-boolean`, tracing the round-end
+cylinder face through stage 2.5), because it is created by the fillet-block
+union and nothing else in the sequence creates it.
+
+Do not "fix" this by lowering `MERGE_GENERATORS` to cut the tab-root
+tangency: that is the branch the table above the previous section rules out,
+and it costs the stator +4.5 % and 1452 open edges.
+
 ## Open item: the mesh fallback moves intermediate solids by millimetres
 
 Separate from the seam, and not addressed here. The mesh-boolean path repairs

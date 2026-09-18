@@ -1842,9 +1842,34 @@ impl Solid {
     }
 
     /// Compute the volume of the solid.
+    ///
+    /// The bare number. Prefer [`Self::volume_report`] anywhere the result
+    /// reaches a person: the divergence theorem needs a closed surface, and
+    /// given an open one this still returns a figure that is wrong by the
+    /// flux through the hole.
     #[wasm_bindgen(js_name = volume)]
     pub fn volume(&self) -> f64 {
         self.inner.volume()
+    }
+
+    /// Volume, with whether the shell it was measured from can support it.
+    ///
+    /// Returns `{ volume, closed, openEdges, overUsedEdges, triangles,
+    /// caveat }`, where `caveat` is `null` when the shell is sound and
+    /// otherwise a line to show beside the number — "shell not closed
+    /// (N open edge(s)): volume is approximate".
+    ///
+    /// The error this exists for is not rounding. One missing 0.98 mm² wall
+    /// on the rana-60 stator's near-tangent fillet made a 4726.91 mm³ union
+    /// report 4734.78 — +0.167 % — while the part's shape was right to
+    /// 0.005 mm: right part, wrong number, with nothing between it and a user
+    /// reading a mass or a quote. The error scales with the hole's DISTANCE
+    /// FROM THE ORIGIN rather than its size, so a sliver far from centre is
+    /// worth cubic millimetres.
+    /// See `docs/boolean-multilump-union-diagnosis.md`.
+    #[wasm_bindgen(js_name = volumeReport)]
+    pub fn volume_report(&self) -> Result<JsValue, JsError> {
+        volume_report_to_js(self.inner.volume_report())
     }
 
     /// Compute the surface area of the solid.
@@ -8004,6 +8029,67 @@ pub fn derive_parts(doc_json: &str) -> Result<JsValue, JsError> {
         .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
     let parts = vcad_ir::file_io::derive_parts(&doc);
     serde_wasm_bindgen::to_value(&parts).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// The shape every closedness-aware reader on the JS side sees.
+///
+/// One seam: `Solid.volumeReport()` and `computeMeshVolumeReport()` both
+/// return this, so a consumer learns the convention once.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VolumeReportJs {
+    /// Volume in mm³, by the divergence theorem over the tessellation.
+    volume: f64,
+    /// True when the shell is closed and the volume is exact for this
+    /// tessellation.
+    closed: bool,
+    /// Directed edges with no opposite-direction partner.
+    open_edges: usize,
+    /// Undirected edges shared by more than two triangles — doubled surface,
+    /// which the signed volume hides because the two copies cancel.
+    over_used_edges: usize,
+    /// Triangles the measurement was taken over.
+    triangles: usize,
+    /// A line to show beside the number, or `null` when none is needed.
+    caveat: Option<String>,
+}
+
+fn volume_report_to_js(report: vcad_kernel::VolumeReport) -> Result<JsValue, JsError> {
+    let js = VolumeReportJs {
+        volume: report.volume,
+        closed: report.closed(),
+        open_edges: report.open_edges,
+        over_used_edges: report.over_used_edges,
+        triangles: report.triangles,
+        caveat: report.caveat(),
+    };
+    serde_wasm_bindgen::to_value(&js).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Volume of a triangle mesh, with whether its shell can support the number.
+///
+/// The closedness-aware sibling of `computeMeshVolume`, which returns the
+/// bare figure. Positions are `[x, y, z, ...]` (flat f32), indices are
+/// `[i0, i1, i2, ...]`; the result is the same
+/// `{ volume, closed, openEdges, overUsedEdges, triangles, caveat }` shape
+/// that `Solid.volumeReport()` returns, so a consumer learns it once.
+///
+/// Use this wherever a volume, a mass or a price reaches a person: an open
+/// shell still yields a number, and it is wrong by the flux through the hole.
+#[wasm_bindgen(js_name = computeMeshVolumeReport)]
+pub fn compute_mesh_volume_report(positions: &[f32], indices: &[u32]) -> Result<JsValue, JsError> {
+    let mesh = vcad_kernel_tessellate::TriangleMesh {
+        vertices: positions.to_vec(),
+        indices: indices.to_vec(),
+        ..Default::default()
+    };
+    let structure = vcad_kernel::vcad_kernel_booleans::mesh_report(&mesh);
+    volume_report_to_js(vcad_kernel::VolumeReport {
+        volume: vcad_kernel::compute_mesh_properties(positions, indices).volume,
+        open_edges: structure.open_edges,
+        over_used_edges: structure.overused_edges,
+        triangles: structure.triangles,
+    })
 }
 
 /// Compute volume of a closed triangle mesh using the divergence theorem.
