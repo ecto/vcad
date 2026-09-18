@@ -178,6 +178,90 @@ impl CamOperation {
     }
 }
 
+/// Chord sag a linearised arc may have, in mm.
+///
+/// Both linearisers in this crate used a fixed 5° step, which is a *constant
+/// angle* and therefore a sag that grows with the radius: 0.047 mm at R50, on
+/// an inside contour, straight into the part. 0.005 mm is the same figure
+/// `ArcFitOptions::tolerance` and `VerifyOptions::arc_tolerance` already use,
+/// so the three agree about what "the same curve" means.
+pub const ARC_CHORD_TOLERANCE: f64 = 0.005;
+
+/// How far apart two readings of an arc's radius may be before the arc is not
+/// an arc, in mm.
+///
+/// Absolute rather than relative: it is the coordinate precision a posted
+/// program carries (three decimals on the Grbl post, so ±0.0005 mm on each
+/// word), with an order of magnitude of headroom. An arc whose ends disagree
+/// by more than this is not round-off — it is a wrong `I`/`J`, and the answer
+/// depends on which end you believe.
+pub const ARC_RADIUS_TOLERANCE: f64 = 0.01;
+
+/// Largest angular step, in radians, whose chord sags no more than
+/// `tolerance` from an arc of radius `radius`.
+///
+/// The sagitta of a chord subtending `θ` on radius `r` is `r(1 − cos(θ/2))`,
+/// so the step that sags exactly `tolerance` is `2·acos(1 − tolerance/r)`. A
+/// radius at or below the tolerance cannot sag more than it, and takes one
+/// step.
+pub fn arc_step(radius: f64, tolerance: f64) -> f64 {
+    if radius.is_nan() || radius <= tolerance || !tolerance.is_finite() || tolerance <= 0.0 {
+        return std::f64::consts::TAU;
+    }
+    2.0 * (1.0 - tolerance / radius).clamp(-1.0, 1.0).acos()
+}
+
+/// Sweep of the arc from `from` to `to` about `center`, in radians, always
+/// positive and in the direction `ccw` says.
+fn arc_sweep(from: Point2D, to: Point2D, center: Point2D, ccw: bool) -> f64 {
+    let start = (from.y - center.y).atan2(from.x - center.x);
+    let end = (to.y - center.y).atan2(to.x - center.x);
+    let mut delta = if ccw { end - start } else { start - end };
+    if delta < 0.0 {
+        delta += std::f64::consts::TAU;
+    }
+    delta
+}
+
+/// Linearise one arc into `out`, appending the points **after** `from` and
+/// ending exactly on `to`.
+///
+/// The step follows the radius, so the chord sag is bounded by `tolerance`
+/// whatever the arc's size. The radius used is the mean of the two ends'; an
+/// arc whose ends disagree about it is refused by
+/// [`Contour::check_arcs`] before any of this runs.
+pub fn linearize_arc(
+    from: Point2D,
+    to: Point2D,
+    center: Point2D,
+    ccw: bool,
+    tolerance: f64,
+    out: &mut Vec<Point2D>,
+) {
+    let r0 = center.distance_to(&from);
+    let r1 = center.distance_to(&to);
+    let radius = 0.5 * (r0 + r1);
+    let sweep = arc_sweep(from, to, center, ccw);
+    let start = (from.y - center.y).atan2(from.x - center.x);
+    let step = arc_step(radius, tolerance);
+    let n = ((sweep / step.max(1e-9)).ceil() as usize).max(1);
+    for i in 1..n {
+        let t = i as f64 / n as f64;
+        let angle = if ccw {
+            start + sweep * t
+        } else {
+            start - sweep * t
+        };
+        out.push(Point2D::new(
+            center.x + radius * angle.cos(),
+            center.y + radius * angle.sin(),
+        ));
+    }
+    // The last point is the arc's own end point, not a sample of it: a
+    // contour that closes a micron short leaves a nib on the part.
+    out.push(to);
+}
+
 /// A 2D point for contour definitions.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Point2D {
@@ -282,6 +366,37 @@ impl Contour {
         contour
     }
 
+    /// Every arc's end has to sit at the same radius from its centre as its
+    /// start does.
+    ///
+    /// Nothing checked this. An arc whose `to` is at a different radius than
+    /// its `from` is not an arc, and every reader in the crate quietly picked
+    /// a different answer: the linearisers swept from the start radius, the
+    /// toolpath's own `arc_geometry` averaged the two, and `verify2d`'s
+    /// sampler took the start radius and landed somewhere other than `to`.
+    /// Three readings of one bad number, none of them a refusal.
+    pub fn check_arcs(&self) -> Result<(), CamError> {
+        let mut at = self.start;
+        for seg in &self.segments {
+            match seg {
+                ContourSegment::Line { to } => at = *to,
+                ContourSegment::Arc { to, center, .. } => {
+                    let start_radius = center.distance_to(&at);
+                    let end_radius = center.distance_to(to);
+                    if (end_radius - start_radius).abs() > ARC_RADIUS_TOLERANCE {
+                        return Err(CamError::ArcRadiusMismatch {
+                            start_radius,
+                            end_radius,
+                            center: [center.x, center.y],
+                        });
+                    }
+                    at = *to;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Check if the contour is closed (within tolerance).
     pub fn is_closed(&self, tolerance: f64) -> bool {
         if self.segments.is_empty() {
@@ -345,52 +460,33 @@ impl Contour {
 
     /// Convert to geo crate LineString for offset operations.
     pub fn to_geo_polygon(&self) -> geo::Polygon<f64> {
-        let mut coords = vec![geo::Coord {
-            x: self.start.x,
-            y: self.start.y,
-        }];
+        let points = self.to_points(ARC_CHORD_TOLERANCE);
+        let coords: Vec<geo::Coord<f64>> = points
+            .into_iter()
+            .map(|p| geo::Coord { x: p.x, y: p.y })
+            .collect();
+        geo::Polygon::new(geo::LineString::from(coords), vec![])
+    }
 
+    /// The contour as a polyline, arcs linearised to a chord sag of at most
+    /// `tolerance`.
+    ///
+    /// The one linearisation in the crate. There were two, both stepping a
+    /// fixed 5°, which is the same *angle* at every radius and so a sag that
+    /// grows with it: 0.047 mm at R50, cut into the part on an inside
+    /// contour.
+    pub fn to_points(&self, tolerance: f64) -> Vec<Point2D> {
+        let mut points = vec![self.start];
         for seg in &self.segments {
             match seg {
-                ContourSegment::Line { to } => {
-                    coords.push(geo::Coord { x: to.x, y: to.y });
-                }
+                ContourSegment::Line { to } => points.push(*to),
                 ContourSegment::Arc { to, center, ccw } => {
-                    // Linearize arc into segments
-                    let current = coords.last().unwrap();
-                    let r =
-                        ((center.x - current.x).powi(2) + (center.y - current.y).powi(2)).sqrt();
-                    let start_angle = (current.y - center.y).atan2(current.x - center.x);
-                    let end_angle = (to.y - center.y).atan2(to.x - center.x);
-
-                    let mut delta = if *ccw {
-                        end_angle - start_angle
-                    } else {
-                        start_angle - end_angle
-                    };
-                    if delta < 0.0 {
-                        delta += 2.0 * std::f64::consts::PI;
-                    }
-
-                    // Use approximately 5 degree segments
-                    let segments = ((delta.abs() / 0.087).ceil() as usize).max(1);
-                    let step = delta / segments as f64;
-
-                    for i in 1..=segments {
-                        let angle = if *ccw {
-                            start_angle + step * i as f64
-                        } else {
-                            start_angle - step * i as f64
-                        };
-                        let px = center.x + r * angle.cos();
-                        let py = center.y + r * angle.sin();
-                        coords.push(geo::Coord { x: px, y: py });
-                    }
+                    let from = *points.last().expect("seeded with start");
+                    linearize_arc(from, *to, *center, *ccw, tolerance, &mut points);
                 }
             }
         }
-
-        geo::Polygon::new(geo::LineString::from(coords), vec![])
+        points
     }
 }
 
@@ -421,5 +517,89 @@ mod tests {
         // Perimeter should be approximately 2*PI*r = 62.83
         let expected = 2.0 * std::f64::consts::PI * 10.0;
         assert!((circle.perimeter() - expected).abs() < 0.1);
+    }
+
+    /// A fixed 5° step is a fixed *angle*, so the chord sag grows with the
+    /// radius: 0.047 mm at R50, cut straight into the part on an inside
+    /// contour. The step now follows the radius, and the sag is bounded
+    /// wherever the arc is measured — including between the samples, at the
+    /// chord midpoints, which is where it is largest.
+    #[test]
+    fn a_linearised_arc_sags_no_more_than_the_tolerance_at_any_radius() {
+        for radius in [1.0, 5.0, 50.0, 500.0] {
+            let circle = Contour::circle(0.0, 0.0, radius);
+            let points = circle.to_points(ARC_CHORD_TOLERANCE);
+            let worst = points
+                .windows(2)
+                .map(|w| {
+                    let m = Point2D::new((w[0].x + w[1].x) / 2.0, (w[0].y + w[1].y) / 2.0);
+                    // How far the true circle sits outside the chord's middle.
+                    radius - m.x.hypot(m.y)
+                })
+                .fold(0.0f64, f64::max);
+            assert!(
+                worst <= ARC_CHORD_TOLERANCE + 1e-12,
+                "R{radius}: sag {worst:.6} mm over {} points",
+                points.len()
+            );
+            // …and it is not simply over-sampling: the sag is within a factor
+            // of four of the tolerance, so the step really does follow the
+            // radius rather than being pinned small.
+            assert!(
+                worst > ARC_CHORD_TOLERANCE / 4.0,
+                "R{radius}: sag {worst:.6} mm is far below the tolerance, so the step is not \
+                 adaptive"
+            );
+            // Every point is on the circle, and the last one is its end.
+            for p in &points {
+                assert!((p.x.hypot(p.y) - radius).abs() < 1e-9);
+            }
+            assert!(points.last().unwrap().distance_to(&circle.start) < 1e-12);
+
+            // The old fixed 5° step, for the record: at R50 it sagged 0.048 mm.
+            let fixed_step_sag = radius * (1.0 - (0.087_f64 / 2.0).cos());
+            if radius >= 50.0 {
+                assert!(fixed_step_sag > ARC_CHORD_TOLERANCE, "{fixed_step_sag}");
+            }
+        }
+    }
+
+    /// An arc whose end is not the same distance from the centre as its start
+    /// is not an arc, and three readers of it used to pick three different
+    /// curves. It is refused.
+    #[test]
+    fn an_arc_whose_ends_disagree_about_its_radius_is_refused() {
+        let mut bad = Contour::new(Point2D::new(10.0, 0.0));
+        // Start is R10 from the origin, end is R12.
+        bad.arc_to(Point2D::new(0.0, 12.0), Point2D::new(0.0, 0.0), true);
+        bad.line_to(Point2D::new(10.0, 0.0));
+        let err = bad.check_arcs().unwrap_err();
+        assert!(
+            matches!(
+                err,
+                CamError::ArcRadiusMismatch { start_radius, end_radius, .. }
+                    if (start_radius - 10.0).abs() < 1e-9 && (end_radius - 12.0).abs() < 1e-9
+            ),
+            "{err:?}"
+        );
+
+        // And the operation that would cut it refuses rather than sweeping
+        // whichever radius it happened to read first.
+        let op = Contour2D::inside(bad, 1.0);
+        let tool = crate::Tool::FlatEndMill {
+            diameter: 2.0,
+            flute_length: 20.0,
+            flutes: 2,
+        };
+        assert!(matches!(
+            op.generate(&tool, &CamSettings::default()),
+            Err(CamError::ArcRadiusMismatch { .. })
+        ));
+
+        // A round-off of a few microns is still one arc.
+        let mut ok = Contour::new(Point2D::new(10.0, 0.0));
+        ok.arc_to(Point2D::new(0.0, 10.002), Point2D::new(0.0, 0.0), true);
+        ok.line_to(Point2D::new(10.0, 0.0));
+        assert!(ok.check_arcs().is_ok());
     }
 }

@@ -71,10 +71,11 @@ pub use job::{
     ToolChangeStrategy, Wcs,
 };
 pub use operation::{
-    tip_length, BreakThrough, CamOperation, CentreLineStretch, Contour, Contour2D, ContourPhase,
-    ContourReport, ContourSegment, CutDirection, Drill, DrillCycle, DrillError, EntryStyle, Face,
-    HelicalBore, Hole, Pocket2D, PocketReport, Point2D, Roughing3D, Spoilboard, Stepover, Tab,
-    ThinSlotStrategy, UncutPatch,
+    arc_step, linearize_arc, tip_length, BreakThrough, CamOperation, CentreLineStretch, Contour,
+    Contour2D, ContourPhase, ContourReport, ContourSegment, CutDirection, Drill, DrillCycle,
+    DrillError, EntryStyle, Face, HelicalBore, Hole, Pocket2D, PocketReport, Point2D, Roughing3D,
+    Spoilboard, Stepover, Tab, ThinSlotStrategy, UncutPatch, ARC_CHORD_TOLERANCE,
+    ARC_RADIUS_TOLERANCE,
 };
 pub use outline::{
     compare_outlines, is_prismatic, read_dxf, section_at_z, silhouette_from_above, write_dxf,

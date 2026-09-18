@@ -1250,8 +1250,20 @@ fn sample_arc(
     ccw: bool,
     tol: f64,
     out: &mut Vec<[f64; 3]>,
-) {
-    let r = (from[0] - centre[0]).hypot(from[1] - centre[1]);
+) -> Result<(), VerifyError> {
+    let r0 = (from[0] - centre[0]).hypot(from[1] - centre[1]);
+    let r1 = (to[0] - centre[0]).hypot(to[1] - centre[1]);
+    // An arc whose ends are at different radii is not an arc. This used to
+    // sweep the *start* radius and land somewhere other than `to`, silently
+    // re-interpreting the program rather than saying it could not read it.
+    if (r1 - r0).abs() > crate::ARC_RADIUS_TOLERANCE {
+        return Err(VerifyError::Unsupported(format!(
+            "an arc starts {r0:.4} mm from its centre ({:.3}, {:.3}) and ends {r1:.4} mm from it: \
+             that is not one arc, and which end is right cannot be guessed",
+            centre[0], centre[1]
+        )));
+    }
+    let r = 0.5 * (r0 + r1);
     let a0 = (from[1] - centre[1]).atan2(from[0] - centre[0]);
     let a1 = (to[1] - centre[1]).atan2(to[0] - centre[0]);
     let two_pi = std::f64::consts::TAU;
@@ -1269,7 +1281,7 @@ fn sample_arc(
         sweep
     };
     let n = ((sweep / step.max(1e-6)).ceil() as usize).max(1);
-    for i in 1..=n {
+    for i in 1..n {
         let t = i as f64 / n as f64;
         let ang = if ccw { a0 + sweep * t } else { a0 - sweep * t };
         out.push([
@@ -1278,6 +1290,9 @@ fn sample_arc(
             from[2] + (to[2] - from[2]) * t,
         ]);
     }
+    // End on the point the program named, not on a sample of it.
+    out.push(to);
+    Ok(())
 }
 
 /// Flatten a [`Toolpath`] into straight moves, sampling arcs.
@@ -1341,7 +1356,7 @@ pub fn replay_toolpath(tp: &Toolpath, opts: &VerifyOptions) -> Result<Vec<Move>,
                     matches!(dir, crate::ArcDir::Ccw),
                     opts.arc_tolerance,
                     &mut pts,
-                );
+                )?;
                 for p in pts {
                     moves.push(Move {
                         index: i,
@@ -1567,7 +1582,10 @@ pub fn parse_gcode(text: &str, opts: &VerifyOptions) -> Result<Vec<Move>, Verify
                 };
                 let r0 = (at[0] - centre[0]).hypot(at[1] - centre[1]);
                 let r1 = (to[0] - centre[0]).hypot(to[1] - centre[1]);
-                if (r0 - r1).abs() > 1e-3 * r0.max(1.0) + 1e-3 {
+                // The same bound `sample_arc` and `Contour::check_arcs` use, so
+                // one inconsistent arc gets one answer — this one, which can
+                // name the line it is on.
+                if (r0 - r1).abs() > crate::ARC_RADIUS_TOLERANCE {
                     return Err(VerifyError::Gcode {
                         line,
                         what: format!(
@@ -1577,7 +1595,7 @@ pub fn parse_gcode(text: &str, opts: &VerifyOptions) -> Result<Vec<Move>, Verify
                     });
                 }
                 let mut pts = Vec::new();
-                sample_arc(at, to, centre, mode == 3, opts.arc_tolerance, &mut pts);
+                sample_arc(at, to, centre, mode == 3, opts.arc_tolerance, &mut pts)?;
                 for p in pts {
                     moves.push(Move {
                         index: line,
@@ -3675,6 +3693,58 @@ mod tests {
         clear.push(ToolpathSegment::rapid(-20.0, 150.0, -5.0));
         clear.push(ToolpathSegment::rapid(120.0, 150.0, -5.0));
         assert!(verify_toolpath(&clear, &spec, &opts).unwrap().rapids.pass);
+    }
+
+    /// An arc whose two ends sit at different radii from its centre is not an
+    /// arc. The replay used to sweep the *start* radius and land somewhere
+    /// other than the point the program named — re-interpreting a program it
+    /// could not read, which is the one thing an oracle must not do.
+    #[test]
+    fn an_arc_whose_ends_disagree_about_its_radius_is_refused() {
+        let opts = VerifyOptions::default();
+
+        // Toolpath form: centre is stored relative to the start, so this arc
+        // starts 10 mm from its centre and ends 12 mm from it.
+        let mut tp = Toolpath::new();
+        tp.push(ToolpathSegment::rapid(10.0, 0.0, 5.0));
+        tp.push(ToolpathSegment::linear(10.0, 0.0, -1.0, 100.0));
+        tp.push(ToolpathSegment::Arc {
+            to: [0.0, 12.0, -1.0],
+            center: [-10.0, 0.0, 0.0],
+            plane: crate::ArcPlane::Xy,
+            dir: crate::ArcDir::Ccw,
+            feed: 400.0,
+        });
+        let err = replay_toolpath(&tp, &opts).unwrap_err();
+        assert!(err.to_string().contains("not one arc"), "{err}");
+
+        // The same arc, consistent, replays — and every sampled point is on
+        // the circle, ending exactly on the point the toolpath named.
+        let mut good = Toolpath::new();
+        good.push(ToolpathSegment::rapid(10.0, 0.0, 5.0));
+        good.push(ToolpathSegment::linear(10.0, 0.0, -1.0, 100.0));
+        good.push(ToolpathSegment::Arc {
+            to: [0.0, 10.0, -1.0],
+            center: [-10.0, 0.0, 0.0],
+            plane: crate::ArcPlane::Xy,
+            dir: crate::ArcDir::Ccw,
+            feed: 400.0,
+        });
+        let moves = replay_toolpath(&good, &opts).unwrap();
+        let last = moves.last().unwrap();
+        assert!((last.to[0]).abs() < 1e-12 && (last.to[1] - 10.0).abs() < 1e-12);
+
+        // And in G-code, where the refusal can name the line.
+        let part = PartRegion::new(
+            vec![[-20.0, -20.0], [20.0, -20.0], [20.0, 20.0], [-20.0, 20.0]],
+            vec![],
+        )
+        .unwrap();
+        let spec = JobSpec::new(part, 3.0, 2.0);
+        let text = "G21 G90 G94 G17 G54\nM3 S10000\nG0 Z5\nG0 X10 Y0\nG1 Z-1 F100\n\
+                    G3 X0 Y12 I-10 J0 F400\nG0 Z5\nM5\nM2\n";
+        let err = verify_gcode(text, &spec, &opts).unwrap_err();
+        assert!(err.to_string().contains("disagree on the radius"), "{err}");
     }
 
     /// Friction item 63: the oracle refused every peck-drilled job. A `G83`

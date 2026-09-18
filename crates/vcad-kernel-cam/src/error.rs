@@ -77,6 +77,22 @@ pub enum CamError {
         spoilboard: f64,
     },
 
+    /// An arc's two ends are not the same distance from its centre, so it is
+    /// not an arc and every reader of it would sweep a different curve.
+    #[error(
+        "an arc starts {start_radius:.4} mm from its centre ({:.3}, {:.3}) and ends \
+         {end_radius:.4} mm from it: that is not one arc. Fix the centre or the end point.",
+        center[0], center[1]
+    )]
+    ArcRadiusMismatch {
+        /// Distance from the centre to the arc's start, in mm.
+        start_radius: f64,
+        /// Distance from the centre to the arc's end, in mm.
+        end_radius: f64,
+        /// The centre as given.
+        center: [f64; 2],
+    },
+
     /// A board is declared under the stock, but what was declared is not a
     /// thickness — and a number that is not a thickness authorises nothing.
     #[error(

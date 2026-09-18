@@ -1,7 +1,7 @@
 //! 2D contour/profile machining operation.
 
 use crate::geom2d;
-use crate::operation::{Contour, ContourSegment, Point2D};
+use crate::operation::{Contour, Point2D};
 use crate::stock::{AllowanceRefusal, BottomAllowance, Spoilboard};
 use crate::{CamError, CamSettings, Tool, Toolpath, ToolpathSegment};
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -405,6 +405,9 @@ impl Contour2D {
             let gap = self.contour.start.distance_to(&self.contour.end_point());
             return Err(CamError::NotClosed(gap));
         }
+        // An arc whose ends disagree about its radius is not an arc: refuse it
+        // here rather than let the lineariser pick one of the two answers.
+        self.contour.check_arcs()?;
         for tab in &self.tabs {
             if tab.position < 0.0 || tab.position > 1.0 {
                 return Err(CamError::InvalidTabPosition(tab.position));
@@ -698,50 +701,11 @@ impl Contour2D {
     }
 
     /// Convert contour to a list of points.
+    ///
+    /// One linearisation, shared with `Contour::to_geo_polygon`, stepping by
+    /// sag rather than by a fixed angle: see `Contour::to_points`.
     fn contour_to_points(&self, contour: &Contour) -> Vec<Point2D> {
-        let mut points = vec![contour.start];
-
-        for seg in &contour.segments {
-            match seg {
-                ContourSegment::Line { to } => {
-                    points.push(*to);
-                }
-                ContourSegment::Arc { to, center, ccw } => {
-                    // Linearize arc
-                    let current = points.last().unwrap();
-                    let r =
-                        ((center.x - current.x).powi(2) + (center.y - current.y).powi(2)).sqrt();
-                    let start_angle = (current.y - center.y).atan2(current.x - center.x);
-                    let end_angle = (to.y - center.y).atan2(to.x - center.x);
-
-                    let mut delta = if *ccw {
-                        end_angle - start_angle
-                    } else {
-                        start_angle - end_angle
-                    };
-                    if delta < 0.0 {
-                        delta += 2.0 * std::f64::consts::PI;
-                    }
-
-                    let segments = ((delta.abs() / 0.087).ceil() as usize).max(1);
-                    let step = delta / segments as f64;
-
-                    for i in 1..=segments {
-                        let angle = if *ccw {
-                            start_angle + step * i as f64
-                        } else {
-                            start_angle - step * i as f64
-                        };
-                        points.push(Point2D::new(
-                            center.x + r * angle.cos(),
-                            center.y + r * angle.sin(),
-                        ));
-                    }
-                }
-            }
-        }
-
-        points
+        contour.to_points(crate::operation::ARC_CHORD_TOLERANCE)
     }
 
     /// Stretches of the closed loop where a pass at `cut_z` must ride over a

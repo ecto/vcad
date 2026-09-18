@@ -450,11 +450,13 @@ impl Pocket2D {
             let gap = self.contour.start.distance_to(&self.contour.end_point());
             return Err(CamError::NotClosed(gap));
         }
+        self.contour.check_arcs()?;
         for island in &self.islands {
             if !island.is_closed(0.01) {
                 let gap = island.start.distance_to(&island.end_point());
                 return Err(CamError::NotClosed(gap));
             }
+            island.check_arcs()?;
         }
 
         let stepover = self
