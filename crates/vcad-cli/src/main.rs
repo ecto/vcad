@@ -1879,6 +1879,40 @@ fn show_info(file: &PathBuf) -> Result<()> {
             println!("\nMesh stats:");
             println!("  Total triangles: {}", total_tris);
             println!("  Total vertices: {}", total_verts);
+            // Volume, and whether the shell it was measured from can support
+            // it. The divergence theorem needs a closed surface; given an
+            // open one it still returns a number, wrong by the flux through
+            // the hole. One missing 0.98 mm² wall on the rana-60 stator's
+            // near-tangent fillet made a 4726.91 mm³ part report 4734.78
+            // while its shape was right to 0.005 mm. A user reading a volume
+            // has no way to know that unless it is printed here.
+            let mut volume = 0.0;
+            let (mut open, mut doubled) = (0usize, 0usize);
+            for m in &meshes {
+                let mesh = vcad_kernel_tessellate::TriangleMesh {
+                    vertices: m.vertices.clone(),
+                    indices: m.indices.clone(),
+                    ..Default::default()
+                };
+                let report = vcad_kernel::vcad_kernel_booleans::mesh_report(&mesh);
+                volume += report.signed_volume;
+                open += report.open_edges;
+                doubled += report.overused_edges;
+            }
+            println!("  Volume: {:.3} mm³", volume);
+            if open > 0 || doubled > 0 {
+                let mut parts = Vec::new();
+                if open > 0 {
+                    parts.push(format!("{open} open edge(s)"));
+                }
+                if doubled > 0 {
+                    parts.push(format!("{doubled} doubled edge(s)"));
+                }
+                println!(
+                    "    ⚠ shell not closed ({}): volume is approximate",
+                    parts.join(", ")
+                );
+            }
             print_timing(&timing);
         }
         Err(e) => {

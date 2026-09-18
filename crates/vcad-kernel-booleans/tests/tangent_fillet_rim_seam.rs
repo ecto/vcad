@@ -248,30 +248,35 @@ fn a_fillet_clear_of_the_bore_is_closed() {
     }
 }
 
-/// The near miss that must not be fused into a tangency — and must not be
-/// silently wrong either.
+/// The near miss that must not be fused into a tangency — and whose volume
+/// must not be silently wrong.
 ///
 /// Sliding the fillet block 0.01 mm OUTWARD breaks the tangency: the centre
 /// distance misses `R − r` by 9.9e-3 mm, a hundred times the 1e-4 mm at which
 /// `tangency::TANGENCY_EPS` declares two carriers to be touching, so nothing
-/// in the tangency machinery may fire here. Good.
+/// in the tangency machinery may fire here. It does not. Good.
 ///
-/// What is NOT good is the answer. The union comes back `Analytic` at
-/// 4734.78 mm³ against a closed form of 4727.01 — **+0.16 %** — with 6
-/// unpaired edges, and nothing catches it:
+/// The union still reports 4734.78 mm³ against a closed form of 4726.91 —
+/// +0.167 %, `Analytic`, 6 unpaired edges.
 ///
-///   * the union volume bound (`max(A,B) ≤ vol ≤ A+B`) is far too loose;
-///   * the mesh referee never overrules, because the mesh fallback it would
-///     compare against is itself repaired under `manifold_at_any_cost` and,
-///     on this arrangement, that repair moves more volume than the error.
+/// Located (`docs/boolean-multilump-union-diagnosis.md`): the SHAPE is right.
+/// Sectioned against the 2D CSG of its own source at six heights, the outline
+/// agrees to **0.00499 mm** and the area to 0.055 mm². What is wrong is that
+/// one wall face is absent — the 0.164 mm stretch from the fillet arc's apex
+/// (23.7338, 3.5500), which sits 0.0022 mm inside the bore, to where the bore
+/// meets the block's top edge at (23.7111, 3.7124). The arc crosses r = 24
+/// mid-stretch, so the boundary has to hand over from arc to bore there, and
+/// both sides of the handover are dropped.
 ///
-/// A wrong solid that reports `Analytic` is the exact failure this crate's
-/// comment headers keep warning about, so it is pinned here rather than left
-/// as a footnote. Fixing it means either a tighter bound for near-tangent
-/// arrangements or failing closed on them; either way this test should then
-/// assert the volume rather than document the error.
+/// The volume error is that hole, billed by the divergence theorem:
+/// 0.16397 × 6 = 0.9838 mm² of missing wall at r = 24 contributes
+/// (1/3)·24·0.9838 = 7.8706 mm³, against an observed 7.869. So this test's
+/// assertion is sound — a user reading mass or a quote gets the wrong number
+/// — but the defect is a missing face at a near-tangent crossing, not a
+/// missing trim. Neither the volume bound nor the buried-face check can see
+/// it: the bound is on volume, and volume is precisely what the hole
+/// corrupts.
 #[test]
-#[ignore = "known defect: a near-tangent fillet is +0.167% and reports Analytic; the buried-face check does NOT catch it — see the doc comment"]
 fn a_near_miss_fillet_is_not_silently_wrong() {
     let r = ring();
     let d = 0.01;

@@ -16,6 +16,7 @@
 //! }
 //! ```
 
+pub mod budget;
 pub mod cache;
 pub mod convert;
 pub mod diff;
@@ -42,10 +43,16 @@ pub use kinematics::solve_forward_kinematics;
 pub use validate::validate_document;
 pub use vcad_ir::resolve::{self, resolve_document, resolve_document_cloned, ResolvePatchError};
 
-/// Platform-agnostic clock for timing instrumentation.
+/// Platform-agnostic clock for timing instrumentation *and* for the
+/// evaluator's batching budget (see [`budget`]).
 ///
 /// Implement this trait to provide millisecond-precision timing.
 /// In WASM, use `performance.now()`; in native, use `std::time::Instant`.
+///
+/// This is the only way the evaluator reads a clock. `Instant::now()` panics
+/// on `wasm32-unknown-unknown`, which traps the module, so a caller that
+/// leaves this `None` gets the native default clock on a native build and a
+/// deterministic operation budget on `wasm32` — never a trap.
 pub trait Clock: Send + Sync {
     /// Returns the current time in milliseconds (monotonic).
     fn now_ms(&self) -> f64;
