@@ -32,6 +32,12 @@ struct EditorView: View {
                     // the cross-domain gripper (used to verify without driving the UI).
                     let env = ProcessInfo.processInfo.environment
                     AppInstance.currentModel = model
+                    // `kill -USR1 <pid>` writes what the app is doing to a
+                    // file: the editor window is borderless, so there is
+                    // nothing to query from outside (friction-log item 31).
+                    // Installed here rather than at launch because this is
+                    // where the model first exists.
+                    VcadStatus.installSignalHandler(model)
                     // Offline native CNC smoke hook. Never contacts hardware.
                     if env["VCAD_CNC_DEMO"] == "1" {
                         model.workspace = .manufacture
@@ -274,6 +280,17 @@ struct DocumentCommands: Commands {
         CommandGroup(replacing: .help) {
             Button("vcad Help") { NSWorkspace.shared.open(URL(string: "https://vcad.io/docs")!) }
             Button("Keyboard Shortcuts") { NSWorkspace.shared.open(URL(string: "https://vcad.io/docs/native/shortcuts")!) }
+            Divider()
+            // The editor window is borderless — no accessibility window, no
+            // Window-menu entry, no title to query — so this and `kill -USR1`
+            // are how anything outside the app finds out what it is doing
+            // (friction-log item 31).
+            Menu("Debug") {
+                Button("Dump Status") { _ = VcadStatus.dump(model) }
+                Button("Dump Status and Reveal") {
+                    if let url = VcadStatus.dump(model) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                }
+            }
             Divider()
             Button("Report an Issue…") { NSWorkspace.shared.open(URL(string: "https://github.com/ecto/vcad/issues/new")!) }
         }
