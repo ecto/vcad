@@ -516,7 +516,7 @@ fillet arc  at y = 4.0038       x =  28.469828
 | 28.469845 | **2.0e-07** (OD circle) | `cyl_band::split_wavy_band_by_line` |
 | 28.469828 | **1.2e-07** (fillet arc) | `split_planar_face` → `split_face_by_curve`, and band-by-line |
 | 28.468892 | −9.4e-04 | `split_planar_face` → `split_face_by_curve` |
-| 28.470458 | +6.3e-04 | `split::clip_spherical_face_by_circle` |
+| 28.470458 | +6.3e-04 | `split_planar_face_by_circle` → `split_planar_face_by_arc` |
 
 The first two are each **correct to a couple of parts in 10⁷ for their own
 surface**, and they are `1.72e-05 mm` apart — *exactly* the amount by which
@@ -550,16 +550,85 @@ points on the OD*:
 ```
 A (28.469849, 4.003778)  the tangency point            A→B   7.9e-03
 B (28.470964, 3.995933)  OD canonical grid             B→C   3.5e-03
-C (28.470459, 3.999438)  clip_spherical_face_by_circle D→C   1.8e-01
+C (28.470459, 3.999438)  split_planar_face_by_arc      D→C   1.8e-01
 D (28.494835, 3.821896)  OD canonical grid             A→D   1.8e-01
 ```
 
-`A→B→C→D→A` appears **once**, on the top cap and the bottom cap. It is a
-sliver of the cap that one side bounds and the other never covers — the same
-"uncovered cap sliver" class as the post-root fillets in the w1 section above,
-not a rail-duplication problem and not a weld-tolerance problem. `C` coming
-from the *spherical* clipper on a part with no spheres is the thread worth
-pulling next.
+`A→B→C→D→A` appears **once**, on the top cap and the bottom cap.
+
+**Retracted:** an earlier version of this section said `C` came from
+`clip_spherical_face_by_circle`, "the spherical clipper on a part with no
+spheres". Both halves were wrong in an instructive way. A surface-kind census
+confirms the whole assembly carries **only `Cylinder` and `Plane`** — no
+sphere at any stage — and `split_spherical_face_by_circle` downcasts to
+`SphereSurface` and returns before it can ever call the clipper. The frame was
+a **symbol artifact**: several splitters end in a byte-identical
+`map(find_or_create_vertex)` closure, the linker folds them into one, and the
+backtrace reports whichever name survived. Re-running with folding disabled
+(`-C link-arg=-Wl,-no_deduplicate`) names the real chain,
+`split_planar_face_by_circle` → `split_planar_face_by_arc`. **Backtraces in an
+optimised build are evidence about addresses, not about functions**; check the
+named function is even reachable before believing it.
+
+### Cover or merge? The four points, tested against both carriers
+
+| vertex | off the OD | off the fillet arc | from the touch |
+|---|---|---|---|
+| A | 7.0e-07 | 1.8e-05 | 0 |
+| C | 7.0e-07 | 8.1e-06 | 0.0044 |
+| B | 1.3e-05 | 6.6e-07 | 0.0079 |
+| D | 1.9e-07 | **1.6e-02** | 0.1836 |
+
+A, B and C lie on **both** carriers to 1.8e-05 mm. They are not three corners
+of a sliver that wants covering — they are three samples of one seam inside
+0.008 mm, taken by three splitters at three parameters. Only D is a genuinely
+distinct point: by 0.18 mm along, the arc has left the circle by 16 µm. So
+this wants **merging, not covering**; covering `A-B-D` would mint a face of
+order 1e-07 mm², which is another sliver.
+
+### Tried and reverted (2): collapsing the seam
+
+Project any vertex inside a tangency's seam onto its line, before the weld.
+Two radii were tried — the flat `TANGENCY_ZONE` (0.02), and a `width` carried
+on `TangencyLine` and computed the way `ssi::parallel_cylinders` computes its
+generator chord (0.0117 mm for this fillet, 0.0152 for the post-root ones), so
+the radius is measured off the carriers rather than chosen.
+
+On the reproducer it works and the gates are clean:
+
+| | open | over-used |
+|---|---|---|
+| ring ∪ cube ∪ round end ∪ blk A | 13 → **5** | 0 → 0 |
+| … ∪ blk B | 18 → **7** | 36 → **31** |
+
+and every remaining unpaired edge is on `x = 24.4000, z = 17.10` — the second,
+unrelated top-cap defect. Boolean suite, tessellate suite and
+`twelve_filleted_posts_stay_analytic` all pass, and the full torture track
+reports **no regressions vs baseline** (707 pass / 44 bad-geometry / 1 timeout,
+identical to HEAD; chain-13's timeout is load-flaky at load ~12).
+
+**It is still not landable.** On the real stator it is a severe regression:
+
+| | fidelity | faces | triangles | open | over-used | volume | solve |
+|---|---|---|---|---|---|---|---|
+| HEAD | `Analytic` | 501 | 12186 | 642 | 95 | 7869.62 | 29.7 s |
+| collapsed | **`TriangleSoup`** | 139229 | 130929 | 93 | 14762 | 7852.24 | 126–145 s |
+
+Both radii give byte-identical numbers, so the width is not the problem — the
+collapse itself is. Note how the tempting numbers move the *right* way: open
+edges 642 → 93 and the volume stays inside 7848 ± 0.5 %. Read alone they look
+like a fix. The fidelity flag is what says the analytic path died and the
+mesh fallback answered instead, which is exactly the failure this whole
+document exists to refuse.
+
+The likely mechanism, not yet confirmed: welding three consecutive loop
+vertices into one leaves a zero-length half-edge, and
+`repair::collapse_degenerate_half_edges` **skips any half-edge that has a
+twin** — so seam spurs survive into the result and the face is rejected. That
+is the `… v77 v78 v79 v175 v79 v78 v77 …` pathology from the w1 section, minted
+here on purpose. Closing this item means collapsing the seam *and* repairing
+the loops it degenerates, which is a larger change than a weld and needs its
+own gates.
 
 ## Open item: the mesh fallback moves intermediate solids by millimetres
 
