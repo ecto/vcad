@@ -1,0 +1,15 @@
+{
+  "id": "2026-09-18-browser-kernel-chained-booleans",
+  "version": "0.10.0",
+  "date": "2026-09-18",
+  "category": "fix",
+  "title": "Chained cuts evaluate in the kernel again",
+  "summary": "A part authored as a chain of differences — a plate, then a bore, then a hole, then another — no longer crashes the browser kernel into a mesh-only fallback.",
+  "details": "The evaluator batches a chain of booleans into one cut against the union of the tools, and bounded that attempt with a wall-clock reading that does not exist in WebAssembly: taking it panicked, and the panic took the whole kernel module down. The web app hid this almost perfectly — it caught the crash and re-evaluated the document in TypeScript, so the part still appeared, just without its B-rep and without the kernel's speed, and the only trace was a line in the console. Anything that needs the real surfaces rather than a mesh found nothing there: sectioning a part for CAM would simply fail on a plate with a few holes in it. The batching budget is now taken from the clock the caller supplies (the browser's own `performance.now()`), and a caller that has none gets a deterministic cap on how many merges the batching may attempt, so it is bounded on every platform rather than on none. Both paths produce the same solid, and a source guard in the test suite stops the wall clock being reintroduced.",
+  "features": [
+    "kernel",
+    "booleans",
+    "cam",
+    "web-app"
+  ]
+}

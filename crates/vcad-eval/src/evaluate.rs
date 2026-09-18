@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::time::{Duration, Instant};
 
 use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer, Trace, TraceArc, Via, Zone};
 use vcad_ir::{CsgOp, Document, NodeId, PathCurve};
@@ -16,6 +15,7 @@ use vcad_kernel_sweep::{CylindricalPath, Helix, LoftOptions, SweepOptions};
 use vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_text::{FontRegistry, TextAlignment};
 
+use crate::budget::Budget;
 use crate::cache::{root_fingerprint, FingerprintSettings, RootKey};
 use crate::convert::{ir_sketch_to_profile, to_point3, to_vec3};
 use crate::kinematics::solve_forward_kinematics;
@@ -680,7 +680,7 @@ fn evaluate_op_timed(
                                 let fused = match inner.len() {
                                     0 => None,
                                     1 => inner.pop(),
-                                    _ => Some(union_group(inner)),
+                                    _ => Some(union_group(inner, clock)),
                                 };
                                 if let Some(f) = fused {
                                     grouped.push(f.apply_transform(&rotation_transform(&angles)));
@@ -688,7 +688,7 @@ fn evaluate_op_timed(
                             }
                         }
                     }
-                    if let Some(found) = union_tree(&grouped, Instant::now() + batch_budget()) {
+                    if let Some(found) = union_tree(&grouped, &Budget::start(clock)) {
                         return Ok(Some(found));
                     }
                 }
@@ -724,7 +724,7 @@ fn evaluate_op_timed(
                     if tools.is_empty() {
                         return Ok(Some(base));
                     }
-                    return Ok(Some(cut_chain(base, &tools)));
+                    return Ok(Some(cut_chain(base, &tools, clock)));
                 }
                 return Ok(None);
             }
@@ -2073,11 +2073,14 @@ fn collect_difference_chain(
 /// So there is no tool-count cap and no fused-face cap. Either the whole
 /// chain batches or none of it does.
 ///
-/// ## The bound is wall clock, spent where it can be checked
+/// ## The bound is a budget, spent where it can be checked
 ///
-/// What is capped is time, by [`BATCH_BUDGET`]. The budget is checked inside
-/// [`union_all`]'s reduction — between pairs, where the work is actually
-/// divisible — and once more before committing to the final difference.
+/// What is capped is [`crate::budget::Budget`] — wall-clock milliseconds
+/// against the caller's [`Clock`], or, for a caller that has no clock to give
+/// on a platform with none of its own, a count of boolean operations. The
+/// budget is charged inside [`union_all`]'s reduction — between pairs, where
+/// the work is actually divisible — and once more before committing to the
+/// final difference.
 /// That placement is the point: the union reduction is where an expensive
 /// tool set announces itself. The rana-60-cnc `rotor` fuses twenty
 /// 100-segment extruded sketches, and it is the *union* of those that
@@ -2089,6 +2092,9 @@ fn collect_difference_chain(
 /// cannot bound one that has already started. It does not need to: on every
 /// part measured, a tool set whose union is cheap has a cheap difference
 /// too, and one whose union is expensive never reaches the difference.
+///
+/// The budget is never read from `Instant::now()`, which panics — and so
+/// traps the module — on `wasm32-unknown-unknown`. See [`crate::budget`].
 ///
 /// ## Fidelity, as before
 ///
@@ -2230,11 +2236,11 @@ const UNION_SEARCH_MIN_TAIL: usize = 8;
 /// results), and an alternative is searched for only when the authored order
 /// has failed AND a long tail of mesh booleans would follow — chained mesh
 /// booleans re-split each other's coplanar caps without bound.
-fn union_group(operands: Vec<Solid>) -> Solid {
+fn union_group(operands: Vec<Solid>, clock: Option<&dyn Clock>) -> Solid {
     if let Ok(clean) = union_fold_analytic(&operands) {
         return clean;
     }
-    if let Some(found) = union_tree(&operands, Instant::now() + batch_budget()) {
+    if let Some(found) = union_tree(&operands, &Budget::start(clock)) {
         return found;
     }
     union_fold(operands)
@@ -2293,8 +2299,8 @@ fn union_fold(operands: Vec<Solid>) -> Solid {
     acc
 }
 
-/// Pairwise halving reduction, smallest operands first, with the deadline
-/// checked before every union.
+/// Pairwise halving reduction, smallest operands first, with the budget
+/// charged before every union.
 ///
 /// Two things make this more than a plain halving:
 ///
@@ -2313,7 +2319,7 @@ fn union_fold(operands: Vec<Solid>) -> Solid {
 ///   to the authored order instead would chain a mesh boolean per operand, and
 ///   chained mesh booleans re-split each other's coplanar caps without bound
 ///   (the rana-60 stator reached 16 GB before it was stopped).
-fn union_tree(operands: &[Solid], deadline: Instant) -> Option<Solid> {
+fn union_tree(operands: &[Solid], budget: &Budget<'_>) -> Option<Solid> {
     if operands
         .iter()
         .any(|s| s.fidelity() != SolidFidelity::Analytic)
@@ -2349,7 +2355,7 @@ fn union_tree(operands: &[Solid], deadline: Instant) -> Option<Solid> {
                 next.push(a);
                 break;
             };
-            if Instant::now() >= deadline {
+            if !budget.spend() {
                 if trace {
                     eprintln!("[union-tree] budget exhausted at level {depth}");
                 }
@@ -2358,16 +2364,22 @@ fn union_tree(operands: &[Solid], deadline: Instant) -> Option<Solid> {
                 next.extend(it);
                 return Some(union_fold(next));
             }
-            let t0 = Instant::now();
+            let t0 = if trace { budget.now_ms() } else { None };
             let u = a.union(&b);
             let clean = u.fidelity() == SolidFidelity::Analytic;
             if trace {
                 let (alo, ahi) = a.bounding_box();
                 let (blo, bhi) = b.bounding_box();
+                // A clockless budget counts operations, not milliseconds, so
+                // the trace says so rather than printing a made-up duration.
+                let took = match (t0, budget.now_ms()) {
+                    (Some(t0), Some(t1)) => format!("{:.0} ms", t1 - t0),
+                    _ => "? ms".to_string(),
+                };
                 eprintln!(
-                    "[union-tree] L{depth} {:?} in {:.0} ms  vol {:.1} ∪ {:.1} = {:.1}  a=[{:.1},{:.1}]..[{:.1},{:.1}] b=[{:.1},{:.1}]..[{:.1},{:.1}]",
+                    "[union-tree] L{depth} {:?} in {}  vol {:.1} ∪ {:.1} = {:.1}  a=[{:.1},{:.1}]..[{:.1},{:.1}] b=[{:.1},{:.1}]..[{:.1},{:.1}]",
                     u.fidelity(),
-                    t0.elapsed().as_secs_f64() * 1000.0,
+                    took,
                     a.volume(),
                     b.volume(),
                     u.volume(),
@@ -2405,13 +2417,13 @@ fn union_tree(operands: &[Solid], deadline: Instant) -> Option<Solid> {
     level.pop()
 }
 
-fn cut_chain(base: Solid, tools: &[Solid]) -> Solid {
-    let deadline = Instant::now() + batch_budget();
+fn cut_chain(base: Solid, tools: &[Solid], clock: Option<&dyn Clock>) -> Solid {
+    let budget = Budget::start(clock);
 
-    if let Some(merged) = union_all(tools, deadline) {
+    if let Some(merged) = union_all(tools, &budget) {
         // The union came in under budget; spending what is left on the one
         // difference it was built for is the whole point of having built it.
-        if Instant::now() < deadline {
+        if budget.spend() {
             let batched = base.difference(&merged);
             if batched.fidelity() == SolidFidelity::Analytic {
                 return batched;
@@ -2424,27 +2436,6 @@ fn cut_chain(base: Solid, tools: &[Solid]) -> Solid {
         acc = acc.difference(t);
     }
     acc
-}
-
-/// Wall-clock budget for the batched attempt on one difference chain.
-///
-/// 20 s. Every chain measured either fuses far inside it (the rana-60-cnc
-/// `can`'s thirty tools) or runs orders of magnitude past it (the `rotor`'s
-/// twenty extruded sketches, which had not finished in 30 minutes), so the
-/// exact figure is not delicate — anything from a few seconds to a minute
-/// separates the two populations. It sits at the high end of that range
-/// because a batched win is worth waiting for: the `can` goes from 539 s and
-/// 247 002 facets to 109 s and 379 analytic faces.
-///
-/// Override with `VCAD_BATCH_BUDGET_MS` when profiling.
-const BATCH_BUDGET: Duration = Duration::from_secs(20);
-
-fn batch_budget() -> Duration {
-    let ms = std::env::var("VCAD_BATCH_BUDGET_MS")
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or_else(|| BATCH_BUDGET.as_millis() as u64);
-    Duration::from_millis(ms)
 }
 
 /// Fuse `tools` into one solid, or `None` if the fusion is not itself a
@@ -2470,16 +2461,16 @@ fn batch_budget() -> Duration {
 ///
 /// Degradation stops the reduction where it happens: once any partial union
 /// has left analytic representation, no amount of further unioning brings it
-/// back, and the caller is going to discard the result anyway. `deadline`
+/// back, and the caller is going to discard the result anyway. `budget`
 /// stops it for the same reason from the other direction: a reduction still
 /// running past the chain's batching budget has already cost more than the
 /// re-trims it was going to save, so it gives up and lets the caller cut the
 /// tools one at a time.
-fn union_all(tools: &[Solid], deadline: Instant) -> Option<Solid> {
+fn union_all(tools: &[Solid], budget: &Budget<'_>) -> Option<Solid> {
     let (first, rest) = tools.split_first()?;
     let mut merged = (first.fidelity() == SolidFidelity::Analytic).then(|| first.clone())?;
     for t in rest {
-        if Instant::now() >= deadline {
+        if !budget.spend() {
             return None;
         }
         merged = merged.union(t);
