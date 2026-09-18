@@ -160,6 +160,42 @@ export function depositFrom(
   };
 }
 
+/**
+ * Refuse a deposit that does not record the inputs its claims rest on.
+ *
+ * Fail-closed, and deliberately at *deposit* time. A claim with no basis can
+ * never be re-stated, so it can never go `Stale` — and to whoever reads the
+ * receipt a month later, "never moved" is indistinguishable from "still
+ * true". The producer is the only party that knows what its claims rest on,
+ * and this is the last moment it is still around to say so.
+ *
+ * Nothing deposits without inputs today, so this blocks nobody now; it is
+ * here so the solver families cannot be wired up later without naming a
+ * basis. Throws with the registry's own message, which lists what was
+ * required and what was missing.
+ */
+export function assertDepositHasBasis(
+  engine: Engine | undefined,
+  entry: ClaimReportEntry,
+): void {
+  if (!engine?.hasClaimRegistry?.()) {
+    // No registry to ask. The floor still applies: a deposit with no inputs
+    // is refused whether or not anyone can tell us which ones it needed.
+    if (!entry.inputs || Object.keys(entry.inputs).length === 0) {
+      throw new Error(
+        `a '${entry.schema}' deposit must record the inputs its claims rest on, and this one records none. A claim with no basis can never go stale, so it would keep certifying a design that has since been edited.`,
+      );
+    }
+    return;
+  }
+  const out = engine.receiptCheckDeposit<{ ok?: boolean; error?: string }>(
+    entry.schema,
+    entry.report,
+    entry.inputs ?? {},
+  );
+  if (typeof out.error === "string") throw new Error(out.error);
+}
+
 /** The families this kernel build serves, or `[]` when it carries none. */
 export function registryFamilies(engine?: Engine): RegistryFamily[] {
   if (!engine || !engine.hasClaimRegistry?.()) return [];
@@ -179,50 +215,100 @@ function familyFor(
   return registryFamilies(engine).find((f) => f.schema === schema);
 }
 
+/** Holds / Stale / Violated, the vocabulary `verify_receipt` reports in. */
+export type ClaimReportStatus = "Holds" | "Stale" | "Violated";
+
+/** What re-stating one deposit found. */
+export interface RestatedEntry {
+  /** The deposit this is about. */
+  id: string;
+  schema: string;
+  label?: string;
+  /** Its claims, after re-stating, in unified form. */
+  claims: ReceiptClaim[];
+  /** Worst-wins verdict over those claims. */
+  status: ClaimReportStatus;
+  /** Names of the claims the re-state turned stale. */
+  stale_claims: string[];
+  /** The basis keys that moved. */
+  drifted_inputs: string[];
+  /** Ids of the claims that came back failed. */
+  violated_claims: string[];
+}
+
 /**
- * One deposit's claims, re-stated against the inputs as they stand now.
+ * Re-state one deposit against today's inputs and read its claims.
+ *
+ * **This is the single code path `build_receipt` and `verify_receipt` share.**
+ * They used to be able to disagree — one re-stated, the other did not — which
+ * is the worst possible shape for a staleness check: the tool an operator
+ * reaches for to ask "is this still good?" was the one that would not notice.
+ * Everything either tool reports about a deposit comes from here.
  *
  * The re-state runs first and always, for any family that supports it: a
  * stored report says what *was* true of the inputs it was made against, and
  * only comparing those against today's inputs can tell a live claim from one
  * about a job that has been edited out from under it.
  */
-function claimsForEntry(engine: Engine, entry: ClaimReportEntry): ReceiptClaim[] {
+export function restateEntry(
+  engine: Engine,
+  entry: ClaimReportEntry,
+): RestatedEntry {
+  const base = {
+    id: entry.id,
+    schema: entry.schema,
+    ...(entry.label ? { label: entry.label } : {}),
+  };
+  /** A deposit that could not be read at all: unverifiable, and Stale to
+   *  `verify_receipt` — never Holds, which is the only unsafe answer. */
+  const blocked = (domain: string, reason: string): RestatedEntry => ({
+    ...base,
+    claims: [
+      unverifiable(
+        `claims.${entry.schema}`,
+        domain,
+        `claims from ${entry.schema}`,
+        reason,
+      ),
+    ],
+    status: "Stale",
+    stale_claims: [],
+    drifted_inputs: [],
+    violated_claims: [],
+  });
+
   const family = familyFor(engine, entry.schema);
   if (!family) {
     const known = registryFamilies(engine)
       .map((f) => f.schema)
       .join(", ");
-    return [
-      unverifiable(
-        `claims.${entry.schema}`,
-        "verification",
-        `claims from ${entry.schema}`,
-        `no claim family is registered for '${entry.schema}' in this kernel build` +
-          (known ? ` — it carries [${known}]` : " — it carries none") +
-          ". The report is kept on the document; rebuild the kernel WASM with that family enabled to certify it.",
-      ),
-    ];
+    return blocked(
+      "verification",
+      `no claim family is registered for '${entry.schema}' in this kernel build` +
+        (known ? ` — it carries [${known}]` : " — it carries none") +
+        ". The report is kept on the document; rebuild the kernel WASM with that family enabled to certify it.",
+    );
   }
 
   let report = entry.report;
+  let staleClaims: string[] = [];
+  let driftedInputs: string[] = [];
   if (family.stale_aware) {
-    const restated = engine.receiptRestate<{ report?: string; error?: string }>(
-      entry.schema,
-      report,
-      entry.inputs ?? {},
-    );
+    const restated = engine.receiptRestate<{
+      report?: string;
+      stale_claims?: string[];
+      drifted_inputs?: string[];
+      error?: string;
+    }>(entry.schema, report, entry.inputs ?? {});
     if (typeof restated.error === "string") {
-      return [
-        unverifiable(
-          `claims.${entry.schema}`,
-          family.domain,
-          `claims from ${entry.schema}`,
-          `the stored report could not be re-stated against the current inputs: ${restated.error}`,
-        ),
-      ];
+      return blocked(
+        family.domain,
+        `the stored report could not be re-stated against the current inputs: ${restated.error}`,
+      );
     }
     if (typeof restated.report === "string") report = restated.report;
+    staleClaims = restated.stale_claims ?? [];
+    driftedInputs = restated.drifted_inputs ?? [];
   }
 
   const out = engine.receiptClaimsFor<{
@@ -230,21 +316,88 @@ function claimsForEntry(engine: Engine, entry: ClaimReportEntry): ReceiptClaim[]
     error?: string;
   }>(entry.schema, report);
   if (typeof out.error === "string" || !Array.isArray(out.claims)) {
-    return [
-      unverifiable(
-        `claims.${entry.schema}`,
-        family.domain,
-        `claims from ${entry.schema}`,
-        out.error ?? "the family returned no claims for a report it accepted",
-      ),
-    ];
+    return blocked(
+      family.domain,
+      out.error ?? "the family returned no claims for a report it accepted",
+    );
   }
   // A deposit's id disambiguates two jobs on one document: without it, two
   // `cam.job.no_gouge` claims would be indistinguishable in the ledger.
-  return out.claims.map((c) => ({
+  const claims = out.claims.map((c) => ({
     ...c,
     subject: c.subject ?? entry.label ?? entry.id,
   }));
+  const violated = claims.filter((c) => c.verdict === "fail").map((c) => c.id);
+  // Worst wins, and a failed claim outranks a stale one: "this job cuts into
+  // the part" is actionable now, where "this job has been edited" is a
+  // request to re-run.
+  const status: ClaimReportStatus =
+    violated.length > 0 ? "Violated" : staleClaims.length > 0 ? "Stale" : "Holds";
+
+  return {
+    ...base,
+    claims,
+    status,
+    stale_claims: staleClaims,
+    drifted_inputs: driftedInputs,
+    violated_claims: violated,
+  };
+}
+
+/**
+ * Every deposit on this document, re-stated. The shared entry point behind
+ * both `build_receipt` (which wants the claims) and `verify_receipt` (which
+ * wants the verdicts).
+ */
+export function restateAll(doc: Document, engine?: Engine): RestatedEntry[] {
+  const entries = claimReports(doc);
+  if (entries.length === 0) return [];
+
+  if (!engine || !engine.hasClaimRegistry?.()) {
+    // Deposits exist and cannot be read. Saying nothing would be the one
+    // outcome that reads as clean, so say it loudly, once per deposit.
+    return entries.map((e) => ({
+      id: e.id,
+      schema: e.schema,
+      ...(e.label ? { label: e.label } : {}),
+      claims: [
+        unverifiable(
+          `claims.${e.schema}`,
+          "verification",
+          `claims from ${e.schema}`,
+          "this kernel build carries no claim registry, so the deposited report could not be translated — rebuild packages/kernel-wasm",
+        ),
+      ],
+      status: "Stale" as const,
+      stale_claims: [],
+      drifted_inputs: [],
+      violated_claims: [],
+    }));
+  }
+
+  return entries.map((entry) => {
+    try {
+      return restateEntry(engine, entry);
+    } catch (e) {
+      return {
+        id: entry.id,
+        schema: entry.schema,
+        ...(entry.label ? { label: entry.label } : {}),
+        claims: [
+          unverifiable(
+            `claims.${entry.schema}`,
+            "verification",
+            `claims from ${entry.schema}`,
+            `the claim registry failed on this report: ${e instanceof Error ? e.message : String(e)}`,
+          ),
+        ],
+        status: "Stale" as const,
+        stale_claims: [],
+        drifted_inputs: [],
+        violated_claims: [],
+      };
+    }
+  });
 }
 
 /**
@@ -258,39 +411,9 @@ export function registryReceiptClaims(
   doc: Document,
   engine?: Engine,
 ): ReceiptClaim[] {
-  const entries = claimReports(doc);
-  if (entries.length === 0) return [];
-
-  if (!engine || !engine.hasClaimRegistry?.()) {
-    // Deposits exist and cannot be read. Saying nothing would be the one
-    // outcome that reads as clean, so say it loudly, once per deposit.
-    return entries.map((e) =>
-      unverifiable(
-        `claims.${e.schema}`,
-        "verification",
-        `claims from ${e.schema}`,
-        "this kernel build carries no claim registry, so the deposited report could not be translated — rebuild packages/kernel-wasm",
-      ),
-    );
-  }
-
-  const out: ReceiptClaim[] = [];
-  for (const entry of entries) {
-    try {
-      out.push(...claimsForEntry(engine, entry));
-    } catch (e) {
-      out.push(
-        unverifiable(
-          `claims.${entry.schema}`,
-          "verification",
-          `claims from ${entry.schema}`,
-          `the claim registry failed on this report: ${e instanceof Error ? e.message : String(e)}`,
-        ),
-      );
-    }
-  }
-  return out;
+  return restateAll(doc, engine).flatMap((e) => e.claims);
 }
+
 
 /** What a measurement binding did. */
 export interface BindResult {

@@ -53,6 +53,7 @@ import {
 import {
   claimReports,
   registryReceiptClaims,
+  restateAll,
 } from "./claim-registry.js";
 import { getNodePcb, getPcbNodeIds, buildEntry, agentView, diffViolations } from "@vcad/core";
 import {
@@ -13396,13 +13397,19 @@ export async function verifyReceipt(args: Record<string, unknown>, engine?: Engi
   }
   const clearanceReceipt = unified && hasClearanceClaims(unified) ? unified : undefined;
   const constraintReceipt = unified && hasConstraintClaims(unified) ? unified : undefined;
+  // Deposited claim-family reports re-verify through the SAME path
+  // `build_receipt` builds them with (`restateAll`), so the two tools cannot
+  // disagree about whether a job has gone stale. They used to be able to,
+  // and in the worst possible direction: the tool you reach for to ask "is
+  // this still good?" was the one that would not have noticed.
+  const deposits = claimReports(ctx.doc);
 
-  if (!legacy && !clearanceReceipt && !constraintReceipt) {
+  if (!legacy && !clearanceReceipt && !constraintReceipt && deposits.length === 0) {
     return {
       content: [
         {
           type: "text" as const,
-          text: "Error: `receipt` carries nothing re-verifiable — pass a PCB Receipt (board_hash) or a unified DesignReceipt with mech.clearance or constraint.* claims, as produced by build_receipt.",
+          text: "Error: `receipt` carries nothing re-verifiable — pass a PCB Receipt (board_hash) or a unified DesignReceipt with mech.clearance or constraint.* claims, as produced by build_receipt. (This document also holds no deposited claim reports; run cam_job or cam_gear against it first.)",
         },
       ],
       isError: true,
@@ -13458,11 +13465,45 @@ export async function verifyReceipt(args: Record<string, unknown>, engine?: Engi
     statuses.push(constraintChecks.status);
   }
 
+  // Every deposited claim-family report, re-stated the one way. `restateAll`
+  // is literally the function `build_receipt` calls, so a job edited since it
+  // was posted reads Stale from whichever tool is asked.
+  let claimReportChecks:
+    | {
+        status: ReceiptStatus;
+        reports: Array<{
+          id: string;
+          schema: string;
+          status: ReceiptStatus;
+          stale_claims: string[];
+          drifted_inputs: string[];
+          violated_claims: string[];
+        }>;
+      }
+    | undefined;
+  if (deposits.length > 0) {
+    const restated = restateAll(ctx.doc, engine);
+    const reports = restated.map((r) => ({
+      id: r.id,
+      schema: r.schema,
+      status: r.status as ReceiptStatus,
+      stale_claims: r.stale_claims,
+      drifted_inputs: r.drifted_inputs,
+      violated_claims: r.violated_claims,
+    }));
+    claimReportChecks = {
+      status: worstStatus(reports.map((r) => r.status)),
+      reports,
+    };
+    statuses.push(claimReportChecks.status);
+  }
+
   const payload = {
     status: worstStatus(statuses),
     ...(boardHash ? { board_hash: boardHash } : {}),
     ...(clearance ? { clearance } : {}),
     ...(constraintChecks ? { constraints: constraintChecks } : {}),
+    ...(claimReportChecks ? { claim_reports: claimReportChecks } : {}),
   };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload) }],
@@ -14595,9 +14636,14 @@ export const toolDefs: ToolDef[] = [
     name: "verify_receipt",
     pack: "ecad",
     description:
-      "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict \u2014 Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff) and mech.clearance claims (re-measured against current geometry); worst verdict wins. Powers the ledger's Re-run button.",
+      "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict \u2014 Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff), mech.clearance claims (re-measured against current geometry), and every deposited claim-family report (cam_job / cam_gear \u2014 re-stated against the inputs it rests on, so an edited program reads Stale and says which input moved). Worst verdict wins. Powers the ledger's Re-run button.",
     inputSchema: verifyReceiptSchema,
-    handler: (a) => verifyReceipt(a) as ToolResult | Promise<ToolResult>,
+    // The engine was never forwarded here, which `build_receipt` has always
+    // done. It matters for more than the claim registry: `verifyReceipt`'s
+    // clearance branch errors out with "needs the kernel engine" without it,
+    // so a mech.clearance receipt could not be re-verified through MCP at all.
+    handler: (a, c) =>
+      verifyReceipt(a, c.engine) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ widgetCallable: true }),
   },
   {

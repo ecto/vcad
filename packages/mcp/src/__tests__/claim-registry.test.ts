@@ -457,6 +457,116 @@ describe.skipIf(!ready)("the claim-family registry", () => {
     expect(rollup(cam)).toBe("unverifiable");
   });
 
+  it("refuses a deposit that records none of the inputs its claims rest on", async () => {
+    const { client } = await connect();
+    const doc = await makeDoc(client);
+    await ok(client, "cam_job", plateJob(doc));
+
+    // What a real deposit carries, straight off the document.
+    const entry = (
+      getSession(doc) as unknown as {
+        claim_reports: Array<{ schema: string; report: string; inputs: Record<string, string> }>;
+      }
+    ).claim_reports[0];
+    expect(Object.keys(entry.inputs).length).toBeGreaterThan(0);
+
+    // Strip the basis and the registry refuses it — by name, saying what was
+    // required and what was missing. A claim with no basis can never be
+    // re-stated, so it can never go stale, and "never moved" reads exactly
+    // like "still true" to whoever opens the receipt next.
+    const refused = engine.receiptCheckDeposit<{ ok?: boolean; error?: string }>(
+      entry.schema,
+      entry.report,
+      {},
+    );
+    expect(refused.ok).toBeUndefined();
+    expect(typeof refused.error).toBe("string");
+    for (const key of ["program", "outline", "tool", "stock"]) {
+      expect(refused.error, `the refusal must name ${key}`).toContain(key);
+    }
+    expect(refused.error).toMatch(/never go stale/i);
+
+    // The deposit it actually made is accepted, so this blocks nobody today.
+    const accepted = engine.receiptCheckDeposit<{ ok?: boolean; error?: string }>(
+      entry.schema,
+      entry.report,
+      entry.inputs,
+    );
+    expect(accepted.error).toBeUndefined();
+    expect(accepted.ok).toBe(true);
+
+    // Recording *something*, but not what these claims rest on, is refused
+    // too: the check is against the report's own basis, not a box to tick.
+    const wrong = engine.receiptCheckDeposit<{ error?: string }>(
+      entry.schema,
+      entry.report,
+      { gear: "{}" },
+    );
+    expect(wrong.error).toContain("program");
+
+    // And a family that tracks no per-claim basis still demands one, so the
+    // solver tools cannot be wired up later without naming theirs.
+    const families = engine.receiptFamilies<{
+      families?: Array<{ schema: string; required_basis?: string[] }>;
+    }>().families;
+    for (const f of families ?? []) {
+      expect(
+        (f.required_basis ?? []).length,
+        `${f.schema} would accept a deposit with no basis`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it("reports a stale job from verify_receipt too, not only build_receipt", async () => {
+    const { client } = await connect();
+    const doc = await makeDoc(client);
+    await ok(client, "cam_job", plateJob(doc));
+
+    // Build a receipt, and check it back: nothing has moved, so it Holds.
+    const built = await ok(client, "build_receipt", { document_id: doc });
+    const fresh = await ok(client, "verify_receipt", {
+      document_id: doc,
+      receipt: built,
+    });
+    const freshPayload = (fresh.verify_receipt ?? fresh) as Json;
+    expect(freshPayload.status, JSON.stringify(freshPayload)).toBe("Holds");
+    const freshReports = (freshPayload.claim_reports as Json | undefined)
+      ?.reports as Json[] | undefined;
+    expect(freshReports?.[0]?.status).toBe("Holds");
+
+    // Edit the program the claims rest on.
+    const session = getSession(doc) as unknown as {
+      claim_reports: Array<{ inputs?: Record<string, string> }>;
+    };
+    const inputs = session.claim_reports[0].inputs as Record<string, string>;
+    inputs.program = inputs.program.replace("G21", "G21 (edited)");
+
+    // verify_receipt alone — no build_receipt in between — must notice. This
+    // is the whole point of the shared path: the tool you reach for to ask
+    // "is this still good?" was the one that used to not look.
+    const after = await ok(client, "verify_receipt", {
+      document_id: doc,
+      receipt: built,
+    });
+    const payload = (after.verify_receipt ?? after) as Json;
+    expect(payload.status).toBe("Stale");
+
+    const reports = (payload.claim_reports as Json).reports as Json[];
+    expect(reports.length).toBe(1);
+    const report = reports[0];
+    expect(report.status).toBe("Stale");
+    expect(report.schema).toBe("vcad.cam-claims/1");
+    // It names which input moved and which claims went with it — a verdict
+    // with no "why" sends someone back to diffing G-code by eye.
+    expect(report.drifted_inputs).toEqual(["program"]);
+    expect((report.stale_claims as string[]).length).toBeGreaterThan(0);
+    expect(report.stale_claims).toContain("job.no_gouge");
+
+    // And the two tools agree, which is the invariant the shared path buys.
+    const rebuilt = await receiptClaims(client, doc);
+    expect(find(rebuilt, "cam.job.no_gouge").verdict).toBe("unverifiable");
+  });
+
   it("changes nothing for a document that deposited no reports", async () => {
     const { client } = await connect();
     const doc = await makeDoc(client);

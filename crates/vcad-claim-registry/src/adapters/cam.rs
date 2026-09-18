@@ -17,7 +17,7 @@ use vcad_kernel_cam::gear::SpurGear;
 use vcad_kernel_cam::receipt as cam;
 use vcad_receipt::ReceiptClaim;
 
-use crate::{BindOutcome, ClaimFamily, RegistryError};
+use crate::{BindOutcome, ClaimFamily, RegistryError, RestateOutcome};
 
 fn parse(report_json: &str) -> Result<cam::ClaimSet, RegistryError> {
     let set: cam::ClaimSet = serde_json::from_str(report_json)
@@ -39,6 +39,27 @@ fn to_claims(report_json: &str) -> Result<Vec<ReceiptClaim>, RegistryError> {
     Ok(cam::design_claims(&parse(report_json)?))
 }
 
+/// Every basis key the claims in this report say they rest on.
+///
+/// CAM is the only family that records this per claim, which makes its
+/// deposit check the strictest in the registry: not merely "some inputs were
+/// recorded" but "the *right* inputs were" — a job deposit that recorded a
+/// gear instead of a program is caught here rather than reading as a
+/// permanently fresh claim about a program nobody kept.
+fn basis_of_report(report_json: &str) -> Result<Vec<String>, RegistryError> {
+    let set = parse(report_json)?;
+    let mut keys: Vec<String> = Vec::new();
+    for claim in &set.claims {
+        for key in &claim.depends_on {
+            if !keys.contains(key) {
+                keys.push(key.clone());
+            }
+        }
+    }
+    keys.sort();
+    Ok(keys)
+}
+
 /// Re-state the set against the input digests as they stand now.
 ///
 /// `current` is keyed by CAM's own basis keys (`program`, `outline`, `tool`,
@@ -46,13 +67,48 @@ fn to_claims(report_json: &str) -> Result<Vec<ReceiptClaim>, RegistryError> {
 /// `current` does not carry counts as changed, not as unchanged — a receipt
 /// that cannot identify the job it certifies certifies nothing — and that
 /// rule is `vcad_kernel_cam::receipt::restate`'s, not ours.
-fn restate(report_json: &str, current: &BTreeMap<String, String>) -> Result<String, RegistryError> {
-    let set = parse(report_json)?;
+///
+/// The outcome names what moved as well as carrying the re-stated report,
+/// because `verify_receipt` has to answer Holds-or-Stale and reconstructing
+/// that by diffing two serialized reports would be a second, weaker answer to
+/// a question `restate` already settled exactly.
+fn restate(
+    report_json: &str,
+    current: &BTreeMap<String, String>,
+) -> Result<RestateOutcome, RegistryError> {
+    let before = parse(report_json)?;
     let mut fp = cam::Fingerprint::new();
     for (key, digest) in current {
         fp = fp.with(key.clone(), digest.clone());
     }
-    render(&cam::restate(&set, &fp))
+    let after = cam::restate(&before, &fp);
+
+    // Which claims the re-state moved, and which inputs moved them. A claim
+    // that was ALREADY stale when it was stored is reported again: the
+    // receipt reader cares that it is stale now, not when it became so.
+    let mut stale_claims = Vec::new();
+    let mut drifted_inputs: Vec<String> = Vec::new();
+    for claim in &after.claims {
+        if claim.status != cam::ClaimStatus::Stale {
+            continue;
+        }
+        stale_claims.push(match &claim.subject {
+            Some(s) => format!("{}[{}]", claim.name, s),
+            None => claim.name.clone(),
+        });
+        for key in fp.drifted(&claim.depends_on, &before.fingerprint) {
+            if !drifted_inputs.contains(&key) {
+                drifted_inputs.push(key);
+            }
+        }
+    }
+    drifted_inputs.sort();
+
+    Ok(RestateOutcome {
+        report: render(&after)?,
+        stale_claims,
+        drifted_inputs,
+    })
 }
 
 /// Accept one measurement or a list of them, so a caller with a single
@@ -156,8 +212,14 @@ pub fn family() -> ClaimFamily {
         summary: "milling jobs: gouge, material left, depth, rapids, tabs, loose pieces, \
                   envelope, plunges, cutter fit, gear geometry and the over-pins dimension",
         native_only: false,
+        // CAM's real requirement is per-report and stricter than any static
+        // list — a job deposit needs the program, a gear deposit the gear —
+        // so this is only the floor every CAM deposit shares. `basis_of_report`
+        // is what actually holds a deposit to its own claims.
+        required_basis: &[cam::BASIS_TOOL],
         to_claims,
         restate: Some(restate),
         bind: Some(bind),
+        basis_of_report: Some(basis_of_report),
     }
 }

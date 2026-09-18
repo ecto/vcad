@@ -210,11 +210,17 @@ Two claims refuse to pass vacuously: `job.envelope_in_travel` is
 `unverifiable` when the job declares no tabs — "nothing to audit" is not
 "tabs that hold".
 
-**Staleness is real.** The deposit stores the live inputs each claim rests on
-(the program, the outline, the tool, the stock), and `build_receipt` re-hashes
-them before reading the report. Edit the program and its claims come back
-`unverifiable`, naming `program` as what moved, rather than certifying a
-program nobody holds.
+**Staleness is real, from either tool.** The deposit stores the live inputs
+each claim rests on (the program, the outline, the tool, the stock), and both
+`build_receipt` and `verify_receipt` re-hash them — through one shared
+function, so the two can never disagree — before reading the report. Edit the
+program and `build_receipt`'s claims come back `unverifiable` naming `program`
+as what moved, while `verify_receipt` reports `Stale` per deposit with the
+claims that went stale and the inputs that moved them.
+
+A deposit that records no inputs is refused outright: a claim with no basis
+can never be re-stated, so it could never go stale, and "never moved" reads
+exactly like "still true" to whoever opens the receipt next.
 
 **Closing a prediction** is `record_measurement`, given `claim` rather than
 `measurements`:

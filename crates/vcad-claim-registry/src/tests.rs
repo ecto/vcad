@@ -231,10 +231,17 @@ mod cam_family {
             ClaimVerdict::Pass
         );
 
-        // Unchanged inputs: the claims stand exactly as they were.
-        let intact = restate(SCHEMA, &report, &fingerprint_of(&inputs)).unwrap();
+        // Unchanged inputs: the claims stand exactly as they were, and the
+        // outcome says nothing moved.
+        let intact = restate(SCHEMA, &report, &inputs).unwrap();
+        assert!(!intact.is_stale(), "{:?}", intact.stale_claims);
+        assert!(intact.drifted_inputs.is_empty());
         assert_eq!(
-            claim(&claims_for(SCHEMA, &intact).unwrap(), "cam.job.no_gouge").verdict,
+            claim(
+                &claims_for(SCHEMA, &intact.report).unwrap(),
+                "cam.job.no_gouge"
+            )
+            .verdict,
             ClaimVerdict::Pass
         );
 
@@ -245,8 +252,17 @@ mod cam_family {
         *program = program.replace("X8.000", "X7.500");
         assert_ne!(edited["program"], inputs["program"], "the edit must bite");
 
-        let stale = restate(SCHEMA, &report, &fingerprint_of(&edited)).unwrap();
-        let after = claims_for(SCHEMA, &stale).unwrap();
+        let stale = restate(SCHEMA, &report, &edited).unwrap();
+        assert!(stale.is_stale());
+        // The outcome names what moved, so a caller answering Holds-or-Stale
+        // never has to diff two reports to work it out.
+        assert_eq!(stale.drifted_inputs, vec!["program".to_string()]);
+        assert!(
+            stale.stale_claims.iter().any(|c| c == "job.no_gouge"),
+            "the gouge claim rests on the program: {:?}",
+            stale.stale_claims
+        );
+        let after = claims_for(SCHEMA, &stale.report).unwrap();
         let gouge = claim(&after, "cam.job.no_gouge");
         assert_eq!(gouge.verdict, ClaimVerdict::Unverifiable);
         assert!(
@@ -256,14 +272,102 @@ mod cam_family {
         );
 
         // A dropped input is a change too — a receipt cannot certify a job
-        // it can no longer identify.
-        let mut dropped = fingerprint_of(&inputs);
-        dropped.remove("outline");
+        // it can no longer identify. (It is also a refused *deposit*; here
+        // the key is dropped after the fact, which is what an edit that
+        // removes an input looks like.)
+        let mut dropped = inputs.clone();
+        dropped.insert("outline".to_string(), "\"something else\"".to_string());
         let lost = restate(SCHEMA, &report, &dropped).unwrap();
+        assert!(lost.is_stale());
         assert_eq!(
-            claim(&claims_for(SCHEMA, &lost).unwrap(), "cam.job.no_gouge").verdict,
+            claim(
+                &claims_for(SCHEMA, &lost.report).unwrap(),
+                "cam.job.material_left"
+            )
+            .verdict,
             ClaimVerdict::Unverifiable
         );
+    }
+
+    #[test]
+    fn a_deposit_that_records_no_basis_is_refused() {
+        let (report, inputs) = deposit(2.0);
+
+        // The inputs the job actually recorded are accepted.
+        check_deposit(SCHEMA, &report, &inputs).expect("a full deposit is fine");
+
+        // Nothing recorded: refused, and the message says what was needed.
+        // This is the fail-open hole the check exists to close — a claim with
+        // no basis can never be re-stated, so it can never go stale, and
+        // "never moved" reads exactly like "still true" a month later.
+        let e = check_deposit(SCHEMA, &report, &BTreeMap::new()).unwrap_err();
+        match &e {
+            RegistryError::MissingBasisInputs {
+                schema,
+                recorded,
+                required,
+                missing,
+            } => {
+                assert_eq!(schema, SCHEMA);
+                assert_eq!(recorded, "none");
+                for key in ["program", "outline", "tool", "stock"] {
+                    assert!(required.contains(key), "{required} omits {key}");
+                    assert!(missing.contains(key), "{missing} omits {key}");
+                }
+            }
+            other => panic!("expected MissingBasisInputs, got {other:?}"),
+        }
+        // …and the whole message is actionable, not just a code.
+        let text = e.to_string();
+        assert!(text.contains("program"), "{text}");
+        assert!(text.contains("never go stale"), "{text}");
+
+        // A deposit that records SOMETHING but not what its own claims rest
+        // on is refused too: this is the stricter, report-derived half. A job
+        // report filed with a gear as its basis would otherwise read as a
+        // permanently fresh claim about a program nobody kept.
+        let mut wrong = BTreeMap::new();
+        wrong.insert("gear".to_string(), "{}".to_string());
+        wrong.insert("tool".to_string(), "4.0".to_string());
+        let e = check_deposit(SCHEMA, &report, &wrong).unwrap_err();
+        match &e {
+            RegistryError::MissingBasisInputs { missing, .. } => {
+                assert!(missing.contains("program"), "{missing}");
+                assert!(missing.contains("stock"), "{missing}");
+            }
+            other => panic!("expected MissingBasisInputs, got {other:?}"),
+        }
+
+        // And re-stating a basis-less deposit is refused rather than
+        // cheerfully reporting that nothing changed — the one answer that
+        // must not be reachable without evidence.
+        assert!(matches!(
+            restate(SCHEMA, &report, &BTreeMap::new()).unwrap_err(),
+            RegistryError::MissingBasisInputs { .. }
+        ));
+    }
+
+    #[test]
+    fn every_family_demands_a_basis_even_the_ones_that_track_none() {
+        // The solver families record no per-claim basis, so their static
+        // requirement is the whole of the gate. It must not be empty, or
+        // wiring one of them up would silently reintroduce the hole.
+        for family in families() {
+            assert!(
+                !family.required_basis.is_empty(),
+                "{} would accept a deposit with no basis",
+                family.schema
+            );
+        }
+        // Concretely, for a family that is not CAM: an empty deposit is
+        // refused without the report even having to parse.
+        if find("vcad.thermal-claims/1").is_some() {
+            let e = check_deposit("vcad.thermal-claims/1", "{}", &BTreeMap::new()).unwrap_err();
+            assert!(
+                matches!(e, RegistryError::MissingBasisInputs { ref required, .. } if required.contains("spec")),
+                "{e:?}"
+            );
+        }
     }
 
     /// Module 1.0, 20 teeth — the milestone's brass planet.
