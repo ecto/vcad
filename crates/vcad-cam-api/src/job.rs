@@ -83,7 +83,7 @@ use vcad_kernel_cam::{
     BreakThrough, CamOperation, CamSettings, Contour, Contour2D, ContourSegment, ContourSide,
     CutDirection, Drill, DrillCycle, Face, FitOptions, HelicalBore, Hole, Job, JobOp,
     MachineLimits, OpRole, PartRegion, Pocket2D, Program, ProgramBlock, ProgramEnd, Spoilboard,
-    Stock, Tab, ThinSlotStrategy, ToolChangeStrategy, ToolEntry, ToolLibrary, Toolpath,
+    Stock, Tab, ThinSlotStrategy, ToolChangeStrategy, ToolEntry, ToolLibrary, ToolReach, Toolpath,
     ToolpathSegment, Wcs,
 };
 
@@ -752,11 +752,10 @@ fn build(req: JobRequest) -> Result<Value, String> {
         })
         .collect::<Result<Vec<_>, String>>()?
         .concat();
-    let spec_for = |diameter: f64, centre_cutting: bool| {
-        let mut spec = stock.job_spec(part.clone(), diameter, allowance);
+    let spec_for = |tool: ToolReach| {
+        let mut spec = stock.job_spec(part.clone(), tool, allowance);
         spec.travel = travel;
         spec.work_offset = work_offset;
-        spec.centre_cutting = centre_cutting;
         spec.declared_tabs = declared_tabs.clone();
         spec
     };
@@ -790,24 +789,21 @@ fn build(req: JobRequest) -> Result<Value, String> {
         Ok((v, "toolpath"))
     };
 
-    let centre_cutting_of = |number: u32| {
+    // Diameter and centre-cutting travel together, from the library entry, so
+    // neither can be read off one tool while the other is assumed.
+    let reach_of = |number: u32| {
         library
             .get_by_number(number)
-            .map(|t| t.geometry.centre_cutting_of(&t.tool) != Some(false))
-            .unwrap_or(true)
+            .map(|t| ToolReach::of(&t.tool, &t.geometry))
+            .unwrap_or(ToolReach::declared(1.0, true))
     };
-    let diameter_of = |number: u32| {
-        library
-            .get_by_number(number)
-            .map(|t| t.tool.diameter())
-            .unwrap_or(1.0)
-    };
+    let diameter_of = |number: u32| reach_of(number).diameter;
 
     // The spec comes back out alongside the verification: it is what the
     // claims are stated against, and what a later re-state has to hash.
     let (verification, replayed, whole_spec) = if tools.len() <= 1 {
         let number = tools.first().copied().unwrap_or(0);
-        let spec = spec_for(diameter_of(number), centre_cutting_of(number));
+        let spec = spec_for(reach_of(number));
         let (v, how) = replay(&program.toolpath, Some(&gcode), &spec)?;
         if how == "toolpath" {
             notes.push(Note::caution(
@@ -823,7 +819,7 @@ fn build(req: JobRequest) -> Result<Value, String> {
         // it never could have reached.
         let mut per_tool = Vec::new();
         for &number in &tools {
-            let spec = spec_for(diameter_of(number), centre_cutting_of(number));
+            let spec = spec_for(reach_of(number));
             let path = toolpath_of(&program, number);
             let (v, _) = replay(&path, None, &spec)?;
             per_tool.push((number, v));
@@ -835,7 +831,10 @@ fn build(req: JobRequest) -> Result<Value, String> {
             .iter()
             .copied()
             .fold(f64::MAX, |a, t| a.min(diameter_of(t)));
-        let spec = spec_for(narrowest, true);
+        // The whole-part checks take the narrowest tool; a sweep that
+        // narrow cannot say whose centre it is, so the plunge rule is left
+        // permissive here and comes from each tool's own pass above.
+        let spec = spec_for(ToolReach::declared(narrowest, true));
         let (whole, how) = replay(&program.toolpath, Some(&gcode), &spec)?;
         notes.push(Note::info(format!(
             "this job uses {} tools, so it was replayed once per tool: the cut checks come from each tool's own passes at its own diameter, and the whole-part checks from every move at Ø{narrowest:.3}.",

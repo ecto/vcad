@@ -81,7 +81,7 @@ pub use outline::{
     CircleFit, Gap, Outline, OutlineDiff, OutlineError, PrismaticReport, Region, SectionOptions,
     SimplifyOptions,
 };
-pub use stock::{AllowanceRefusal, BottomAllowance, Stock};
+pub use stock::{AllowanceRefusal, BottomAllowance, Stock, ToolReach};
 pub use tool::{
     check_flute_length, check_slot_ratio, check_stickout, check_tool_for_cut, has_error,
     CheckSeverity, CutContext, Tool, ToolCheck, ToolCheckKind, ToolEntry, ToolGeometry, ToolHolder,

@@ -131,17 +131,62 @@ impl Stock {
     /// The bridge exists so the FFI does not have to know that the oracle
     /// spells a spoilboard as a `bool` and this side spells it as a
     /// thickness.
+    ///
+    /// The cutter arrives as a [`ToolReach`] rather than a bare diameter
+    /// because this used to take only the diameter, leaving
+    /// `JobSpec::centre_cutting` at its `true` default. Nothing in the crate
+    /// ever set it false on this path, so `check_plunges` was permanently
+    /// permissive and [`Tool::centre_cutting`](crate::ToolGeometry) was dead
+    /// here. A caller now has to answer the question to get a spec at all.
     pub fn job_spec(
         &self,
         part: crate::verify2d::PartRegion,
-        tool_diameter: f64,
+        tool: ToolReach,
         allowance: BottomAllowance,
     ) -> crate::verify2d::JobSpec {
-        let mut spec = crate::verify2d::JobSpec::new(part, self.thickness, tool_diameter);
+        let mut spec = crate::verify2d::JobSpec::new(part, self.thickness, tool.diameter);
         spec.stock_bbox = Some(self.bbox_or_around(part_bbox(&spec)));
         spec.bottom_allowance = allowance.0;
         spec.spoilboard = self.spoilboard.is_some();
+        spec.centre_cutting = tool.centre_cutting;
         spec
+    }
+}
+
+/// What the verification oracle needs to know about the cutter: how wide it
+/// is, and whether it may be put straight down into metal.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ToolReach {
+    /// Cutting diameter, in mm.
+    pub diameter: f64,
+    /// The tool cuts across its own centre, so a vertical entry is legal.
+    pub centre_cutting: bool,
+}
+
+impl ToolReach {
+    /// Read both facts off a library entry. The one place the tool's own
+    /// answer becomes the oracle's.
+    ///
+    /// An undeclared answer stays permissive: a plain flat end mill says
+    /// nothing about its centre, and most libraries do not fill the field in,
+    /// so refusing every plunge on silence would refuse nearly every job. The
+    /// operations that *must* know — [`Drill`](crate::Drill) and
+    /// [`HelicalBore`](crate::HelicalBore) — refuse on `None` themselves, at
+    /// the point where the plunge is actually generated.
+    pub fn of(tool: &crate::Tool, geometry: &crate::ToolGeometry) -> Self {
+        Self {
+            diameter: tool.diameter(),
+            centre_cutting: geometry.centre_cutting_of(tool).unwrap_or(true),
+        }
+    }
+
+    /// Both facts stated outright, for a caller that has a measurement rather
+    /// than a tool library — G-code verified against a diameter typed in.
+    pub fn declared(diameter: f64, centre_cutting: bool) -> Self {
+        Self {
+            diameter,
+            centre_cutting,
+        }
     }
 }
 
@@ -318,7 +363,11 @@ mod tests {
         )
         .unwrap();
         let stock = Stock::new(6.0).with_bbox([0.0, 0.0, 50.0, 40.0]).over(3.0);
-        let spec = stock.job_spec(part.clone(), 3.175, BottomAllowance::break_through(0.3));
+        let spec = stock.job_spec(
+            part.clone(),
+            ToolReach::declared(3.175, true),
+            BottomAllowance::break_through(0.3),
+        );
 
         assert!((spec.stock_thickness - 6.0).abs() < 1e-12);
         assert_eq!(spec.stock_bbox, Some([0.0, 0.0, 50.0, 40.0]));
@@ -329,11 +378,74 @@ mod tests {
         assert!((spec.floor_z() + 6.3).abs() < 1e-12);
 
         // No board declared, no break-through allowed to claim one.
-        let bare = Stock::new(6.0).job_spec(part, 3.175, BottomAllowance::skin(0.2));
+        let bare = Stock::new(6.0).job_spec(
+            part,
+            ToolReach::declared(3.175, true),
+            BottomAllowance::skin(0.2),
+        );
         assert!(!bare.spoilboard);
         assert!((bare.floor_z() + 5.8).abs() < 1e-12);
         // And with no outline, the oracle gets the part plus the margin.
         assert_eq!(bare.stock_bbox, Some([5.0, 5.0, 45.0, 35.0]));
+    }
+
+    /// A face mill's inserts sit off its axis: it cannot be put down into
+    /// metal at all. That fact lives on the tool, and it has to reach the
+    /// oracle — `job_spec` used to leave `centre_cutting` at its `true`
+    /// default, so a straight plunge with a face mill came back as a warning
+    /// about feed rate.
+    #[test]
+    fn a_tool_that_cannot_plunge_says_so_through_the_job_spec() {
+        use crate::verify2d::{verify_toolpath, Severity, VerifyOptions};
+        use crate::{Tool, ToolGeometry, Toolpath, ToolpathSegment};
+
+        let part = crate::verify2d::PartRegion::new(
+            vec![[0.0, 0.0], [50.0, 0.0], [50.0, 40.0], [0.0, 40.0]],
+            Vec::new(),
+        )
+        .unwrap();
+        let stock = Stock::new(6.0).with_bbox([-5.0, -5.0, 55.0, 45.0]);
+
+        // Straight down into uncut material at a gentle feed, then a cut.
+        let mut tp = Toolpath::new();
+        tp.push(ToolpathSegment::rapid(25.0, 20.0, 5.0));
+        tp.push(ToolpathSegment::linear(25.0, 20.0, -1.0, 100.0));
+        tp.push(ToolpathSegment::linear(35.0, 20.0, -1.0, 400.0));
+        tp.push(ToolpathSegment::rapid(35.0, 20.0, 5.0));
+
+        let face_mill = Tool::FaceMill {
+            diameter: 20.0,
+            inserts: 3,
+        };
+        let reach = ToolReach::of(&face_mill, &ToolGeometry::new());
+        assert!(!reach.centre_cutting, "a face mill never plunges");
+        assert!((reach.diameter - 20.0).abs() < 1e-12);
+
+        let spec = stock.job_spec(part.clone(), reach, BottomAllowance::skin(0.2));
+        let rep = verify_toolpath(&tp, &spec, &VerifyOptions::default()).unwrap();
+        assert!(!rep.plunges.pass, "{:?}", rep.plunges);
+        assert_eq!(
+            rep.plunges.severity,
+            Severity::Error,
+            "a tool that cannot plunge plunging is a blocker, not a note"
+        );
+        assert!(
+            rep.plunges.examples[0].what.contains("non-centre-cutting"),
+            "{}",
+            rep.plunges.examples[0].what
+        );
+
+        // The same program with a centre-cutting cutter of the same width is
+        // only the usual feed-rate warning, and passes at F100.
+        let endmill = Tool::FlatEndMill {
+            diameter: 20.0,
+            flute_length: 30.0,
+            flutes: 2,
+        };
+        let reach = ToolReach::of(&endmill, &ToolGeometry::new().with_centre_cutting(true));
+        let spec = stock.job_spec(part, reach, BottomAllowance::skin(0.2));
+        let rep = verify_toolpath(&tp, &spec, &VerifyOptions::default()).unwrap();
+        assert!(rep.plunges.pass, "{:?}", rep.plunges);
     }
 
     /// The outline falls back to the part's bounds grown by the margin, and a

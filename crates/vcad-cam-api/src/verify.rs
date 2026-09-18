@@ -10,7 +10,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use vcad_kernel_cam::verify2d::{DeclaredTab, VerifyOptions};
-use vcad_kernel_cam::{fit_contour, verify_gcode, BottomAllowance, ContourSide, FitOptions};
+use vcad_kernel_cam::{
+    fit_contour, verify_gcode, BottomAllowance, ContourSide, FitOptions, ToolReach,
+};
 
 use crate::types::{loop_points, non_negative, positive, MachineReq, PartReq, StockReq};
 
@@ -87,13 +89,17 @@ pub fn verify_gcode_request(input: &str) -> Result<Value, String> {
         None => 0.0,
     });
 
-    let mut spec = stock.job_spec(part, tool_diameter, allowance);
+    // No tool library here — just a diameter someone typed — so the
+    // centre-cutting fact is stated outright. Left out, it stays permissive,
+    // which is what it has always been on this path.
+    let mut spec = stock.job_spec(
+        part,
+        ToolReach::declared(tool_diameter, req.centre_cutting.unwrap_or(true)),
+        allowance,
+    );
     let (travel, work_offset) = req.machine.travel_limits()?;
     spec.travel = travel;
     spec.work_offset = work_offset;
-    if let Some(c) = req.centre_cutting {
-        spec.centre_cutting = c;
-    }
     spec.declared_tabs = req
         .tabs
         .iter()
