@@ -309,6 +309,12 @@ export {
 } from "./parts.js";
 export type { PartManifestEntry, PartParam, PartXref } from "./parts.js";
 
+// CAM: the typed client over the shared `vcad-cam-api` surface. The raw
+// `camJob`/`camFit`/… methods on `Engine` below stay as they are — this is the
+// layer that turns `{"error": …}` into a throw and types a blocked job so its
+// absent G-code cannot be reached.
+export * from "./cam.js";
+
 // Analyze mode (#592): off-main-thread solver studies
 export { AnalyzeClient, getAnalyzeClient } from "./analyze.js";
 export type {

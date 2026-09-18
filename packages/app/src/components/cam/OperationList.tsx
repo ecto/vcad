@@ -1,577 +1,280 @@
-import { useState } from "react";
-import { Plus } from "@phosphor-icons/react/dist/ssr/Plus";
-import { Trash } from "@phosphor-icons/react/dist/ssr/Trash";
+/**
+ * The operations the outline implies, in the order they run.
+ *
+ * Every row is a cut the part actually has — a pilot, an opening, the profile
+ * that frees it — rather than a rectangle typed in by hand. The row is flagged
+ * where a fault lands: the oracle reports a *place*, and a place inside one
+ * operation's sweep is that operation's problem.
+ */
+import { CheckCircle } from "@phosphor-icons/react/dist/ssr/CheckCircle";
+import { WarningCircle } from "@phosphor-icons/react/dist/ssr/WarningCircle";
+import { XCircle } from "@phosphor-icons/react/dist/ssr/XCircle";
 import { ArrowUp } from "@phosphor-icons/react/dist/ssr/ArrowUp";
 import { ArrowDown } from "@phosphor-icons/react/dist/ssr/ArrowDown";
 import { Eye } from "@phosphor-icons/react/dist/ssr/Eye";
 import { EyeSlash } from "@phosphor-icons/react/dist/ssr/EyeSlash";
-import { Square } from "@phosphor-icons/react/dist/ssr/Square";
-import { Circle as CircleIcon } from "@phosphor-icons/react/dist/ssr/Circle";
-import { Path } from "@phosphor-icons/react/dist/ssr/Path";
-import { SelectionBackground } from "@phosphor-icons/react/dist/ssr/SelectionBackground";
-import {
-  useCamStore,
-  type CamOperation,
-  type CamOperationType,
-} from "@/stores/cam-store";
 import { cn } from "@/lib/utils";
-import { ToolLibrary } from "./ToolLibrary";
+import {
+  findingsOf,
+  useCamJobStore,
+  type CamJobOperation,
+} from "@/stores/cam-job-store";
+import { NumberField } from "./NumberField";
 
-const OPERATION_LABELS: Record<CamOperationType, string> = {
-  face: "Face",
+/** What the kernel calls each kind, in the words on the machine. */
+const KIND_LABELS: Record<string, string> = {
+  helical_bore: "Helical bore",
+  contour_inside: "Cut out",
   pocket: "Pocket",
-  pocket_circle: "Circular Pocket",
-  contour: "Contour",
-  roughing3d: "3D Roughing",
+  contour_outside: "Outside profile",
+  face: "Face",
+  drill: "Drill",
 };
-
-const OPERATION_ICONS: Record<CamOperationType, typeof Square> = {
-  face: SelectionBackground,
-  pocket: Square,
-  pocket_circle: CircleIcon,
-  contour: Path,
-  roughing3d: SelectionBackground,
-};
-
-interface AddOperationFormProps {
-  onAdd: (type: CamOperationType) => void;
-  onCancel: () => void;
-}
-
-function AddOperationForm({ onAdd, onCancel }: AddOperationFormProps) {
-  return (
-    <div className="bg-surface-secondary p-2 rounded space-y-2 text-xs">
-      <div className="text-text-muted mb-1">Select operation type:</div>
-      <div className="grid grid-cols-2 gap-1">
-        {(Object.entries(OPERATION_LABELS) as [CamOperationType, string][]).map(
-          ([type, label]) => {
-            const Icon = OPERATION_ICONS[type];
-            return (
-              <button
-                key={type}
-                className="flex items-center gap-2 p-2 hover:bg-hover rounded text-left"
-                onClick={() => onAdd(type)}
-              >
-                <Icon size={14} />
-                <span>{label}</span>
-              </button>
-            );
-          }
-        )}
-      </div>
-      <div className="flex justify-end">
-        <button
-          className="px-2 py-1 text-text-muted hover:text-text"
-          onClick={onCancel}
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
-}
-
-interface OperationEditorProps {
-  operation: CamOperation;
-  onUpdate: (updates: Partial<CamOperation>) => void;
-}
-
-function OperationEditor({ operation, onUpdate }: OperationEditorProps) {
-  const renderFields = () => {
-    switch (operation.type) {
-      case "face":
-        return (
-          <>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-text-muted">Min X</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.minX}
-                  onChange={(e) => onUpdate({ minX: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Min Y</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.minY}
-                  onChange={(e) => onUpdate({ minY: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Max X</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.maxX}
-                  onChange={(e) => onUpdate({ maxX: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Max Y</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.maxY}
-                  onChange={(e) => onUpdate({ maxY: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-          </>
-        );
-
-      case "pocket":
-        return (
-          <>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-text-muted">X</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.x}
-                  onChange={(e) => onUpdate({ x: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Y</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.y}
-                  onChange={(e) => onUpdate({ y: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Width</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.width}
-                  onChange={(e) => onUpdate({ width: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Height</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.height}
-                  onChange={(e) => onUpdate({ height: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-text-muted">Stock to Leave</label>
-              <input
-                type="number"
-                step="0.1"
-                className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                value={operation.stockToLeave}
-                onChange={(e) => onUpdate({ stockToLeave: parseFloat(e.target.value) })}
-              />
-            </div>
-          </>
-        );
-
-      case "pocket_circle":
-        return (
-          <>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-text-muted">Center X</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.centerX}
-                  onChange={(e) => onUpdate({ centerX: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Center Y</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.centerY}
-                  onChange={(e) => onUpdate({ centerY: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-text-muted">Radius</label>
-              <input
-                type="number"
-                className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                value={operation.radius}
-                onChange={(e) => onUpdate({ radius: parseFloat(e.target.value) })}
-              />
-            </div>
-          </>
-        );
-
-      case "contour":
-        return (
-          <>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-text-muted">X</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.x}
-                  onChange={(e) => onUpdate({ x: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Y</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.y}
-                  onChange={(e) => onUpdate({ y: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Width</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.width}
-                  onChange={(e) => onUpdate({ width: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Height</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.height}
-                  onChange={(e) => onUpdate({ height: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-text-muted">Offset</label>
-              <input
-                type="number"
-                step="0.1"
-                className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                value={operation.offset}
-                onChange={(e) => onUpdate({ offset: parseFloat(e.target.value) })}
-              />
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <label className="text-xs text-text-muted">Tab Count</label>
-                <input
-                  type="number"
-                  min="0"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.tabCount}
-                  onChange={(e) => onUpdate({ tabCount: parseInt(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Tab Width</label>
-                <input
-                  type="number"
-                  step="0.5"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.tabWidth}
-                  onChange={(e) => onUpdate({ tabWidth: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Tab Height</label>
-                <input
-                  type="number"
-                  step="0.5"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.tabHeight}
-                  onChange={(e) => onUpdate({ tabHeight: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-          </>
-        );
-
-      case "roughing3d":
-        return (
-          <>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-text-muted">Top Z</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.topZ}
-                  onChange={(e) => onUpdate({ topZ: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Target Z</label>
-                <input
-                  type="number"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.targetZ}
-                  onChange={(e) => onUpdate({ targetZ: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-text-muted">Stock Margin</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.stockMargin}
-                  onChange={(e) => onUpdate({ stockMargin: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-text-muted">Direction (°)</label>
-                <input
-                  type="number"
-                  step="45"
-                  className="w-full bg-surface border border-border rounded px-2 py-1 text-sm"
-                  value={operation.direction}
-                  onChange={(e) => onUpdate({ direction: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-            <div className="text-xs text-text-muted mt-2">
-              Note: 3D roughing requires a part with tessellated mesh.
-            </div>
-          </>
-        );
-    }
-  };
-
-  return (
-    <div className="space-y-2 p-2 bg-surface-secondary rounded text-sm">
-      <div>
-        <label className="text-xs text-text-muted">Name</label>
-        <input
-          type="text"
-          className="w-full bg-surface border border-border rounded px-2 py-1"
-          value={operation.name}
-          onChange={(e) => onUpdate({ name: e.target.value })}
-        />
-      </div>
-      <div>
-        <label className="text-xs text-text-muted">Depth</label>
-        <input
-          type="number"
-          step="0.5"
-          className="w-full bg-surface border border-border rounded px-2 py-1"
-          value={operation.depth}
-          onChange={(e) => onUpdate({ depth: parseFloat(e.target.value) })}
-        />
-      </div>
-      <ToolLibrary compact />
-      {renderFields()}
-    </div>
-  );
-}
 
 export function OperationList() {
-  const operations = useCamStore((s) => s.operations);
-  const selectedOperationId = useCamStore((s) => s.selectedOperationId);
-  const selectedToolId = useCamStore((s) => s.selectedToolId);
-  const tools = useCamStore((s) => s.tools);
-  const selectTool = useCamStore((s) => s.selectTool);
-  const selectOperation = useCamStore((s) => s.selectOperation);
-  const addOperation = useCamStore((s) => s.addOperation);
-  const updateOperation = useCamStore((s) => s.updateOperation);
-  const removeOperation = useCamStore((s) => s.removeOperation);
-  const moveOperation = useCamStore((s) => s.moveOperation);
+  const operations = useCamJobStore((s) => s.operations);
+  const outline = useCamJobStore((s) => s.outline);
+  const result = useCamJobStore((s) => s.result);
+  const highlighted = useCamJobStore((s) => s.highlightedOpIndex);
+  const updateOperation = useCamJobStore((s) => s.updateOperation);
+  const moveOperation = useCamJobStore((s) => s.moveOperation);
+  const setHighlightedOp = useCamJobStore((s) => s.setHighlightedOp);
 
-  const [showAddForm, setShowAddForm] = useState(false);
+  if (!outline) {
+    return (
+      <p className="text-xs text-text-muted">
+        Take the contour from the part first — the operations are the cuts that
+        outline implies.
+      </p>
+    );
+  }
+  if (operations.length === 0) {
+    return <p className="text-xs text-text-muted">This section has nothing to cut.</p>;
+  }
 
-  const handleAddOperation = (type: CamOperationType) => {
-    const baseName = OPERATION_LABELS[type];
-    const count = operations.filter((op) => op.type === type).length + 1;
-
-    // Use selected tool, or auto-select first tool if none selected
-    let toolId = selectedToolId;
-    if (!toolId && tools.length > 0) {
-      toolId = tools[0]!.id;
-      selectTool(toolId);
+  // A fault is placed on the operation whose request index it landed in. The
+  // tool checks carry `op_index` directly; the verification findings carry a
+  // place, and the ranges say whose sweep that is.
+  const findings = result ? findingsOf(result) : { blockers: [], warnings: [] };
+  const opIndexOfRow = (row: number): number | undefined => {
+    // A helical-bore row is several kernel operations, so the row owns a span.
+    let index = 0;
+    for (let i = 0; i < operations.length; i++) {
+      const op = operations[i];
+      if (!op?.enabled) continue;
+      const span = op.source.type === "bore" ? op.source.centres.length : 1;
+      if (i === row) return index;
+      index += span;
     }
-
-    const baseOp = {
-      name: `${baseName} ${count}`,
-      type,
-      toolId: toolId ?? "",
-      depth: 5.0,
-      enabled: true,
-    };
-
-    switch (type) {
-      case "face":
-        addOperation({
-          ...baseOp,
-          type: "face",
-          minX: 0,
-          minY: 0,
-          maxX: 100,
-          maxY: 50,
-        });
-        break;
-      case "pocket":
-        addOperation({
-          ...baseOp,
-          type: "pocket",
-          x: 10,
-          y: 10,
-          width: 30,
-          height: 20,
-          stockToLeave: 0,
-        });
-        break;
-      case "pocket_circle":
-        addOperation({
-          ...baseOp,
-          type: "pocket_circle",
-          centerX: 25,
-          centerY: 25,
-          radius: 15,
-        });
-        break;
-      case "contour":
-        addOperation({
-          ...baseOp,
-          type: "contour",
-          x: 0,
-          y: 0,
-          width: 50,
-          height: 40,
-          offset: 0,
-          tabCount: 4,
-          tabWidth: 5,
-          tabHeight: 2,
-        });
-        break;
-      case "roughing3d":
-        addOperation({
-          ...baseOp,
-          type: "roughing3d",
-          targetZ: -10,
-          topZ: 0,
-          stockMargin: 0.5,
-          direction: 0,
-        });
-        break;
-    }
-
-    setShowAddForm(false);
+    return undefined;
   };
-
-  const selectedOperation = operations.find((op) => op.id === selectedOperationId);
+  const statusOf = (row: number): "none" | "built" | "warned" | "refused" => {
+    if (!result) return "none";
+    const first = opIndexOfRow(row);
+    if (first === undefined) return "none";
+    const op = operations[row];
+    if (!op) return "none";
+    const span = op.source.type === "bore" ? op.source.centres.length : 1;
+    const owns = (i: number | undefined) =>
+      i !== undefined && i >= first && i < first + span;
+    if (findings.blockers.some((f) => owns(f.opIndex))) return "refused";
+    // A refused job with one operation is that operation's refusal, whether or
+    // not the finding could be placed: a green tick beside a blocker reads as
+    // "all good".
+    if (findings.blockers.length > 0 && operations.length === 1) return "refused";
+    if (findings.warnings.some((f) => owns(f.opIndex))) return "warned";
+    return "built";
+  };
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium">Operations</h3>
+      {operations.map((op, row) => (
+        <OperationRow
+          key={op.id}
+          op={op}
+          row={row}
+          status={statusOf(row)}
+          highlighted={highlighted === row}
+          onHighlight={() => setHighlightedOp(highlighted === row ? null : row)}
+          onUpdate={(patch) => updateOperation(op.id, patch)}
+          onMove={(direction) => moveOperation(op.id, direction)}
+          canMoveUp={row > 0}
+          canMoveDown={row < operations.length - 1}
+        />
+      ))}
+    </div>
+  );
+}
+
+interface OperationRowProps {
+  op: CamJobOperation;
+  row: number;
+  status: "none" | "built" | "warned" | "refused";
+  highlighted: boolean;
+  onHighlight: () => void;
+  onUpdate: (patch: Partial<CamJobOperation>) => void;
+  onMove: (direction: "up" | "down") => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+}
+
+function OperationRow({
+  op,
+  status,
+  highlighted,
+  onHighlight,
+  onUpdate,
+  onMove,
+  canMoveUp,
+  canMoveDown,
+}: OperationRowProps) {
+  const StatusIcon =
+    status === "refused" ? XCircle : status === "warned" ? WarningCircle : CheckCircle;
+  const statusColour =
+    status === "refused"
+      ? "text-error"
+      : status === "warned"
+        ? "text-warning"
+        : "text-success";
+
+  return (
+    <div
+      className={cn(
+        "rounded border",
+        highlighted ? "border-brand bg-surface-secondary" : "border-border",
+      )}
+    >
+      <div className="flex items-center gap-1 p-2">
         <button
-          className="p-1 hover:bg-hover rounded text-text-muted hover:text-text"
-          onClick={() => setShowAddForm(!showAddForm)}
+          className="p-1 text-text-muted hover:text-text"
+          onClick={() => onUpdate({ enabled: !op.enabled })}
+          title={op.enabled ? "Skip this operation" : "Include this operation"}
+          aria-label={op.enabled ? "Skip this operation" : "Include this operation"}
         >
-          <Plus size={14} />
+          {op.enabled ? <Eye size={14} /> : <EyeSlash size={14} />}
+        </button>
+        <button
+          className={cn("flex-1 text-left text-sm", !op.enabled && "opacity-50")}
+          onClick={onHighlight}
+          title="Show only this operation in the preview"
+        >
+          <span className="block truncate">{op.label}</span>
+          <span className="block text-xs text-text-muted">
+            {KIND_LABELS[op.kind] ?? op.kind}
+            {op.source.type === "bore" && op.source.centres.length > 1
+              ? ` · ${op.source.centres.length} holes`
+              : ""}
+          </span>
+        </button>
+        {status !== "none" && (
+          <StatusIcon
+            size={14}
+            className={statusColour}
+            aria-label={
+              status === "refused" ? "refused" : status === "warned" ? "warning" : "built"
+            }
+          />
+        )}
+        <button
+          className="p-1 text-text-muted hover:text-text disabled:opacity-30"
+          onClick={() => onMove("up")}
+          disabled={!canMoveUp}
+          aria-label="Move earlier"
+        >
+          <ArrowUp size={12} />
+        </button>
+        <button
+          className="p-1 text-text-muted hover:text-text disabled:opacity-30"
+          onClick={() => onMove("down")}
+          disabled={!canMoveDown}
+          aria-label="Move later"
+        >
+          <ArrowDown size={12} />
         </button>
       </div>
 
-      {showAddForm && (
-        <AddOperationForm
-          onAdd={handleAddOperation}
-          onCancel={() => setShowAddForm(false)}
-        />
-      )}
-
-      {operations.length === 0 && !showAddForm && (
-        <div className="text-center text-text-muted text-sm py-4">
-          No operations yet. Click + to add one.
-        </div>
-      )}
-
-      <div className="space-y-1">
-        {operations.map((op, index) => {
-          const Icon = OPERATION_ICONS[op.type];
-          return (
-            <div
-              key={op.id}
-              className={cn(
-                "flex items-center gap-2 p-2 rounded cursor-pointer text-sm",
-                "hover:bg-hover transition-colors",
-                selectedOperationId === op.id && "bg-brand/20 border border-brand/40"
-              )}
-              onClick={() => selectOperation(op.id)}
-            >
-              <button
-                className="p-1 hover:bg-hover rounded"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  updateOperation(op.id, { enabled: !op.enabled });
-                }}
-              >
-                {op.enabled ? (
-                  <Eye size={14} className="text-text-muted" />
-                ) : (
-                  <EyeSlash size={14} className="text-text-muted" />
-                )}
-              </button>
-              <Icon size={14} className="text-text-muted" />
-              <div className="flex-1 min-w-0">
-                <div className="truncate">{op.name}</div>
-                <div className="text-xs text-text-muted">
-                  {OPERATION_LABELS[op.type]}, depth: {op.depth}mm
-                </div>
-              </div>
-              <div className="flex items-center gap-1">
-                <button
-                  className="p-1 hover:bg-hover rounded text-text-muted"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    moveOperation(op.id, "up");
-                  }}
-                  disabled={index === 0}
-                >
-                  <ArrowUp size={12} />
-                </button>
-                <button
-                  className="p-1 hover:bg-hover rounded text-text-muted"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    moveOperation(op.id, "down");
-                  }}
-                  disabled={index === operations.length - 1}
-                >
-                  <ArrowDown size={12} />
-                </button>
-                <button
-                  className="p-1 hover:bg-error/20 rounded text-text-muted hover:text-error"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeOperation(op.id);
-                  }}
-                >
-                  <Trash size={12} />
-                </button>
-              </div>
+      {highlighted && (
+        <div className="px-2 pb-2 space-y-2 border-t border-border pt-2">
+          {op.source.type === "opening" && (
+            <fieldset className="text-xs space-y-1">
+              <legend className="text-text-muted">What happens to the slug</legend>
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  checked={op.kind === "contour_inside"}
+                  onChange={() => onUpdate({ kind: "contour_inside" })}
+                />
+                Cut out (waste drops free)
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="radio"
+                  checked={op.kind === "pocket"}
+                  onChange={() => onUpdate({ kind: "pocket" })}
+                />
+                Pocket (nothing comes loose)
+              </label>
+            </fieldset>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <NumberField
+              label="Depth"
+              unit="mm"
+              value={op.depth}
+              min={0}
+              onCommit={(depth) => onUpdate({ depth })}
+            />
+            <NumberField
+              label="Stepdown"
+              unit="mm"
+              value={op.stepdown}
+              min={0}
+              onCommit={(stepdown) => onUpdate({ stepdown })}
+            />
+            <NumberField
+              label="Feed"
+              unit="mm/min"
+              step={10}
+              value={op.feed}
+              min={0}
+              onCommit={(feed) => onUpdate({ feed })}
+            />
+            <NumberField
+              label="Plunge"
+              unit="mm/min"
+              step={10}
+              value={op.plunge}
+              min={0}
+              onCommit={(plunge) => onUpdate({ plunge })}
+            />
+          </div>
+          {op.kind === "contour_outside" && (
+            <div className="grid grid-cols-3 gap-2">
+              <NumberField
+                label="Tabs"
+                value={op.tabs ?? 0}
+                step={1}
+                min={0}
+                onCommit={(tabs) => onUpdate({ tabs: Math.round(tabs) })}
+                title="Tabs hold the part while the cut that frees it finishes."
+              />
+              <NumberField
+                label="Width"
+                unit="mm"
+                value={op.tab_width ?? 4}
+                min={0}
+                onCommit={(tab_width) => onUpdate({ tab_width })}
+              />
+              <NumberField
+                label="Height"
+                unit="mm"
+                value={op.tab_height ?? 1}
+                min={0}
+                onCommit={(tab_height) => onUpdate({ tab_height })}
+              />
             </div>
-          );
-        })}
-      </div>
-
-      {selectedOperation && (
-        <OperationEditor
-          operation={selectedOperation}
-          onUpdate={(updates) => updateOperation(selectedOperation.id, updates)}
-        />
+          )}
+        </div>
       )}
     </div>
   );
