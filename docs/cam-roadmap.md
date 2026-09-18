@@ -107,3 +107,32 @@ over pins within tolerance.
   simplifier whose tolerance was not a bound, a 77k-move stator job, phantom
   tabs at ramp starts, an oracle that failed the job that was actually cut, an
   export repair that tore the stator by 0.68 mm under a 1 % volume check.
+
+## Review (2026-09-18)
+
+An independent read of `crates/` on the branch (~42k lines) found 23 items.
+Two critical, both confirmed by reproduction and fixed on the integration
+branch the same morning:
+
+- **Grbl dwell was posted in milliseconds.** Grbl's `G4 P` is seconds, so the
+  3 s spin-up after every `M3` was a 50-minute park with the spindle on, and
+  the two tests that touched the line pinned the wrong number (`"G4 P3000"`,
+  `contains("G4")`). The oracle discards `P` on `G4`, so it could not see it.
+  House rule 1, again: the assertion was of existence.
+- **A request without an `options` map skipped verification.** serde only
+  runs field defaults when the map is present; the derived `Default` said
+  `verify: false`, and the job came back `blocked: false` with G-code nothing
+  had replayed. Unknown keys on the request are now refused too.
+
+The rest are on `cam/w3-review-fixes` (rapids clipped against the stock, the
+tool gate reading the real depth past a break-through, `centre_cutting`
+reaching the plunge check, G18/G19 arc words, `M6` refused on Grbl, no `moves`
+on a blocked job, NaN spoilboard, DXF bulge parse, side-aware arc fitting,
+`G91.1`, one sag-adaptive linearizer, dropped errors in materials, the
+`Wall::escape` perf cliff, and the vacuous tests). Held for the booleans
+round, since that code is under change: the export shape guard is one-sided
+(surface added is not bounded, so a slit bridge can cap a real 1.5 mm slot
+mouth), `parallel_cylinders` merges below an absolute 0.05 mm with no
+`DegradeReason`, the union referee's reference-uncertainty term can
+desensitise it ~7×, and the tangency epsilons are absolute, duplicated and
+untested.
