@@ -130,7 +130,39 @@ over pins within tolerance.
   `loose_pieces` to a warning. Peck drilling is refused by the oracle (G83's
   rapid back down the hole is a "rapid below stock top"). Both are oracle
   work, in the review-fix round.
-- **In flight:** `cam/w3-review-fixes`, `cam/w2d-union-seam-3`.
+- **Also merged before the pause:** the review fixes (16 of 17 findings, each
+  with a mutation-checked test; the oracle now clips rapids against the
+  blank, allows a rapid back down a hole this program already cut, drops
+  micro-lifts that are not tabs, reads the real depth past a break-through;
+  `M6` is refused on Grbl; a refused answer carries no program anywhere —
+  including the claim deposit's basis, which is now the program's digest)
+  and union round 3 (seam collapse for curved-vs-curved tangencies; the
+  retraction that the tab corner *is* the cylinder–plane family).
+- **Gates at the pause (`ca1b2331`):** cam 348, cam-api 35, cli 40, ffi 63,
+  registry 16, tessellate 74, booleans green, Swift 184, engine 138, app 92,
+  MCP 1165, `ir:check` current; torture track 709/752 with 25 improvements
+  and one regression (`chain-13` bad-geometry → timeout, present since union
+  round 2, measured under load).
+
+## What is left (2026-09-18, at the pause)
+
+Kernel: the tab-root seam (give planar carriers a real span, then re-run
+`zz_seam_probe::probe_stator_l2`; until then the stator is machined through
+its DXF only), `MERGE_GENERATORS` → lens-depth epsilon, a bounded union
+referee with a cannot-judge outcome, one tangency epsilon, arc fitting that
+knows its side (finding 17: mechanism written and reverted for want of a
+fixture), `chain-13` re-timed alone. CAM: workholding as something a job can
+declare (the planet is held by a screw through its bore; today that is a
+policy downgrade), a mid-job pause, `cam_verify_gcode` forwarding
+`placement` / `verify_policy`, the planet actually cut and measured over pins.
+Receipts: the seven solver tools' deposits with real basis keys (`spec` is a
+placeholder). App/MCP: `volumeReport()` at every call site that reports a
+volume, stock thickness from the solid is in, the web CAM panel has not been
+looked at live. Wave 4: 3D finishing in the app; the indexed 4th axis waits
+on the hardware gate (is A driven, does a rotary fit under 100 mm of Z).
+Process: a PR from `claude/cam-roadmap` to `main` (CI will show `chain-23`
+regressed by design under the shape guard; the agent branches were never
+pushed).
 
 ## Review (2026-09-18)
 
