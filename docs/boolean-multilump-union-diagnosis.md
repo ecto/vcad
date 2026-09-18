@@ -264,7 +264,52 @@ other; a buried one has material on both. Containment is judged against the
 operand meshes (valid solids) by the same three-ray parity vote the mesh
 boolean trusts.
 
-### Calibrated, sound — and it does not catch the near miss
+### Located: the near miss is ONE missing wall face, and the shape is right
+
+Rasterised the near-miss union's sections against the 2D CSG of its own
+source (`scratchpad/nearmiss.loon`, truth from `stage_truth.py`). The answer
+is not a missing trim, not a wrong shape, and not at the caps.
+
+**The section is identical at every height** — 11.2, 12.5, 14.1, 15.5, 16.8,
+17.0 — and at every one of them it refuses to close with the *same* gap:
+
+    0.1640 mm between (23.7111, 3.7124) and (23.7338, 3.5500)
+
+Identical at every z means a vertical wall, so the cap splitter is exonerated.
+The two endpoints name the stretch exactly: (23.7111, 3.7124) is where the
+r 24 bore meets the block's top edge y = 3.7124, and (23.7338, 3.5500) is the
+fillet arc's apex, at r = 23.9978 — just *inside* the bore. Between them the
+arc crosses r = 24 (at about y = 3.57), so the union's inner boundary has to
+hand over from the arc to the bore mid-stretch. **Both sides of that handover
+are missing from the result.**
+
+Heal the gap and the rest of the section is right: area 787.8190 mm² against
+a 2D-CSG truth of 787.7636, **max boundary distance 0.00499 mm**, 1 region,
+1 hole, at every height.
+
+So where is the 7.9 mm³? It is not in the cross-section at all. The sections
+imply 787.8190 × 6 = **4726.914 mm³**; the divergence integral over the
+tessellation reports **4734.783**. The gap between those two numbers is the
+missing wall itself:
+
+    missing wall area  0.16397 x 6      = 0.9838 mm²
+    flux it would contribute  (1/3)·r·A = 7.8706 mm³   (r = 24)
+    observed discrepancy               = 7.869 mm³
+
+Four significant figures. **The +0.167 % is not a wrong solid — it is a right
+solid with one face absent, and the divergence theorem billing for the hole.**
+
+That explains everything that was confusing about this case: why the buried-
+face check correctly does not fire (nothing is buried), why the volume bound
+never noticed (the bound is on volume, and volume is exactly what the defect
+corrupts), and why the six unpaired edges are the rim of the hole rather than
+an incidental sliver.
+
+The remaining question is a classification one, and narrow: why is the wall
+dropped over a stretch that spans a near-tangent crossing of two curves? Not
+the cap splitter — the caps are right.
+
+### The buried-face check: calibrated, sound, and not the tool for this
 
 The check is now clean: **zero false positives** across the whole boolean
 suite with `VCAD_BURIED_FACE_CHECK=1`. Getting there took two structural
