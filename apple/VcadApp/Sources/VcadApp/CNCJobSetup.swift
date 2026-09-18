@@ -423,15 +423,11 @@ extension EditorModel {
 
 // MARK: - The machine's own numbers, if it has any yet
 
-/// Travel limits, work offset and measured skew, read off `cnc.machine` if it
-/// carries them.
-///
-/// The machine profile is another package's work and may not have landed. This
-/// reads it reflectively rather than naming a type that might not exist, so
-/// this package compiles either way and starts using the numbers the moment
-/// they appear. Everything is optional: a missing profile means the job asks
-/// for no travel check, which is what it did before.
-struct CNCMachineProfile: Sendable {
+/// The machine's limits as the job request wants them: travel per axis in
+/// machine mm, the work offset, and the measured skew — or nothing, when no
+/// machine has reported them. A missing profile means the job asks for no
+/// travel check, which is what it did before there was one.
+struct CNCJobMachineLimits: Sendable {
     var travelMin: [Double]?
     var travelMax: [Double]?
     var workOffset: [Double]?
@@ -439,60 +435,17 @@ struct CNCMachineProfile: Sendable {
 
     var hasTravel: Bool { travelMin?.count == 3 && travelMax?.count == 3 }
 
-    /// Read whatever of a profile the machine happens to expose.
-    static func read(_ machine: Any) -> CNCMachineProfile {
-        var out = CNCMachineProfile()
-        guard let profile = child(of: machine, named: "profile") else { return out }
-        if let travel = child(of: profile, named: "travel") {
-            let (lo, hi) = axisLimits(travel)
-            out.travelMin = lo
-            out.travelMax = hi
-        }
-        if let offset = child(of: profile, named: "workOffset") ?? child(of: profile, named: "work_offset") {
-            out.workOffset = numbers(offset)
-        }
-        if let skew = child(of: profile, named: "skewDegrees") ?? child(of: profile, named: "skew_degrees") {
-            out.skewDegrees = (skew as? Double) ?? (skew as? Float).map(Double.init)
-        }
-        return out
-    }
+    init() {}
 
-    /// One stored property by name, unwrapped if it is an optional. Observation
-    /// renames stored properties to `_name`, so both spellings are tried.
-    private static func child(of value: Any, named name: String) -> Any? {
-        for candidate in [name, "_\(name)"] {
-            for child in Mirror(reflecting: value).children where child.label == candidate {
-                return unwrap(child.value)
-            }
+    init(_ profile: CNCMachineProfile?) {
+        guard let profile else { return }
+        if profile.hasTravel {
+            travelMin = profile.travels.map(\.min)
+            travelMax = profile.travels.map(\.max)
         }
-        return nil
-    }
-    private static func unwrap(_ value: Any) -> Any? {
-        let mirror = Mirror(reflecting: value)
-        guard mirror.displayStyle == .optional else { return value }
-        return mirror.children.first.map { unwrap($0.value) } ?? nil
-    }
-
-    /// `[Double]`, or anything with x/y/z, as three numbers.
-    private static func numbers(_ value: Any) -> [Double]? {
-        if let v = value as? [Double] { return v }
-        if let v = value as? [Float] { return v.map(Double.init) }
-        let mirror = Mirror(reflecting: value)
-        let axes = ["x", "y", "z"].compactMap { name -> Double? in
-            mirror.children.first { $0.label == name }.flatMap { $0.value as? Double }
+        if let offset = profile.workOffset {
+            workOffset = [offset.x, offset.y, offset.z]
         }
-        return axes.count == 3 ? axes : nil
-    }
-
-    /// Travel as `[[min, max]]` per axis, or as a pair of triples.
-    private static func axisLimits(_ value: Any) -> ([Double]?, [Double]?) {
-        if let pairs = value as? [[Double]], pairs.count == 3, pairs.allSatisfy({ $0.count == 2 }) {
-            return (pairs.map { $0[0] }, pairs.map { $0[1] })
-        }
-        if let lo = child(of: value, named: "min").flatMap(numbers),
-           let hi = child(of: value, named: "max").flatMap(numbers) {
-            return (lo, hi)
-        }
-        return (nil, nil)
+        skewDegrees = profile.skewDegrees
     }
 }

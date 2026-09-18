@@ -368,7 +368,7 @@ final class CNCWorkspace {
 
     /// The machine's own limits and measured skew, when the machine bar has
     /// them. Read reflectively so this package does not depend on that one.
-    var machineProfile: CNCMachineProfile { CNCMachineProfile.read(machine) }
+    var machineProfile: CNCJobMachineLimits { CNCJobMachineLimits(machine.profile) }
 
     var jogStep = 1.0
     var jogFeed = 300.0
