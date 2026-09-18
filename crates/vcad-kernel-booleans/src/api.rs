@@ -694,7 +694,7 @@ pub fn boolean_op_reported(
         && std::env::var_os("VCAD_NO_UNION_REFEREE").is_none()
     {
         if let Some((mesh_a, mesh_b)) = &operands {
-            if let Ok((alt, refinement_moved)) =
+            if let Ok((alt, before_refinement)) =
                 mesh_fallback_measured(mesh_a, mesh_b, op, &quadrics, true)
             {
                 // The referee's question is "is there a WATERTIGHT solid that
@@ -725,9 +725,23 @@ pub fn boolean_op_reported(
                 // volume the reference's own repair moved. A reference that
                 // had to invent 20 mm³ of itself to become watertight cannot
                 // convict anything of a 22 mm³ error.
-                let threshold = union_referee_slack(segments) * alt_vol
-                    + reference_uncertainty
-                    + refinement_moved;
+                // Priced lazily: the cheap part of the threshold first, and
+                // the reference's own damage only for a candidate that would
+                // otherwise overrule.
+                let base = union_referee_slack(segments) * alt_vol;
+                let disagreement = (alt_vol - brep_vol).abs();
+                let refinement_moved = if watertight && disagreement > base + reference_uncertainty
+                {
+                    before_refinement.as_ref().map_or(0.0, |before| {
+                        let moved = vcad_kernel_tessellate::surface_move_report(before, &alt_mesh);
+                        mesh_surface_area(&alt_mesh)
+                            * moved.surface_lost.area_over[0]
+                            * moved.surface_lost.max
+                    })
+                } else {
+                    0.0
+                };
+                let threshold = base + reference_uncertainty + refinement_moved;
                 if std::env::var_os("VCAD_BOOLEAN_WARN").is_some() {
                     eprintln!(
                         "vcad boolean: union referee: analytic {brep_vol:.1} (open {result_open_edges}) \
@@ -1238,7 +1252,7 @@ fn mesh_fallback(
     mesh_fallback_measured(mesh_a, mesh_b, op, quadrics, refine).map(|(r, _)| r)
 }
 
-/// [`mesh_fallback`], and an upper bound on the volume its refinement moved.
+/// [`mesh_fallback`], and the mesh as it stood BEFORE its refinement.
 ///
 /// The refinement repairs under `manifold_at_any_cost`, which on a real part
 /// slides the boundary by tenths of a millimetre over several percent of the
@@ -1257,8 +1271,8 @@ fn mesh_fallback_measured(
     op: BooleanOp,
     quadrics: &QuadricCtx,
     refine: bool,
-) -> Result<(BooleanResult, f64), BooleanError> {
-    let mut refinement_moved = 0.0f64;
+) -> Result<(BooleanResult, Option<TriangleMesh>), BooleanError> {
+    let mut refinement_moved: Option<TriangleMesh> = None;
     let mut out = crate::mesh::csg::mesh_csg(mesh_a, mesh_b, op);
     // First projection runs on the pristine topology: the constraint each
     // vertex lives under is read off its incident triangle normals, so it
@@ -1314,12 +1328,14 @@ fn mesh_fallback_measured(
         // level because the passes between the projections interact: the
         // refinement must not hand back more raw boundary edges than the
         // plain fallback had.
-        let moved = vcad_kernel_tessellate::surface_move_report(&before_refinement, &out);
-        refinement_moved =
-            mesh_surface_area(&out) * moved.surface_lost.area_over[0] * moved.surface_lost.max;
+        // Kept, not measured: pricing the refinement costs two BVH builds and
+        // four nearest-point queries per triangle, and the referee needs the
+        // number on maybe one boolean in fifty. Measuring it unconditionally
+        // took the stator's 57 stages from 21 s to 81 s.
+        refinement_moved = Some(before_refinement);
         if out.boundary_edges().len() > unrefined_boundary {
             out = unrefined;
-            refinement_moved = 0.0;
+            refinement_moved = None;
         }
     }
     validate_boolean_result(&out).map_err(BooleanError::InvalidResult)?;

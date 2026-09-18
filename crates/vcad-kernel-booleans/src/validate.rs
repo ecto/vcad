@@ -666,7 +666,6 @@ pub(crate) fn buried_retained_face(
         };
 
         for sample in interior_samples(result, face_id, &loop_pts) {
-            let sample = project_to_face(result, face, sample);
             // The sample sits on its own operand. To be BURIED it has to be
             // well inside the other one, not resting against it.
             let at = [sample.x, sample.y, sample.z];
@@ -683,35 +682,40 @@ pub(crate) fn buried_retained_face(
                 }
                 depth = step;
             }
+            if buried && std::env::var_os("VCAD_BURIED_DEBUG").is_some() {
+                let probe = |d: f64| {
+                    let q = sample + normal * d;
+                    (
+                        crate::mesh::csg::contains(&index_a, &q),
+                        crate::mesh::csg::contains(&index_b, &q),
+                    )
+                };
+                eprintln!(
+                    "buried {face_id:?}: sample ({:.5},{:.5},{:.5}) n ({:.3},{:.3},{:.3}) \
+                     dA {:.5} dB {:.5} | +1e-3 {:?} -1e-3 {:?} | +4e-3 {:?} -4e-3 {:?} \
+                     | +1.2e-2 {:?} -1.2e-2 {:?}",
+                    sample.x,
+                    sample.y,
+                    sample.z,
+                    normal.x,
+                    normal.y,
+                    normal.z,
+                    dist_a.distance(at),
+                    dist_b.distance(at),
+                    probe(1e-3),
+                    probe(-1e-3),
+                    probe(4e-3),
+                    probe(-4e-3),
+                    probe(1.2e-2),
+                    probe(-1.2e-2),
+                );
+            }
             if buried {
                 return Some(BuriedFace { at: sample, depth });
             }
         }
     }
     None
-}
-
-/// Pull a sample onto the face's own surface.
-///
-/// The candidates are built from loop vertices, so on a CURVED face they are
-/// chord interiors — inside the solid by the chordal sag, which reads
-/// "material on both sides" for every cylinder in the model and was the whole
-/// of this check's false-positive rate. On a plane the projection is a no-op.
-fn project_to_face(
-    brep: &vcad_kernel_primitives::BRepSolid,
-    face: &vcad_kernel_topo::Face,
-    p: Point3,
-) -> Point3 {
-    let surface = &brep.geometry.surfaces[face.surface_index];
-    let uv = crate::trim::project_point_to_uv(surface.as_ref(), &p);
-    let on = surface.evaluate(uv);
-    // A projection that lands far away means the parameterisation failed
-    // (a seam, a pole); the unprojected point is the better guess then.
-    if (on - p).norm() < 1.0 {
-        on
-    } else {
-        p
-    }
 }
 
 /// Newell normal of a polygon, `None` when degenerate.
@@ -724,44 +728,81 @@ fn newell_normal(pts: &[Point3]) -> Option<vcad_kernel_math::Vec3> {
     (n.norm() > 1e-12).then(|| n.normalize())
 }
 
-/// A few points strictly inside a face, each at least [`SAMPLE_INSET`] from
-/// its boundary. Empty for a sliver.
+/// A few points strictly inside a face AND on its surface, each at least
+/// [`SAMPLE_INSET`] from the boundary. Empty for a sliver.
+///
+/// Built in the surface's own parameter space, not in 3D. The obvious
+/// construction — centroids of a fan over the loop vertices — puts the sample
+/// on a CHORD, which for a cylinder of any size is deep inside the solid: a
+/// r 46 wall sampled that way reported its point 0.42 mm off its own surface,
+/// read "material on both sides", and every such wall in the corpus came back
+/// buried. Averaging the vertices' UVs and evaluating the surface there lands
+/// on the surface by construction, for planes and quadrics alike.
 fn interior_samples(
     brep: &vcad_kernel_primitives::BRepSolid,
     face_id: vcad_kernel_topo::FaceId,
     pts: &[Point3],
 ) -> Vec<Point3> {
-    let n = pts.len();
-    let centre = {
-        let mut c = vcad_kernel_math::Vec3::zeros();
-        for p in pts {
-            c += p - Point3::origin();
+    let face = &brep.topology.faces[face_id];
+    let surface = brep.geometry.surfaces[face.surface_index].as_ref();
+    let mut uvs: Vec<vcad_kernel_math::Point2> = pts
+        .iter()
+        .map(|p| crate::trim::project_point_to_uv(surface, p))
+        .collect();
+    if uvs.len() < 3 {
+        return Vec::new();
+    }
+    // A periodic surface's loop can straddle the u seam, where averaging is
+    // meaningless. Unwrap onto one branch; a face that still spans more than
+    // half the period after that wraps the whole way round and has no
+    // meaningful parameter centroid, so it is skipped.
+    let period = std::f64::consts::TAU;
+    let u0 = uvs[0].x;
+    for uv in &mut uvs {
+        while uv.x - u0 > period * 0.5 {
+            uv.x -= period;
         }
-        Point3::origin() + c / n as f64
-    };
-    // Fan triangle centroids, pulled toward the face centre so a sample of a
-    // non-convex face's spurious fan triangle still lands in the face.
+        while u0 - uv.x > period * 0.5 {
+            uv.x += period;
+        }
+    }
+    let (umin, umax) = uvs.iter().fold((f64::MAX, f64::MIN), |(lo, hi), uv| {
+        (lo.min(uv.x), hi.max(uv.x))
+    });
+    if umax - umin > period * 0.5 {
+        return Vec::new();
+    }
+
+    let n = uvs.len();
+    let centre = vcad_kernel_math::Point2::new(
+        uvs.iter().map(|uv| uv.x).sum::<f64>() / n as f64,
+        uvs.iter().map(|uv| uv.y).sum::<f64>() / n as f64,
+    );
     let mut out = Vec::new();
     let stride = n.div_ceil(6).max(1);
     for i in (0..n).step_by(stride) {
-        let (a, b) = (pts[i], pts[(i + 1) % n]);
-        let tri_centroid = Point3::origin()
-            + ((a - Point3::origin()) + (b - Point3::origin()) + (centre - Point3::origin())) / 3.0;
-        for pull in [0.0, 0.5] {
-            let p = tri_centroid + (centre - tri_centroid) * pull;
+        // Between the centre and a vertex, in parameter space: interior for
+        // any face whose parameter domain is star-shaped about its centroid,
+        // and checked against `point_in_face` for the ones that are not.
+        for pull in [0.5f64, 0.25, 0.75] {
+            let uv = vcad_kernel_math::Point2::new(
+                centre.x + (uvs[i].x - centre.x) * pull,
+                centre.y + (uvs[i].y - centre.y) * pull,
+            );
+            let p = surface.evaluate(uv);
             if !crate::trim::point_in_face(brep, face_id, &p) {
                 continue;
             }
-            let clear = (0..n).all(|k| {
-                let (u, v) = (pts[k], pts[(k + 1) % n]);
-                let uv = v - u;
-                let len2 = uv.norm_squared();
+            let clear = (0..pts.len()).all(|k| {
+                let (u, v) = (pts[k], pts[(k + 1) % pts.len()]);
+                let uvv = v - u;
+                let len2 = uvv.norm_squared();
                 let t = if len2 < 1e-18 {
                     0.0
                 } else {
-                    ((p - u).dot(uv) / len2).clamp(0.0, 1.0)
+                    ((p - u).dot(uvv) / len2).clamp(0.0, 1.0)
                 };
-                (p - (u + uv * t)).norm() > SAMPLE_INSET
+                (p - (u + uvv * t)).norm() > SAMPLE_INSET
             });
             if clear {
                 out.push(p);
