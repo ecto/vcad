@@ -3,7 +3,7 @@
 use crate::operation::{Contour, ContourSegment, Point2D};
 use crate::{CamError, CamSettings, Tool, Toolpath, ToolpathSegment};
 #[cfg(not(target_arch = "wasm32"))]
-use geo_clipper::Clipper;
+use clipper2_rust::{clipper, offset};
 use serde::{Deserialize, Serialize};
 
 /// A holding tab to prevent part from moving during cutout.
@@ -185,7 +185,7 @@ impl Contour2D {
         Ok(toolpath)
     }
 
-    /// Offset the contour by the given amount (native version with geo-clipper).
+    /// Offset the contour by the given amount (native version with clipper2-rust).
     #[cfg(not(target_arch = "wasm32"))]
     fn offset_contour(&self, offset: f64) -> Result<Vec<Point2D>, CamError> {
         if offset.abs() < 0.001 {
@@ -193,14 +193,14 @@ impl Contour2D {
             return Ok(self.contour_to_points(&self.contour));
         }
 
-        // Use geo-clipper for offset
+        // Use clipper2-rust for offset
         let polygon = self.contour.to_geo_polygon();
         let scale = 1000.0;
-
+        // Use clipper2-rust for offset
         let result = polygon.offset(
             offset, // geo-clipper applies the coordinate scale internally.
-            geo_clipper::JoinType::Round(10.0),
-            geo_clipper::EndType::ClosedPolygon,
+            clipper2_rust::offset::JoinType::Round(10.0),
+            clipper2_rust::offset::EndType::Polygon,
             scale,
         );
 
