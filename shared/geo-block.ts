@@ -9,7 +9,7 @@
  *   for … design and manufacturing software" (CAD is explicitly named) to
  *   any person located in the Russian Federation.
  * - BY — parallel BIS EAR restrictions (15 C.F.R. § 746.8, Russia/Belarus).
- * - IR, CU, KP, SY — comprehensively sanctioned (OFAC country programs).
+ * - IR, CU, KP — comprehensively sanctioned (OFAC country programs).
  * - Crimea, Sevastopol, Donetsk, Luhansk (so-called DNR/LNR) regions of
  *   Ukraine — embargoed under E.O. 13685 and E.O. 14065. Blocked
  *   best-effort via the region header when the platform provides one.
@@ -28,7 +28,6 @@ export const BLOCKED_COUNTRIES: ReadonlySet<string> = new Set([
   "IR",
   "CU",
   "KP",
-  "SY",
 ]);
 
 /**
