@@ -10,7 +10,7 @@ subject to U.S. export controls and sanctions. They are **not available** in:
   explicitly named) to any person located in the Russian Federation.
 - **Belarus** — parallel BIS Export Administration Regulations restrictions
   (15 C.F.R. § 746.8).
-- **Iran, Cuba, North Korea, Syria** — comprehensively sanctioned under the
+- **Iran, Cuba, North Korea** — comprehensively sanctioned under the
   respective OFAC country programs.
 - **The Crimea, Sevastopol, Donetsk, and Luhansk regions of Ukraine** —
   embargoed under Executive Orders 13685 and 14065. Blocked best-effort by
