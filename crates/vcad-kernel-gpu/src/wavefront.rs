@@ -409,16 +409,30 @@ pub async fn distance_field_compacted_async(
         make_storage("Wavefront Frontier Buffer B", &vec![0u32; total]),
     ];
 
-    // meta = [dispatch x, y, z, epoch, count A, count B].
-    let meta_init = [0u32, 1, 1, 0, source_count, 0];
+    // Dispatch args live in their own buffer: WebGPU makes a writable
+    // storage binding exclusive, so a buffer cannot be both a
+    // `STORAGE_READ_WRITE` binding and the indirect-dispatch argument
+    // buffer in the same pass -- and the relax pass does exactly that.
+    // Keeping the args out of the relax bind group (which only needs
+    // `meta`) sidesteps the rule.
+    let dispatch_init = [0u32, 1, 1];
+    let dispatch_buffer = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Wavefront Dispatch Buffer"),
+            contents: bytemuck::cast_slice(&dispatch_init),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_DST,
+        });
+    // meta = [epoch, count A, count B].
+    let meta_init = [0u32, source_count, 0];
     let meta_buffer = ctx
         .device
         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Wavefront Meta Buffer"),
             contents: bytemuck::cast_slice(&meta_init),
-            usage: wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::COPY_SRC,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         });
 
     // Per-parity params (parity selects which frontier/count is input).
@@ -459,22 +473,39 @@ pub async fn distance_field_compacted_async(
         count: None,
     };
 
-    let bind_group_layout = ctx
+    let uniform_entry = |binding: u32| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    };
+
+    // `frontier_prep` writes the indirect args, so it needs the dispatch
+    // buffer in its layout; `relax_compacted` only reads `meta`, so the
+    // dispatch buffer must NOT be in its bind group -- otherwise the relax
+    // pass would use it as both a writable storage binding and the
+    // indirect-args buffer, which WebGPU rejects.
+    let prep_layout = ctx
         .device
         .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Wavefront Compacted Bind Group Layout"),
+            label: Some("Wavefront Frontier Prep Bind Group Layout"),
+            entries: &[
+                uniform_entry(4),
+                storage_entry(9, false),
+                storage_entry(10, false),
+            ],
+        });
+    let relax_layout = ctx
+        .device
+        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Wavefront Compacted Relax Bind Group Layout"),
             entries: &[
                 storage_entry(0, true),
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                uniform_entry(4),
                 storage_entry(5, false),
                 storage_entry(6, true),
                 storage_entry(7, false),
@@ -483,10 +514,30 @@ pub async fn distance_field_compacted_async(
             ],
         });
 
-    let make_bind_group = |parity: usize| {
+    let make_prep_bind_group = |parity: usize| {
         ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Wavefront Compacted Bind Group"),
-            layout: &bind_group_layout,
+            label: Some("Wavefront Frontier Prep Bind Group"),
+            layout: &prep_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buffers[parity].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: meta_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 10,
+                    resource: dispatch_buffer.as_entire_binding(),
+                },
+            ],
+        })
+    };
+    let make_relax_bind_group = |parity: usize| {
+        ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Wavefront Compacted Relax Bind Group"),
+            layout: &relax_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -519,28 +570,36 @@ pub async fn distance_field_compacted_async(
             ],
         })
     };
-    let bind_groups = [make_bind_group(0), make_bind_group(1)];
+    let prep_bind_groups = [make_prep_bind_group(0), make_prep_bind_group(1)];
+    let relax_bind_groups = [make_relax_bind_group(0), make_relax_bind_group(1)];
 
-    let pipeline_layout = ctx
+    let prep_pipeline_layout = ctx
         .device
         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Wavefront Compacted Pipeline Layout"),
-            bind_group_layouts: &[Some(&bind_group_layout)],
+            label: Some("Wavefront Frontier Prep Pipeline Layout"),
+            bind_group_layouts: &[Some(&prep_layout)],
             immediate_size: 0,
         });
-    let make_pipeline = |entry: &str| {
+    let relax_pipeline_layout =
+        ctx.device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Wavefront Compacted Relax Pipeline Layout"),
+                bind_group_layouts: &[Some(&relax_layout)],
+                immediate_size: 0,
+            });
+    let make_pipeline = |entry: &str, layout: &wgpu::PipelineLayout| {
         ctx.device
             .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(entry),
-                layout: Some(&pipeline_layout),
+                layout: Some(layout),
                 module: &shader,
                 entry_point: Some(entry),
                 compilation_options: Default::default(),
                 cache: None,
             })
     };
-    let prep_pipeline = make_pipeline("frontier_prep");
-    let relax_pipeline = make_pipeline("relax_compacted");
+    let prep_pipeline = make_pipeline("frontier_prep", &prep_pipeline_layout);
+    let relax_pipeline = make_pipeline("relax_compacted", &relax_pipeline_layout);
 
     let count_staging = ctx.device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Wavefront Count Staging"),
@@ -571,7 +630,7 @@ pub async fn distance_field_compacted_async(
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&prep_pipeline);
-                pass.set_bind_group(0, &bind_groups[parity], &[]);
+                pass.set_bind_group(0, &prep_bind_groups[parity], &[]);
                 pass.dispatch_workgroups(1, 1, 1);
             }
             {
@@ -580,16 +639,16 @@ pub async fn distance_field_compacted_async(
                     timestamp_writes: None,
                 });
                 pass.set_pipeline(&relax_pipeline);
-                pass.set_bind_group(0, &bind_groups[parity], &[]);
-                pass.dispatch_workgroups_indirect(&meta_buffer, 0);
+                pass.set_bind_group(0, &relax_bind_groups[parity], &[]);
+                pass.dispatch_workgroups_indirect(&dispatch_buffer, 0);
             }
         }
         iters_done += batch;
-        // The next iteration's input count lives at meta[4 + parity].
+        // The next iteration's input count lives at meta[1 + parity].
         let next_parity = iters_done % 2;
         encoder.copy_buffer_to_buffer(
             &meta_buffer,
-            ((4 + next_parity) * std::mem::size_of::<u32>()) as u64,
+            ((1 + next_parity) * std::mem::size_of::<u32>()) as u64,
             &count_staging,
             0,
             std::mem::size_of::<u32>() as u64,

@@ -35,13 +35,11 @@ struct Params {
 }
 
 // Layout of the compacted-path `meta` buffer (all atomic u32):
-//   [0..3) DispatchIndirect args (x, y, z) for `relax_compacted`
-//   [3]    epoch (bumped once per iteration by `frontier_prep`)
-//   [4]    frontier A length
-//   [5]    frontier B length
-const META_DISPATCH_X: u32 = 0u;
-const META_EPOCH: u32 = 3u;
-const META_COUNT_A: u32 = 4u;
+//   [0]    epoch (bumped once per iteration by `frontier_prep`)
+//   [1]    frontier A length
+//   [2]    frontier B length
+const META_EPOCH: u32 = 0u;
+const META_COUNT_A: u32 = 1u;
 
 const INF: u32 = 0xffffffffu;
 
@@ -131,8 +129,13 @@ fn relax(@builtin(global_invocation_id) gid: vec3<u32>) {
 @group(0) @binding(7) var<storage, read_write> frontier_out: array<u32>;
 // Per-node epoch stamp for duplicate suppression.
 @group(0) @binding(8) var<storage, read_write> stamp: array<atomic<u32>>;
-// Dispatch args + epoch + frontier lengths; see layout above.
+// Epoch + frontier lengths; see layout above.
 @group(0) @binding(9) var<storage, read_write> fmeta: array<atomic<u32>>;
+// DispatchIndirect args (x, y, z), written by `frontier_prep` and consumed
+// as the `relax_compacted` dispatch. Separate from `fmeta` because WebGPU
+// forbids a buffer from being both a writable storage binding and the
+// indirect-args buffer in the same pass.
+@group(0) @binding(10) var<storage, read_write> fdispatch: array<atomic<u32>>;
 
 // Single-threaded per-iteration bookkeeping: publish the input frontier
 // length as indirect workgroup counts, clear the output counter, and
@@ -140,9 +143,9 @@ fn relax(@builtin(global_invocation_id) gid: vec3<u32>) {
 @compute @workgroup_size(1)
 fn frontier_prep() {
     let n = atomicLoad(&fmeta[META_COUNT_A + params.parity]);
-    atomicStore(&fmeta[META_DISPATCH_X], (n + 255u) / 256u);
-    atomicStore(&fmeta[META_DISPATCH_X + 1u], 1u);
-    atomicStore(&fmeta[META_DISPATCH_X + 2u], 1u);
+    atomicStore(&fdispatch[0u], (n + 255u) / 256u);
+    atomicStore(&fdispatch[1u], 1u);
+    atomicStore(&fdispatch[2u], 1u);
     atomicStore(&fmeta[META_COUNT_A + (1u - params.parity)], 0u);
     atomicAdd(&fmeta[META_EPOCH], 1u);
 }
