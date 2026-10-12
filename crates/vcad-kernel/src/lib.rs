@@ -2484,6 +2484,37 @@ mod tests {
         assert!(!cone.is_empty());
     }
 
+    /// A frustum whose top is wider than its base must keep its radii at the
+    /// right heights. Volume and bounding box are symmetric in the two radii,
+    /// so neither catches a swap; only a per-z-band radius check does.
+    #[test]
+    fn test_cone_frustum_radii_by_height() {
+        let height = 10.0;
+        let cone = Solid::cone(2.0, 10.0, height, 128);
+        let mesh = cone.to_mesh(128);
+
+        let (mut r_bottom, mut r_top) = (0.0_f64, 0.0_f64);
+        for v in mesh.vertices.chunks(3) {
+            let (x, y, z) = (v[0] as f64, v[1] as f64, v[2] as f64);
+            let r = (x * x + y * y).sqrt();
+            if z <= 0.25 {
+                r_bottom = r_bottom.max(r);
+            }
+            if z >= height - 0.25 {
+                r_top = r_top.max(r);
+            }
+        }
+
+        assert!(
+            (r_bottom - 2.0).abs() < 0.1,
+            "bottom radius {r_bottom}, expected 2"
+        );
+        assert!(
+            (r_top - 10.0).abs() < 0.1,
+            "top radius {r_top}, expected 10"
+        );
+    }
+
     #[test]
     fn test_empty() {
         let empty = Solid::empty();

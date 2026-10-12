@@ -474,7 +474,7 @@ impl ConeSurface {
         let apex_z = if radius_bottom > radius_top {
             height * radius_bottom / dr
         } else {
-            -height * radius_top / (radius_top - radius_bottom)
+            -height * radius_bottom / (radius_top - radius_bottom)
         };
         let apex = Point3::new(center.x, center.y, center.z + apex_z);
         let axis = if radius_bottom > radius_top {
@@ -1809,6 +1809,36 @@ mod tests {
             (g(p + Vec3::new(0.0, h, 0.0)) - g(p - Vec3::new(0.0, h, 0.0))) / (2.0 * h),
             (g(p + Vec3::new(0.0, 0.0, h)) - g(p - Vec3::new(0.0, 0.0, h))) / (2.0 * h),
         )
+    }
+
+    /// A frustum whose top is wider than its base must still have its
+    /// `radius_bottom` at `z = 0` and `radius_top` at `z = height`. The apex
+    /// has to be placed from the radius at the base; deriving it from the top
+    /// radius silently swaps the two.
+    #[test]
+    fn from_frustum_keeps_radii_at_their_heights() {
+        let height = 10.0;
+        let cone = ConeSurface::from_frustum(Point3::origin(), 2.0, 10.0, height)
+            .expect("unequal radii, so a cone not a cylinder");
+
+        // Axis points +Z with the apex below the base; a point at height `z`
+        // sits `(z - apex.z) / cos(half_angle)` from the apex along the axis.
+        let r_at = |z: f64| {
+            let v = (z - cone.apex.z) / cone.half_angle.cos();
+            let p = cone.evaluate(Point2::new(0.0, v));
+            (p.x * p.x + p.y * p.y).sqrt()
+        };
+
+        assert!(
+            (r_at(0.0) - 2.0).abs() < 1e-9,
+            "radius at z=0 is {}, expected 2",
+            r_at(0.0)
+        );
+        assert!(
+            (r_at(height) - 10.0).abs() < 1e-9,
+            "radius at z={height} is {}, expected 10",
+            r_at(height)
+        );
     }
 
     #[test]
