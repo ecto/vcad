@@ -244,7 +244,12 @@ pub fn render_svg_annotated(
     let v = view
         .parse::<vcad_render::View>()
         .unwrap_or(vcad_render::View::Isometric);
-    let annotations = vcad_render::RenderAnnotations { axes, labels, dims };
+    let annotations = vcad_render::RenderAnnotations {
+        axes,
+        labels,
+        dims,
+        callouts: false,
+    };
     vcad_render::render_svg_str_view_opts(vcad_json, scale, v, false, &annotations)
         .map_err(|e| JsError::new(&e))
 }
@@ -299,7 +304,12 @@ pub fn render_svg_camera(
         focus: focus.filter(|f| !f.trim().is_empty()),
         section: plane,
         highlight,
-        annotations: vcad_render::RenderAnnotations { axes, labels, dims },
+        annotations: vcad_render::RenderAnnotations {
+            axes,
+            labels,
+            dims,
+            callouts: false,
+        },
         ..Default::default()
     };
     vcad_render::render_svg_str_opts(vcad_json, scale, &opts).map_err(|e| JsError::new(&e))
@@ -386,6 +396,7 @@ pub fn render_svg_camera_opts(
             axes: o.axes,
             labels: o.labels,
             dims: o.dims,
+            callouts: false,
         },
         style,
         ..Default::default()

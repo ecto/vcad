@@ -1,0 +1,5 @@
+[difference
+  [union
+    [union [translate -12 0 -1 [cylinder 1.7 5]] [translate 12 0 -1 [cylinder 1.7 5]]]
+    [union [translate 0 -10 -1 [cylinder 3 5]] [translate 0 10 -1 [cylinder 3 5]]]]
+  [translate -20 -20 0 [cube 40 40 3]]]
