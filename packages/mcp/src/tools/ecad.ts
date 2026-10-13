@@ -1842,7 +1842,9 @@ const CHIP_SIZE_CODES = new Set([
  */
 export function isTwoPinPassiveFootprint(footprint: unknown): boolean {
   if (typeof footprint !== "string") return false;
-  const fp = footprint.trim();
+  // KiCad footprint ids carry a library prefix ("Resistor_SMD:R_0402_1005Metric");
+  // classify on the footprint name after it, or prefixed passives get no pins.
+  const fp = footprint.trim().split(":").pop()!;
   if (/^[RCLD]_/i.test(fp)) return true;
   return CHIP_SIZE_CODES.has(fp);
 }

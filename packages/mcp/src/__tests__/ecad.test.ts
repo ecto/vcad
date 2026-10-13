@@ -169,6 +169,23 @@ function registerPwrBoard(continuous: boolean): string {
   return registerSession(doc);
 }
 
+describe("two-pin passive footprints with a KiCad library prefix", () => {
+  it("synthesizes pins for Resistor_SMD:R_0402 like it does for R_0402", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          { ref: "R1", value: "10k", footprint: "Resistor_SMD:R_0402_1005Metric", x: 0, y: 0 },
+          { ref: "C1", value: "100n", footprint: "Capacitor_SMD:C_0402_1005Metric", x: 20, y: 0 },
+        ],
+        nets: { A: ["R1.1", "C1.1"], B: ["R1.2", "C1.2"] },
+      }),
+    );
+    expect(created.success).toBe(true);
+    const doc = getSession(created.document_id);
+    expect(doc.schematic!.components.map((c) => c.pins.length)).toEqual([2, 2]);
+  });
+});
+
 describe("pin-type validation (create_schematic)", () => {
   it("accepts valid PinType variants verbatim", async () => {
     const created = out(
