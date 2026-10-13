@@ -832,6 +832,11 @@
 [type EcadVia [EcadVia f64 f64 f64 f64 Str]]
 ; PCB footprint: [EcadFootprint ref value footprint-name x y rotation front]
 [type EcadFootprint [EcadFootprint Str Str Str f64 f64 f64 Bool]]
+; Library component: [EcadSymbol ref lib-id value footprint-id x y rotation]
+; pins come from the KiCad symbol library named by lib-id ("Library:Symbol")
+[type EcadSymbol [EcadSymbol Str Str Str Str f64 f64 f64]]
+; Connection: [EcadConn net "REF.PIN"] - the netlist as data
+[type EcadConn [EcadConn Str Str]]
 ; Net: [EcadNet id name]
 [type EcadNet [EcadNet Str Str]]
 ; Design rules: [EcadRules trace-width clearance via-dia via-drill edge-clr hole-to-hole]
@@ -845,4 +850,6 @@
 [let ecad-via [fn [x y dia drill net] [EcadVia x y dia drill net]]]
 [let ecad-footprint [fn [ref val fp x y rot front] [EcadFootprint ref val fp x y rot front]]]
 [let ecad-net [fn [id name] [EcadNet id name]]]
+[let ecad-symbol [fn [ref lib val fp x y rot] [EcadSymbol ref lib val fp x y rot]]]
+[let ecad-conn [fn [net pin] [EcadConn net pin]]]
 [let ecad-rules [fn [tw clr vdia vdrl eclr h2h] [EcadRules tw clr vdia vdrl eclr h2h]]]

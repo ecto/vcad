@@ -951,7 +951,7 @@ fn write_kicad_sch_impl(
     e.line(1, "(generator \"vcad\")");
     e.line(1, "(generator_version \"9.0\")");
     e.line(1, &format!("(uuid {})", q(&root_uuid)));
-    e.line(1, "(paper \"A4\")");
+    e.line(1, &format!("(paper {})", paper_for(sheet, &placements)));
 
     // Title block. No date — output must be byte-stable (golden tests, diffs).
     if let Some(title) = &sheet.title {
@@ -1445,12 +1445,37 @@ fn pin_ref_comp<'a>(sheet: &SchematicSheet, pin_ref: &'a str) -> Option<(usize, 
 /// signal sources into columns (sources left, sinks right), each column
 /// ordered top-to-bottom by shared-net count, spaced by symbol extents plus
 /// label clearance, all origins snapped to the schematic grid.
+/// Auto-layout columns wrap past this height (mm): an A2 sheet's usable height.
+const MAX_COLUMN_HEIGHT: f64 = 380.0;
+
+/// Smallest ISO landscape sheet (KiCad paper name) that holds the placed
+/// symbols with a margin; "User" with explicit size beyond A0.
+fn paper_for(sheet: &SchematicSheet, placements: &[Vec2]) -> String {
+    let (mut w, mut h) = (0.0f64, 0.0f64);
+    for (c, p) in sheet.components.iter().zip(placements) {
+        let (hx, hy) = comp_half_extents(c);
+        w = w.max(p.x + hx + 20.0);
+        h = h.max(p.y + hy + 20.0);
+    }
+    for (name, pw, ph) in [("A4", 297.0, 210.0), ("A3", 420.0, 297.0), ("A2", 594.0, 420.0), ("A1", 841.0, 594.0), ("A0", 1189.0, 841.0)] {
+        // leave room for the title block in the lower right
+        if w <= pw - 10.0 && h <= ph - 40.0 {
+            return format!("\"{name}\"");
+        }
+    }
+    format!("\"User\" {:.0} {:.0}", (w + 20.0).ceil(), (h + 50.0).ceil())
+}
+
 fn auto_layout(sheet: &SchematicSheet) -> Vec<Vec2> {
     let n = sheet.components.len();
 
     // Per-component net degree and adjacency, from the declared netlist.
     let mut degree = vec![0u32; n];
     let mut adjacency: Vec<std::collections::BTreeSet<usize>> = vec![Default::default(); n];
+    // Rail nets (GND, supplies) touch most of the board; ranking through them
+    // puts every part one hop from every other and the layout collapses into
+    // one column. Rank on signal nets only.
+    let rail_size = 8usize.max(n / 10);
     if let Some(nets) = &sheet.nets {
         for pins in nets.values() {
             let mut members = std::collections::BTreeSet::new();
@@ -1458,6 +1483,9 @@ fn auto_layout(sheet: &SchematicSheet) -> Vec<Vec2> {
                 if let Some((idx, _)) = pin_ref_comp(sheet, pin_ref) {
                     members.insert(idx);
                 }
+            }
+            if members.len() > rail_size {
+                continue;
             }
             for &i in &members {
                 degree[i] += 1;
@@ -1525,9 +1553,34 @@ fn auto_layout(sheet: &SchematicSheet) -> Vec<Vec2> {
     const LABEL_CLEARANCE_Y: f64 = 6.35;
     const ORIGIN: f64 = 25.4;
 
+    // Wrap a column that would run taller than this into side-by-side
+    // sub-columns, so a wide rank lays out as a block rather than a strip.
+    // Never shorter than the tallest single symbol.
+    let tallest = (0..n)
+        .map(|i| 2.0 * (comp_half_extents(&sheet.components[i]).1 + LABEL_CLEARANCE_Y))
+        .fold(0.0f64, f64::max);
+    let max_col_h = MAX_COLUMN_HEIGHT.max(tallest);
+    let mut wrapped: Vec<Vec<usize>> = Vec::new();
+    for col in &cols {
+        let mut cur: Vec<usize> = Vec::new();
+        let mut h = 0.0;
+        for &i in col {
+            let dh = 2.0 * (comp_half_extents(&sheet.components[i]).1 + LABEL_CLEARANCE_Y);
+            if !cur.is_empty() && h + dh > max_col_h {
+                wrapped.push(std::mem::take(&mut cur));
+                h = 0.0;
+            }
+            cur.push(i);
+            h += dh;
+        }
+        if !cur.is_empty() {
+            wrapped.push(cur);
+        }
+    }
+
     let mut positions = vec![Vec2::new(0.0, 0.0); n];
     let mut x_cursor = ORIGIN;
-    for col in &cols {
+    for col in &wrapped {
         let col_half_w = col
             .iter()
             .map(|&i| comp_half_extents(&sheet.components[i]).0 + LABEL_CLEARANCE_X)
@@ -2127,6 +2180,23 @@ fn symbol_body(comp: &SchematicComponent) -> (Vec2, Vec2) {
         maxx = maxx.max(p.position.x);
         maxy = maxy.max(p.position.y);
     }
+    // A single column (or row) of pins - a 1xN connector - has no pin ring to
+    // inset into. KiCad draws symbols about their origin, so the body lies
+    // between the column and the origin; put it there, so every pin reads as a
+    // side pin. Collapsing it instead made the box degenerate and gave the
+    // pins vertical stubs that ran into their neighbours, merging their nets.
+    if comp.pins.len() > 1 && (maxx - minx).abs() < 1e-9 && (maxy - miny).abs() > 1e-9 {
+        let x = minx;
+        let toward = if x <= 0.0 { 1.0 } else { -1.0 };
+        let (a, b) = (x + toward * 1.27, x + toward * 3.81);
+        return (Vec2::new(a.min(b), maxy + 1.27), Vec2::new(a.max(b), miny - 1.27));
+    }
+    if comp.pins.len() > 1 && (maxy - miny).abs() < 1e-9 && (maxx - minx).abs() > 1e-9 {
+        let y = miny;
+        let toward = if y <= 0.0 { 1.0 } else { -1.0 };
+        let (a, b) = (y + toward * 1.27, y + toward * 3.81);
+        return (Vec2::new(minx - 1.27, a.max(b)), Vec2::new(maxx + 1.27, a.min(b)));
+    }
     // Shrink the box inside the pin ring so pin stubs read as connecting in.
     let inset = 1.27;
     let (mut x0, mut y0, mut x1, mut y1) = (minx + inset, miny + inset, maxx - inset, maxy - inset);
@@ -2142,13 +2212,34 @@ fn symbol_body(comp: &SchematicComponent) -> (Vec2, Vec2) {
 }
 
 /// Pin rotation (degrees) so the stub points from the body toward the pin.
+///
+/// Classified by the body edge the pin sits beyond, not by direction from the
+/// body centre: on a tall IC a side pin near a corner is closer to the centre
+/// line vertically than horizontally, and a centre-relative test turned it into
+/// a top/bottom pin whose vertical net stub landed on its neighbour - shorting
+/// the two nets in the exported schematic.
 fn pin_angle(_comp: &SchematicComponent, pos: Vec2, body: (Vec2, Vec2)) -> f64 {
-    let cx = (body.0.x + body.1.x) / 2.0;
-    let cy = (body.0.y + body.1.y) / 2.0;
+    let (x0, y1) = (body.0.x, body.0.y);
+    let (x1, y0) = (body.1.x, body.1.y);
+    // How far the pin lies outside each edge (negative = inside).
+    let out = [
+        (x0 - pos.x, 0.0),   // left: stub points right, toward the body
+        (pos.x - x1, 180.0), // right
+        (pos.y - y1, 270.0), // top (Y-up)
+        (y0 - pos.y, 90.0),  // bottom
+    ];
+    let best = out
+        .iter()
+        .copied()
+        .fold((f64::NEG_INFINITY, 0.0), |a, b| if b.0 > a.0 { b } else { a });
+    if best.0 > 0.0 {
+        return best.1;
+    }
+    // Inside the body (degenerate box): fall back to the centre-relative test.
+    let cx = (x0 + x1) / 2.0;
+    let cy = (y0 + y1) / 2.0;
     let dx = pos.x - cx;
     let dy = pos.y - cy;
-    // KiCad pin angle points from the pin's connection end toward the body, so
-    // a pin on the right of the body has angle 180.
     if dx.abs() >= dy.abs() {
         if dx >= 0.0 {
             180.0
@@ -2159,6 +2250,55 @@ fn pin_angle(_comp: &SchematicComponent, pos: Vec2, body: (Vec2, Vec2)) -> f64 {
         270.0
     } else {
         90.0
+    }
+}
+
+#[cfg(test)]
+mod pin_angle_tests {
+    use super::*;
+
+    fn comp() -> SchematicComponent {
+        SchematicComponent {
+            reference: "U1".into(),
+            value: "X".into(),
+            footprint_id: String::new(),
+            position: Vec2::new(0.0, 0.0),
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![],
+            pads_override: None,
+            properties: Default::default(),
+        }
+    }
+
+    #[test]
+    fn single_column_connector_pins_get_horizontal_stubs() {
+        // KiCad Conn_01x04: pins at x = -5.08, y = 2.54 .. -5.08, body to the right.
+        let mut c = comp();
+        for (i, y) in [2.54, 0.0, -2.54, -5.08].iter().enumerate() {
+            c.pins.push(SchematicPin {
+                number: (i + 1).to_string(),
+                name: format!("Pin_{}", i + 1),
+                pin_type: PinType::Passive,
+                position: Vec2::new(-5.08, *y),
+            });
+        }
+        let body = symbol_body(&c);
+        for p in &c.pins {
+            assert_eq!(pin_angle(&c, p.position, body), 0.0, "pin {}", p.number);
+        }
+    }
+
+    #[test]
+    fn side_pin_near_the_corner_of_a_tall_symbol_stays_a_side_pin() {
+        // 20 mm wide, 120 mm tall pin ring; a left pin 5 mm below the top.
+        let body = (Vec2::new(-8.73, 58.73), Vec2::new(8.73, -58.73));
+        let left_near_top = Vec2::new(-10.0, 55.0);
+        assert_eq!(pin_angle(&comp(), left_near_top, body), 0.0);
+        let right_near_bottom = Vec2::new(10.0, -55.0);
+        assert_eq!(pin_angle(&comp(), right_near_bottom, body), 180.0);
+        let top_mid = Vec2::new(0.0, 60.0);
+        assert_eq!(pin_angle(&comp(), top_mid, body), 270.0);
     }
 }
 

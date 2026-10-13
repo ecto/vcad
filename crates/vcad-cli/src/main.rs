@@ -81,7 +81,7 @@ enum Commands {
     Export {
         /// Input .vcad or .loon file
         input: PathBuf,
-        /// Output file (format determined by extension: .stl, .glb, .step, .stp, .urdf)
+        /// Output file (format determined by extension: .stl, .glb, .step, .stp, .urdf, .kicad_sch)
         output: PathBuf,
         /// Refuse to write a STEP that contains tessellated (triangle-soup)
         /// faces. Without this flag such a fallback is a stderr warning
@@ -982,6 +982,22 @@ fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<(
     let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext.eq_ignore_ascii_case("loon") {
         return export_loon(&doc, output);
+    }
+    // Schematic: no mesh evaluation - a circuit-only loon file has no geometry.
+    if ext.eq_ignore_ascii_case("kicad_sch") {
+        let sheet = doc
+            .schematic
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("{} has no schematic", input.display()))?;
+        fs::write(output, vcad_ecad_symbols::write_kicad_sch(sheet))?;
+        let nets = sheet.nets.as_ref().map_or(0, |n| n.len());
+        println!(
+            "Exported schematic ({} parts, {} nets) to {}",
+            sheet.components.len(),
+            nets,
+            output.display()
+        );
+        return Ok(());
     }
 
     // Evaluate document to get meshes (not needed for loon)

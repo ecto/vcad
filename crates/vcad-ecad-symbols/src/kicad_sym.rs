@@ -27,6 +27,10 @@ pub struct Symbol {
     pub properties: Vec<Property>,
     /// Graphical primitives (body outline).
     pub graphics: Vec<SymbolGraphic>,
+    /// Parent symbol this one derives from (`(extends "X")`), already applied:
+    /// a derived symbol carries its parent's pins and graphics after parsing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extends: Option<String>,
 }
 
 /// A pin on a schematic symbol.
@@ -240,10 +244,14 @@ fn parse_symbol(node: &SExpr<'_>) -> Option<Symbol> {
     let mut pins = Vec::new();
     let mut properties = Vec::new();
     let mut graphics = Vec::new();
+    let mut extends = None;
 
     let children = node.children()?;
     for child in children.iter().skip(1) {
         match child.tag_name() {
+            Some("extends") => {
+                extends = child_str(child, 1).map(|s| s.to_string());
+            }
             Some("property") => {
                 if let Some(prop) = parse_property(child) {
                     properties.push(prop);
@@ -289,6 +297,7 @@ fn parse_symbol(node: &SExpr<'_>) -> Option<Symbol> {
         pins,
         properties,
         graphics,
+        extends,
     })
 }
 
@@ -309,11 +318,31 @@ pub fn parse_symbol_lib(input: &str) -> Result<SymbolLib, ParseError> {
         ));
     }
 
-    let symbols = root
+    let mut symbols: Vec<Symbol> = root
         .find_all("symbol")
         .into_iter()
         .filter_map(|n| parse_symbol(n))
         .collect();
+
+    // Derived symbols (`(extends "Parent")`) carry no pins or graphics of
+    // their own in the file; give them the parent's so lookups by name work.
+    let by_name: std::collections::HashMap<String, (Vec<SymbolPin>, Vec<SymbolGraphic>)> = symbols
+        .iter()
+        .filter(|s| s.extends.is_none())
+        .map(|s| (s.name.clone(), (s.pins.clone(), s.graphics.clone())))
+        .collect();
+    for s in symbols.iter_mut() {
+        if let Some(parent) = &s.extends {
+            if let Some((pins, graphics)) = by_name.get(parent) {
+                if s.pins.is_empty() {
+                    s.pins = pins.clone();
+                }
+                if s.graphics.is_empty() {
+                    s.graphics = graphics.clone();
+                }
+            }
+        }
+    }
 
     Ok(SymbolLib { symbols })
 }
@@ -328,9 +357,32 @@ pub fn parse_symbol_lib_file(path: &str) -> Result<SymbolLib, ParseError> {
     parse_symbol_lib(&contents)
 }
 
+impl SymbolLib {
+    /// Find a symbol by name.
+    pub fn get(&self, name: &str) -> Option<&Symbol> {
+        self.symbols.iter().find(|s| s.name == name)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn derived_symbol_inherits_parent_pins() {
+        let lib = parse_symbol_lib(
+            r#"(kicad_symbol_lib (version 20211014) (generator test)
+  (symbol "BASE" (property "Reference" "U" (at 0 0 0))
+    (symbol "BASE_1_1"
+      (pin input line (at -5.08 0 0) (length 2.54) (name "IN" (effects (font (size 1.27 1.27)))) (number "1" (effects (font (size 1.27 1.27)))))))
+  (symbol "CHILD" (extends "BASE") (property "Reference" "U" (at 0 0 0))))"#,
+        )
+        .unwrap();
+        let child = lib.get("CHILD").unwrap();
+        assert_eq!(child.extends.as_deref(), Some("BASE"));
+        assert_eq!(child.pins.len(), 1);
+        assert_eq!(child.pins[0].name, "IN");
+    }
 
     const RESISTOR_LIB: &str = r#"(kicad_symbol_lib (version 20211014) (generator kicad_symbol_editor)
   (symbol "R" (pin_names (offset 0)) (in_bom yes) (on_board yes)

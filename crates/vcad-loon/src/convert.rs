@@ -559,6 +559,8 @@ fn is_ecad_tag(tag: &str) -> bool {
     matches!(
         tag,
         "EcadComponent"
+            | "EcadSymbol"
+            | "EcadConn"
             | "EcadWire"
             | "EcadLabel"
             | "EcadTrace"
@@ -614,6 +616,47 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
                 properties: HashMap::new(),
             });
         }
+        // [EcadSymbol ref lib-id value footprint-id x y rotation]
+        // A component whose pins come from a KiCad symbol library: lib-id is
+        // "Library:Symbol" (e.g. "MCU_ST_STM32H7:STM32H723VGTx").
+        "EcadSymbol" => {
+            assert_fields(tag, fields, 7)?;
+            let reference = ctx.str_val(&fields[0])?;
+            let lib_id = ctx.str_val(&fields[1])?;
+            let value = ctx.str_val(&fields[2])?;
+            let footprint_id = ctx.str_val(&fields[3])?;
+            let x = ctx.f64_val(&fields[4])?;
+            let y = ctx.f64_val(&fields[5])?;
+            let rotation = ctx.f64_val(&fields[6])?;
+            let pins = kicad_symbol_pins(&lib_id).map_err(|e| format!("{reference}: {e}"))?;
+            let mut properties = HashMap::new();
+            properties.insert("lib_id".to_string(), lib_id);
+            ensure_schematic(ctx);
+            let sheet = ctx.doc.schematic.as_mut().unwrap();
+            sheet.components.push(ecad::SchematicComponent {
+                reference,
+                value,
+                footprint_id,
+                position: Vec2::new(x, y),
+                rotation,
+                mirror: false,
+                pins,
+                pads_override: None,
+                properties,
+            });
+        }
+        // [EcadConn net "REF.PIN"] — one pin on a named net (the netlist as data).
+        "EcadConn" => {
+            assert_fields(tag, fields, 2)?;
+            let net = ctx.str_val(&fields[0])?;
+            let pin = ctx.str_val(&fields[1])?;
+            if !pin.contains('.') {
+                return Err(format!("EcadConn: pin '{pin}' must be REF.PIN"));
+            }
+            ensure_schematic(ctx);
+            let sheet = ctx.doc.schematic.as_mut().unwrap();
+            sheet.nets.get_or_insert_with(Default::default).entry(net).or_default().push(pin);
+        }
         // [EcadWire x1 y1 x2 y2]
         "EcadWire" => {
             assert_fields(tag, fields, 4)?;
@@ -659,6 +702,62 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
     }
 
     Ok(())
+}
+
+/// Directories searched for KiCad `.kicad_sym` libraries: `$VCAD_KICAD_SYMBOLS`
+/// first, then the standard KiCad install locations.
+fn kicad_symbol_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(d) = std::env::var("VCAD_KICAD_SYMBOLS") {
+        dirs.push(d.into());
+    }
+    for d in [
+        "/Applications/KiCad/KiCad.app/Contents/SharedSupport/symbols",
+        "/usr/share/kicad/symbols",
+        "/usr/local/share/kicad/symbols",
+        "C:/Program Files/KiCad/9.0/share/kicad/symbols",
+    ] {
+        dirs.push(d.into());
+    }
+    dirs
+}
+
+/// Pins of a KiCad library symbol ("Library:Symbol"), as schematic pins.
+/// Libraries are parsed once per process.
+fn kicad_symbol_pins(lib_id: &str) -> Result<Vec<ecad::SchematicPin>, String> {
+    use std::sync::{Mutex, OnceLock};
+    static LIBS: OnceLock<Mutex<HashMap<String, vcad_ecad_symbols::SymbolLib>>> = OnceLock::new();
+    let (lib, sym) = lib_id
+        .split_once(':')
+        .ok_or_else(|| format!("lib-id '{lib_id}' must be Library:Symbol"))?;
+    let cache = LIBS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().map_err(|e| e.to_string())?;
+    if !cache.contains_key(lib) {
+        let dirs = kicad_symbol_dirs();
+        let path = dirs
+            .iter()
+            .map(|d| d.join(format!("{lib}.kicad_sym")))
+            .find(|p| p.exists())
+            .ok_or_else(|| {
+                format!("KiCad symbol library '{lib}' not found (set VCAD_KICAD_SYMBOLS; searched {dirs:?})")
+            })?;
+        let parsed = vcad_ecad_symbols::kicad_sym::parse_symbol_lib_file(&path.to_string_lossy())
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        cache.insert(lib.to_string(), parsed);
+    }
+    let s = cache[lib]
+        .get(sym)
+        .ok_or_else(|| format!("symbol '{sym}' not in library '{lib}'"))?;
+    Ok(s
+        .pins
+        .iter()
+        .map(|p| ecad::SchematicPin {
+            number: p.number.clone(),
+            name: p.name.clone(),
+            pin_type: p.pin_type.clone(),
+            position: Vec2::new(p.position.0, p.position.1),
+        })
+        .collect())
 }
 
 /// Apply an Euler XYZ rotation (degrees, X then Y then Z) to a point.
