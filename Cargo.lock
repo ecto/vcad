@@ -7156,6 +7156,8 @@ dependencies = [
  "vcad-crdt",
  "vcad-diff",
  "vcad-ecad-fabprep",
+ "vcad-ecad-pcb",
+ "vcad-ecad-symbols",
  "vcad-eval",
  "vcad-i18n",
  "vcad-ir",
@@ -8135,6 +8137,7 @@ dependencies = [
  "loon-lang",
  "serde",
  "serde_json",
+ "vcad-ecad-symbols",
  "vcad-ir",
  "vcad-parts",
 ]
