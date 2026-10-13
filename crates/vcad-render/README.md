@@ -79,6 +79,8 @@ vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 | `--axes` | off | Overlay an X/Y/Z origin gizmo (kernel is Z-up). See below. |
 | `--labels` | off | Label each top-level part with its name. See below. |
 | `--dims` | off | Overlay overall W×D×H bounding-box dimensions in mm. See below. |
+| `--callouts` | off | Call out holes and bolt circles: "Ø<d>" leaders per hole/boss, "<n>× Ø<d> on Ø<pcd> PCD" for equal-pitch patterns. See below. |
+| `--style <S>` | `drafting` | Shading style: `drafting` (navy tonal family), `shaded` (full material colour), or `tinted` (drafting look with material-tinted fills). See below. |
 | `-o, --output <PATH>` | stdout | Output path; format inferred from `.svg`/`.jpg`/`.jpeg`/`.png`. `-o -` = SVG on stdout. Single input only. |
 | `--jpeg <PATH>` | — | Legacy alias for `-o <path.jpg>`. |
 | `--raytrace` | off | Render the raster output via direct BRep ray tracing (needs `.png`/`.jpg`). |
@@ -144,6 +146,65 @@ pixel space. Three things keep them readable on any render:
   the extreme vertex along the leader's own diagonal, which is always on
   the projection's convex hull, so the leader runs out into open
   background.
+
+### Hole and bolt-circle callouts (`--callouts`)
+
+`--dims` only measures the envelope; a fabricator also needs the hole
+pattern. `--callouts` walks the evaluated BRep (the same face walk
+`--exact-edges` uses) for cylindrical faces whose axis is parallel to the
+view direction — so it works in any view, and is most useful in `--view
+top`/`front`/`side` — and annotates them drafting-style:
+
+- **Each hole or boss** gets a leader from its rim to a label "Ø<d>" (mm,
+  one decimal, trailing zero dropped: `Ø3.4`, `Ø8`). Hole vs boss is
+  decided from the tessellation's outward normals, so a boolean-cut bore
+  and a turned boss both qualify and neither is misread.
+- **A pattern** of ≥ 3 equal holes on a common circle (radius within
+  0.1 mm) at equal angular pitch (within 0.5°) collapses to one callout,
+  "6× Ø3.4 on Ø27 PCD", with the pitch circle drawn as a dashed
+  construction circle and the first-hole angle appended (" @ 30°") when
+  it isn't zero. Partial arcs at equal pitch count too.
+- **Stacked parts share a callout.** A bolt hole running through a plate
+  and the disc beneath it is one axis and one diameter, and is called out
+  once.
+- **Labels sit outside the silhouette**, with the same leader style
+  `--labels` uses. Each callout tries eight leader directions and keeps the
+  cheapest: overlapping another label (or leaving the canvas) costs its
+  overlap area, a leader crossing an unrelated hole costs far more, and a
+  longer leader costs a little — so a hole near an edge leads straight
+  out rather than across the part.
+
+Mesh-only parts (frozen topology-optimization results, STL imports) have
+no analytic faces and contribute nothing; the render never fails for lack
+of callouts. Because detection needs the BRep, `--callouts` bypasses the
+on-disk root-mesh cache like `--section` does.
+
+```bash
+vcad-render plate.vcad --view top --dims --callouts -o plate.png
+```
+
+### Material tints in drafting mode (`--style tinted`)
+
+The default `drafting` style maps every part into the navy tonal family,
+and does so by rescaling each material's colour to the ramp stop's own
+luminance — so a `0.2`-grey steel and a `0.78`-grey aluminium render
+identically, and a drawing can't tell a fabricator which part is which.
+`--style shaded` is full material colour, which is a different (non-
+drafting) look.
+
+`--style tinted` keeps the drafting plate — ink linework, flat tonal fills,
+hidden lines, the paper ground — and tints each part's fill from its
+material's base colour: 60 % material (lit by a gentle 0.55→1.0 ladder so
+its own lightness survives) mixed with 40 % of the drafting fill at that
+stop. Material luminance is clamped to `[0.25, 0.95]` first, so a black
+motor still shows its edges and a white part doesn't vanish into the
+paper. Parts whose material has no colour keep the navy. `--style
+drafting` output is byte-identical to before the mode existed; it applies
+to SVG, JPEG and PNG.
+
+```bash
+vcad-render gripper.vcad --style tinted -o gripper.png
+```
 
 ### Drawing-sheet mode (`--sheet`)
 

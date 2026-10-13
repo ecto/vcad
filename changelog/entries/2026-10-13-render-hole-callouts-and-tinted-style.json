@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-13-render-hole-callouts-and-tinted-style",
+  "version": "0.10.0",
+  "date": "2026-10-13",
+  "category": "feat",
+  "title": "vcad-render: hole/PCD callouts and material tints",
+  "summary": "--callouts annotates holes and bosses with Ø leaders and collapses equal-pitch bolt circles to one 'n× Ød on Øpcd PCD' callout; --style tinted keeps the drafting look but tints fills by material so steel, aluminium and black parts read apart.",
+  "features": ["render", "drafting", "manufacture"]
+}

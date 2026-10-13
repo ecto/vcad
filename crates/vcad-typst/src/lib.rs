@@ -96,6 +96,7 @@ impl Config {
                 axes: self.axes.unwrap_or(false),
                 labels: self.labels.unwrap_or(false),
                 dims: self.dims.unwrap_or(false),
+                callouts: false,
             },
             focus: self.focus.clone(),
             ..Default::default()

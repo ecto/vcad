@@ -1,0 +1,5 @@
+[difference
+  [union
+    [circular-pattern 0 0 0 0 0 1 6 360 [translate 13.5 0 -1 [cylinder 1.7 5]]]
+    [translate 0 0 -1 [cylinder 4 5]]]
+  [translate -20 -20 0 [cube 40 40 3]]]

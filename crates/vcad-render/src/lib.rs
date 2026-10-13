@@ -43,6 +43,7 @@ pub mod animate;
 /// `--assembly` / `--explode`: several posed parts as one scene.
 #[cfg(feature = "cli")]
 pub mod assembly;
+mod callouts;
 #[cfg(feature = "raytrace")]
 pub mod envmap;
 mod exact;
@@ -496,12 +497,19 @@ pub struct RenderAnnotations {
     /// Draw overall W×D×H bounding-box dimensions with mm values, using
     /// drafting-style extension lines.
     pub dims: bool,
+    /// Call out cylindrical holes and bosses whose axis is parallel to
+    /// the view direction: a leader with "Ø<d>" per feature, and ≥3 equal
+    /// holes on a common circle at equal pitch collapse to one
+    /// "<n>× Ø<d> on Ø<pcd> PCD" callout with a dashed pitch circle.
+    /// Detected from the evaluated BRep; mesh-only parts contribute
+    /// nothing.
+    pub callouts: bool,
 }
 
 impl RenderAnnotations {
     /// True when any overlay is enabled.
     pub fn any(&self) -> bool {
-        self.axes || self.labels || self.dims
+        self.axes || self.labels || self.dims || self.callouts
     }
 }
 
@@ -1299,6 +1307,7 @@ fn build_artifacts(
             .map(match style {
                 RenderStyle::Drafting => tint_ramp,
                 RenderStyle::Shaded => shaded_ramp,
+                RenderStyle::Tinted => tinted_ramp,
             })
             .unwrap_or(RAMP);
         if emphasis == Emphasis::Ghost {
@@ -1570,6 +1579,63 @@ fn tint_ramp(color: [f64; 3]) -> [[u8; 3]; 4] {
 /// therefore render as true greys instead of staying in the navy family.
 fn shaded_ramp(color: [f64; 3]) -> [[u8; 3]; 4] {
     tint_ramp_k(color, 1.0)
+}
+
+/// Share of the material colour in a [`RenderStyle::Tinted`] fill; the
+/// rest is the drafting [`RAMP`] stop, so tinted parts still sit in the
+/// plate's tonal family.
+const TINT_MATERIAL_WEIGHT: f64 = 0.6;
+/// Lighting ladder applied to the material colour in tinted mode, as the
+/// multiplier at the deepest shadow stop (the highlight stop is 1.0). Much
+/// gentler than the navy ramp's own 0.18→1.0 swing so the *material*
+/// lightness survives into the fill: steel and aluminium must read apart.
+const TINT_LADDER_MIN: f64 = 0.55;
+/// Material luminance is clamped to this range before tinting, so a black
+/// motor still carries a legible fill under the ink linework and a white
+/// part does not vanish into the paper.
+const TINT_MATERIAL_LUMA: (f64, f64) = (0.25, 0.95);
+
+/// Push `c`'s luminance into `[lo, hi]` by blending toward white (too
+/// dark) or black (too light); hue is preserved.
+fn clamp_luma(c: [f64; 3], lo: f64, hi: f64) -> [f64; 3] {
+    let l = luma(c);
+    if l < lo {
+        let t = if l < 1.0 { (lo - l) / (1.0 - l) } else { 0.0 };
+        [
+            c[0] + (1.0 - c[0]) * t,
+            c[1] + (1.0 - c[1]) * t,
+            c[2] + (1.0 - c[2]) * t,
+        ]
+    } else if l > hi {
+        let t = (l - hi) / l;
+        [c[0] * (1.0 - t), c[1] * (1.0 - t), c[2] * (1.0 - t)]
+    } else {
+        c
+    }
+}
+
+/// Drafting-with-material-tints ramp for [`RenderStyle::Tinted`]: each stop
+/// mixes [`TINT_MATERIAL_WEIGHT`] of the material colour (lit by a gentle
+/// ladder, luminance-clamped) with the drafting [`RAMP`] stop. Unlike
+/// [`tint_ramp_k`], the material's own lightness is kept rather than
+/// rescaled to the stop's, which is what lets a 0.2-grey steel and a
+/// 0.78-grey aluminium render as visibly different parts on the same
+/// white-paper, ink-linework plate.
+fn tinted_ramp(color: [f64; 3]) -> [[u8; 3]; 4] {
+    let color = clamp_luma(color, TINT_MATERIAL_LUMA.0, TINT_MATERIAL_LUMA.1);
+    let top = luma([RAMP[3][0] as f64, RAMP[3][1] as f64, RAMP[3][2] as f64]) / 255.0;
+    let mut out = RAMP;
+    for stop in out.iter_mut() {
+        let sl = luma([stop[0] as f64, stop[1] as f64, stop[2] as f64]) / 255.0;
+        let lit = TINT_LADDER_MIN + (1.0 - TINT_LADDER_MIN) * (sl / top).min(1.0);
+        for c in 0..3 {
+            let base = stop[c] as f64;
+            let mat = (color[c] * lit * 255.0).clamp(0.0, 255.0);
+            stop[c] =
+                (base * (1.0 - TINT_MATERIAL_WEIGHT) + mat * TINT_MATERIAL_WEIGHT).round() as u8;
+        }
+    }
+    out
 }
 
 /// Shared ramp construction: blend the navy [`RAMP`] toward the material
@@ -2149,6 +2215,11 @@ pub enum RenderStyle {
     /// Full material colour: parts render in their assigned material colour
     /// with the same Lambertian shading ladder.
     Shaded,
+    /// Drafting look (ink linework, flat tonal fills, paper ground) with
+    /// each part's fill tinted from its material's base colour — mixed
+    /// 60/40 with the drafting fill and luminance-clamped so lines stay
+    /// legible on dark materials. Parts with no material keep the navy.
+    Tinted,
 }
 
 impl std::str::FromStr for RenderStyle {
@@ -2157,8 +2228,9 @@ impl std::str::FromStr for RenderStyle {
         match s.trim().to_ascii_lowercase().as_str() {
             "" | "drafting" => Ok(RenderStyle::Drafting),
             "shaded" => Ok(RenderStyle::Shaded),
+            "tinted" => Ok(RenderStyle::Tinted),
             other => Err(format!(
-                "unknown render style '{other}' — supported: 'drafting', 'shaded'"
+                "unknown render style '{other}' — supported: 'drafting', 'shaded', 'tinted'"
             )),
         }
     }
@@ -2906,8 +2978,11 @@ fn render_svg_impl(
     // Opt-in engineering overlays, drawn over the linework.
     if annos.any() {
         let world_to_fin = |p: [f64; 3]| fin(project(p));
+        // Text boxes already on the plate, so callout labels can steer
+        // clear of them.
+        let mut occupied: Vec<callouts::Rect> = Vec::new();
         if annos.dims {
-            emit_svg_dims(&mut out, lo3, hi3, w, h, &world_to_fin);
+            emit_svg_dims(&mut out, lo3, hi3, w, h, &world_to_fin, &mut occupied);
         }
         if annos.labels {
             for (ai, art) in arts.iter().enumerate() {
@@ -2924,8 +2999,35 @@ fn render_svg_impl(
                     continue;
                 }
                 let anchor = fin(((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0));
-                emit_svg_label(&mut out, name, anchor, w);
+                occupied.push(emit_svg_label(&mut out, name, anchor, w));
             }
+        }
+        if annos.callouts {
+            let (rn, dn) = (normalize(right), normalize(down));
+            let feats = callouts::detect(solids, &arts, cam, rn, dn, TESSELLATION_SEGMENTS);
+            let groups = callouts::group(&feats, cam, rn, dn);
+            let silhouette: Vec<(f64, f64)> = projected.iter().flatten().map(|&p| fin(p)).collect();
+            let plan = callouts::plan(
+                &feats,
+                &groups,
+                rn,
+                &world_to_fin,
+                &silhouette,
+                &mut occupied,
+                &callouts::Metrics {
+                    char_w: 6.0,
+                    text_h: 10.0,
+                    clearance: 18.0,
+                    gap: 3.0,
+                    bounds: Some(callouts::Rect {
+                        x0: 0.0,
+                        y0: 0.0,
+                        x1: w,
+                        y1: h,
+                    }),
+                },
+            );
+            emit_svg_callouts(&mut out, &plan);
         }
         if annos.axes {
             emit_svg_axes(&mut out, view, h);
@@ -2939,7 +3041,7 @@ fn render_svg_impl(
 /// Emit the part-label annotation: an anchor dot at the part's projected
 /// bbox centre, a leader line, and the name with a paper-coloured halo so
 /// it stays legible over fills.
-fn emit_svg_label(out: &mut String, name: &str, anchor: (f64, f64), w: f64) {
+fn emit_svg_label(out: &mut String, name: &str, anchor: (f64, f64), w: f64) -> callouts::Rect {
     // Lead up-right by default; flip left when close to the right edge.
     let dir = if anchor.0 + 70.0 > w { -1.0 } else { 1.0 };
     let elbow = (anchor.0 + 18.0 * dir, anchor.1 - 18.0);
@@ -2947,6 +3049,15 @@ fn emit_svg_label(out: &mut String, name: &str, anchor: (f64, f64), w: f64) {
         ("start", elbow.0 + 3.0)
     } else {
         ("end", elbow.0 - 3.0)
+    };
+    // Approximate text box (10px monospace ≈ 6px per glyph), for callout
+    // placement to avoid.
+    let tw = name.chars().count() as f64 * 6.0;
+    let rect = callouts::Rect {
+        x0: if dir > 0.0 { tx } else { tx - tw },
+        y0: elbow.1 - 7.0,
+        x1: if dir > 0.0 { tx + tw } else { tx },
+        y1: elbow.1 + 3.0,
     };
     out.push_str(&format!(
         r#"<g class="annot-label"><circle cx="{:.2}" cy="{:.2}" r="1.6" fill="{INK}"/><line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="0.6"/><text x="{tx:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="10" fill="{INK}" text-anchor="{ta}" paint-order="stroke" stroke="{PAPER}" stroke-width="3">{}</text></g>"#,
@@ -2959,11 +3070,42 @@ fn emit_svg_label(out: &mut String, name: &str, anchor: (f64, f64), w: f64) {
         elbow.1 + 3.0,
         xml_escape(name),
     ));
+    rect
+}
+
+/// Emit the hole / pitch-circle callouts planned by [`callouts::plan`]:
+/// dashed construction circles, rim-anchored leaders in the part-label
+/// style, and haloed labels.
+fn emit_svg_callouts(out: &mut String, plan: &callouts::Plan) {
+    out.push_str(r#"<g class="annot-callouts">"#);
+    for &((cx, cy), r) in &plan.dashed_circles {
+        out.push_str(&format!(
+            r#"<circle cx="{cx:.2}" cy="{cy:.2}" r="{r:.2}" fill="none" stroke="{INK}" stroke-width="0.5" stroke-dasharray="4 2.5" opacity="0.8"/>"#,
+        ));
+    }
+    for (&(a, b), &dot) in plan.leaders.iter().zip(&plan.dots) {
+        out.push_str(&format!(
+            r#"<circle cx="{:.2}" cy="{:.2}" r="1.6" fill="{INK}"/><line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="0.6"/>"#,
+            dot.0, dot.1, a.0, a.1, b.0, b.1,
+        ));
+    }
+    for t in &plan.texts {
+        // `pos` is the text box's top-left; the box is 10 units tall, so
+        // the baseline sits 2 units above its bottom edge.
+        out.push_str(&format!(
+            r#"<text x="{:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="10" fill="{INK}" text-anchor="start" paint-order="stroke" stroke="{PAPER}" stroke-width="3">{}</text>"#,
+            t.pos.0,
+            t.pos.1 + 8.0,
+            xml_escape(&t.text),
+        ));
+    }
+    out.push_str("</g>");
 }
 
 /// Emit drafting-style overall bounding-box dimensions: extension lines
 /// from the bbox corners, a dimension line offset outside the silhouette,
-/// and the mm value at its midpoint.
+/// and the mm value at its midpoint. Each value's text box is appended to
+/// `occupied` so later overlays can avoid it.
 fn emit_svg_dims(
     out: &mut String,
     lo3: [f64; 3],
@@ -2971,6 +3113,7 @@ fn emit_svg_dims(
     w: f64,
     h: f64,
     world_to_fin: &dyn Fn([f64; 3]) -> (f64, f64),
+    occupied: &mut Vec<callouts::Rect>,
 ) {
     out.push_str(r#"<g class="annot-dims">"#);
     for dim in bbox_dim_specs(lo3, hi3) {
@@ -3025,6 +3168,13 @@ fn emit_svg_dims(
             text.1,
             xml_escape(&dim.label),
         ));
+        let half_w = dim.label.chars().count() as f64 * 5.4 / 2.0;
+        occupied.push(callouts::Rect {
+            x0: text.0 - half_w,
+            y0: text.1 - 4.5,
+            x1: text.0 + half_w,
+            y1: text.1 + 4.5,
+        });
     }
     out.push_str("</g>");
 }
@@ -3402,6 +3552,10 @@ mod raster {
         /// point-sampled output. Clamped to 1..=4. Ignored by the
         /// ray-traced path, which supersamples on its own.
         pub aa: Option<u32>,
+        /// Shading style, as for [`SvgOptions::style`]: the drafting navy
+        /// family (default), full material colour, or drafting fills
+        /// tinted from each part's material.
+        pub style: RenderStyle,
     }
 
     /// Supersampling factor for a given output width when the caller
@@ -3431,6 +3585,7 @@ mod raster {
                 section: None,
                 annotations: RenderAnnotations::default(),
                 aa: None,
+                style: RenderStyle::Drafting,
             }
         }
     }
@@ -3654,7 +3809,7 @@ mod raster {
                 keep_occluded: false,
             },
             opts.section,
-            RenderStyle::Drafting,
+            opts.style,
         );
 
         // Screen-plane (mm) and 3D bounding boxes over all vertices.
@@ -3871,7 +4026,7 @@ mod raster {
         // background stays opaque in the transparent PNG output.
         if opts.annotations.any() {
             draw_annotations(
-                &mut rgb, &mut mask, canvas, &arts, names, opts, &to_px, lo3, hi3,
+                &mut rgb, &mut mask, canvas, solids, &arts, names, opts, &to_px, lo3, hi3,
             );
         }
 
@@ -4062,6 +4217,7 @@ mod raster {
         rgb: &mut [u8],
         mask: &mut [u8],
         canvas: Canvas,
+        solids: &[Solid],
         arts: &[SolidArtifacts],
         names: &[Option<String>],
         opts: &RasterOptions,
@@ -4072,6 +4228,8 @@ mod raster {
         let annos = &opts.annotations;
         let s = AnnoScale::for_canvas(canvas);
         let hair = s.i(1.0);
+        // Text boxes already drawn, so callout labels can steer clear.
+        let mut occupied: Vec<callouts::Rect> = Vec::new();
         if annos.dims {
             // Every projected vertex, so a dimension line can be pushed
             // clear of the silhouette rather than a fixed distance off the
@@ -4142,6 +4300,13 @@ mod raster {
                 let out = off + s.u(14.0);
                 let text = (mid.0 + n.0 * out, mid.1 + n.1 * out);
                 draw_text_centered(rgb, mask, canvas, text, &dim.label, INK_RGB, s);
+                let half_w = text_width_px(&dim.label, s) as f64 / 2.0;
+                occupied.push(callouts::Rect {
+                    x0: text.0 - half_w,
+                    y0: text.1 - s.text_h() / 2.0,
+                    x1: text.0 + half_w,
+                    y1: text.1 + s.text_h() / 2.0,
+                });
             }
         }
         if annos.labels {
@@ -4205,6 +4370,97 @@ mod raster {
                 let tx = tx.clamp(0.0, (canvas.w as f64 - tw).max(0.0));
                 let ty = (elbow.1 - s.text_h() / 2.0).clamp(0.0, canvas.h as f64 - s.text_h());
                 draw_text(rgb, mask, canvas, (tx, ty), name, INK_RGB, s);
+                occupied.push(callouts::Rect {
+                    x0: tx,
+                    y0: ty,
+                    x1: tx + tw,
+                    y1: ty + s.text_h(),
+                });
+            }
+        }
+        if annos.callouts {
+            let cam = opts.view.cam();
+            let rn = normalize(opts.view.right());
+            let dn = normalize(opts.view.down());
+            let feats = callouts::detect(solids, arts, cam, rn, dn, segments_for(opts.size_px));
+            let groups = callouts::group(&feats, cam, rn, dn);
+            let to2d = |p: [f64; 3]| {
+                let (x, y, _) = to_px(p);
+                (x, y)
+            };
+            let silhouette: Vec<(f64, f64)> = arts
+                .iter()
+                .flat_map(|a| a.verts.iter())
+                .map(|v| to2d(*v))
+                .filter(|p| p.0.is_finite() && p.1.is_finite())
+                .collect();
+            let plan = callouts::plan(
+                &feats,
+                &groups,
+                rn,
+                &to2d,
+                &silhouette,
+                &mut occupied,
+                &callouts::Metrics {
+                    char_w: (6 * s.font()) as f64,
+                    text_h: s.text_h(),
+                    clearance: s.u(18.0),
+                    gap: s.u(4.0),
+                    bounds: Some(callouts::Rect {
+                        x0: 0.0,
+                        y0: 0.0,
+                        x1: canvas.w as f64,
+                        y1: canvas.h as f64,
+                    }),
+                },
+            );
+            for &(c, r) in &plan.dashed_circles {
+                // Dashed construction circle: on/off arcs of a fixed
+                // screen length, so the dash period reads the same at
+                // every canvas size.
+                let (on, off) = (s.u(5.0), s.u(3.0));
+                let circ = std::f64::consts::TAU * r;
+                let period = on + off;
+                let n = (circ / period).ceil().max(1.0) as usize;
+                let step = std::f64::consts::TAU / n as f64;
+                let frac = on / period;
+                for k in 0..n {
+                    let a0 = k as f64 * step;
+                    let a1 = a0 + step * frac;
+                    let sub = ((r * step * frac) / 2.0).ceil().max(1.0) as usize;
+                    for q in 0..sub {
+                        let t0 = a0 + (a1 - a0) * q as f64 / sub as f64;
+                        let t1 = a0 + (a1 - a0) * (q + 1) as f64 / sub as f64;
+                        draw_line_col(
+                            rgb,
+                            mask,
+                            canvas,
+                            (c.0 + r * t0.cos(), c.1 + r * t0.sin()),
+                            (c.0 + r * t1.cos(), c.1 + r * t1.sin()),
+                            INK_RGB,
+                            hair,
+                        );
+                    }
+                }
+            }
+            let dot_r = s.u(1.0);
+            for (&(a, b), &d) in plan.leaders.iter().zip(&plan.dots) {
+                draw_line_col(rgb, mask, canvas, a, b, INK_RGB, hair);
+                draw_line_col(
+                    rgb,
+                    mask,
+                    canvas,
+                    (d.0 - dot_r, d.1),
+                    (d.0 + dot_r, d.1),
+                    INK_RGB,
+                    s.i(2.0),
+                );
+            }
+            for t in &plan.texts {
+                let tw = text_width_px(&t.text, s) as f64;
+                let tx = t.pos.0.clamp(0.0, (canvas.w as f64 - tw).max(0.0));
+                let ty = t.pos.1.clamp(0.0, (canvas.h as f64 - s.text_h()).max(0.0));
+                draw_text(rgb, mask, canvas, (tx, ty), &t.text, INK_RGB, s);
             }
         }
         if annos.axes {
@@ -4334,6 +4590,12 @@ mod raster {
             'X' => [0x63, 0x14, 0x08, 0x14, 0x63],
             'Y' => [0x07, 0x08, 0x70, 0x08, 0x07],
             'Z' => [0x61, 0x51, 0x49, 0x45, 0x43],
+            // Drafting symbols for hole callouts.
+            'Ø' => [0x7E, 0x51, 0x49, 0x45, 0x3F],
+            '×' => [0x22, 0x14, 0x08, 0x14, 0x22],
+            '°' => [0x00, 0x06, 0x09, 0x09, 0x06],
+            '@' => [0x3E, 0x41, 0x5D, 0x55, 0x1E],
+            ',' => [0x00, 0x50, 0x30, 0x00, 0x00],
             _ => [0x7F, 0x41, 0x41, 0x41, 0x7F],
         }
     }
@@ -4899,6 +5161,166 @@ mod tests {
         let err = "raytrace".parse::<RenderStyle>().unwrap_err();
         assert!(err.contains("unknown render style"), "{err}");
         assert!(err.contains("shaded"), "{err}");
+        assert_eq!("tinted".parse::<RenderStyle>(), Ok(RenderStyle::Tinted));
+    }
+
+    #[test]
+    fn tinted_ramp_keeps_material_lightness_and_edge_contrast() {
+        // Luma of the visible-linework ink (`INK`, #0b2742).
+        const INK_LUMA: f64 = (0.2126 * 11.0 + 0.7152 * 39.0 + 0.0722 * 66.0) / 255.0;
+        let alu = [0.78, 0.78, 0.80];
+        let steel = [0.2, 0.2, 0.22];
+        let black = [0.05, 0.05, 0.05];
+        let lum = |c: [u8; 3]| luma([c[0] as f64, c[1] as f64, c[2] as f64]) / 255.0;
+        let (ra, rs, rb) = (tinted_ramp(alu), tinted_ramp(steel), tinted_ramp(black));
+        for i in 0..4 {
+            // Aluminium reads lighter than steel at every stop — the whole
+            // point; drafting's luminance-rescaled tint can't do this.
+            assert!(
+                lum(ra[i]) > lum(rs[i]) + 0.08,
+                "stop {i}: alu {:?} vs steel {:?}",
+                ra[i],
+                rs[i]
+            );
+            // A black motor's fill never drops below the drafting ramp's
+            // deepest shadow, and every lit stop clears the ink by a margin,
+            // so linework still separates from it.
+            let floor = if i == 0 {
+                lum(RAMP[0]) - 0.01
+            } else {
+                INK_LUMA + 0.06
+            };
+            assert!(
+                lum(rb[i]) >= floor,
+                "stop {i}: black {:?} too dark for ink edges (luma {:.3} < {floor:.3})",
+                rb[i],
+                lum(rb[i])
+            );
+        }
+        // Achromatic materials no longer land on the navy ramp.
+        assert_ne!(ra, tint_ramp(alu));
+        assert_ne!(rs, tint_ramp(steel));
+    }
+
+    /// Two cubes, one aluminium and one steel: same fill in drafting mode
+    /// (both stay in the navy family), visibly different fills in tinted
+    /// mode. Sampled from the raster path's PNG, left half vs right half.
+    #[cfg(feature = "raster")]
+    #[test]
+    fn tinted_style_separates_materials_drafting_does_not() {
+        let doc = r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "alu_block", "op": { "type": "Cube", "size": { "x": 20, "y": 20, "z": 20 } } },
+    "2": { "id": 2, "name": null, "op": { "type": "Cube", "size": { "x": 20, "y": 20, "z": 20 } } },
+    "3": { "id": 3, "name": "steel_block", "op": { "type": "Translate", "child": 2, "offset": { "x": 40, "y": 0, "z": 0 } } }
+  },
+  "materials": {
+    "alu": { "name": "alu", "color": [0.78, 0.78, 0.80], "metallic": 1.0, "roughness": 0.4 },
+    "steel": { "name": "steel", "color": [0.2, 0.2, 0.22], "metallic": 1.0, "roughness": 0.3 }
+  },
+  "part_materials": {},
+  "roots": [
+    { "root": 1, "material": "alu" },
+    { "root": 3, "material": "steel" }
+  ]
+}"#;
+        // Mean colour of the covered pixels in each canvas half.
+        let halves = |style: RenderStyle| -> ([f64; 3], [f64; 3]) {
+            let png = render_png_str(
+                doc,
+                &RasterOptions {
+                    view: View::Front,
+                    size_px: 256,
+                    style,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let img = image::load_from_memory(&png).unwrap().to_rgba8();
+            let (w, h) = img.dimensions();
+            let mut acc = [[0.0f64; 3]; 2];
+            let mut n = [0usize; 2];
+            for y in 0..h {
+                for x in 0..w {
+                    let p = img.get_pixel(x, y);
+                    if p[3] == 0 {
+                        continue;
+                    }
+                    let side = usize::from(x >= w / 2);
+                    for c in 0..3 {
+                        acc[side][c] += p[c] as f64;
+                    }
+                    n[side] += 1;
+                }
+            }
+            assert!(n[0] > 100 && n[1] > 100, "both cubes must be drawn: {n:?}");
+            let mean = |s: usize| {
+                [
+                    acc[s][0] / n[s] as f64,
+                    acc[s][1] / n[s] as f64,
+                    acc[s][2] / n[s] as f64,
+                ]
+            };
+            (mean(0), mean(1))
+        };
+        let diff =
+            |a: [f64; 3], b: [f64; 3]| (0..3).map(|c| (a[c] - b[c]).abs()).fold(0.0, f64::max);
+
+        let (dl, dr) = halves(RenderStyle::Drafting);
+        assert!(
+            diff(dl, dr) < 4.0,
+            "drafting must shade both achromatic materials alike: {dl:?} vs {dr:?}"
+        );
+        let (tl, tr) = halves(RenderStyle::Tinted);
+        assert!(
+            diff(tl, tr) > 25.0,
+            "tinted must separate aluminium from steel: {tl:?} vs {tr:?}"
+        );
+        assert!(
+            luma(tl) > luma(tr),
+            "aluminium (left) must render lighter than steel (right): {tl:?} vs {tr:?}"
+        );
+        // The default style is untouched by the new mode.
+        let render = |style| {
+            render_png_str(
+                doc,
+                &RasterOptions {
+                    view: View::Front,
+                    size_px: 256,
+                    style,
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            render(RenderStyle::default()),
+            render(RenderStyle::Drafting)
+        );
+        // And the SVG path agrees: drafting output is identical with or
+        // without the style named; tinted differs.
+        let plain = render_svg_str_opts(doc, 2.0, &SvgOptions::default()).unwrap();
+        let drafting = render_svg_str_opts(
+            doc,
+            2.0,
+            &SvgOptions {
+                style: RenderStyle::Drafting,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let tinted = render_svg_str_opts(
+            doc,
+            2.0,
+            &SvgOptions {
+                style: RenderStyle::Tinted,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(plain, drafting);
+        assert_ne!(plain, tinted);
     }
 
     #[test]
@@ -5199,6 +5621,7 @@ mod tests {
                 labels: true,
                 dims: true,
                 axes: false,
+                callouts: false,
             },
         )
         .unwrap();
@@ -5826,6 +6249,7 @@ mod tests {
                 axes: true,
                 labels: true,
                 dims: true,
+                callouts: false,
             });
             assert_ne!(plain, annotated, "overlays must actually draw");
         }

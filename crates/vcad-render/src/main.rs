@@ -69,7 +69,8 @@ use std::str::FromStr;
 
 use clap::{Parser, ValueEnum};
 use vcad_render::{
-    render_svg_str_opts, RenderAnnotations, SectionPlane, SvgOptions, View, DEFAULT_SCALE,
+    render_svg_str_opts, RenderAnnotations, RenderStyle, SectionPlane, SvgOptions, View,
+    DEFAULT_SCALE,
 };
 
 /// Default overall width of a `--sheet` render when `--size` is unset.
@@ -249,6 +250,26 @@ struct Cli {
     /// Overlay overall W×D×H bounding-box dimensions in mm.
     #[arg(long)]
     dims: bool,
+
+    /// Call out holes and bolt circles: cylindrical through-holes and
+    /// bosses whose axis is parallel to the view direction get a leader
+    /// with "Ø<d>" (mm); ≥3 equal holes on a common circle at equal pitch
+    /// collapse to one "<n>× Ø<d> on Ø<pcd> PCD" callout with a dashed
+    /// pitch circle (and the first-hole angle when non-zero). Works with
+    /// any view, best with --view top/front/side. Detected from the BRep;
+    /// mesh-only parts are skipped. Coaxial holes stacked through several
+    /// parts are called out once.
+    #[arg(long)]
+    callouts: bool,
+
+    /// Shading style: `drafting` (default; every part in the navy tonal
+    /// family), `shaded` (full material colour), or `tinted` (the drafting
+    /// look — ink linework, flat fills, paper ground — with each part's
+    /// fill tinted from its material's base colour, so steel, aluminium
+    /// and a black motor read as different parts; materials without a
+    /// colour keep the navy). SVG, JPEG and PNG.
+    #[arg(long, default_value = "drafting", value_parser = RenderStyle::from_str)]
+    style: RenderStyle,
 
     /// Output path; format inferred from extension (.svg/.jpg/.jpeg/.png).
     /// Use `-o -` for SVG on stdout. Single input only.
@@ -558,6 +579,7 @@ impl Cli {
             axes: self.axes,
             labels: self.labels,
             dims: self.dims,
+            callouts: self.callouts,
         }
     }
 }
@@ -582,6 +604,7 @@ fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
         section: cli.section,
         annotations: cli.annotations(),
         aa: cli.aa,
+        style: cli.style,
     }
 }
 
@@ -696,7 +719,7 @@ fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
     // single-image path makes, made here before anything is evaluated.
     if cli.photoreal && (cli.section.is_some() || cli.annotations().any()) {
         return Err(
-            "--photoreal does not compose with --section/--axes/--labels/--dims; \
+            "--photoreal does not compose with --section/--axes/--labels/--dims/--callouts; \
              drop --photoreal to animate in the drafting style"
                 .to_string(),
         );
@@ -796,7 +819,7 @@ fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String
         // that --exact could not trace analytically anyway.
         if cli.section.is_some() || cli.annotations().any() {
             return Err(
-                "--photoreal does not compose with --section/--axes/--labels/--dims; \
+                "--photoreal does not compose with --section/--axes/--labels/--dims/--callouts; \
                  use the tessellated raster path for those"
                     .to_string(),
             );
@@ -825,7 +848,7 @@ fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String
         // the combination rather than silently ignoring those flags.
         if cli.section.is_some() || cli.annotations().any() {
             return Err(
-                "--raytrace does not compose with --section/--axes/--labels/--dims; \
+                "--raytrace does not compose with --section/--axes/--labels/--dims/--callouts; \
                  use the tessellated raster path (drop --raytrace) for those"
                     .to_string(),
             );
@@ -997,7 +1020,7 @@ fn is_loon(path: &Path) -> bool {
 /// the single largest fixed cost of a photoreal render. Only `--exact` opts
 /// back into analytic surfaces, and therefore out of the cache.
 fn root_cache(cli: &Cli) -> Option<std::rc::Rc<vcad_eval::cache::DiskMeshCache>> {
-    if cli.no_cache || cli.raytrace || cli.section.is_some() {
+    if cli.no_cache || cli.raytrace || cli.section.is_some() || cli.callouts {
         return None;
     }
     if cli.photoreal && cli.exact {
@@ -1113,6 +1136,7 @@ fn render_one_uncached(
                     section: cli.section,
                     focus: cli.focus.clone(),
                     annotations: cli.annotations(),
+                    style: cli.style,
                     ..Default::default()
                 },
             )?;
@@ -1217,6 +1241,7 @@ fn run_assembly(spec: &Path, cli: &Cli) -> Result<(), String> {
             section: cli.section,
             focus: cli.focus.clone(),
             annotations: cli.annotations(),
+            style: cli.style,
             ..Default::default()
         },
     )?;
