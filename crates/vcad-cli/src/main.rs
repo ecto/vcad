@@ -99,6 +99,10 @@ enum Commands {
         /// Trace width (mm); default: the board's default rule
         #[arg(long)]
         width: Option<f64>,
+        /// Continuous current a net carries, NET=AMPS (repeatable). Nets whose
+        /// IPC-2221 width outgrows a trace are poured instead of traced.
+        #[arg(long = "current", value_name = "NET=AMPS")]
+        currents: Vec<String>,
     },
 
     /// Import a STEP file to .vcad format
@@ -596,8 +600,9 @@ fn main() -> Result<()> {
             input,
             output,
             width,
+            currents,
         }) => {
-            route_file(&input, &output, width)?;
+            route_file(&input, &output, width, &currents)?;
         }
         Some(Commands::Import {
             input,
@@ -1076,7 +1081,12 @@ fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<(
 }
 
 /// Route every net of a document's board with vcad's autorouter and write KiCad.
-fn route_file(input: &PathBuf, output: &PathBuf, width: Option<f64>) -> Result<()> {
+fn route_file(
+    input: &PathBuf,
+    output: &PathBuf,
+    width: Option<f64>,
+    currents: &[String],
+) -> Result<()> {
     use vcad_ir::ecad::{CopperSource, Trace, Via};
     let doc = load_vcad_document(input)?;
     let mut pcb = doc
@@ -1085,7 +1095,17 @@ fn route_file(input: &PathBuf, output: &PathBuf, width: Option<f64>) -> Result<(
         .ok_or_else(|| anyhow::anyhow!("{} has no board (EcadBoard)", input.display()))?;
     let w = width.unwrap_or(pcb.rules.default_rules.trace_width);
     let t0 = std::time::Instant::now();
-    let r = vcad_ecad_pcb::router::auto::route_all(&pcb, w, &[]);
+    let mut opts = vcad_ecad_pcb::router::auto::RouteOptions::default();
+    for c in currents {
+        let (net, amps) = c
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("--current {c}: expected NET=AMPS"))?;
+        let amps: f64 = amps
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--current {c}: bad amps"))?;
+        opts.pour_policy.net_current_a.insert(net.to_string(), amps);
+    }
+    let r = vcad_ecad_pcb::router::auto::route_all_with_opts(&pcb, w, &[], &opts);
     let (vd, vdrill) = (
         pcb.rules.default_rules.via_diameter,
         pcb.rules.default_rules.via_drill,
