@@ -2884,8 +2884,14 @@ mod tests {
         let text = write_kicad_pcb(&pcb);
         // On the wire the angles are absolute and in KiCad's sense (opposite
         // to vcad's): -90 -> 270 and -(90 + 45) -> 225.
-        assert!(text.contains(" 270)"), "absolute pad angle 270 must be emitted");
-        assert!(text.contains(" 225)"), "absolute pad angle 225 must be emitted");
+        assert!(
+            text.contains(" 270)"),
+            "absolute pad angle 270 must be emitted"
+        );
+        assert!(
+            text.contains(" 225)"),
+            "absolute pad angle 225 must be emitted"
+        );
 
         let back = crate::parse_kicad_pcb(&text).expect("re-parse");
         let fp = &back.footprints[0];
@@ -2910,8 +2916,14 @@ mod tests {
         let p = &fp.pads[0];
         let (s, c) = fp.rotation.to_radians().sin_cos();
         // vcad's canonical transform (vcad_ecad_pcb::geometry::pad_world_position)
-        let world = (fp.position.x + p.position.x * c - p.position.y * s, fp.position.y + p.position.x * s + p.position.y * c);
-        assert!((world.0 - 10.0).abs() < 1e-9 && (world.1 - 9.05).abs() < 1e-9, "{world:?}");
+        let world = (
+            fp.position.x + p.position.x * c - p.position.y * s,
+            fp.position.y + p.position.x * s + p.position.y * c,
+        );
+        assert!(
+            (world.0 - 10.0).abs() < 1e-9 && (world.1 - 9.05).abs() < 1e-9,
+            "{world:?}"
+        );
         // and it writes back out as KiCad's 90
         assert!(write_kicad_pcb(&pcb).contains("(at 10 10 90)"));
     }
