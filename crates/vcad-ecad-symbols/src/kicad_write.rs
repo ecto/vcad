@@ -507,12 +507,19 @@ fn write_footprint(
     e.line(1, &format!("(footprint {}", q(&name)));
     e.line(2, &format!("(layer {})", q(layer)));
     e.line(2, &format!("(uuid {})", q(&uuid)));
-    let at = if fp.rotation != 0.0 {
+    // vcad rotates footprints with the math rotation in its y-down board frame
+    // (`pad_world_position`), which turns clockwise on screen; KiCad's angle
+    // turns counter-clockwise on screen. Same magnitude, opposite sign - see
+    // `kicad_angle`. Writing it unflipped mirrored every 90/270-degree part
+    // across its own centre in KiCad: tracks the router laid to a pad landed
+    // on the pad opposite, and KiCad DRC reported them as shorts.
+    let kr = kicad_angle(fp.rotation);
+    let at = if kr != 0.0 {
         format!(
             "(at {} {} {})",
             num(fp.position.x),
             num(fp.position.y),
-            num(fp.rotation)
+            num(kr)
         )
     } else {
         format!("(at {} {})", num(fp.position.x), num(fp.position.y))
@@ -540,6 +547,18 @@ fn write_footprint(
     }
 
     e.line(1, ")");
+}
+
+/// A vcad rotation (degrees; math sense in the y-down board frame, so
+/// clockwise on screen) as a KiCad angle (counter-clockwise on screen), in [0, 360).
+pub(crate) fn kicad_angle(vcad_deg: f64) -> f64 {
+    let r = (-vcad_deg) % 360.0;
+    let r = if r < 0.0 { r + 360.0 } else { r };
+    if r.abs() < 1e-9 || (360.0 - r).abs() < 1e-9 {
+        0.0
+    } else {
+        r
+    }
 }
 
 fn write_fp_property(e: &mut Emitter, key: &str, value: &str, layer: &str) {
@@ -705,14 +724,7 @@ fn write_pad(e: &mut Emitter, pad: &Pad, fp: &Footprint, nets: &NetTable) {
     // vcad's IR keeps it relative to the footprint, so compose on the way out.
     // The reader performs the inverse, and `pad_rotation_round_trips` pins the
     // pair together.
-    let abs_rot = {
-        let r = (fp.rotation + pad.rotation) % 360.0;
-        if r < 0.0 {
-            r + 360.0
-        } else {
-            r
-        }
-    };
+    let abs_rot = kicad_angle(fp.rotation + pad.rotation);
     let at = if abs_rot != 0.0 {
         format!(
             "(at {} {} {})",
@@ -2870,15 +2882,10 @@ mod tests {
         pcb.footprints[0].pads[1].rotation = 45.0;
 
         let text = write_kicad_pcb(&pcb);
-        // On the wire the angles are absolute: 90 and 135.
-        assert!(
-            text.contains(" 90)"),
-            "absolute pad angle 90 must be emitted"
-        );
-        assert!(
-            text.contains(" 135)"),
-            "absolute pad angle 45+90=135 must be emitted"
-        );
+        // On the wire the angles are absolute and in KiCad's sense (opposite
+        // to vcad's): -90 -> 270 and -(90 + 45) -> 225.
+        assert!(text.contains(" 270)"), "absolute pad angle 270 must be emitted");
+        assert!(text.contains(" 225)"), "absolute pad angle 225 must be emitted");
 
         let back = crate::parse_kicad_pcb(&text).expect("re-parse");
         let fp = &back.footprints[0];
@@ -2886,6 +2893,27 @@ mod tests {
         // ...and relative again in the IR.
         assert!((fp.pads[0].rotation - 0.0).abs() < 1e-6);
         assert!((fp.pads[1].rotation - 45.0).abs() < 1e-6);
+    }
+
+    /// KiCad places pad (0.95, 0) of a footprint at (10, 10, angle 90) at
+    /// (10, 9.05) - measured with KiCad 9 DRC on a real board. vcad must agree
+    /// after import, through its own pad transform, or routed copper lands on
+    /// the wrong pad of every 90/270-degree part.
+    #[test]
+    fn imported_rotation_puts_pads_where_kicad_does() {
+        let text = r#"(kicad_pcb (version 20240108) (generator "test")
+  (net 0 "")
+  (footprint "R" (layer "F.Cu") (at 10 10 90)
+    (pad "2" smd rect (at 0.95 0 90) (size 1 1.2) (layers "F.Cu"))))"#;
+        let pcb = crate::parse_kicad_pcb(text).expect("parse");
+        let fp = &pcb.footprints[0];
+        let p = &fp.pads[0];
+        let (s, c) = fp.rotation.to_radians().sin_cos();
+        // vcad's canonical transform (vcad_ecad_pcb::geometry::pad_world_position)
+        let world = (fp.position.x + p.position.x * c - p.position.y * s, fp.position.y + p.position.x * s + p.position.y * c);
+        assert!((world.0 - 10.0).abs() < 1e-9 && (world.1 - 9.05).abs() < 1e-9, "{world:?}");
+        // and it writes back out as KiCad's 90
+        assert!(write_kicad_pcb(&pcb).contains("(at 10 10 90)"));
     }
 
     #[test]
