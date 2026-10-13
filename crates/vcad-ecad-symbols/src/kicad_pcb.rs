@@ -667,7 +667,11 @@ fn parse_footprint(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<F
         .unwrap_or("")
         .to_string();
 
-    let (position, rotation) = read_at(node);
+    // KiCad's footprint angle turns counter-clockwise on screen; vcad's turns
+    // the other way (math rotation in a y-down frame). Negate on the way in,
+    // as the writer negates on the way out (`kicad_write::kicad_angle`).
+    let (position, kicad_rotation) = read_at(node);
+    let rotation = normalize_deg(-kicad_rotation);
 
     // Determine front/back from layer
     let layer = node
@@ -726,7 +730,9 @@ fn parse_footprint(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<F
         .iter()
         .filter_map(|p| parse_pad(p, net_map))
         .map(|mut pad| {
-            pad.rotation = normalize_deg(pad.rotation - rotation);
+            // KiCad pad angles are absolute and counter-clockwise; vcad's are
+            // relative to the footprint and clockwise: -(abs - fp).
+            pad.rotation = normalize_deg(kicad_rotation - pad.rotation);
             pad
         })
         .collect();
