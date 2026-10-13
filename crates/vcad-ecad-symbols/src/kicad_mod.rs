@@ -118,7 +118,24 @@ pub enum GraphicDef {
         position: (f64, f64),
         /// Layer name.
         layer: String,
+        /// Rotation in degrees.
+        #[serde(default)]
+        rotation: f64,
+        /// Font height in mm (KiCad's default 1.0 when absent).
+        #[serde(default = "default_text_size")]
+        size: f64,
+        /// Stroke thickness in mm.
+        #[serde(default = "default_text_thickness")]
+        thickness: f64,
     },
+}
+
+fn default_text_size() -> f64 {
+    1.0
+}
+
+fn default_text_thickness() -> f64 {
+    0.15
 }
 
 // ---------------------------------------------------------------------------
@@ -393,13 +410,25 @@ fn parse_graphic(node: &SExpr<'_>) -> Option<GraphicDef> {
             let text_type = child_str(node, 1)?.to_string();
             let content = child_str(node, 2).unwrap_or("").to_string();
             let at_node = node.find("at")?;
-            let (position, _) = parse_at(at_node)?;
+            let (position, rotation) = parse_at(at_node)?;
             let layer = extract_layer(node);
+            let font = node.find("effects").and_then(|e| e.find("font"));
+            let size = font
+                .and_then(|f| f.find("size"))
+                .and_then(|s| child_f64(s, 1))
+                .unwrap_or(1.0);
+            let thickness = font
+                .and_then(|f| f.find("thickness"))
+                .and_then(|t| child_f64(t, 1))
+                .unwrap_or(0.15);
             Some(GraphicDef::Text {
                 text_type,
                 content,
                 position,
                 layer,
+                rotation,
+                size,
+                thickness,
             })
         }
         _ => None,

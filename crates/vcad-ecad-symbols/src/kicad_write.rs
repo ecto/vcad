@@ -519,8 +519,10 @@ fn write_footprint(
     };
     e.line(2, &at);
 
-    write_fp_property(e, "Reference", &fp.reference, "F.SilkS");
-    write_fp_property(e, "Value", &fp.value, "F.Fab");
+    // Art (logos, labels: `properties["art"]`) is its own silkscreen; its designator would only clutter it.
+    let art = fp.properties.contains_key("art");
+    write_fp_property(e, "Reference", &fp.reference, "F.SilkS", art);
+    write_fp_property(e, "Value", &fp.value, "F.Fab", art);
 
     // Cross-probe linkage: point the footprint at its schematic symbol
     // instance (KiCad 9 root-sheet paths are "/<symbol-uuid>").
@@ -542,11 +544,14 @@ fn write_footprint(
     e.line(1, ")");
 }
 
-fn write_fp_property(e: &mut Emitter, key: &str, value: &str, layer: &str) {
+fn write_fp_property(e: &mut Emitter, key: &str, value: &str, layer: &str, hidden: bool) {
     let uuid = e.uuid();
     e.line(2, &format!("(property {} {}", q(key), q(value)));
     e.line(3, "(at 0 0 0)");
     e.line(3, &format!("(layer {})", q(layer)));
+    if hidden {
+        e.line(3, "(hide yes)");
+    }
     e.line(3, &format!("(uuid {})", q(&uuid)));
     e.line(3, "(effects");
     e.line(4, "(font");
@@ -668,6 +673,10 @@ fn write_fp_graphic(e: &mut Emitter, g: &FootprintGraphic) {
             e.line(5, &format!("(size {} {})", num(*height), num(*height)));
             e.line(5, &format!("(thickness {})", num(*width)));
             e.line(4, ")");
+            // back-side text reads correctly from the back only when mirrored
+            if layer_name(*layer).starts_with("B.") {
+                e.line(4, "(justify mirror)");
+            }
             e.line(3, ")");
             e.line(2, ")");
         }
@@ -1457,7 +1466,13 @@ fn paper_for(sheet: &SchematicSheet, placements: &[Vec2]) -> String {
         w = w.max(p.x + hx + 20.0);
         h = h.max(p.y + hy + 20.0);
     }
-    for (name, pw, ph) in [("A4", 297.0, 210.0), ("A3", 420.0, 297.0), ("A2", 594.0, 420.0), ("A1", 841.0, 594.0), ("A0", 1189.0, 841.0)] {
+    for (name, pw, ph) in [
+        ("A4", 297.0, 210.0),
+        ("A3", 420.0, 297.0),
+        ("A2", 594.0, 420.0),
+        ("A1", 841.0, 594.0),
+        ("A0", 1189.0, 841.0),
+    ] {
         // leave room for the title block in the lower right
         if w <= pw - 10.0 && h <= ph - 40.0 {
             return format!("\"{name}\"");
@@ -2189,13 +2204,19 @@ fn symbol_body(comp: &SchematicComponent) -> (Vec2, Vec2) {
         let x = minx;
         let toward = if x <= 0.0 { 1.0 } else { -1.0 };
         let (a, b) = (x + toward * 1.27, x + toward * 3.81);
-        return (Vec2::new(a.min(b), maxy + 1.27), Vec2::new(a.max(b), miny - 1.27));
+        return (
+            Vec2::new(a.min(b), maxy + 1.27),
+            Vec2::new(a.max(b), miny - 1.27),
+        );
     }
     if comp.pins.len() > 1 && (maxy - miny).abs() < 1e-9 && (maxx - minx).abs() > 1e-9 {
         let y = miny;
         let toward = if y <= 0.0 { 1.0 } else { -1.0 };
         let (a, b) = (y + toward * 1.27, y + toward * 3.81);
-        return (Vec2::new(minx - 1.27, a.max(b)), Vec2::new(maxx + 1.27, a.min(b)));
+        return (
+            Vec2::new(minx - 1.27, a.max(b)),
+            Vec2::new(maxx + 1.27, a.min(b)),
+        );
     }
     // Shrink the box inside the pin ring so pin stubs read as connecting in.
     let inset = 1.27;
@@ -2228,10 +2249,10 @@ fn pin_angle(_comp: &SchematicComponent, pos: Vec2, body: (Vec2, Vec2)) -> f64 {
         (pos.y - y1, 270.0), // top (Y-up)
         (y0 - pos.y, 90.0),  // bottom
     ];
-    let best = out
-        .iter()
-        .copied()
-        .fold((f64::NEG_INFINITY, 0.0), |a, b| if b.0 > a.0 { b } else { a });
+    let best = out.iter().copied().fold(
+        (f64::NEG_INFINITY, 0.0),
+        |a, b| if b.0 > a.0 { b } else { a },
+    );
     if best.0 > 0.0 {
         return best.1;
     }

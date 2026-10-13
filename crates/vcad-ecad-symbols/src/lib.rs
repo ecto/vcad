@@ -31,6 +31,7 @@ pub mod altium;
 pub mod builtin;
 pub mod eagle_brd;
 pub mod footprint;
+pub mod kicad_board;
 pub mod kicad_mod;
 pub mod kicad_pcb;
 pub mod kicad_sch;

@@ -90,6 +90,17 @@ enum Commands {
         strict_brep: bool,
     },
 
+    /// Autoroute a board (a .loon with EcadBoard / EcadPlace) and write .kicad_pcb
+    Route {
+        /// Input .vcad or .loon file with a board
+        input: PathBuf,
+        /// Output .kicad_pcb
+        output: PathBuf,
+        /// Trace width (mm); default: the board's default rule
+        #[arg(long)]
+        width: Option<f64>,
+    },
+
     /// Import a STEP file to .vcad format
     Import {
         /// Input STEP file (.step or .stp)
@@ -581,6 +592,13 @@ fn main() -> Result<()> {
         }) => {
             export_file(&input, &output, strict_brep)?;
         }
+        Some(Commands::Route {
+            input,
+            output,
+            width,
+        }) => {
+            route_file(&input, &output, width)?;
+        }
         Some(Commands::Import {
             input,
             output,
@@ -983,6 +1001,21 @@ fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<(
     if ext.eq_ignore_ascii_case("loon") {
         return export_loon(&doc, output);
     }
+    // Board: footprints, nets, pours (unrouted). `vcad route` routes it.
+    if ext.eq_ignore_ascii_case("kicad_pcb") {
+        let pcb = doc
+            .pcb
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("{} has no board (EcadBoard)", input.display()))?;
+        fs::write(output, vcad_ecad_symbols::write_kicad_pcb(pcb))?;
+        println!(
+            "Exported board ({} footprints, {} nets) to {}",
+            pcb.footprints.len(),
+            pcb.nets.len(),
+            output.display()
+        );
+        return Ok(());
+    }
     // Schematic: no mesh evaluation - a circuit-only loon file has no geometry.
     if ext.eq_ignore_ascii_case("kicad_sch") {
         let sheet = doc
@@ -1039,6 +1072,59 @@ fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<(
         }
     }
 
+    Ok(())
+}
+
+/// Route every net of a document's board with vcad's autorouter and write KiCad.
+fn route_file(input: &PathBuf, output: &PathBuf, width: Option<f64>) -> Result<()> {
+    use vcad_ir::ecad::{CopperSource, Trace, Via};
+    let doc = load_vcad_document(input)?;
+    let mut pcb = doc
+        .pcb
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("{} has no board (EcadBoard)", input.display()))?;
+    let w = width.unwrap_or(pcb.rules.default_rules.trace_width);
+    let t0 = std::time::Instant::now();
+    let r = vcad_ecad_pcb::router::auto::route_all(&pcb, w, &[]);
+    let (vd, vdrill) = (
+        pcb.rules.default_rules.via_diameter,
+        pcb.rules.default_rules.via_drill,
+    );
+    pcb.traces.extend(r.traces.iter().map(|t| Trace {
+        start: t.start,
+        end: t.end,
+        width: t.width,
+        layer: t.layer,
+        net: t.net.clone(),
+        source: Some(CopperSource::Autoroute),
+    }));
+    pcb.vias.extend(r.vias.iter().map(|v| Via {
+        position: v.position,
+        diameter: vd,
+        drill: vdrill,
+        start_layer: v.start_layer,
+        end_layer: v.end_layer,
+        net: v.net.clone(),
+        source: Some(CopperSource::Autoroute),
+    }));
+    pcb.zones.extend(r.zones.iter().cloned());
+    std::fs::write(output, vcad_ecad_symbols::write_kicad_pcb(&pcb))?;
+    println!(
+        "Routed {:.1}% of connections in {:.1} s: {} traces, {} vias, {} synthesized pours -> {}",
+        r.routability * 100.0,
+        t0.elapsed().as_secs_f64(),
+        r.traces.len(),
+        r.vias.len(),
+        r.zones.len(),
+        output.display()
+    );
+    if !r.unrouted_nets.is_empty() {
+        println!(
+            "unrouted nets ({}): {}",
+            r.unrouted_nets.len(),
+            r.unrouted_nets.join(", ")
+        );
+    }
     Ok(())
 }
 

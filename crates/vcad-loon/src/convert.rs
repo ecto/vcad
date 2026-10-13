@@ -105,6 +105,26 @@ pub fn value_to_document_in(
         );
     }
 
+    // A declared board is built last, so placements and pours may appear
+    // before or after the parts and nets they refer to.
+    if let Some(mut spec) = ctx.board.take() {
+        if let Some(r) = ctx.rules.take() {
+            spec.rules = r;
+        }
+        spec.pours = std::mem::take(&mut ctx.pours);
+        spec.art = std::mem::take(&mut ctx.art);
+        let sheet = ctx
+            .doc
+            .schematic
+            .as_ref()
+            .ok_or_else(|| "EcadBoard needs a schematic (EcadSymbol / EcadConn)".to_string())?;
+        ctx.doc.pcb = Some(vcad_ecad_symbols::kicad_board::board_from_sheet(
+            sheet,
+            &ctx.places,
+            &spec,
+        )?);
+    }
+
     Ok(ctx.doc)
 }
 
@@ -561,6 +581,10 @@ fn is_ecad_tag(tag: &str) -> bool {
         "EcadComponent"
             | "EcadSymbol"
             | "EcadConn"
+            | "EcadBoard"
+            | "EcadPlace"
+            | "EcadPour"
+            | "EcadArt"
             | "EcadWire"
             | "EcadLabel"
             | "EcadTrace"
@@ -655,7 +679,77 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
             }
             ensure_schematic(ctx);
             let sheet = ctx.doc.schematic.as_mut().unwrap();
-            sheet.nets.get_or_insert_with(Default::default).entry(net).or_default().push(pin);
+            sheet
+                .nets
+                .get_or_insert_with(Default::default)
+                .entry(net)
+                .or_default()
+                .push(pin);
+        }
+        // [EcadBoard x0 y0 x1 y1 corner-radius thickness copper-layers]
+        "EcadBoard" => {
+            assert_fields(tag, fields, 7)?;
+            let f: Vec<f64> = (0..6)
+                .map(|k| ctx.f64_val(&fields[k]))
+                .collect::<Result<_, _>>()?;
+            let layers = ctx.f64_val(&fields[6])? as usize;
+            if ![2, 4, 6, 8].contains(&layers) {
+                return Err(format!("EcadBoard: {layers} copper layers (2, 4, 6 or 8)"));
+            }
+            ctx.board = Some(vcad_ecad_symbols::kicad_board::BoardSpec {
+                outline: vcad_ecad_symbols::kicad_board::rounded_rect(f[0], f[1], f[2], f[3], f[4]),
+                thickness: f[5],
+                layers,
+                rules: vcad_ecad_symbols::kicad_board::default_rules(),
+                pours: vec![],
+                art: vec![],
+            });
+        }
+        // [EcadPlace ref x y rotation] - where a schematic part's footprint goes
+        "EcadPlace" => {
+            assert_fields(tag, fields, 4)?;
+            ctx.places.push(vcad_ecad_symbols::kicad_board::Placement {
+                reference: ctx.str_val(&fields[0])?,
+                position: Vec2::new(ctx.f64_val(&fields[1])?, ctx.f64_val(&fields[2])?),
+                rotation: ctx.f64_val(&fields[3])?,
+            });
+        }
+        // [EcadArt ref footprint-id x y rotation] - a footprint that is not on the
+        // schematic: a logo, art, a label, a fiducial. Searched like any footprint.
+        "EcadArt" => {
+            assert_fields(tag, fields, 5)?;
+            let reference = ctx.str_val(&fields[0])?;
+            let id = ctx.str_val(&fields[1])?;
+            let placement = vcad_ecad_symbols::kicad_board::Placement {
+                reference: reference.clone(),
+                position: Vec2::new(ctx.f64_val(&fields[2])?, ctx.f64_val(&fields[3])?),
+                rotation: ctx.f64_val(&fields[4])?,
+            };
+            ctx.art.push((reference, id, placement));
+        }
+        // [EcadPour net layer] - a copper plane over the whole board ("In1.Cu", ...)
+        "EcadPour" => {
+            assert_fields(tag, fields, 2)?;
+            let net = ctx.str_val(&fields[0])?;
+            let layer_s = ctx.str_val(&fields[1])?;
+            let layer: ecad::PcbLayer = serde_json::from_str(&format!("\"{layer_s}\""))
+                .map_err(|_| format!("EcadPour: unknown layer '{layer_s}'"))?;
+            ctx.pours.push((net, layer));
+        }
+        // [EcadRules trace-width clearance via-dia via-drill edge-clearance hole-to-hole]
+        "EcadRules" => {
+            assert_fields(tag, fields, 6)?;
+            let f: Vec<f64> = (0..6)
+                .map(|k| ctx.f64_val(&fields[k]))
+                .collect::<Result<_, _>>()?;
+            let mut r = vcad_ecad_symbols::kicad_board::default_rules();
+            r.default_rules.trace_width = f[0];
+            r.default_rules.clearance = f[1];
+            r.default_rules.via_diameter = f[2];
+            r.default_rules.via_drill = f[3];
+            r.edge_clearance = f[4];
+            r.hole_to_hole = f[5];
+            ctx.rules = Some(r);
         }
         // [EcadWire x1 y1 x2 y2]
         "EcadWire" => {
@@ -748,8 +842,7 @@ fn kicad_symbol_pins(lib_id: &str) -> Result<Vec<ecad::SchematicPin>, String> {
     let s = cache[lib]
         .get(sym)
         .ok_or_else(|| format!("symbol '{sym}' not in library '{lib}'"))?;
-    Ok(s
-        .pins
+    Ok(s.pins
         .iter()
         .map(|p| ecad::SchematicPin {
             number: p.number.clone(),
@@ -873,6 +966,16 @@ struct ConvertCtx {
     /// Sheet-metal nodes emitted so far. Doubles as the check that a sheet op
     /// was actually handed a sheet chain and not a solid.
     sheet_chains: HashMap<NodeId, SheetChain>,
+    /// Board declared with `EcadBoard` (built into `doc.pcb` after evaluation).
+    board: Option<vcad_ecad_symbols::kicad_board::BoardSpec>,
+    /// `EcadPlace` placements, in source order.
+    places: Vec<vcad_ecad_symbols::kicad_board::Placement>,
+    /// `EcadPour` (net, layer) pairs.
+    pours: Vec<(String, ecad::PcbLayer)>,
+    /// `EcadRules`, if given.
+    rules: Option<ecad::DesignRules>,
+    /// `EcadArt` footprints (not on the schematic).
+    art: Vec<(String, String, vcad_ecad_symbols::kicad_board::Placement)>,
 }
 
 impl ConvertCtx {
@@ -882,6 +985,11 @@ impl ConvertCtx {
             next_id: 0,
             base_dir: base_dir.map(|p| p.to_path_buf()),
             sheet_chains: HashMap::new(),
+            board: None,
+            places: Vec::new(),
+            pours: Vec::new(),
+            rules: None,
+            art: Vec::new(),
         }
     }
 

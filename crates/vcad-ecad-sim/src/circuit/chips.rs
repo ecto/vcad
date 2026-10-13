@@ -98,10 +98,23 @@ pub trait Chip {
 /// How one chip pin was realised in the circuit.
 #[derive(Debug, Clone, Copy)]
 enum Port {
-    Input { node: usize },
-    Output { node: usize, src: usize, r: usize, r_out: f64 },
-    Sink { node: usize, src: usize },
-    Switch { node: usize, r: usize },
+    Input {
+        node: usize,
+    },
+    Output {
+        node: usize,
+        src: usize,
+        r: usize,
+        r_out: f64,
+    },
+    Sink {
+        node: usize,
+        src: usize,
+    },
+    Switch {
+        node: usize,
+        r: usize,
+    },
 }
 
 struct Placed {
@@ -121,7 +134,10 @@ pub struct ChipCircuit {
 impl ChipCircuit {
     /// Wrap a circuit.
     pub fn new(circuit: Circuit) -> Self {
-        ChipCircuit { circuit, placed: Vec::new() }
+        ChipCircuit {
+            circuit,
+            placed: Vec::new(),
+        }
     }
 
     /// Place a chip; `nodes[k]` is the node pin `k` connects to. Returns the
@@ -131,7 +147,13 @@ impl ChipCircuit {
     /// If `nodes` does not have one entry per pin.
     pub fn add_chip(&mut self, chip: Box<dyn Chip>, nodes: &[usize]) -> usize {
         let kinds = chip.pins();
-        assert_eq!(kinds.len(), nodes.len(), "chip has {} pins, got {} nodes", kinds.len(), nodes.len());
+        assert_eq!(
+            kinds.len(),
+            nodes.len(),
+            "chip has {} pins, got {} nodes",
+            kinds.len(),
+            nodes.len()
+        );
         let mut ports = Vec::new();
         let mut drive = Vec::new();
         for (kind, &node) in kinds.iter().zip(nodes) {
@@ -143,19 +165,36 @@ impl ChipCircuit {
                 PinKind::Output { r_out } => {
                     let m = self.circuit.node();
                     let src = self.circuit.add(Device::VSource { p: m, n: 0, v: 0.0 });
-                    let r = self.circuit.add(Device::Resistor { p: m, n: node, r: OPEN });
-                    ports.push(Port::Output { node, src, r, r_out });
+                    let r = self.circuit.add(Device::Resistor {
+                        p: m,
+                        n: node,
+                        r: OPEN,
+                    });
+                    ports.push(Port::Output {
+                        node,
+                        src,
+                        r,
+                        r_out,
+                    });
                     drive.push(Drive::HiZ);
                 }
                 PinKind::Sink => {
                     // ISource{p, n, i} pushes i into `p` and draws it from `n`, so
                     // p = ground, n = node draws from the pin (see the sign test).
-                    let src = self.circuit.add(Device::ISource { p: 0, n: node, i: 0.0 });
+                    let src = self.circuit.add(Device::ISource {
+                        p: 0,
+                        n: node,
+                        i: 0.0,
+                    });
                     ports.push(Port::Sink { node, src });
                     drive.push(Drive::Amps(0.0));
                 }
                 PinKind::Switch { to } => {
-                    let r = self.circuit.add(Device::Resistor { p: node, n: to, r: OPEN });
+                    let r = self.circuit.add(Device::Resistor {
+                        p: node,
+                        n: to,
+                        r: OPEN,
+                    });
                     ports.push(Port::Switch { node, r });
                     drive.push(Drive::Ohms(OPEN));
                 }
@@ -170,7 +209,12 @@ impl ChipCircuit {
         let mut env = CircuitEnv::new(self.circuit, dt);
         env.reset();
         let last = env.observe();
-        ChipEnv { env, placed: self.placed, last, dt }
+        ChipEnv {
+            env,
+            placed: self.placed,
+            last,
+            dt,
+        }
     }
 }
 
@@ -188,7 +232,10 @@ impl ChipEnv {
     pub fn step(&mut self) -> Observation {
         let t = self.last.time;
         for p in &mut self.placed {
-            let (mut v, mut i) = (Vec::with_capacity(p.ports.len()), Vec::with_capacity(p.ports.len()));
+            let (mut v, mut i) = (
+                Vec::with_capacity(p.ports.len()),
+                Vec::with_capacity(p.ports.len()),
+            );
             for port in &p.ports {
                 let (node, cur) = match *port {
                     Port::Input { node } => (node, 0.0),
@@ -199,7 +246,13 @@ impl ChipEnv {
                 v.push(self.last.node_voltages[node]);
                 i.push(cur);
             }
-            let mut io = ChipIo { t, dt: self.dt, v, i, drive: p.drive.clone() };
+            let mut io = ChipIo {
+                t,
+                dt: self.dt,
+                v,
+                i,
+                drive: p.drive.clone(),
+            };
             p.chip.step(&mut io);
             for (k, port) in p.ports.iter().enumerate() {
                 match (*port, io.drive[k]) {
@@ -259,17 +312,36 @@ pub struct Comparator {
 impl Comparator {
     /// A comparator with no internal hysteresis and the given delay.
     pub fn new(delay: f64) -> Self {
-        Comparator { hysteresis: 0.0, delay, iq: 0.3e-6, r_out: 50.0, high: false, pending: None }
+        Comparator {
+            hysteresis: 0.0,
+            delay,
+            iq: 0.3e-6,
+            r_out: 50.0,
+            high: false,
+            pending: None,
+        }
     }
     /// TI TLV7031-like: 3 µs, 335 nA, push-pull.
     pub fn tlv7031() -> Self {
-        Comparator { hysteresis: 0.0, delay: 3e-6, iq: 335e-9, r_out: 50.0, high: false, pending: None }
+        Comparator {
+            hysteresis: 0.0,
+            delay: 3e-6,
+            iq: 335e-9,
+            r_out: 50.0,
+            high: false,
+            pending: None,
+        }
     }
 }
 
 impl Chip for Comparator {
     fn pins(&self) -> Vec<PinKind> {
-        vec![PinKind::Input, PinKind::Input, PinKind::Sink, PinKind::Output { r_out: self.r_out }]
+        vec![
+            PinKind::Input,
+            PinKind::Input,
+            PinKind::Sink,
+            PinKind::Output { r_out: self.r_out },
+        ]
     }
     fn step(&mut self, io: &mut ChipIo) {
         let d = io.v[0] - io.v[1];
@@ -327,13 +399,21 @@ pub struct IdealFet {
 impl IdealFet {
     /// A FET whose source is node `s`.
     pub fn new(vth: f64, r_on: f64, s: usize) -> Self {
-        IdealFet { vth, r_on, s_node: s }
+        IdealFet {
+            vth,
+            r_on,
+            s_node: s,
+        }
     }
 }
 
 impl Chip for IdealFet {
     fn pins(&self) -> Vec<PinKind> {
-        vec![PinKind::Input, PinKind::Switch { to: self.s_node }, PinKind::Input]
+        vec![
+            PinKind::Input,
+            PinKind::Switch { to: self.s_node },
+            PinKind::Input,
+        ]
     }
     fn step(&mut self, io: &mut ChipIo) {
         let on = io.v[0] - io.v[2] > self.vth;
@@ -360,7 +440,13 @@ pub struct Ldo {
 impl Ldo {
     /// Diodes AP2112K-3.3-like.
     pub fn ap2112k_3v3() -> Self {
-        Ldo { vout: 3.3, dropout: 0.25, iq: 55e-6, ilim: 0.8, limiting: false }
+        Ldo {
+            vout: 3.3,
+            dropout: 0.25,
+            iq: 55e-6,
+            ilim: 0.8,
+            limiting: false,
+        }
     }
 }
 
@@ -384,7 +470,11 @@ impl Chip for Ldo {
             }
         }
         io.drive[0] = Drive::Amps(iout + self.iq);
-        io.drive[1] = if self.limiting && v > 0.0 { Drive::Thevenin(v, v / self.ilim) } else { Drive::Volts(v) };
+        io.drive[1] = if self.limiting && v > 0.0 {
+            Drive::Thevenin(v, v / self.ilim)
+        } else {
+            Drive::Volts(v)
+        };
     }
 }
 
@@ -419,23 +509,49 @@ pub struct BuckAvg {
 impl BuckAvg {
     /// TI LM5164-like: 100 V, 1 A, 1.2 V reference.
     pub fn lm5164() -> Self {
-        BuckAvg { vref: 1.2, eff: 0.88, uvlo: 6.0, en_th: 1.5, slew: 2_000.0, ilim: 1.5, iq: 0.5e-3, gain: 5e4, v: 0.0 }
+        BuckAvg {
+            vref: 1.2,
+            eff: 0.88,
+            uvlo: 6.0,
+            en_th: 1.5,
+            slew: 2_000.0,
+            ilim: 1.5,
+            iq: 0.5e-3,
+            gain: 5e4,
+            v: 0.0,
+        }
     }
     /// TI TPS54302-like: 28 V, 3 A, 0.596 V reference.
     pub fn tps54302() -> Self {
-        BuckAvg { vref: 0.596, eff: 0.92, uvlo: 4.5, en_th: 1.2, slew: 5_000.0, ilim: 4.0, iq: 0.1e-3, gain: 5e4, v: 0.0 }
+        BuckAvg {
+            vref: 0.596,
+            eff: 0.92,
+            uvlo: 4.5,
+            en_th: 1.2,
+            slew: 5_000.0,
+            ilim: 4.0,
+            iq: 0.1e-3,
+            gain: 5e4,
+            v: 0.0,
+        }
     }
 }
 
 impl Chip for BuckAvg {
     fn pins(&self) -> Vec<PinKind> {
-        vec![PinKind::Sink, PinKind::Output { r_out: 0.01 }, PinKind::Input, PinKind::Input]
+        vec![
+            PinKind::Sink,
+            PinKind::Output { r_out: 0.01 },
+            PinKind::Input,
+            PinKind::Input,
+        ]
     }
     fn step(&mut self, io: &mut ChipIo) {
         let (vin, fb, en) = (io.v[0], io.v[2], io.v[3]);
         let iout = io.i[1].max(0.0);
         if en > self.en_th && vin > self.uvlo {
-            let dv = (self.gain * (self.vref - fb) * io.dt).clamp(-self.slew * io.dt, self.slew * io.dt);
+            let dv =
+                (self.gain * (self.vref - fb) * io.dt).clamp(-self.slew * io.dt, self.slew * io.dt);
             self.v = (self.v + dv).clamp(0.0, vin * 0.98);
             if iout > self.ilim {
                 self.v = (self.v - (iout - self.ilim) * 0.5).max(0.0);
@@ -444,8 +560,16 @@ impl Chip for BuckAvg {
             self.v = 0.0;
         }
         let pout = io.v[1].max(0.0) * iout;
-        io.drive[0] = Drive::Amps(if vin > 1.0 { pout / (self.eff * vin) + self.iq } else { 0.0 });
-        io.drive[1] = if self.v > 0.0 { Drive::Volts(self.v) } else { Drive::HiZ };
+        io.drive[0] = Drive::Amps(if vin > 1.0 {
+            pout / (self.eff * vin) + self.iq
+        } else {
+            0.0
+        });
+        io.drive[1] = if self.v > 0.0 {
+            Drive::Volts(self.v)
+        } else {
+            Drive::HiZ
+        };
     }
 }
 
@@ -472,14 +596,34 @@ pub struct HotSwap {
 
 impl HotSwap {
     /// A controller whose OUT is node `out`.
-    pub fn new(out: usize, en_th: f64, uvlo_th: f64, ovp_th: f64, i_inrush: f64, r_on: f64) -> Self {
-        HotSwap { en_th, uvlo_th, ovp_th, i_inrush, r_on, out_node: out }
+    pub fn new(
+        out: usize,
+        en_th: f64,
+        uvlo_th: f64,
+        ovp_th: f64,
+        i_inrush: f64,
+        r_on: f64,
+    ) -> Self {
+        HotSwap {
+            en_th,
+            uvlo_th,
+            ovp_th,
+            i_inrush,
+            r_on,
+            out_node: out,
+        }
     }
 }
 
 impl Chip for HotSwap {
     fn pins(&self) -> Vec<PinKind> {
-        vec![PinKind::Switch { to: self.out_node }, PinKind::Input, PinKind::Input, PinKind::Input, PinKind::Input]
+        vec![
+            PinKind::Switch { to: self.out_node },
+            PinKind::Input,
+            PinKind::Input,
+            PinKind::Input,
+            PinKind::Input,
+        ]
     }
     fn step(&mut self, io: &mut ChipIo) {
         let on = io.v[2] > self.en_th && io.v[3] > self.uvlo_th && io.v[4] < self.ovp_th;
@@ -512,7 +656,14 @@ pub struct Watchdog {
 impl Watchdog {
     /// A window watchdog.
     pub fn new(t_min: f64, t_max: f64, t_reset: f64) -> Self {
-        Watchdog { t_min, t_max, t_reset, last_kick: 0.0, last_in: false, fault_until: 0.0 }
+        Watchdog {
+            t_min,
+            t_max,
+            t_reset,
+            last_kick: 0.0,
+            last_in: false,
+            fault_until: 0.0,
+        }
     }
 }
 
@@ -534,7 +685,11 @@ impl Chip for Watchdog {
             self.fault_until = io.t + self.t_reset;
             self.last_kick = io.t;
         }
-        io.drive[1] = if io.t < self.fault_until { Drive::Volts(0.0) } else { Drive::HiZ };
+        io.drive[1] = if io.t < self.fault_until {
+            Drive::Volts(0.0)
+        } else {
+            Drive::HiZ
+        };
     }
 }
 
@@ -572,13 +727,41 @@ mod tests {
         let (r16, r17, r20) = (316e3, 10e3, 1e6);
         let mut c = Circuit::new();
         let (vbus, div, refn, v33, cmp) = (c.node(), c.node(), c.node(), c.node(), c.node());
-        let src = c.add(Device::VSource { p: vbus, n: 0, v: 50.0 });
-        c.add(Device::Resistor { p: vbus, n: div, r: r16 });
-        c.add(Device::Resistor { p: div, n: 0, r: r17 });
-        c.add(Device::Resistor { p: cmp, n: div, r: r20 });
-        c.add(Device::VSource { p: v33, n: 0, v: 3.3 });
-        c.add(Device::Resistor { p: v33, n: refn, r: 10e3 });
-        c.add(Device::Resistor { p: refn, n: 0, r: 10e3 });
+        let src = c.add(Device::VSource {
+            p: vbus,
+            n: 0,
+            v: 50.0,
+        });
+        c.add(Device::Resistor {
+            p: vbus,
+            n: div,
+            r: r16,
+        });
+        c.add(Device::Resistor {
+            p: div,
+            n: 0,
+            r: r17,
+        });
+        c.add(Device::Resistor {
+            p: cmp,
+            n: div,
+            r: r20,
+        });
+        c.add(Device::VSource {
+            p: v33,
+            n: 0,
+            v: 3.3,
+        });
+        c.add(Device::Resistor {
+            p: v33,
+            n: refn,
+            r: 10e3,
+        });
+        c.add(Device::Resistor {
+            p: refn,
+            n: 0,
+            r: 10e3,
+        });
         let mut cc = ChipCircuit::new(c);
         let k = cc.add_chip(Box::new(Comparator::new(0.0)), &[div, refn, v33, cmp]);
         let mut env = cc.into_env(1e-6);
@@ -586,7 +769,11 @@ mod tests {
         for s in 0..20_000 {
             // ramp 50 -> 58 -> 46 V
             let t = s as f64 / 20_000.0;
-            let v = if t < 0.5 { 50.0 + 16.0 * t } else { 58.0 - 24.0 * (t - 0.5) };
+            let v = if t < 0.5 {
+                50.0 + 16.0 * t
+            } else {
+                58.0 - 24.0 * (t - 0.5)
+            };
             env.env.set_value(src, v);
             let high = |d: Drive| matches!(d, Drive::Volts(x) if x > 1.0);
             let before = high(env.drives(k)[3]);
@@ -604,7 +791,11 @@ mod tests {
         let b = par(r16, r17) / (r20 + par(r16, r17));
         let (on, off) = (1.65 / a, (1.65 - 3.3 * b) / a);
         assert!((on_at.unwrap() - on).abs() < 0.05, "on {:?} vs {on}", on_at);
-        assert!((off_at.unwrap() - off).abs() < 0.05, "off {:?} vs {off}", off_at);
+        assert!(
+            (off_at.unwrap() - off).abs() < 0.05,
+            "off {:?} vs {off}",
+            off_at
+        );
     }
 
     #[test]
@@ -613,22 +804,47 @@ mod tests {
         let mut c = Circuit::new();
         let (s, pin) = (c.node(), c.node());
         c.add(Device::VSource { p: s, n: 0, v: 5.0 });
-        c.add(Device::Resistor { p: s, n: pin, r: 10.0 });
+        c.add(Device::Resistor {
+            p: s,
+            n: pin,
+            r: 10.0,
+        });
         let mut cc = ChipCircuit::new(c);
-        cc.add_chip(Box::new(FnChip::new(vec![PinKind::Sink], |io: &mut ChipIo| io.drive[0] = Drive::Amps(0.1))), &[pin]);
+        cc.add_chip(
+            Box::new(FnChip::new(vec![PinKind::Sink], |io: &mut ChipIo| {
+                io.drive[0] = Drive::Amps(0.1)
+            })),
+            &[pin],
+        );
         let mut env = cc.into_env(1e-6);
         env.step();
         env.step();
-        assert!((env.observe().node_voltages[pin] - 4.0).abs() < 1e-6, "{}", env.observe().node_voltages[pin]);
+        assert!(
+            (env.observe().node_voltages[pin] - 4.0).abs() < 1e-6,
+            "{}",
+            env.observe().node_voltages[pin]
+        );
     }
 
     #[test]
     fn ldo_drops_out_and_conserves_current() {
         let mut c = Circuit::new();
         let (vin, vout) = (c.node(), c.node());
-        let src = c.add(Device::VSource { p: vin, n: 0, v: 5.0 });
-        c.add(Device::Resistor { p: vout, n: 0, r: 33.0 }); // 100 mA
-        c.add(Device::Capacitor { p: vout, n: 0, c: 10e-6 });
+        let src = c.add(Device::VSource {
+            p: vin,
+            n: 0,
+            v: 5.0,
+        });
+        c.add(Device::Resistor {
+            p: vout,
+            n: 0,
+            r: 33.0,
+        }); // 100 mA
+        c.add(Device::Capacitor {
+            p: vout,
+            n: 0,
+            c: 10e-6,
+        });
         let mut cc = ChipCircuit::new(c);
         cc.add_chip(Box::new(Ldo::ap2112k_3v3()), &[vin, vout]);
         let mut env = cc.into_env(1e-6);
@@ -636,7 +852,11 @@ mod tests {
             env.step();
         }
         let o = env.observe().clone();
-        assert!((o.node_voltages[vout] - 3.3).abs() < 0.01, "{}", o.node_voltages[vout]);
+        assert!(
+            (o.node_voltages[vout] - 3.3).abs() < 0.01,
+            "{}",
+            o.node_voltages[vout]
+        );
         // supply current = load + iq
         let i_in = o.device_currents[src].abs();
         assert!((i_in - (0.1 + 55e-6)).abs() < 1e-3, "{i_in}");
@@ -652,12 +872,36 @@ mod tests {
         // arm controller 12 V rail: LM5164, R29 100k / R30 11k
         let mut c = Circuit::new();
         let (vin, vout, fb, en) = (c.node(), c.node(), c.node(), c.node());
-        let src = c.add(Device::VSource { p: vin, n: 0, v: 48.0 });
-        c.add(Device::VSource { p: en, n: 0, v: 3.0 });
-        c.add(Device::Resistor { p: vout, n: fb, r: 100e3 });
-        c.add(Device::Resistor { p: fb, n: 0, r: 11e3 });
-        c.add(Device::Capacitor { p: vout, n: 0, c: 22e-6 });
-        let load = c.add(Device::Resistor { p: vout, n: 0, r: 24.0 }); // 0.5 A
+        let src = c.add(Device::VSource {
+            p: vin,
+            n: 0,
+            v: 48.0,
+        });
+        c.add(Device::VSource {
+            p: en,
+            n: 0,
+            v: 3.0,
+        });
+        c.add(Device::Resistor {
+            p: vout,
+            n: fb,
+            r: 100e3,
+        });
+        c.add(Device::Resistor {
+            p: fb,
+            n: 0,
+            r: 11e3,
+        });
+        c.add(Device::Capacitor {
+            p: vout,
+            n: 0,
+            c: 22e-6,
+        });
+        let load = c.add(Device::Resistor {
+            p: vout,
+            n: 0,
+            r: 24.0,
+        }); // 0.5 A
         let mut cc = ChipCircuit::new(c);
         cc.add_chip(Box::new(BuckAvg::lm5164()), &[vin, vout, fb, en]);
         let mut env = cc.into_env(1e-6);
@@ -666,23 +910,53 @@ mod tests {
         }
         let o = env.observe().clone();
         let expect = 1.2 * (111.0 / 11.0);
-        assert!((o.node_voltages[vout] - expect).abs() < 0.05, "{} vs {expect}", o.node_voltages[vout]);
+        assert!(
+            (o.node_voltages[vout] - expect).abs() < 0.05,
+            "{} vs {expect}",
+            o.node_voltages[vout]
+        );
         let pout = o.node_voltages[vout] * o.device_currents[load];
         let pin = 48.0 * o.device_currents[src].abs();
-        assert!((pin - pout / 0.88).abs() / pin < 0.03, "pin {pin} pout {pout}");
+        assert!(
+            (pin - pout / 0.88).abs() / pin < 0.03,
+            "pin {pin} pout {pout}"
+        );
     }
 
     #[test]
     fn hot_swap_limits_inrush_then_settles_on() {
         let mut c = Circuit::new();
         let (vin, out, en, uv, ov) = (c.node(), c.node(), c.node(), c.node(), c.node());
-        c.add(Device::VSource { p: vin, n: 0, v: 48.0 });
-        c.add(Device::VSource { p: en, n: 0, v: 3.3 });
-        c.add(Device::VSource { p: uv, n: 0, v: 2.0 });
-        c.add(Device::VSource { p: ov, n: 0, v: 1.0 });
-        let cap = c.add(Device::Capacitor { p: out, n: 0, c: 220e-6 });
+        c.add(Device::VSource {
+            p: vin,
+            n: 0,
+            v: 48.0,
+        });
+        c.add(Device::VSource {
+            p: en,
+            n: 0,
+            v: 3.3,
+        });
+        c.add(Device::VSource {
+            p: uv,
+            n: 0,
+            v: 2.0,
+        });
+        c.add(Device::VSource {
+            p: ov,
+            n: 0,
+            v: 1.0,
+        });
+        let cap = c.add(Device::Capacitor {
+            p: out,
+            n: 0,
+            c: 220e-6,
+        });
         let mut cc = ChipCircuit::new(c);
-        cc.add_chip(Box::new(HotSwap::new(out, 2.0, 1.6, 2.0, 2.0, 1.5e-3)), &[vin, out, en, uv, ov]);
+        cc.add_chip(
+            Box::new(HotSwap::new(out, 2.0, 1.6, 2.0, 2.0, 1.5e-3)),
+            &[vin, out, en, uv, ov],
+        );
         let mut env = cc.into_env(1e-6);
         let mut peak = 0.0f64;
         for _ in 0..20_000 {
@@ -699,18 +973,37 @@ mod tests {
         // charges it through 1k: a bang-bang controller holding 2.0..2.2 V.
         let mut c = Circuit::new();
         let (gpio, cap) = (c.node(), c.node());
-        c.add(Device::Resistor { p: gpio, n: cap, r: 1e3 });
-        c.add(Device::Capacitor { p: cap, n: 0, c: 10e-6 });
-        c.add(Device::Resistor { p: cap, n: 0, r: 10e3 });
+        c.add(Device::Resistor {
+            p: gpio,
+            n: cap,
+            r: 1e3,
+        });
+        c.add(Device::Capacitor {
+            p: cap,
+            n: 0,
+            c: 10e-6,
+        });
+        c.add(Device::Resistor {
+            p: cap,
+            n: 0,
+            r: 10e3,
+        });
         let mut cc = ChipCircuit::new(c);
         let mut high = false;
         cc.add_chip(
-            Box::new(FnChip::new(vec![PinKind::Input, PinKind::Output { r_out: 25.0 }], move |io: &mut ChipIo| {
-                let v = io.v[0];
-                if v < 2.0 { high = true }
-                if v > 2.2 { high = false }
-                io.drive[1] = Drive::Volts(if high { 3.3 } else { 0.0 });
-            })),
+            Box::new(FnChip::new(
+                vec![PinKind::Input, PinKind::Output { r_out: 25.0 }],
+                move |io: &mut ChipIo| {
+                    let v = io.v[0];
+                    if v < 2.0 {
+                        high = true
+                    }
+                    if v > 2.2 {
+                        high = false
+                    }
+                    io.drive[1] = Drive::Volts(if high { 3.3 } else { 0.0 });
+                },
+            )),
             &[cap, gpio],
         );
         let mut env = cc.into_env(1e-5);
@@ -729,9 +1022,21 @@ mod tests {
     fn watchdog_faults_when_kicks_stop() {
         let mut c = Circuit::new();
         let (wdi, wdo, v33) = (c.node(), c.node(), c.node());
-        c.add(Device::VSource { p: v33, n: 0, v: 3.3 });
-        c.add(Device::Resistor { p: v33, n: wdo, r: 10e3 });
-        let kick = c.add(Device::VSource { p: wdi, n: 0, v: 0.0 });
+        c.add(Device::VSource {
+            p: v33,
+            n: 0,
+            v: 3.3,
+        });
+        c.add(Device::Resistor {
+            p: v33,
+            n: wdo,
+            r: 10e3,
+        });
+        let kick = c.add(Device::VSource {
+            p: wdi,
+            n: 0,
+            v: 0.0,
+        });
         let mut cc = ChipCircuit::new(c);
         cc.add_chip(Box::new(Watchdog::new(0.0, 0.010, 0.005)), &[wdi, wdo]);
         let mut env = cc.into_env(1e-4);
@@ -739,7 +1044,14 @@ mod tests {
         for k in 0..1_000 {
             let t = k as f64 * 1e-4;
             let kicking = t < 0.05;
-            env.env.set_value(kick, if kicking && (k / 20) % 2 == 0 { 3.3 } else { 0.0 });
+            env.env.set_value(
+                kick,
+                if kicking && (k / 20) % 2 == 0 {
+                    3.3
+                } else {
+                    0.0
+                },
+            );
             let o = env.step();
             if kicking && t > 0.005 && o.node_voltages[wdo] < 1.0 {
                 low_seen_while_kicking = true;

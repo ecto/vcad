@@ -34,6 +34,7 @@ vcad-kernel-tessellate = { workspace = true }
 vcad-kernel-export = { workspace = true }
 vcad-ecad-fabprep = { workspace = true }
 vcad-ecad-symbols = { workspace = true }
+vcad-ecad-pcb = { workspace = true }
 # fab-prep runs for minutes on a dense board and narrates its rounds through
 # `log`; without a subscriber the terminal shows nothing until it finishes.
 env_logger = "0.11"
