@@ -62,6 +62,13 @@ pub fn set_no_route_layers(layers: &[PcbLayer]) {
     *NO_ROUTE_LAYERS.write().unwrap() = layers.to_vec();
 }
 
+/// Is `layer` a plane layer no trace may run on? Consulted by the session's
+/// legality probe, so every emitter (escape, push-and-shove, joint repair, the
+/// maze itself) honours it, not only the maze search.
+pub(crate) fn is_no_route(layer: PcbLayer) -> bool {
+    NO_ROUTE_LAYERS.read().unwrap().contains(&layer)
+}
+
 /// Cost (mm-equivalent) of placing a via, i.e. taking a layer-transition edge
 /// in the 3D search. A through via consumes routing space on *every* copper
 /// layer, so it must cost noticeably more than a modest same-layer detour —
@@ -1045,7 +1052,24 @@ impl Grid {
                 (wlo, whi)
             }
         } else if outline.len() >= 3 {
-            bbox(outline)
+            // A corridor round this connection, not the whole board: the grid
+            // is capped at MAX_DIM cells a side, so on a big board a whole-board
+            // grid coarsens past what a fine-pitch fan-out needs (a 230 mm board
+            // at 0.57 mm can't pass between 0.5 mm-pitch pins). The margin leaves
+            // room to detour; the board outline still bounds legality.
+            let (blo, bhi) = bbox(outline);
+            let span = ((start.x - end.x).powi(2) + (start.y - end.y).powi(2)).sqrt();
+            let m = 10.0 + 0.3 * span;
+            (
+                Vec2::new(
+                    (start.x.min(end.x) - m).max(blo.x),
+                    (start.y.min(end.y) - m).max(blo.y),
+                ),
+                Vec2::new(
+                    (start.x.max(end.x) + m).min(bhi.x),
+                    (start.y.max(end.y) + m).min(bhi.y),
+                ),
+            )
         } else {
             // Fall back to the start/end span with a margin.
             let lo = Vec2::new(start.x.min(end.x) - 5.0, start.y.min(end.y) - 5.0);

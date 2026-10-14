@@ -448,6 +448,8 @@ pub fn board_from_sheet(
         let mut fp = place_footprint(&def, id, reference, "", pl.position, pl.rotation, &copper);
         fp.properties.insert("art".into(), "1".into());
         if let Ok(src) = footprint_source(id) {
+            // art can carry keepouts too (a copper logo, a gold edge rim)
+            keepouts.extend(footprint_keepouts(&src, &fp, &copper));
             fp.properties.insert("kicad_mod".into(), src);
         }
         footprints.push(fp);
@@ -660,6 +662,19 @@ fn place_designators(fps: &mut [Footprint], outline: &[Vec2]) {
         if f.properties.contains_key("art")
             || f.properties.get("ref_layer").map(String::as_str) == Some("F.Fab")
         {
+            continue;
+        }
+        // Small passives carry their designator on the fab layer (assembly
+        // drawing), not the silk: a 0402 field of R/C labels is noise, and it
+        // crowds out the labels that matter (ICs, connectors, power parts).
+        let prefix: String = f
+            .reference
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
+        if matches!(prefix.as_str(), "R" | "C" | "FB" | "TH" | "PF") {
+            fps[i].properties.insert("ref_layer".into(), "F.Fab".into());
+            fps[i].properties.remove("ref_at");
             continue;
         }
         let Some(own) = world_box(f, &[PcbLayer::FCrtYd]) else {
