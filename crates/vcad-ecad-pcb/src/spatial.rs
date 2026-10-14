@@ -599,13 +599,27 @@ pub(crate) fn pad_geom(pad: &Pad, center: Vec2, rot: f64) -> CopperGeom {
             half_h: height / 2.0,
             rot,
         },
-        PadShape::Custom { .. } => {
-            // Approximate a custom polygon by its (rotated) bounding rectangle.
-            let (hw, hh) = pad_half_extents(pad);
+        PadShape::Custom { vertices } => {
+            // Approximate a custom polygon by its (rotated) bounding rectangle
+            // — about the polygon's own centre, which for an asymmetric pad (a
+            // TOLL drain tab) is well off the anchor. (`pad_half_extents`
+            // stays symmetric: it only sizes the broadphase box.)
+            if vertices.is_empty() {
+                return CopperGeom::Disc { center, r: 0.0 };
+            }
+            let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+            for v in vertices {
+                x0 = x0.min(v.x);
+                y0 = y0.min(v.y);
+                x1 = x1.max(v.x);
+                y1 = y1.max(v.y);
+            }
+            let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+            let (s, c) = rot.sin_cos();
             CopperGeom::Rect {
-                center,
-                half_w: hw,
-                half_h: hh,
+                center: Vec2::new(center.x + cx * c - cy * s, center.y + cx * s + cy * c),
+                half_w: (x1 - x0) / 2.0,
+                half_h: (y1 - y0) / 2.0,
                 rot,
             }
         }

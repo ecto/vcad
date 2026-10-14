@@ -105,6 +105,40 @@ pub fn value_to_document_in(
         );
     }
 
+    // A declared board is built last, so placements and pours may appear
+    // before or after the parts and nets they refer to.
+    if let Some(mut spec) = ctx.board.take() {
+        if let Some(r) = ctx.rules.take() {
+            spec.rules = r;
+        }
+        spec.pours = std::mem::take(&mut ctx.pours);
+        spec.pour_regions = std::mem::take(&mut ctx.pour_regions);
+        spec.art = std::mem::take(&mut ctx.art);
+        spec.rules
+            .class_rules
+            .extend(std::mem::take(&mut ctx.classes));
+        for (net, class) in std::mem::take(&mut ctx.class_nets) {
+            if !spec.rules.class_rules.iter().any(|c| c.name == class) {
+                return Err(format!("EcadInClass: no EcadClass named '{class}'"));
+            }
+            spec.rules
+                .net_class_assignments
+                .entry(class)
+                .or_default()
+                .push(net);
+        }
+        let sheet = ctx
+            .doc
+            .schematic
+            .as_ref()
+            .ok_or_else(|| "EcadBoard needs a schematic (EcadSymbol / EcadConn)".to_string())?;
+        ctx.doc.pcb = Some(vcad_ecad_symbols::kicad_board::board_from_sheet(
+            sheet,
+            &ctx.places,
+            &spec,
+        )?);
+    }
+
     Ok(ctx.doc)
 }
 
@@ -559,6 +593,15 @@ fn is_ecad_tag(tag: &str) -> bool {
     matches!(
         tag,
         "EcadComponent"
+            | "EcadSymbol"
+            | "EcadConn"
+            | "EcadBoard"
+            | "EcadPlace"
+            | "EcadPour"
+            | "EcadArt"
+            | "EcadPourRect"
+            | "EcadClass"
+            | "EcadInClass"
             | "EcadWire"
             | "EcadLabel"
             | "EcadTrace"
@@ -614,6 +657,163 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
                 properties: HashMap::new(),
             });
         }
+        // [EcadSymbol ref lib-id value footprint-id x y rotation]
+        // A component whose pins come from a KiCad symbol library: lib-id is
+        // "Library:Symbol" (e.g. "MCU_ST_STM32H7:STM32H723VGTx").
+        "EcadSymbol" => {
+            assert_fields(tag, fields, 7)?;
+            let reference = ctx.str_val(&fields[0])?;
+            let lib_id = ctx.str_val(&fields[1])?;
+            let value = ctx.str_val(&fields[2])?;
+            let footprint_id = ctx.str_val(&fields[3])?;
+            let x = ctx.f64_val(&fields[4])?;
+            let y = ctx.f64_val(&fields[5])?;
+            let rotation = ctx.f64_val(&fields[6])?;
+            let pins = kicad_symbol_pins(&lib_id).map_err(|e| format!("{reference}: {e}"))?;
+            let mut properties = HashMap::new();
+            properties.insert("lib_id".to_string(), lib_id);
+            ensure_schematic(ctx);
+            let sheet = ctx.doc.schematic.as_mut().unwrap();
+            sheet.components.push(ecad::SchematicComponent {
+                reference,
+                value,
+                footprint_id,
+                position: Vec2::new(x, y),
+                rotation,
+                mirror: false,
+                pins,
+                pads_override: None,
+                properties,
+            });
+        }
+        // [EcadConn net "REF.PIN"] — one pin on a named net (the netlist as data).
+        "EcadConn" => {
+            assert_fields(tag, fields, 2)?;
+            let net = ctx.str_val(&fields[0])?;
+            let pin = ctx.str_val(&fields[1])?;
+            if !pin.contains('.') {
+                return Err(format!("EcadConn: pin '{pin}' must be REF.PIN"));
+            }
+            ensure_schematic(ctx);
+            let sheet = ctx.doc.schematic.as_mut().unwrap();
+            sheet
+                .nets
+                .get_or_insert_with(Default::default)
+                .entry(net)
+                .or_default()
+                .push(pin);
+        }
+        // [EcadBoard x0 y0 x1 y1 corner-radius thickness copper-layers]
+        "EcadBoard" => {
+            assert_fields(tag, fields, 7)?;
+            let f: Vec<f64> = (0..6)
+                .map(|k| ctx.f64_val(&fields[k]))
+                .collect::<Result<_, _>>()?;
+            let layers = ctx.f64_val(&fields[6])? as usize;
+            if ![2, 4, 6, 8].contains(&layers) {
+                return Err(format!("EcadBoard: {layers} copper layers (2, 4, 6 or 8)"));
+            }
+            ctx.board = Some(vcad_ecad_symbols::kicad_board::BoardSpec {
+                outline: vcad_ecad_symbols::kicad_board::rounded_rect(f[0], f[1], f[2], f[3], f[4]),
+                thickness: f[5],
+                layers,
+                rules: vcad_ecad_symbols::kicad_board::default_rules(),
+                pours: vec![],
+                pour_regions: vec![],
+                art: vec![],
+            });
+        }
+        // [EcadPlace ref x y rotation] - where a schematic part's footprint goes
+        "EcadPlace" => {
+            assert_fields(tag, fields, 4)?;
+            ctx.places.push(vcad_ecad_symbols::kicad_board::Placement {
+                reference: ctx.str_val(&fields[0])?,
+                position: Vec2::new(ctx.f64_val(&fields[1])?, ctx.f64_val(&fields[2])?),
+                rotation: ctx.f64_val(&fields[3])?,
+            });
+        }
+        // [EcadArt ref footprint-id x y rotation] - a footprint that is not on the
+        // schematic: a logo, art, a label, a fiducial. Searched like any footprint.
+        "EcadArt" => {
+            assert_fields(tag, fields, 5)?;
+            let reference = ctx.str_val(&fields[0])?;
+            let id = ctx.str_val(&fields[1])?;
+            let placement = vcad_ecad_symbols::kicad_board::Placement {
+                reference: reference.clone(),
+                position: Vec2::new(ctx.f64_val(&fields[2])?, ctx.f64_val(&fields[3])?),
+                rotation: ctx.f64_val(&fields[4])?,
+            };
+            ctx.art.push((reference, id, placement));
+        }
+        // [EcadPourRect net layer x0 y0 x1 y1 priority] - a pour over a rectangle;
+        // where pours overlap, the higher priority fills first.
+        "EcadPourRect" => {
+            assert_fields(tag, fields, 7)?;
+            let net = ctx.str_val(&fields[0])?;
+            let layer_s = ctx.str_val(&fields[1])?;
+            let layer: ecad::PcbLayer = serde_json::from_str(&format!("\"{layer_s}\""))
+                .map_err(|_| format!("EcadPourRect: unknown layer '{layer_s}'"))?;
+            let f: Vec<f64> = (2..7)
+                .map(|k| ctx.f64_val(&fields[k]))
+                .collect::<Result<_, _>>()?;
+            let outline = vec![
+                Vec2::new(f[0], f[1]),
+                Vec2::new(f[2], f[1]),
+                Vec2::new(f[2], f[3]),
+                Vec2::new(f[0], f[3]),
+            ];
+            ctx.pour_regions.push((net, layer, outline, f[4] as u32));
+        }
+        // [EcadClass name trace-width clearance via-dia via-drill] - a net class;
+        // the router lays its nets at its width.
+        "EcadClass" => {
+            assert_fields(tag, fields, 5)?;
+            let name = ctx.str_val(&fields[0])?;
+            let f: Vec<f64> = (1..5)
+                .map(|k| ctx.f64_val(&fields[k]))
+                .collect::<Result<_, _>>()?;
+            ctx.classes.push(ecad::NetClassRules {
+                name,
+                trace_width: f[0],
+                clearance: f[1],
+                via_diameter: f[2],
+                via_drill: f[3],
+                diff_pair_gap: None,
+                diff_pair_width: None,
+                target_impedance: None,
+                target_diff_impedance: None,
+            });
+        }
+        // [EcadInClass net class]
+        "EcadInClass" => {
+            assert_fields(tag, fields, 2)?;
+            ctx.class_nets
+                .push((ctx.str_val(&fields[0])?, ctx.str_val(&fields[1])?));
+        }
+        // [EcadPour net layer] - a copper plane over the whole board ("In1.Cu", ...)
+        "EcadPour" => {
+            assert_fields(tag, fields, 2)?;
+            let net = ctx.str_val(&fields[0])?;
+            let layer_s = ctx.str_val(&fields[1])?;
+            let layer: ecad::PcbLayer = serde_json::from_str(&format!("\"{layer_s}\""))
+                .map_err(|_| format!("EcadPour: unknown layer '{layer_s}'"))?;
+            ctx.pours.push((net, layer));
+        }
+        // [EcadRules trace-width clearance via-dia via-drill edge-clearance hole-to-hole]
+        "EcadRules" => {
+            assert_fields(tag, fields, 6)?;
+            let f: Vec<f64> = (0..6)
+                .map(|k| ctx.f64_val(&fields[k]))
+                .collect::<Result<_, _>>()?;
+            let mut r = vcad_ecad_symbols::kicad_board::default_rules();
+            r.default_rules.trace_width = f[0];
+            r.default_rules.clearance = f[1];
+            r.default_rules.via_diameter = f[2];
+            r.default_rules.via_drill = f[3];
+            r.edge_clearance = f[4];
+            r.hole_to_hole = f[5];
+            ctx.rules = Some(r);
+        }
         // [EcadWire x1 y1 x2 y2]
         "EcadWire" => {
             assert_fields(tag, fields, 4)?;
@@ -659,6 +859,61 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
     }
 
     Ok(())
+}
+
+/// Directories searched for KiCad `.kicad_sym` libraries: `$VCAD_KICAD_SYMBOLS`
+/// first, then the standard KiCad install locations.
+fn kicad_symbol_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(d) = std::env::var("VCAD_KICAD_SYMBOLS") {
+        dirs.push(d.into());
+    }
+    for d in [
+        "/Applications/KiCad/KiCad.app/Contents/SharedSupport/symbols",
+        "/usr/share/kicad/symbols",
+        "/usr/local/share/kicad/symbols",
+        "C:/Program Files/KiCad/9.0/share/kicad/symbols",
+    ] {
+        dirs.push(d.into());
+    }
+    dirs
+}
+
+/// Pins of a KiCad library symbol ("Library:Symbol"), as schematic pins.
+/// Libraries are parsed once per process.
+fn kicad_symbol_pins(lib_id: &str) -> Result<Vec<ecad::SchematicPin>, String> {
+    use std::sync::{Mutex, OnceLock};
+    static LIBS: OnceLock<Mutex<HashMap<String, vcad_ecad_symbols::SymbolLib>>> = OnceLock::new();
+    let (lib, sym) = lib_id
+        .split_once(':')
+        .ok_or_else(|| format!("lib-id '{lib_id}' must be Library:Symbol"))?;
+    let cache = LIBS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache.lock().map_err(|e| e.to_string())?;
+    if !cache.contains_key(lib) {
+        let dirs = kicad_symbol_dirs();
+        let path = dirs
+            .iter()
+            .map(|d| d.join(format!("{lib}.kicad_sym")))
+            .find(|p| p.exists())
+            .ok_or_else(|| {
+                format!("KiCad symbol library '{lib}' not found (set VCAD_KICAD_SYMBOLS; searched {dirs:?})")
+            })?;
+        let parsed = vcad_ecad_symbols::kicad_sym::parse_symbol_lib_file(&path.to_string_lossy())
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        cache.insert(lib.to_string(), parsed);
+    }
+    let s = cache[lib]
+        .get(sym)
+        .ok_or_else(|| format!("symbol '{sym}' not in library '{lib}'"))?;
+    Ok(s.pins
+        .iter()
+        .map(|p| ecad::SchematicPin {
+            number: p.number.clone(),
+            name: p.name.clone(),
+            pin_type: p.pin_type,
+            position: Vec2::new(p.position.0, p.position.1),
+        })
+        .collect())
 }
 
 /// Apply an Euler XYZ rotation (degrees, X then Y then Z) to a point.
@@ -774,6 +1029,21 @@ struct ConvertCtx {
     /// Sheet-metal nodes emitted so far. Doubles as the check that a sheet op
     /// was actually handed a sheet chain and not a solid.
     sheet_chains: HashMap<NodeId, SheetChain>,
+    /// Board declared with `EcadBoard` (built into `doc.pcb` after evaluation).
+    board: Option<vcad_ecad_symbols::kicad_board::BoardSpec>,
+    /// `EcadPlace` placements, in source order.
+    places: Vec<vcad_ecad_symbols::kicad_board::Placement>,
+    /// `EcadPour` (net, layer) pairs.
+    pours: Vec<(String, ecad::PcbLayer)>,
+    /// `EcadPourRect` regions.
+    pour_regions: Vec<(String, ecad::PcbLayer, Vec<Vec2>, u32)>,
+    /// `EcadRules`, if given.
+    rules: Option<ecad::DesignRules>,
+    /// `EcadClass` net classes and `EcadInClass` assignments.
+    classes: Vec<ecad::NetClassRules>,
+    class_nets: Vec<(String, String)>,
+    /// `EcadArt` footprints (not on the schematic).
+    art: Vec<(String, String, vcad_ecad_symbols::kicad_board::Placement)>,
 }
 
 impl ConvertCtx {
@@ -783,6 +1053,14 @@ impl ConvertCtx {
             next_id: 0,
             base_dir: base_dir.map(|p| p.to_path_buf()),
             sheet_chains: HashMap::new(),
+            board: None,
+            places: Vec::new(),
+            pours: Vec::new(),
+            pour_regions: Vec::new(),
+            rules: None,
+            art: Vec::new(),
+            classes: Vec::new(),
+            class_nets: Vec::new(),
         }
     }
 

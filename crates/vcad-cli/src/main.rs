@@ -81,13 +81,42 @@ enum Commands {
     Export {
         /// Input .vcad or .loon file
         input: PathBuf,
-        /// Output file (format determined by extension: .stl, .glb, .step, .stp, .urdf)
+        /// Output file (format determined by extension: .stl, .glb, .step, .stp, .urdf, .kicad_sch)
         output: PathBuf,
         /// Refuse to write a STEP that contains tessellated (triangle-soup)
         /// faces. Without this flag such a fallback is a stderr warning
         /// naming the node and the reason; with it, it is an error.
         #[arg(long)]
         strict_brep: bool,
+    },
+
+    /// Autoroute a board (a .loon with EcadBoard / EcadPlace) and write .kicad_pcb
+    Route {
+        /// Input .vcad or .loon file with a board
+        input: PathBuf,
+        /// Output .kicad_pcb
+        output: PathBuf,
+        /// Trace width (mm); default: the board's default rule
+        #[arg(long)]
+        width: Option<f64>,
+        /// Continuous current a net carries, NET=AMPS (repeatable). Nets whose
+        /// IPC-2221 width outgrows a trace are poured instead of traced.
+        #[arg(long = "current", value_name = "NET=AMPS")]
+        currents: Vec<String>,
+        /// Allow blind and buried vias (default: through vias only - most fabs
+        /// charge extra for the others on a 4-layer board)
+        #[arg(long)]
+        blind_vias: bool,
+        /// Router effort multiplier: scales negotiation and rip-up budgets
+        #[arg(long, default_value = "1.0")]
+        effort: f64,
+        /// Route these nets first, before the rest (repeatable)
+        #[arg(long = "priority", value_name = "NET")]
+        priority: Vec<String>,
+        /// Print which nets would get a synthesized copper pour, on which layer,
+        /// and why - then stop without routing
+        #[arg(long)]
+        explain_pours: bool,
     },
 
     /// Import a STEP file to .vcad format
@@ -581,6 +610,27 @@ fn main() -> Result<()> {
         }) => {
             export_file(&input, &output, strict_brep)?;
         }
+        Some(Commands::Route {
+            input,
+            output,
+            width,
+            currents,
+            explain_pours,
+            blind_vias,
+            effort,
+            priority,
+        }) => {
+            route_file(
+                &input,
+                &output,
+                width,
+                &currents,
+                explain_pours,
+                blind_vias,
+                effort,
+                priority,
+            )?;
+        }
         Some(Commands::Import {
             input,
             output,
@@ -983,6 +1033,38 @@ fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<(
     if ext.eq_ignore_ascii_case("loon") {
         return export_loon(&doc, output);
     }
+    // Board: footprints, nets, pours (unrouted). `vcad route` routes it.
+    if ext.eq_ignore_ascii_case("kicad_pcb") {
+        let pcb = doc
+            .pcb
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("{} has no board (EcadBoard)", input.display()))?;
+        fs::write(output, vcad_ecad_symbols::write_kicad_pcb_for_project(pcb))?;
+        write_board_project(output, pcb)?;
+        println!(
+            "Exported board ({} footprints, {} nets) to {}",
+            pcb.footprints.len(),
+            pcb.nets.len(),
+            output.display()
+        );
+        return Ok(());
+    }
+    // Schematic: no mesh evaluation - a circuit-only loon file has no geometry.
+    if ext.eq_ignore_ascii_case("kicad_sch") {
+        let sheet = doc
+            .schematic
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("{} has no schematic", input.display()))?;
+        fs::write(output, vcad_ecad_symbols::write_kicad_sch(sheet))?;
+        let nets = sheet.nets.as_ref().map_or(0, |n| n.len());
+        println!(
+            "Exported schematic ({} parts, {} nets) to {}",
+            sheet.components.len(),
+            nets,
+            output.display()
+        );
+        return Ok(());
+    }
 
     // Evaluate document to get meshes (not needed for loon)
     let meshes = crate::app::evaluate_document(&doc)?;
@@ -1023,6 +1105,390 @@ fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<(
         }
     }
 
+    Ok(())
+}
+
+/// Route every net of a document's board with vcad's autorouter and write KiCad.
+#[allow(clippy::too_many_arguments)] // one per CLI flag
+fn route_file(
+    input: &PathBuf,
+    output: &PathBuf,
+    width: Option<f64>,
+    currents: &[String],
+    explain_pours: bool,
+    blind_vias: bool,
+    effort: f64,
+    priority: Vec<String>,
+) -> Result<()> {
+    use vcad_ir::ecad::{CopperSource, Trace, Via};
+    // RUST_LOG=info shows the router's own account (legalization, pruning)
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+        .try_init();
+    let doc = load_vcad_document(input)?;
+    let mut pcb = doc
+        .pcb
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("{} has no board (EcadBoard)", input.display()))?;
+    let w = width.unwrap_or(pcb.rules.default_rules.trace_width);
+    let t0 = std::time::Instant::now();
+    let mut opts = vcad_ecad_pcb::router::auto::RouteOptions {
+        through_vias_only: !blind_vias,
+        ..Default::default()
+    };
+    // Inner layers carrying a whole-board plane stay solid: no traces there.
+    let board_area = {
+        let o = &pcb.outline.vertices;
+        let n = o.len();
+        (0..n)
+            .map(|i| o[i].x * o[(i + 1) % n].y - o[(i + 1) % n].x * o[i].y)
+            .sum::<f64>()
+            .abs()
+            / 2.0
+    };
+    opts.no_route_layers = pcb
+        .zones
+        .iter()
+        .filter(|z| {
+            !matches!(
+                z.layer,
+                vcad_ir::ecad::PcbLayer::FCu | vcad_ir::ecad::PcbLayer::BCu
+            )
+        })
+        .filter(|z| {
+            let n = z.outline.len();
+            let a = (0..n)
+                .map(|i| {
+                    z.outline[i].x * z.outline[(i + 1) % n].y
+                        - z.outline[(i + 1) % n].x * z.outline[i].y
+                })
+                .sum::<f64>()
+                .abs()
+                / 2.0;
+            board_area > 0.0 && a >= 0.8 * board_area
+        })
+        .map(|z| z.layer)
+        .collect();
+    if !opts.no_route_layers.is_empty() {
+        println!("plane layers kept trace-free: {:?}", opts.no_route_layers);
+    }
+    opts.effort = effort;
+    opts.prune_dangling_copper = std::env::var_os("VCAD_ROUTER_PRUNE").is_some();
+    opts.priority_nets = priority;
+    for c in currents {
+        let (net, amps) = c
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("--current {c}: expected NET=AMPS"))?;
+        let amps: f64 = amps
+            .parse()
+            .map_err(|_| anyhow::anyhow!("--current {c}: bad amps"))?;
+        opts.pour_policy.net_current_a.insert(net.to_string(), amps);
+    }
+    // Declared currents are the design intent: don't also guess pours from
+    // rail-looking net names.
+    if !currents.is_empty() {
+        opts.pour_policy.pour_power_rails = false;
+    }
+    if explain_pours {
+        let c = vcad_ecad_pcb::decide_pours(&pcb, &opts.pour_policy, &[]);
+        if c.is_empty() {
+            println!("pours: none synthesized");
+        }
+        for c in &c {
+            println!(
+                "pour {} on {:?}: {} of {} pads on that layer - {:?}",
+                c.net, c.layer, c.pads_on_layer, c.demand_pads, c.reason
+            );
+        }
+        let zones = vcad_ecad_pcb::synthesize_pours(&pcb, &opts.pour_policy, &[]);
+        for z in &zones {
+            println!(
+                "  outline: {} on {:?}, {} vertices",
+                z.net,
+                z.layer,
+                z.outline.len()
+            );
+        }
+        if zones.len() < c.len() {
+            println!("  {} of {} candidates got an outline", zones.len(), c.len());
+        }
+        return Ok(());
+    }
+    // What the router sees differs from the board in two ways:
+    // - copper with no net (a connector's unplated holes, a package's
+    //   unnumbered thermal pads) gets a private net each, so the router keeps
+    //   clearance from it instead of treating it as nothing;
+    // - pour regions on the outer layers are reinforcement: the router traces
+    //   those nets (a plane on a signal layer gets cut into islands by other
+    //   nets' traces, stranding pads), and KiCad fills the pour around the
+    //   traces afterwards.
+    let mut route_pcb = pcb.clone();
+    for f in &mut route_pcb.footprints {
+        for (k, p) in f.pads.iter_mut().enumerate() {
+            if p.net.is_none() && p.layers.iter().any(|l| l.is_copper()) {
+                p.net = Some(format!("~nc~{}~{}", f.reference, k));
+            }
+        }
+    }
+    // Unplated holes keep copper on every layer a hole clearance away; the
+    // router sees each as a no-tracks, no-vias keepout.
+    let copper_layers: Vec<_> = route_pcb
+        .stackup
+        .layers
+        .iter()
+        .map(|l| l.layer)
+        .filter(|l| l.is_copper())
+        .collect();
+    let hole_gap = pcb.rules.default_rules.clearance + 0.05;
+    let mut npth = Vec::new();
+    for f in &route_pcb.footprints {
+        for p in f
+            .pads
+            .iter()
+            .filter(|p| p.pad_type == vcad_ir::ecad::PadType::NPTH)
+        {
+            let Some(d) = &p.drill else { continue };
+            let c = vcad_ecad_pcb::geometry::pad_world_position(f, p);
+            let r = d.diameter.max(d.oval_height.unwrap_or(0.0)) / 2.0 + hole_gap;
+            let outline = (0..24)
+                .map(|k| {
+                    let a = k as f64 * std::f64::consts::TAU / 24.0;
+                    // circumscribe the circle so chords never cut inside it
+                    let rr = r / (std::f64::consts::PI / 24.0).cos();
+                    vcad_ir::Vec2::new(c.x + rr * a.cos(), c.y + rr * a.sin())
+                })
+                .collect();
+            npth.push(vcad_ir::ecad::Keepout {
+                outline,
+                layers: copper_layers.clone(),
+                no_tracks: true,
+                no_vias: true,
+                no_pour: false,
+                no_components: false,
+            });
+        }
+    }
+    route_pcb.keepouts.extend(npth);
+    for z in &route_pcb.zones {
+        opts.pour_policy
+            .net_current_a
+            .entry(z.net.clone())
+            .or_insert(0.0);
+    }
+    route_pcb.zones.retain(|z| {
+        !matches!(
+            z.layer,
+            vcad_ir::ecad::PcbLayer::FCu | vcad_ir::ecad::PcbLayer::BCu
+        )
+    });
+    let r = vcad_ecad_pcb::router::auto::route_all_with_opts(&route_pcb, w, &[], &opts);
+    let (vd, vdrill) = (
+        pcb.rules.default_rules.via_diameter,
+        pcb.rules.default_rules.via_drill,
+    );
+    pcb.traces.extend(r.traces.iter().map(|t| Trace {
+        start: t.start,
+        end: t.end,
+        width: t.width,
+        layer: t.layer,
+        net: t.net.clone(),
+        source: Some(CopperSource::Autoroute),
+    }));
+    pcb.vias.extend(r.vias.iter().map(|v| Via {
+        position: v.position,
+        diameter: vd,
+        drill: vdrill,
+        start_layer: v.start_layer,
+        end_layer: v.end_layer,
+        net: v.net.clone(),
+        source: Some(CopperSource::Autoroute),
+    }));
+    pcb.zones.extend(r.zones.iter().cloned());
+    if let Some(raw) = std::env::var_os("VCAD_ROUTE_RAW") {
+        std::fs::write(&raw, vcad_ecad_symbols::write_kicad_pcb_for_project(&pcb))?;
+    }
+    // Outer-layer pours are reinforcement the router ignored; KiCad's fill
+    // carves overlapping ones and drops islands, so they can't be counted on
+    // to connect anything. Judge the clean-up below without them.
+    let outer_zones: Vec<_> = pcb
+        .zones
+        .iter()
+        .filter(|z| {
+            matches!(
+                z.layer,
+                vcad_ir::ecad::PcbLayer::FCu | vcad_ir::ecad::PcbLayer::BCu
+            )
+        })
+        .cloned()
+        .collect();
+    pcb.zones.retain(|z| {
+        !matches!(
+            z.layer,
+            vcad_ir::ecad::PcbLayer::FCu | vcad_ir::ecad::PcbLayer::BCu
+        )
+    });
+    // the router's own leftovers: copper islands reaching no pad (spur
+    // pruning is left out: it cut live links in multi-hop routes)
+    let (dt, dv) = vcad_ecad_pcb::drc::prune_dangling_copper(&mut pcb);
+    if dt + dv > 0 {
+        println!("pruned dead copper: {dt} traces, {dv} vias");
+    }
+    let anchored = anchor_track_ends(&mut pcb);
+    if anchored > 0 {
+        println!("anchored {anchored} track ends into their pads");
+    }
+    let restored = restore_layer_change_vias(&route_pcb, &mut pcb);
+    if restored > 0 {
+        println!("restored {restored} layer-change vias");
+    }
+    // whatever is still split - unrouted, or opened by the clean-up above
+    let mut split: Vec<String> = pcb
+        .nets
+        .iter()
+        .map(|n| n.name.clone())
+        .filter(|n| vcad_ecad_pcb::drc::analyze_net_continuity(&pcb, n).islands > 1)
+        .collect();
+    split.sort();
+    if !split.is_empty() {
+        println!("split after clean-up: {}", split.join(", "));
+    }
+    // Second pass for split nets: rip a signal net's copper and route it
+    // again against the finished board (plane nets keep theirs - the pass
+    // only adds the missing joins).
+    for _round in 0..3 {
+        if split.is_empty() {
+            break;
+        }
+        let planes: std::collections::BTreeSet<&str> =
+            route_pcb.zones.iter().map(|z| z.net.as_str()).collect();
+        let ripped: Vec<&String> = split
+            .iter()
+            .filter(|n| !planes.contains(n.as_str()))
+            .collect();
+        let mut again = route_pcb.clone();
+        let keep = |n: &str| !ripped.iter().any(|r| r.as_str() == n);
+        again.traces = pcb
+            .traces
+            .iter()
+            .filter(|t| keep(&t.net))
+            .cloned()
+            .collect();
+        again.vias = pcb.vias.iter().filter(|v| keep(&v.net)).cloned().collect();
+        let r2 = vcad_ecad_pcb::router::auto::route_all_with_opts(&again, w, &[], &opts);
+        let before: usize = split
+            .iter()
+            .map(|n| vcad_ecad_pcb::drc::analyze_net_continuity(&pcb, n).islands)
+            .sum();
+        let mut trial = pcb.clone();
+        trial.traces.retain(|t| keep(&t.net));
+        trial.vias.retain(|v| keep(&v.net));
+        let in_split = |n: &str| split.iter().any(|s| s == n);
+        trial.traces.extend(
+            r2.traces
+                .iter()
+                .filter(|t| in_split(&t.net))
+                .map(|t| Trace {
+                    start: t.start,
+                    end: t.end,
+                    width: t.width,
+                    layer: t.layer,
+                    net: t.net.clone(),
+                    source: Some(CopperSource::Autoroute),
+                }),
+        );
+        trial
+            .vias
+            .extend(r2.vias.iter().filter(|v| in_split(&v.net)).map(|v| Via {
+                position: v.position,
+                diameter: vd,
+                drill: vdrill,
+                start_layer: v.start_layer,
+                end_layer: v.end_layer,
+                net: v.net.clone(),
+                source: Some(CopperSource::Autoroute),
+            }));
+        anchor_track_ends(&mut trial);
+        let after: usize = split
+            .iter()
+            .map(|n| vcad_ecad_pcb::drc::analyze_net_continuity(&trial, n).islands)
+            .sum();
+        println!(
+            "second pass on {}: islands {before} -> {after}",
+            split.join(", ")
+        );
+        if after < before {
+            pcb = trial;
+            split.retain(|n| vcad_ecad_pcb::drc::analyze_net_continuity(&pcb, n).islands > 1);
+        } else {
+            break;
+        }
+    }
+    let links = direct_links(&route_pcb, &pcb, &split, w);
+    if !links.is_empty() {
+        println!("direct-linked {} leftover pad pairs", links.len());
+    }
+    pcb.traces.extend(links);
+    let (st, sv) = stitch_to_planes(&route_pcb, &pcb, &split, w);
+    if !sv.is_empty() {
+        println!("stitched {} pads to their planes", sv.len());
+    }
+    pcb.traces.extend(st);
+    pcb.vias.extend(sv);
+    dedupe_copper(&mut pcb);
+    let (lt, lv) = trim_leaf_copper(&mut pcb);
+    if lt + lv > 0 {
+        println!("trimmed leaf copper: {lt} traces, {lv} vias");
+    }
+    pcb.zones.extend(outer_zones);
+    std::fs::write(output, vcad_ecad_symbols::write_kicad_pcb_for_project(&pcb))?;
+    write_board_project(output, &pcb)?;
+    println!(
+        "Routed {:.1}% of connections in {:.1} s: {} traces, {} vias, {} synthesized pours -> {}",
+        r.routability * 100.0,
+        t0.elapsed().as_secs_f64(),
+        r.traces.len(),
+        r.vias.len(),
+        r.zones.len(),
+        output.display()
+    );
+    if !r.unrouted_nets.is_empty() {
+        println!(
+            "unrouted nets ({}): {}",
+            r.unrouted_nets.len(),
+            r.unrouted_nets.join(", ")
+        );
+        for d in &r.diagnostics {
+            println!(
+                "  {} ({:.2},{:.2}) -> ({:.2},{:.2}): blocked by {}",
+                d.net,
+                d.from.x,
+                d.from.y,
+                d.to.x,
+                d.to.y,
+                if d.blocking_nets.is_empty() {
+                    "-".to_string()
+                } else {
+                    d.blocking_nets.join(", ")
+                }
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Write `<board>.kicad_pro` next to a standalone `.kicad_pcb`, so KiCad (and
+/// `kicad-cli pcb drc`) checks the board against its own design rules.
+fn write_board_project(board: &std::path::Path, pcb: &vcad_ir::ecad::Pcb) -> Result<()> {
+    if board.as_os_str() == "/dev/null" {
+        return Ok(());
+    }
+    let name = board
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("board");
+    std::fs::write(
+        board.with_extension("kicad_pro"),
+        vcad_ecad_symbols::write_kicad_pro_for_board(name, pcb),
+    )?;
     Ok(())
 }
 
@@ -2979,4 +3445,614 @@ mod tests {
         std::fs::remove_file(&out).ok();
         assert!(text.starts_with("ISO-10303-21"));
     }
+}
+
+/// Extend each trace end that touches a same-net pad without landing inside
+/// it, so the end sits on the pad centre. The router counts copper overlap as
+/// a connection; KiCad wants the track's end point inside the pad.
+fn anchor_track_ends(pcb: &mut vcad_ir::ecad::Pcb) -> usize {
+    use vcad_ir::ecad::PadShape;
+    let mut pads = Vec::new();
+    for f in &pcb.footprints {
+        for p in &f.pads {
+            let Some(net) = &p.net else { continue };
+            let (w, h) = match &p.shape {
+                PadShape::Circle { diameter } => (*diameter, *diameter),
+                PadShape::Rect { width, height }
+                | PadShape::Oval { width, height }
+                | PadShape::RoundRect { width, height, .. } => (*width, *height),
+                _ => continue,
+            };
+            let c = vcad_ecad_pcb::geometry::pad_world_position(f, p);
+            let a = (f.rotation + p.rotation).to_radians();
+            pads.push((net.clone(), p.layers.clone(), c, a, w / 2.0, h / 2.0));
+        }
+    }
+    // (inside, touching) for point q against a pad, `grow` added for touch
+    let test = |q: vcad_ir::Vec2, c: vcad_ir::Vec2, a: f64, hw: f64, hh: f64, grow: f64| {
+        let (dx, dy) = (q.x - c.x, q.y - c.y);
+        let (u, v) = (dx * a.cos() + dy * a.sin(), -dx * a.sin() + dy * a.cos());
+        let inside = u.abs() <= hw - 1e-3 && v.abs() <= hh - 1e-3;
+        let touch = u.abs() <= hw + grow && v.abs() <= hh + grow;
+        (inside, touch)
+    };
+    let mut extra = Vec::new();
+    for t in &pcb.traces {
+        for q in [t.start, t.end] {
+            let mut hits = pads
+                .iter()
+                .filter(|p| p.0 == t.net && p.1.contains(&t.layer))
+                .map(|p| (test(q, p.2, p.3, p.4, p.5, t.width / 2.0), p.2));
+            if hits.clone().any(|((inside, _), _)| inside) {
+                continue;
+            }
+            if let Some((_, c)) = hits.find(|((_, touch), _)| *touch) {
+                let mut seg = t.clone();
+                seg.start = q;
+                seg.end = c;
+                extra.push(seg);
+            }
+        }
+    }
+    // a via that touches a same-net SMD pad it does not sit inside: the
+    // router counts the overlap, KiCad needs copper on the pad's layer
+    let tw = pcb.rules.default_rules.trace_width;
+    for v in &pcb.vias {
+        for p in pads.iter().filter(|p| p.0 == v.net) {
+            let ((inside, touch), _) = (test(v.position, p.2, p.3, p.4, p.5, v.diameter / 2.0), ());
+            if inside || !touch {
+                continue;
+            }
+            let Some(&layer) = p.1.iter().find(|l| l.is_copper()) else {
+                continue;
+            };
+            let joined = pcb.traces.iter().chain(extra.iter()).any(|t| {
+                t.net == v.net
+                    && t.layer == layer
+                    && [t.start, t.end]
+                        .iter()
+                        .any(|e| (e.x - v.position.x).hypot(e.y - v.position.y) < 1e-3)
+            });
+            if joined || !p.1.iter().all(|l| *l == layer || !l.is_copper()) {
+                continue;
+            }
+            extra.push(vcad_ir::ecad::Trace {
+                start: v.position,
+                end: p.2,
+                width: tw,
+                layer,
+                net: v.net.clone(),
+                source: Some(vcad_ir::ecad::CopperSource::Autoroute),
+            });
+        }
+    }
+    let n = extra.len();
+    pcb.traces.extend(extra);
+    n
+}
+
+/// Last resort for connections the router left open: join near pairs of
+/// same-net pads with a straight or L-shaped trace on a layer they share,
+/// accepted only where the router's own legality oracle says it is clear.
+fn direct_links(
+    route_pcb: &vcad_ir::ecad::Pcb,
+    pcb: &vcad_ir::ecad::Pcb,
+    nets: &[String],
+    width: f64,
+) -> Vec<vcad_ir::ecad::Trace> {
+    use vcad_ecad_pcb::spatial::CopperGeom;
+    use vcad_ir::ecad::{CopperSource, Trace};
+    let mut work = route_pcb.clone();
+    work.traces = pcb.traces.clone();
+    work.vias = pcb.vias.clone();
+    let mut out = Vec::new();
+    for net in nets {
+        let pads: Vec<_> = work
+            .footprints
+            .iter()
+            .flat_map(|f| {
+                f.pads
+                    .iter()
+                    .filter(|p| p.net.as_deref() == Some(net.as_str()))
+                    .map(move |p| {
+                        (
+                            vcad_ecad_pcb::geometry::pad_world_position(f, p),
+                            p.layers.clone(),
+                        )
+                    })
+            })
+            .collect();
+        let mut pads = pads;
+        pads.extend(
+            dangling_ends(&work)
+                .into_iter()
+                .filter(|e| &e.1 == net)
+                .map(|e| (e.0, vec![e.2])),
+        );
+        for i in 0..pads.len() {
+            for j in i + 1..pads.len() {
+                let (a, b) = (pads[i].0, pads[j].0);
+                if (a.x - b.x).hypot(a.y - b.y) > 6.0 {
+                    continue;
+                }
+                let Some(&layer) = pads[i]
+                    .1
+                    .iter()
+                    .find(|l| l.is_copper() && pads[j].1.contains(l))
+                else {
+                    continue;
+                };
+                let session = vcad_ecad_pcb::RouteSession::from_pcb(&work);
+                let w = session.width_for(net, width);
+                let clearance = session.clearance_for(net);
+                let corners = [
+                    vec![a, b],
+                    vec![a, vcad_ir::Vec2::new(a.x, b.y), b],
+                    vec![a, vcad_ir::Vec2::new(b.x, a.y), b],
+                ];
+                let legal = corners.into_iter().find(|path| {
+                    path.windows(2).all(|s| {
+                        let g = CopperGeom::Segment {
+                            a: s[0],
+                            b: s[1],
+                            half_w: w / 2.0,
+                        };
+                        let pr = session.probe(&g, layer, net, clearance);
+                        if !pr.legal && std::env::var_os("VCAD_LINK_DEBUG").is_some() {
+                            let who: Vec<_> = pr
+                                .blockers
+                                .iter()
+                                .map(|b| {
+                                    format!(
+                                        "{}@{:.3}{:?}",
+                                        b.net,
+                                        b.distance,
+                                        session.span_bounds(b.span)
+                                    )
+                                })
+                                .collect();
+                            eprintln!("link {net} {:?}->{:?}: {:?}", s[0], s[1], who);
+                        }
+                        pr.legal
+                    })
+                });
+                let Some(path) = legal else { continue };
+                // keep the link only if it joins two islands of the net
+                let before = vcad_ecad_pcb::drc::analyze_net_continuity(&work, net).islands;
+                let n0 = work.traces.len();
+                work.traces.extend(path.windows(2).map(|s| Trace {
+                    start: s[0],
+                    end: s[1],
+                    width: w,
+                    layer,
+                    net: net.clone(),
+                    source: Some(CopperSource::Autoroute),
+                }));
+                if vcad_ecad_pcb::drc::analyze_net_continuity(&work, net).islands < before {
+                    out.extend(work.traces[n0..].iter().cloned());
+                } else {
+                    work.traces.truncate(n0);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Pads of a plane net that the router left without a via to the plane: drop
+/// one nearby with a short stub, where the legality oracle allows it, and keep
+/// it only if it joins two islands of the net.
+fn stitch_to_planes(
+    route_pcb: &vcad_ir::ecad::Pcb,
+    pcb: &vcad_ir::ecad::Pcb,
+    nets: &[String],
+    width: f64,
+) -> (Vec<vcad_ir::ecad::Trace>, Vec<vcad_ir::ecad::Via>) {
+    use vcad_ecad_pcb::spatial::CopperGeom;
+    use vcad_ir::ecad::{CopperSource, PcbLayer, Trace, Via};
+    let mut work = route_pcb.clone();
+    work.traces = pcb.traces.clone();
+    work.vias = pcb.vias.clone();
+    let (vd, vdrill) = (
+        pcb.rules.default_rules.via_diameter,
+        pcb.rules.default_rules.via_drill,
+    );
+    let copper: Vec<PcbLayer> = work
+        .stackup
+        .layers
+        .iter()
+        .map(|l| l.layer)
+        .filter(|l| l.is_copper())
+        .collect();
+    let (front, back) = (copper[0], copper[copper.len() - 1]);
+    let (mut ts, mut vs) = (Vec::new(), Vec::new());
+    for net in nets {
+        if !route_pcb.zones.iter().any(|z| &z.net == net) {
+            continue;
+        }
+        let pads: Vec<_> = work
+            .footprints
+            .iter()
+            .flat_map(|f| {
+                f.pads
+                    .iter()
+                    .filter(|p| p.net.as_deref() == Some(net.as_str()) && p.drill.is_none())
+                    .map(move |p| {
+                        let (hw, hh) = match &p.shape {
+                            vcad_ir::ecad::PadShape::Circle { diameter } => {
+                                (diameter / 2.0, diameter / 2.0)
+                            }
+                            vcad_ir::ecad::PadShape::Rect { width, height }
+                            | vcad_ir::ecad::PadShape::Oval { width, height }
+                            | vcad_ir::ecad::PadShape::RoundRect { width, height, .. } => {
+                                (width / 2.0, height / 2.0)
+                            }
+                            _ => (0.5, 0.5),
+                        };
+                        (
+                            vcad_ecad_pcb::geometry::pad_world_position(f, p),
+                            p.layers.clone(),
+                            hw.max(hh),
+                        )
+                    })
+            })
+            .collect();
+        let ends: Vec<_> = dangling_ends(&work)
+            .into_iter()
+            .filter(|e| &e.1 == net)
+            .map(|e| (e.0, vec![e.2], 0.0))
+            .collect();
+        for (c, layers, r) in ends.into_iter().chain(pads) {
+            let Some(&layer) = layers.iter().find(|l| l.is_copper()) else {
+                continue;
+            };
+            let before = vcad_ecad_pcb::drc::analyze_net_continuity(&work, net).islands;
+            if before <= 1 {
+                break;
+            }
+            let session = vcad_ecad_pcb::RouteSession::from_pcb(&work);
+            let w = session.width_for(net, width);
+            let clearance = session.clearance_for(net);
+            'found: for ring in [-1.0, 0.5, 0.8, 1.1, 1.5, 2.0, 2.6] {
+                for k in 0..if ring < 0.0 { 1 } else { 24 } {
+                    let a = k as f64 * std::f64::consts::TAU / 24.0;
+                    // ring < 0: via in the pad itself
+                    let d = if ring < 0.0 {
+                        0.0
+                    } else {
+                        r + vd / 2.0 + ring - 0.4
+                    };
+                    let v = vcad_ir::Vec2::new(c.x + d * a.cos(), c.y + d * a.sin());
+                    if !session.probe_via_drill(v, net).legal {
+                        continue;
+                    }
+                    let disc = CopperGeom::Disc {
+                        center: v,
+                        r: vd / 2.0,
+                    };
+                    if !copper
+                        .iter()
+                        .all(|l| session.probe(&disc, *l, net, clearance).legal)
+                    {
+                        continue;
+                    }
+                    let stub = CopperGeom::Segment {
+                        a: c,
+                        b: v,
+                        half_w: w / 2.0,
+                    };
+                    if !session.probe(&stub, layer, net, clearance).legal {
+                        continue;
+                    }
+                    let n0 = (work.traces.len(), work.vias.len());
+                    work.vias.push(Via {
+                        position: v,
+                        diameter: vd,
+                        drill: vdrill,
+                        start_layer: front,
+                        end_layer: back,
+                        net: net.clone(),
+                        source: Some(CopperSource::Autoroute),
+                    });
+                    if d > 0.0 {
+                        work.traces.push(Trace {
+                            start: c,
+                            end: v,
+                            width: w,
+                            layer,
+                            net: net.clone(),
+                            source: Some(CopperSource::Autoroute),
+                        });
+                    }
+                    let after = vcad_ecad_pcb::drc::analyze_net_continuity(&work, net).islands;
+                    if std::env::var_os("VCAD_LINK_DEBUG").is_some() {
+                        eprintln!("stitch {net} pad ({:.2},{:.2}) via ({:.2},{:.2}): islands {before} -> {after}", c.x, c.y, v.x, v.y);
+                    }
+                    if after < before {
+                        vs.push(work.vias[n0.1].clone());
+                        ts.extend(work.traces[n0.0..].iter().cloned());
+                        break 'found;
+                    }
+                    work.traces.truncate(n0.0);
+                    work.vias.truncate(n0.1);
+                }
+            }
+        }
+    }
+    (ts, vs)
+}
+
+/// A trace end that meets same-net copper only on another layer (a pad on the
+/// front, a trace on an inner layer) needs a via there; put back any the
+/// router's output is missing.
+fn restore_layer_change_vias(
+    route_pcb: &vcad_ir::ecad::Pcb,
+    pcb: &mut vcad_ir::ecad::Pcb,
+) -> usize {
+    use vcad_ir::ecad::{CopperSource, PcbLayer, Via};
+    let near = |a: vcad_ir::Vec2, b: vcad_ir::Vec2| (a.x - b.x).hypot(a.y - b.y) < 1e-3;
+    let copper: Vec<PcbLayer> = pcb
+        .stackup
+        .layers
+        .iter()
+        .map(|l| l.layer)
+        .filter(|l| l.is_copper())
+        .collect();
+    let (front, back) = (copper[0], copper[copper.len() - 1]);
+    // (point, net, layer) of every pad centre and trace end
+    let mut ends: Vec<(vcad_ir::Vec2, String, PcbLayer)> = Vec::new();
+    for f in &pcb.footprints {
+        for p in &f.pads {
+            let Some(net) = &p.net else { continue };
+            let c = vcad_ecad_pcb::geometry::pad_world_position(f, p);
+            for l in p.layers.iter().filter(|l| l.is_copper()) {
+                ends.push((c, net.clone(), *l));
+            }
+        }
+    }
+    for t in &pcb.traces {
+        ends.push((t.start, t.net.clone(), t.layer));
+        ends.push((t.end, t.net.clone(), t.layer));
+    }
+    let mut work = route_pcb.clone();
+    work.traces = pcb.traces.clone();
+    work.vias = pcb.vias.clone();
+    let session = vcad_ecad_pcb::RouteSession::from_pcb(&work);
+    let vr = pcb.rules.default_rules.via_diameter / 2.0;
+    let via_fits = |q: vcad_ir::Vec2, net: &str| {
+        let disc = vcad_ecad_pcb::spatial::CopperGeom::Disc { center: q, r: vr };
+        session.probe_via_drill(q, net).legal
+            && copper.iter().all(|l| {
+                session
+                    .probe(&disc, *l, net, session.clearance_for(net))
+                    .legal
+            })
+    };
+    let mut added: Vec<Via> = Vec::new();
+    for t in &pcb.traces {
+        for q in [t.start, t.end] {
+            let covered = pcb
+                .vias
+                .iter()
+                .chain(added.iter())
+                .any(|v| v.net == t.net && near(v.position, q));
+            if covered {
+                continue;
+            }
+            let other_layer = ends
+                .iter()
+                .any(|e| e.1 == t.net && e.2 != t.layer && near(e.0, q));
+            if other_layer && via_fits(q, &t.net) {
+                added.push(Via {
+                    position: q,
+                    diameter: pcb.rules.default_rules.via_diameter,
+                    drill: pcb.rules.default_rules.via_drill,
+                    start_layer: front,
+                    end_layer: back,
+                    net: t.net.clone(),
+                    source: Some(CopperSource::Autoroute),
+                });
+            }
+        }
+    }
+    let n = added.len();
+    pcb.vias.extend(added);
+    n
+}
+
+/// Trace ends that touch nothing of their net: no other trace end, via or pad.
+fn dangling_ends(
+    pcb: &vcad_ir::ecad::Pcb,
+) -> Vec<(vcad_ir::Vec2, String, vcad_ir::ecad::PcbLayer)> {
+    let near = |a: vcad_ir::Vec2, b: vcad_ir::Vec2, r: f64| (a.x - b.x).hypot(a.y - b.y) < r;
+    // (net, layers, centre, angle, half-w, half-h)
+    let mut pads = Vec::new();
+    for f in &pcb.footprints {
+        for p in &f.pads {
+            let Some(net) = &p.net else { continue };
+            let (w, h) = match &p.shape {
+                vcad_ir::ecad::PadShape::Circle { diameter } => (*diameter, *diameter),
+                vcad_ir::ecad::PadShape::Rect { width, height }
+                | vcad_ir::ecad::PadShape::Oval { width, height }
+                | vcad_ir::ecad::PadShape::RoundRect { width, height, .. } => (*width, *height),
+                vcad_ir::ecad::PadShape::Custom { vertices } => {
+                    let m = vertices
+                        .iter()
+                        .fold(0.0f64, |m, v| m.max(v.x.abs()).max(v.y.abs()));
+                    (2.0 * m, 2.0 * m)
+                }
+            };
+            pads.push((
+                net.clone(),
+                p.layers.clone(),
+                vcad_ecad_pcb::geometry::pad_world_position(f, p),
+                (f.rotation + p.rotation).to_radians(),
+                w / 2.0,
+                h / 2.0,
+            ));
+        }
+    }
+    let in_pad = |q: vcad_ir::Vec2, c: vcad_ir::Vec2, a: f64, hw: f64, hh: f64| {
+        let (dx, dy) = (q.x - c.x, q.y - c.y);
+        let (u, v) = (dx * a.cos() + dy * a.sin(), -dx * a.sin() + dy * a.cos());
+        u.abs() <= hw + 1e-3 && v.abs() <= hh + 1e-3
+    };
+    let mut out = Vec::new();
+    for (i, t) in pcb.traces.iter().enumerate() {
+        for q in [t.start, t.end] {
+            // another trace of the net whose copper the end sits on (end to
+            // end, or a T onto its middle - KiCad joins both)
+            let other_trace = pcb.traces.iter().enumerate().any(|(j, u)| {
+                j != i
+                    && u.net == t.net
+                    && u.layer == t.layer
+                    && seg_dist(q, u.start, u.end) <= u.width / 2.0 + 1e-3
+            });
+            let via = pcb
+                .vias
+                .iter()
+                .any(|v| v.net == t.net && near(v.position, q, v.diameter / 2.0));
+            let pad = pads
+                .iter()
+                .any(|p| p.0 == t.net && p.1.contains(&t.layer) && in_pad(q, p.2, p.3, p.4, p.5));
+            if !other_trace && !via && !pad {
+                out.push((q, t.net.clone(), t.layer));
+            }
+        }
+    }
+    out
+}
+
+/// Trim leaf copper KiCad would call dangling: traces with a free end and vias
+/// that reach copper of their net on fewer than two layers, repeatedly. A
+/// trace on a layer its net pours is never free (the pour picks it up). A net
+/// whose continuity would get worse keeps its copper.
+fn trim_leaf_copper(pcb: &mut vcad_ir::ecad::Pcb) -> (usize, usize) {
+    let near = |a: vcad_ir::Vec2, b: vcad_ir::Vec2, r: f64| (a.x - b.x).hypot(a.y - b.y) < r;
+    let poured: std::collections::BTreeSet<(String, vcad_ir::ecad::PcbLayer)> =
+        pcb.zones.iter().map(|z| (z.net.clone(), z.layer)).collect();
+    let orig = pcb.clone();
+    let (mut nt, mut nv) = (0, 0);
+    loop {
+        let zones = pcb.zones.clone();
+        let free: Vec<(vcad_ir::Vec2, String, vcad_ir::ecad::PcbLayer)> = dangling_ends(pcb)
+            .into_iter()
+            .filter(|e| {
+                !zones
+                    .iter()
+                    .any(|z| z.net == e.1 && z.layer == e.2 && point_in(e.0, &z.outline))
+            })
+            .collect();
+        let t0 = pcb.traces.len();
+        pcb.traces.retain(|t| {
+            !free.iter().any(|e| {
+                e.1 == t.net
+                    && e.2 == t.layer
+                    && (near(e.0, t.start, 1e-3) || near(e.0, t.end, 1e-3))
+            })
+        });
+        let dt = t0 - pcb.traces.len();
+        // vias: layers on which the via meets its net's copper
+        let pads: Vec<_> = pcb
+            .footprints
+            .iter()
+            .flat_map(|f| {
+                f.pads.iter().filter_map(move |p| {
+                    Some((
+                        vcad_ecad_pcb::geometry::pad_world_position(f, p),
+                        p.net.clone()?,
+                        p.layers.clone(),
+                    ))
+                })
+            })
+            .collect();
+        let v0 = pcb.vias.len();
+        let traces = pcb.traces.clone();
+        pcb.vias.retain(|v| {
+            let mut layers: std::collections::BTreeSet<vcad_ir::ecad::PcbLayer> = traces
+                .iter()
+                .filter(|t| {
+                    t.net == v.net
+                        && (near(t.start, v.position, v.diameter / 2.0)
+                            || near(t.end, v.position, v.diameter / 2.0))
+                })
+                .map(|t| t.layer)
+                .collect();
+            for p in pads
+                .iter()
+                .filter(|p| p.1 == v.net && near(p.0, v.position, 0.3))
+            {
+                layers.extend(p.2.iter().filter(|l| l.is_copper()).copied());
+            }
+            layers.extend(poured.iter().filter(|(n, _)| *n == v.net).map(|(_, l)| *l));
+            layers.len() >= 2
+        });
+        let dv = v0 - pcb.vias.len();
+        nt += dt;
+        nv += dv;
+        if dt + dv == 0 {
+            break;
+        }
+    }
+    // never make a net worse
+    let nets: std::collections::BTreeSet<String> =
+        orig.traces.iter().map(|t| t.net.clone()).collect();
+    for n in nets {
+        let a = vcad_ecad_pcb::drc::analyze_net_continuity(&orig, &n).islands;
+        let b = vcad_ecad_pcb::drc::analyze_net_continuity(pcb, &n).islands;
+        if b > a {
+            pcb.traces.retain(|t| t.net != n);
+            pcb.vias.retain(|v| v.net != n);
+            pcb.traces
+                .extend(orig.traces.iter().filter(|t| t.net == n).cloned());
+            pcb.vias
+                .extend(orig.vias.iter().filter(|v| v.net == n).cloned());
+        }
+    }
+    (nt, nv)
+}
+
+/// Even-odd point-in-polygon test.
+fn point_in(p: vcad_ir::Vec2, poly: &[vcad_ir::Vec2]) -> bool {
+    let mut inside = false;
+    let n = poly.len();
+    for i in 0..n {
+        let (a, b) = (poly[i], poly[(i + 1) % n]);
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+            inside = !inside;
+        }
+    }
+    inside
+}
+
+/// Distance from `p` to segment `a`-`b`.
+fn seg_dist(p: vcad_ir::Vec2, a: vcad_ir::Vec2, b: vcad_ir::Vec2) -> f64 {
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let l2 = dx * dx + dy * dy;
+    let t = if l2 > 0.0 {
+        (((p.x - a.x) * dx + (p.y - a.y) * dy) / l2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (a.x + t * dx - p.x).hypot(a.y + t * dy - p.y)
+}
+
+/// Drop exact duplicate traces and vias (clean-up passes can re-add a stub).
+fn dedupe_copper(pcb: &mut vcad_ir::ecad::Pcb) {
+    let key = |p: vcad_ir::Vec2| ((p.x * 1e4).round() as i64, (p.y * 1e4).round() as i64);
+    let mut seen = std::collections::BTreeSet::new();
+    pcb.traces.retain(|t| {
+        let (a, b) = (key(t.start), key(t.end));
+        let (a, b) = if a <= b { (a, b) } else { (b, a) };
+        seen.insert((
+            t.net.clone(),
+            format!("{:?}", t.layer),
+            a,
+            b,
+            (t.width * 1e4).round() as i64,
+        ))
+    });
+    let mut seen = std::collections::BTreeSet::new();
+    pcb.vias
+        .retain(|v| seen.insert((v.net.clone(), key(v.position))));
 }

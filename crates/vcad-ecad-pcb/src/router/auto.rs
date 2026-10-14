@@ -160,6 +160,10 @@ pub struct RouteOptions {
     /// the routing assumes them. Set `enabled: false` to route a board exactly
     /// as it was authored.
     pub pour_policy: PourPolicy,
+    /// Only through vias (front to back); no blind or buried vias.
+    pub through_vias_only: bool,
+    /// Plane layers no trace may run on (vias still pass through them).
+    pub no_route_layers: Vec<PcbLayer>,
 }
 
 impl RouteOptions {
@@ -201,6 +205,8 @@ impl Default for RouteOptions {
             priority_nets: Vec::new(),
             prune_dangling_copper: true,
             pour_policy: PourPolicy::default(),
+            through_vias_only: false,
+            no_route_layers: Vec::new(),
         }
     }
 }
@@ -358,6 +364,8 @@ pub fn route_all_with_opts(
     // pad-to-pad traces — so it has to be in place before the ratsnest is taken.
     // Nets that already own a pour are left alone, so this complements existing
     // zones rather than duplicating them.
+    super::maze::set_through_vias_only(opts.through_vias_only);
+    super::maze::set_no_route_layers(&opts.no_route_layers);
     let synthesized = synthesize_pours(pcb, &opts.pour_policy, nets_filter);
     let poured_board;
     let pcb = if synthesized.is_empty() {
@@ -796,6 +804,11 @@ pub fn route_all_with_opts(
             legal.pruned_traces,
             legal.dropped_stitches.len(),
             legal.demoted.len(),
+        );
+        log::debug!(
+            "legalization detail: demoted {:?}, dropped stitches {:?}",
+            legal.demoted,
+            legal.dropped_stitches
         );
     }
 

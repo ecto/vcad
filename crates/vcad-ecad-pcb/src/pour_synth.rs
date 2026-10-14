@@ -348,6 +348,13 @@ pub fn decide_pours(pcb: &Pcb, policy: &PourPolicy, nets_filter: &[String]) -> V
         if !nets_filter.is_empty() && !nets_filter.iter().any(|n| n == net) {
             continue;
         }
+        // A net that already owns a copper pour has its plane: its current rides
+        // that. Synthesizing another one (on an outer layer, where it outranks
+        // every other net by pad count) took the only layer the real
+        // high-current nets could use - a 40 A bus came out as traces.
+        if existing.contains_key(net) {
+            continue;
+        }
         // Ampacity is judged on the outermost layer the net has pads on — the
         // most favourable case. If even that needs a pour, every layer does.
         let layer = copper
@@ -1283,6 +1290,41 @@ mod tests {
         let mut small = board(40.0, 30.0);
         pad_row(&mut small, "V_SUPPLY", 5, 8.0, 15.0, PcbLayer::FCu);
         assert!(decide_pours(&small, &PourPolicy::default(), &[]).is_empty());
+    }
+
+    #[test]
+    fn a_net_that_already_has_a_pour_is_not_poured_again() {
+        // GND already owns an inner plane. Declaring its current must not buy
+        // it a second, outer-layer flood: that outer layer is where the bus
+        // nets' pads are, and GND outranks them on pad count.
+        let mut pcb = board(40.0, 30.0);
+        for (i, x) in [3.0_f64, 20.0, 37.0].iter().enumerate() {
+            for (j, y) in [3.0_f64, 15.0, 27.0].iter().enumerate() {
+                pcb.footprints.push(pad_fp(
+                    &format!("G{i}{j}"),
+                    Vec2::new(*x, *y),
+                    "GND",
+                    PcbLayer::FCu,
+                ));
+            }
+        }
+        pcb.zones.push(Zone {
+            outline: pcb.outline.vertices.clone(),
+            holes: vec![],
+            net: "GND".into(),
+            layer: PcbLayer::In1Cu,
+            clearance: 0.2,
+            min_area: 0.0,
+            fill_type: ZoneFillType::Solid,
+            thermal_relief: ThermalReliefStyle::Relief,
+            thermal_gap: None,
+            thermal_spoke_width: None,
+            priority: 0,
+        });
+        let mut policy = PourPolicy::default();
+        policy.net_current_a.insert("GND".into(), 40.0);
+        let d = decide_pours(&pcb, &policy, &[]);
+        assert!(d.iter().all(|c| c.net != "GND"), "{d:?}");
     }
 
     #[test]
