@@ -847,7 +847,7 @@ fn kicad_symbol_pins(lib_id: &str) -> Result<Vec<ecad::SchematicPin>, String> {
         .map(|p| ecad::SchematicPin {
             number: p.number.clone(),
             name: p.name.clone(),
-            pin_type: p.pin_type.clone(),
+            pin_type: p.pin_type,
             position: Vec2::new(p.position.0, p.position.1),
         })
         .collect())
