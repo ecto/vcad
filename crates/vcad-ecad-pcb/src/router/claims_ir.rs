@@ -159,6 +159,23 @@ impl ClaimSet {
         }
     }
 
+    /// [`Self::gn_residual`] with an augmented-Lagrangian shift: a hinge
+    /// claim's residual becomes `√w · hinge(r + σ)` where `σ ≥ 0` is an
+    /// input (the scaled multiplier estimate). `σ = 0` reproduces the
+    /// unshifted form; the predicate is untouched (it is always raw `r`).
+    pub fn gn_residual_shifted(g: &mut ExprGraph, c: &Claim, shift: ExprId) -> ExprId {
+        match c.penalty {
+            Penalty::SquaredHinge => {
+                let sw = g.lit(c.weight.sqrt());
+                let zero = g.lit(0.0);
+                let rs = g.add(c.residual, shift);
+                let h = g.select(rs, rs, zero);
+                g.mul(sw, h)
+            }
+            Penalty::Linear => Self::gn_residual(g, c),
+        }
+    }
+
     /// Least-squares residual vector, one row per claim.
     pub fn gn_residuals(&self, g: &mut ExprGraph) -> Vec<ExprId> {
         self.claims
@@ -405,6 +422,178 @@ pub fn var_deps(g: &ExprGraph, roots: &[ExprId]) -> Vec<Vec<u16>> {
     out
 }
 
+/// Dependency-aware symbolic differentiation.
+///
+/// `ExprGraph::diff` recurses into every subtree and emits `0 + 0`,
+/// `0 · b` nodes for the parts that don't depend on the variable, so the
+/// derivative of a polyline length (a chain of n adds) costs O(n) NEW nodes
+/// per variable — O(n²) for a full Jacobian row; the long descent fixture
+/// grew to 3.1M nodes and 95 s of compile. This differentiator tracks a
+/// conservative `[min, max]` variable-index range per node, returns `0`
+/// for any subtree whose range excludes the variable, and folds `0`/`1`
+/// through add/mul/neg/select — a derivative costs O(1) new nodes for local
+/// terms. (Upstream note: the same short-circuit would belong in
+/// `tang-expr`'s own `diff`.)
+#[derive(Debug, Default)]
+pub struct SparseDiff {
+    lo: Vec<u16>,
+    hi: Vec<u16>,
+}
+
+impl SparseDiff {
+    /// Empty; ranges are computed lazily as the graph grows.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn sync(&mut self, g: &ExprGraph) {
+        let nodes = g.nodes_slice();
+        let start = self.lo.len();
+        for node in &nodes[start..] {
+            let (lo, hi) = match *node {
+                Node::Var(v) => (v, v),
+                Node::Lit(_) => (u16::MAX, 0),
+                Node::Add(a, b) | Node::Mul(a, b) | Node::Atan2(a, b) => {
+                    let (a, b) = (a.index() as usize, b.index() as usize);
+                    (self.lo[a].min(self.lo[b]), self.hi[a].max(self.hi[b]))
+                }
+                Node::Neg(a)
+                | Node::Recip(a)
+                | Node::Sqrt(a)
+                | Node::Sin(a)
+                | Node::Exp2(a)
+                | Node::Log2(a) => {
+                    let a = a.index() as usize;
+                    (self.lo[a], self.hi[a])
+                }
+                Node::Select(c, a, b) => {
+                    let (c, a, b) = (c.index() as usize, a.index() as usize, b.index() as usize);
+                    (
+                        self.lo[c].min(self.lo[a]).min(self.lo[b]),
+                        self.hi[c].max(self.hi[a]).max(self.hi[b]),
+                    )
+                }
+            };
+            self.lo.push(lo);
+            self.hi.push(hi);
+        }
+    }
+
+    /// `∂expr/∂Var(var)`, appended to `g`.
+    pub fn diff(&mut self, g: &mut ExprGraph, expr: ExprId, var: u16) -> ExprId {
+        self.sync(g);
+        let mut memo = std::collections::HashMap::new();
+        let d = self.inner(g, expr, var, &mut memo);
+        self.sync(g);
+        d
+    }
+
+    fn inner(
+        &self,
+        g: &mut ExprGraph,
+        e: ExprId,
+        var: u16,
+        memo: &mut std::collections::HashMap<ExprId, ExprId>,
+    ) -> ExprId {
+        const Z: ExprId = ExprId::ZERO;
+        const O: ExprId = ExprId::ONE;
+        let i = e.index() as usize;
+        // Nodes created during this walk are derivative nodes of in-range
+        // subtrees; they are never revisited as inputs, so `i` is in range.
+        if var < self.lo[i] || var > self.hi[i] {
+            return Z;
+        }
+        if let Some(&d) = memo.get(&e) {
+            return d;
+        }
+        let add = |g: &mut ExprGraph, a: ExprId, b: ExprId| {
+            if a == Z {
+                b
+            } else if b == Z {
+                a
+            } else {
+                g.add(a, b)
+            }
+        };
+        let mul = |g: &mut ExprGraph, a: ExprId, b: ExprId| {
+            if a == Z || b == Z {
+                Z
+            } else if a == O {
+                b
+            } else if b == O {
+                a
+            } else {
+                g.mul(a, b)
+            }
+        };
+        let d = match g.node(e) {
+            Node::Var(v) => {
+                if v == var {
+                    O
+                } else {
+                    Z
+                }
+            }
+            Node::Lit(_) => Z,
+            Node::Add(a, b) => {
+                let da = self.inner(g, a, var, memo);
+                let db = self.inner(g, b, var, memo);
+                add(g, da, db)
+            }
+            Node::Mul(a, b) => {
+                let da = self.inner(g, a, var, memo);
+                let db = self.inner(g, b, var, memo);
+                let t1 = mul(g, da, b);
+                let t2 = mul(g, a, db);
+                add(g, t1, t2)
+            }
+            Node::Neg(a) => {
+                let da = self.inner(g, a, var, memo);
+                if da == Z {
+                    Z
+                } else {
+                    g.neg(da)
+                }
+            }
+            Node::Recip(a) => {
+                let da = self.inner(g, a, var, memo);
+                if da == Z {
+                    Z
+                } else {
+                    let a2 = g.mul(a, a);
+                    let r = g.recip(a2);
+                    let t = mul(g, da, r);
+                    g.neg(t)
+                }
+            }
+            Node::Sqrt(a) => {
+                let da = self.inner(g, a, var, memo);
+                if da == Z {
+                    Z
+                } else {
+                    let sq = g.sqrt(a);
+                    let two_sq = g.mul(ExprId::TWO, sq);
+                    let r = g.recip(two_sq);
+                    mul(g, da, r)
+                }
+            }
+            Node::Select(c, a, b) => {
+                let da = self.inner(g, a, var, memo);
+                let db = self.inner(g, b, var, memo);
+                if da == db {
+                    da
+                } else {
+                    g.select(c, da, db)
+                }
+            }
+            // Ops the claim builders never emit: defer to tang's rules.
+            Node::Sin(_) | Node::Atan2(_, _) | Node::Exp2(_) | Node::Log2(_) => g.diff(e, var),
+        };
+        memo.insert(e, d);
+        d
+    }
+}
+
 /// Minimal one-layer board for router tests (100 mm square, 0.15 mm
 /// default clearance, no footprints).
 #[cfg(test)]
@@ -582,5 +771,28 @@ mod tests {
             }
         }
         assert!(checked > 2000);
+    }
+
+    /// The folded differentiator agrees with tang's `diff` numerically and
+    /// stays O(1) nodes per variable on a long sum.
+    #[test]
+    fn sparse_diff_matches_and_stays_small() {
+        let mut g = ExprGraph::new();
+        let pts: Vec<PointExpr> = (0..200).map(|i| (g.var(2 * i), g.var(2 * i + 1))).collect();
+        let len = polyline_len(&mut g, &pts);
+        let theta: Vec<f64> = (0..400)
+            .map(|i| (i as f64 * 0.37).sin() + i as f64 * 0.1)
+            .collect();
+        let mut sd = SparseDiff::new();
+        let before = g.len();
+        let ds: Vec<ExprId> = (0..400u16).map(|v| sd.diff(&mut g, len, v)).collect();
+        let grown = g.len() - before;
+        assert!(grown < 400 * 40, "folded diff grew {grown} nodes");
+        for v in [0u16, 7, 199, 398, 399] {
+            let a: f64 = g.eval(ds[v as usize], &theta);
+            let r = g.diff(len, v);
+            let b: f64 = g.eval(r, &theta);
+            assert!((a - b).abs() < 1e-12, "var {v}: {a} vs {b}");
+        }
     }
 }

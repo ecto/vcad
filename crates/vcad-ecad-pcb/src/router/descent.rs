@@ -25,6 +25,7 @@
 //! the product.
 
 use super::claims_ir::{self as cir, ClaimSet, PointExpr};
+use super::sco::{ResidualSystem, ScoOptions, ScoReport};
 use tang_expr::{ExprGraph, ExprId};
 use vcad_ir::ecad::Pcb;
 use vcad_ir::Vec2;
@@ -65,6 +66,18 @@ pub struct DescentObstacle {
     /// Required centre-to-segment distance (obstacle half-width + own
     /// half-width + clearance).
     pub required: f64,
+}
+
+/// Which optimizer drives the descent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DescentSolver {
+    /// Sequential convex optimization (compiled LM + trust region +
+    /// penalty continuation, [`super::sco`]). The default.
+    #[default]
+    Sco,
+    /// The original Adam loop on the interpreted gradient graph — kept for
+    /// comparison.
+    Adam,
 }
 
 /// Result of a pair descent.
@@ -117,7 +130,7 @@ pub fn descend_pair_runs(
     let prob = PairProblem::build(
         p_pts, n_pts, extra_p, extra_n, springs, gap_centre, obstacles, weights,
     )?;
-    let (theta, it) = prob.solve_adam(&prob.theta0, iters);
+    let (theta, it) = prob.solve(&prob.theta0, DescentSolver::default(), iters);
     Some(prob.result(&theta, it))
 }
 
@@ -278,6 +291,34 @@ impl PairProblem {
         added
     }
 
+    /// Solve from `theta0` with `solver`; `iters` is Adam's step budget, or
+    /// the SCO inner-iteration cap (SCO stops far earlier on convergence).
+    pub(crate) fn solve(
+        &self,
+        theta0: &[f64],
+        solver: DescentSolver,
+        iters: usize,
+    ) -> (Vec<f64>, usize) {
+        match solver {
+            DescentSolver::Adam => self.solve_adam(theta0, iters),
+            DescentSolver::Sco => {
+                let (th, rep) = self.solve_sco(theta0, iters);
+                (th, rep.iters)
+            }
+        }
+    }
+
+    /// SCO on the claim-compiled residual system.
+    pub(crate) fn solve_sco(&self, theta0: &[f64], iters: usize) -> (Vec<f64>, ScoReport) {
+        let mut g = self.g.clone();
+        let sys = ResidualSystem::compile(&mut g, &self.claims, theta0.len());
+        let opts = ScoOptions {
+            max_iters: iters.clamp(1, 400),
+            ..ScoOptions::default()
+        };
+        sys.solve(theta0, &opts)
+    }
+
     /// Adam on the claim-compiled loss (the original M5 optimizer).
     pub(crate) fn solve_adam(&self, theta0: &[f64], iters: usize) -> (Vec<f64>, usize) {
         let mut g = self.g.clone();
@@ -355,6 +396,11 @@ pub struct DescentReport {
 /// legal against a session with both nets' old copper removed and (b) the
 /// WHOLE-net skew actually fell. Anything else leaves the pair untouched.
 pub fn descend_board(pcb: &mut Pcb, iters: usize) -> DescentReport {
+    descend_board_with(pcb, iters, DescentSolver::default())
+}
+
+/// [`descend_board`] with an explicit optimizer (Adam kept for comparison).
+pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> DescentReport {
     use super::classes::{apply_classes, classify_nets};
     use super::length_match::longest_chain;
     use crate::session::RouteSession;
@@ -534,7 +580,7 @@ pub fn descend_board(pcb: &mut Pcb, iters: usize) -> DescentReport {
             );
         }
 
-        let Some(r) = descend_pair_runs(
+        let Some(prob) = PairProblem::build(
             &p_pts,
             &n_pts,
             extra_p,
@@ -543,10 +589,11 @@ pub fn descend_board(pcb: &mut Pcb, iters: usize) -> DescentReport {
             gap_centre,
             &obstacles,
             &DescentWeights::default(),
-            iters,
         ) else {
             continue;
         };
+        let (theta, it) = prob.solve(&prob.theta0, solver, iters);
+        let r = prob.result(&theta, it);
 
         // Fail-closed: every optimized segment passes the exact oracle. Each
         // leg is checked against a board with only ITS OWN old copper removed,
@@ -759,5 +806,98 @@ mod tests {
             (got - want).abs() < 1e-6 * (1.0 + want),
             "claims {got} vs formula {want}"
         );
+    }
+
+    /// Fixture B: a 40 mm pair densified at 0.4 mm (≈400 variables), N
+    /// carrying a 3-bump detour (≈2 mm skew), obstacles flanking both legs.
+    fn long_fixture() -> (Vec<Vec2>, Vec<Vec2>, Vec<DescentObstacle>) {
+        let p: Vec<Vec2> = (0..=100).map(|i| Vec2::new(0.4 * i as f64, 0.0)).collect();
+        let n: Vec<Vec2> = (0..=100)
+            .map(|i| {
+                let x = 0.4 * i as f64;
+                let bump = if (10.0..30.0).contains(&x) {
+                    0.6 * (std::f64::consts::PI * (x - 10.0) / 20.0 * 3.0).sin().abs()
+                } else {
+                    0.0
+                };
+                Vec2::new(x, 0.45 + bump)
+            })
+            .collect();
+        let mut obs = Vec::new();
+        for k in 0..6 {
+            let x0 = 3.0 + 6.0 * k as f64;
+            obs.push(DescentObstacle {
+                a: Vec2::new(x0, -0.55),
+                b: Vec2::new(x0 + 2.0, -0.55),
+                required: 0.4,
+            });
+            obs.push(DescentObstacle {
+                a: Vec2::new(x0 + 3.0, 1.6),
+                b: Vec2::new(x0 + 5.0, 1.6),
+                required: 0.4,
+            });
+        }
+        (p, n, obs)
+    }
+
+    fn min_margin(r: &DescentResult, obs: &[DescentObstacle]) -> f64 {
+        let mut m = f64::INFINITY;
+        for pt in r.p_pts.iter().chain(r.n_pts.iter()) {
+            for o in obs {
+                m = m.min(pt_seg_dist_f64(*pt, o.a, o.b) - o.required);
+            }
+        }
+        m
+    }
+
+    /// M2 benchmark: SCO vs Adam on the descent fixtures — same claims, same
+    /// objective. Reports final loss, iterations and wall time (run with
+    /// `--nocapture` to see the table); asserts SCO reaches an objective no
+    /// worse than Adam's and holds every clearance claim exactly.
+    #[test]
+    fn sco_vs_adam_on_descent_fixtures() {
+        let short_p: Vec<Vec2> = (0..=10).map(|i| Vec2::new(2.0 * i as f64, 0.0)).collect();
+        let short_n: Vec<Vec2> = (0..=10)
+            .map(|i| Vec2::new(2.0 * i as f64, 0.45 + if i % 2 == 0 { 0.0 } else { 0.8 }))
+            .collect();
+        let short_obs = vec![DescentObstacle {
+            a: Vec2::new(9.0, -0.6),
+            b: Vec2::new(11.0, -0.6),
+            required: 0.4,
+        }];
+        let (lp, ln, lobs) = long_fixture();
+        let w = DescentWeights::default();
+        for (name, p, n, obs) in [
+            ("A short", short_p, short_n, short_obs),
+            ("B long", lp, ln, lobs),
+        ] {
+            let prob = PairProblem::build(&p, &n, 0.0, 0.0, true, 0.45, &obs, &w).unwrap();
+            let t = std::time::Instant::now();
+            let (ta, ia) = prob.solve(&prob.theta0, DescentSolver::Adam, 3000);
+            let adam_ms = t.elapsed().as_secs_f64() * 1e3;
+            let ra = prob.result(&ta, ia);
+            let t = std::time::Instant::now();
+            let (ts, is) = prob.solve(&prob.theta0, DescentSolver::Sco, 3000);
+            let sco_ms = t.elapsed().as_secs_f64() * 1e3;
+            let rs = prob.result(&ts, is);
+            eprintln!(
+                "{name}: vars={} claims={} | adam loss={:.5} skew={:.4} margin={:+.4} iters={} {:.1}ms | sco loss={:.5} skew={:.4} margin={:+.4} iters={} {:.1}ms",
+                prob.theta0.len(),
+                prob.claims.claims.len(),
+                ra.loss, ra.skew, min_margin(&ra, &obs), ra.iters, adam_ms,
+                rs.loss, rs.skew, min_margin(&rs, &obs), rs.iters, sco_ms,
+            );
+            assert!(
+                rs.loss <= ra.loss * 1.01 + 1e-6,
+                "{name}: sco {} vs adam {}",
+                rs.loss,
+                ra.loss
+            );
+            assert!(
+                min_margin(&rs, &obs) >= -1e-9,
+                "{name}: sco broke clearance"
+            );
+            assert!(rs.skew < 0.15, "{name}: sco skew {}", rs.skew);
+        }
     }
 }

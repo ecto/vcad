@@ -16,6 +16,7 @@ pub mod classes;
 pub mod descent;
 #[cfg(feature = "gpu")]
 pub mod gpu_bridge;
+pub mod sco;
 pub mod si_claims;
 
 /// Wall-clock timer that is a no-op on wasm32 (where `Instant::now` traps).
@@ -64,7 +65,7 @@ pub use auto::{
     UnroutedDiagnostic,
 };
 pub use congestion::Congestion;
-pub use descent::{descend_board, DescentReport};
+pub use descent::{descend_board, descend_board_with, DescentReport, DescentSolver};
 pub use diff_pair::route_diff_pair;
 pub use length_match::{
     check_length_match, match_lengths, LengthMatchOptions, LengthMatchResult, NetLengthReport,
