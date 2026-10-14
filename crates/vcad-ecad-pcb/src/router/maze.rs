@@ -38,6 +38,30 @@ const MAX_DIM: usize = 400;
 /// routes straight (fewer, longer segments) rather than staircasing.
 const BEND_PENALTY: f64 = 0.6;
 
+/// Through vias only: every via spans the whole stack (front to back). Blind
+/// and buried vias cost extra at most fabs and are often not offered at all on
+/// a standard 4-layer order; with this set, the search still chooses *where* to
+/// change layer, but every layer change is a through via, probed on every layer.
+static THROUGH_VIAS_ONLY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Restrict the maze router to through vias (see [`THROUGH_VIAS_ONLY`]).
+pub fn set_through_vias_only(on: bool) {
+    THROUGH_VIAS_ONLY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn through_only() -> bool {
+    THROUGH_VIAS_ONLY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Plane layers: no trace runs on them (a signal there cuts the plane into
+/// islands); vias still pass through. Empty by default.
+static NO_ROUTE_LAYERS: std::sync::RwLock<Vec<PcbLayer>> = std::sync::RwLock::new(Vec::new());
+
+/// Keep the maze router's traces off `layers` (see [`NO_ROUTE_LAYERS`]).
+pub fn set_no_route_layers(layers: &[PcbLayer]) {
+    *NO_ROUTE_LAYERS.write().unwrap() = layers.to_vec();
+}
+
 /// Cost (mm-equivalent) of placing a via, i.e. taking a layer-transition edge
 /// in the 3D search. A through via consumes routing space on *every* copper
 /// layer, so it must cost noticeably more than a modest same-layer detour —
@@ -342,6 +366,10 @@ pub fn route_net_maze3d(
     // by ring search. Grid-quantized via sites lose exactly the positions a
     // human uses inside a BGA field (between the balls); the candidates
     // recover them.
+    let no_route: Vec<bool> = {
+        let banned = NO_ROUTE_LAYERS.read().unwrap();
+        layers.iter().map(|l| banned.contains(l)).collect()
+    };
     let mut via_cache: Vec<i8> = vec![-1; plane * nl * nl];
     let mut via_pos: Vec<Vec2> = vec![Vec2::new(0.0, 0.0); plane * nl * nl];
     // A candidate must clear its span AND connect legally to the cell centre
@@ -446,8 +474,11 @@ pub fn route_net_maze3d(
             (ix as i64 - px as i64, iy as i64 - py as i64)
         };
 
-        // In-plane moves.
+        // In-plane moves (none on a plane layer).
         for (dx, dy) in NEIGHBORS {
+            if no_route[li] {
+                break;
+            }
             let nx = ix as i64 + dx;
             let ny = iy as i64 + dy;
             if nx < 0 || ny < 0 || nx >= grid.nx as i64 || ny >= grid.ny as i64 {
@@ -520,7 +551,11 @@ pub fn route_net_maze3d(
                 if closed[nb] || raster.state(cell, lj) == CELL_BLOCKED {
                     continue;
                 }
-                let (lo, hi) = (li.min(lj), li.max(lj));
+                let (lo, hi) = if through_only() {
+                    (0, nl - 1)
+                } else {
+                    (li.min(lj), li.max(lj))
+                };
                 let key = cell * nl * nl + lo * nl + hi;
                 if via_cache[key] < 0 {
                     match find_via_site(grid.world(ix, iy), lo, hi) {
@@ -639,7 +674,11 @@ pub fn route_net_maze3d(
             // this (cell, span) — the cell centre, or an off-grid candidate
             // between obstacles. Route the old-layer run to it and start the
             // new-layer run from it.
-            let (lo, hi) = (run_layer.min(li), run_layer.max(li));
+            let (lo, hi) = if through_only() {
+                (0, nl - 1)
+            } else {
+                (run_layer.min(li), run_layer.max(li))
+            };
             let key = cell * nl * nl + lo * nl + hi;
             let at = if via_cache[key] == 1 {
                 via_pos[key]

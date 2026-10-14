@@ -246,10 +246,21 @@ struct SchematicLinks {
 
 /// Serialize a [`Pcb`] to a KiCad 9 `.kicad_pcb` board file.
 pub fn write_kicad_pcb(pcb: &Pcb) -> String {
-    write_kicad_pcb_impl(pcb, None)
+    write_kicad_pcb_impl(pcb, None, false)
 }
 
-fn write_kicad_pcb_impl(pcb: &Pcb, links: Option<&SchematicLinks>) -> String {
+/// The board half of a board + `.kicad_pro` pair (see [`write_kicad_pro_for_board`]).
+///
+/// KiCad 9 treats the legacy rule tokens in a board's `(setup …)` (`trace_min`,
+/// `via_min_size`, `hole_to_hole_min`, …) as a pre-project board and uses them
+/// *instead of* the project's design rules, so a board written next to its
+/// project leaves them out - otherwise every project rule, hole clearance
+/// included, is silently replaced by KiCad's defaults.
+pub fn write_kicad_pcb_for_project(pcb: &Pcb) -> String {
+    write_kicad_pcb_impl(pcb, None, true)
+}
+
+fn write_kicad_pcb_impl(pcb: &Pcb, links: Option<&SchematicLinks>, with_project: bool) -> String {
     let mut e = Emitter::new();
     let nets = NetTable::build(pcb);
 
@@ -266,7 +277,7 @@ fn write_kicad_pcb_impl(pcb: &Pcb, links: Option<&SchematicLinks>) -> String {
     e.line(1, "(paper \"A4\")");
 
     write_layers(&mut e, pcb);
-    write_setup(&mut e, pcb);
+    write_setup(&mut e, pcb, with_project);
 
     // Nets
     for (idx, name) in &nets.ordered {
@@ -374,11 +385,16 @@ fn write_layers(e: &mut Emitter, pcb: &Pcb) {
 /// to load the board at all). Clearance and per-net widths travel in the
 /// `(net_class …)` blocks instead; edge clearance, which has no board token,
 /// travels in the project file (see `write_kicad_pro`).
-fn write_setup(e: &mut Emitter, pcb: &Pcb) {
+fn write_setup(e: &mut Emitter, pcb: &Pcb, with_project: bool) {
     let r = &pcb.rules;
     let d = &r.default_rules;
     e.line(1, "(setup");
     e.line(2, "(pad_to_mask_clearance 0)");
+    if with_project {
+        e.line(2, "(allow_soldermask_bridges_in_footprints no)");
+        e.line(1, ")");
+        return;
+    }
     e.line(2, &format!("(trace_min {})", num(d.trace_width)));
     e.line(2, &format!("(via_size {})", num(d.via_diameter)));
     e.line(2, &format!("(via_drill {})", num(d.via_drill)));
@@ -528,7 +544,23 @@ fn write_footprint(
 
     // Art (logos, labels: `properties["art"]`) is its own silkscreen; its designator would only clutter it.
     let art = fp.properties.contains_key("art");
-    write_fp_property(e, "Reference", &fp.reference, "F.SilkS", art);
+    // Designator placement, when the board builder chose one (`ref_layer`,
+    // `ref_at` "x y" in footprint coordinates): small parts carry it on the fab
+    // layer, larger ones just outside their courtyard instead of on their pads.
+    let ref_layer = fp
+        .properties
+        .get("ref_layer")
+        .map(String::as_str)
+        .unwrap_or("F.SilkS");
+    let ref_at = fp
+        .properties
+        .get("ref_at")
+        .and_then(|s| {
+            let mut it = s.split_whitespace().filter_map(|v| v.parse::<f64>().ok());
+            Some((it.next()?, it.next()?))
+        })
+        .unwrap_or((0.0, 0.0));
+    write_fp_property_at(e, "Reference", &fp.reference, ref_layer, art, ref_at);
     write_fp_property(e, "Value", &fp.value, "F.Fab", art);
 
     // Cross-probe linkage: point the footprint at its schematic symbol
@@ -541,11 +573,31 @@ fn write_footprint(
         }
     }
 
+    // A footprint built from a KiCad library carries that library's source
+    // (`properties["kicad_mod"]`): write it faithfully - graphics, attributes,
+    // 3D model and pad shapes exactly as the library has them - so KiCad sees
+    // the library footprint, not a simplified look-alike
+    // (`lib_footprint_mismatch`). Only placement changes: pad angles become
+    // absolute and pads get their nets.
+    if let Some(src) = fp.properties.get("kicad_mod") {
+        if write_library_body(e, fp, src, nets) {
+            e.line(1, ")");
+            return;
+        }
+    }
     for g in &fp.graphics {
         write_fp_graphic(e, g);
     }
     for pad in &fp.pads {
         write_pad(e, pad, fp, nets);
+    }
+    // The 3D body, so KiCad's 3D view and STEP export show the part, not a bare land pattern.
+    if let Some(m) = &fp.model_3d {
+        e.line(2, &format!("(model {}", q(m)));
+        e.line(3, "(offset (xyz 0 0 0))");
+        e.line(3, "(scale (xyz 1 1 1))");
+        e.line(3, "(rotate (xyz 0 0 0))");
+        e.line(2, ")");
     }
 
     e.line(1, ")");
@@ -563,10 +615,181 @@ pub(crate) fn kicad_angle(vcad_deg: f64) -> f64 {
     }
 }
 
+/// Print an s-expression back as KiCad text.
+fn sx_print(x: &crate::sexpr::SExpr<'_>, out: &mut String) {
+    use crate::sexpr::SExpr;
+    match x {
+        SExpr::Atom(a) => out.push_str(a),
+        SExpr::Str(t) => out.push_str(&q(t)),
+        SExpr::List(items) => {
+            out.push('(');
+            for (i, it) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(' ');
+                }
+                sx_print(it, out);
+            }
+            out.push(')');
+        }
+    }
+}
+
+/// The body of a library footprint (`.kicad_mod` source), placed: everything
+/// but the header, the Reference/Value fields (written by the caller) and
+/// placement tokens, with each pad's angle made absolute and its net added.
+/// Returns false if the source does not parse (the caller falls back to the IR).
+fn write_library_body(e: &mut Emitter, fp: &Footprint, src: &str, nets: &NetTable) -> bool {
+    use crate::sexpr::{parse_sexpr, SExpr};
+    let Ok((_, root)) = parse_sexpr(src) else {
+        return false;
+    };
+    let Some(children) = root.children() else {
+        return false;
+    };
+    if root.tag_name() != Some("footprint") {
+        return false;
+    }
+    let fp_angle = kicad_angle(fp.rotation);
+    let pad_net: BTreeMap<&str, &str> = fp
+        .pads
+        .iter()
+        .filter_map(|p| p.net.as_deref().map(|n| (p.number.as_str(), n)))
+        .collect();
+    // Thermal vias: a plated hole sharing its number with an SMD pad (an
+    // exposed pad's via array). Their job is heat, so they tie into planes
+    // solid, not through thermal spokes.
+    let pad_kind = |c: &SExpr<'_>| -> Option<(String, String)> {
+        let k = c.children()?;
+        Some((
+            k.get(1)?.as_str()?.to_string(),
+            k.get(2)?.as_str()?.to_string(),
+        ))
+    };
+    let smd_numbers: std::collections::BTreeSet<String> = children
+        .iter()
+        .filter(|c| c.tag_name() == Some("pad"))
+        .filter_map(&pad_kind)
+        .filter(|(_, kind)| kind == "smd")
+        .map(|(n, _)| n)
+        .collect();
+    for child in children.iter().skip(2) {
+        let tag = child.tag_name().unwrap_or("");
+        let field = |c: &SExpr<'_>| {
+            c.children()
+                .and_then(|k| k.get(1))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        match tag {
+            "version" | "generator" | "generator_version" | "layer" | "at" | "uuid" | "tstamp"
+            | "path" => continue,
+            "property" if matches!(field(child).as_str(), "Reference" | "Value") => continue,
+            "fp_text" if matches!(field(child).as_str(), "reference" | "value") => continue,
+            "pad" => {
+                let SExpr::List(items) = child else { continue };
+                let number = items
+                    .get(1)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let mut out_items: Vec<SExpr<'_>> = Vec::new();
+                for it in items {
+                    if it.tag_name() == Some("at") {
+                        // pad angle: library-relative -> absolute on the board
+                        let c = it.children().unwrap_or(&[]);
+                        let x = c.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let y = c.get(2).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let a = c.get(3).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let abs = (a + fp_angle).rem_euclid(360.0);
+                        let mut s = format!("(at {} {}", num(x), num(y));
+                        if abs.abs() > 1e-9 {
+                            s.push_str(&format!(" {}", num(abs)));
+                        }
+                        s.push(')');
+                        out_items.push(SExpr::Atom(Box::leak(s.into_boxed_str())));
+                    } else if it.tag_name() == Some("net") || it.tag_name() == Some("uuid") {
+                        continue;
+                    } else {
+                        out_items.push(it.clone());
+                    }
+                }
+                let thermal_via = pad_kind(child).is_some_and(|(n, kind)| {
+                    kind == "thru_hole" && !n.is_empty() && smd_numbers.contains(&n)
+                }) && !out_items
+                    .iter()
+                    .any(|it| it.tag_name() == Some("zone_connect"));
+                if thermal_via {
+                    out_items.push(SExpr::Atom("(zone_connect 2)"));
+                }
+                let mut line = String::new();
+                sx_print(&SExpr::List(out_items), &mut line);
+                if let Some(n) = pad_net.get(number.as_str()) {
+                    // insert the net before the closing paren
+                    line.pop();
+                    line.push_str(&format!(" (net {} {}))", nets.id(n), q(n)));
+                }
+                e.line(2, &line);
+            }
+            // footprint zones (keepouts) live in board coordinates in a .kicad_pcb
+            "zone" => {
+                let (sn, cs) = fp.rotation.to_radians().sin_cos();
+                let place = |x: f64, y: f64| {
+                    (
+                        fp.position.x + x * cs - y * sn,
+                        fp.position.y + x * sn + y * cs,
+                    )
+                };
+                fn walk<'a>(x: &SExpr<'a>, place: &dyn Fn(f64, f64) -> (f64, f64)) -> SExpr<'a> {
+                    match x {
+                        SExpr::List(items) if x.tag_name() == Some("xy") => {
+                            let c = |i: usize| items.get(i).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let (wx, wy) = place(c(1), c(2));
+                            SExpr::Atom(Box::leak(
+                                format!("(xy {} {})", num(wx), num(wy)).into_boxed_str(),
+                            ))
+                        }
+                        SExpr::List(items)
+                            if x.tag_name() == Some("uuid") || x.tag_name() == Some("tstamp") =>
+                        {
+                            let _ = items;
+                            SExpr::Atom("")
+                        }
+                        SExpr::List(items) => {
+                            SExpr::List(items.iter().map(|i| walk(i, place)).collect())
+                        }
+                        other => other.clone(),
+                    }
+                }
+                let mut line = String::new();
+                sx_print(&walk(child, &place), &mut line);
+                e.line(2, &line);
+            }
+            _ => {
+                let mut line = String::new();
+                sx_print(child, &mut line);
+                e.line(2, &line);
+            }
+        }
+    }
+    true
+}
+
 fn write_fp_property(e: &mut Emitter, key: &str, value: &str, layer: &str, hidden: bool) {
+    write_fp_property_at(e, key, value, layer, hidden, (0.0, 0.0));
+}
+
+fn write_fp_property_at(
+    e: &mut Emitter,
+    key: &str,
+    value: &str,
+    layer: &str,
+    hidden: bool,
+    at: (f64, f64),
+) {
     let uuid = e.uuid();
     e.line(2, &format!("(property {} {}", q(key), q(value)));
-    e.line(3, "(at 0 0 0)");
+    e.line(3, &format!("(at {} {} 0)", num(at.0), num(at.1)));
     e.line(3, &format!("(layer {})", q(layer)));
     if hidden {
         e.line(3, "(hide yes)");
@@ -898,14 +1121,31 @@ fn write_zone(e: &mut Emitter, z: &Zone, nets: &NetTable) {
     e.line(2, &format!("(layer {})", q(layer_name(z.layer))));
     e.line(2, &format!("(uuid {})", q(&uuid)));
     e.line(2, "(hatch edge 0.508)");
-    e.line(2, "(connect_pads");
+    if z.priority > 0 {
+        e.line(2, &format!("(priority {})", z.priority));
+    }
+    // pad connection: relief (default), solid (`Direct` - high-current pours), or none
+    match z.thermal_relief {
+        vcad_ir::ecad::ThermalReliefStyle::Direct => e.line(2, "(connect_pads yes"),
+        vcad_ir::ecad::ThermalReliefStyle::None => e.line(2, "(connect_pads no"),
+        vcad_ir::ecad::ThermalReliefStyle::Relief => e.line(2, "(connect_pads"),
+    }
     e.line(3, &format!("(clearance {})", num(z.clearance)));
     e.line(2, ")");
     e.line(2, &format!("(min_thickness {})", num(z.clearance.max(0.0))));
     e.line(2, "(filled_areas_thickness no)");
     e.line(2, "(fill yes");
-    e.line(3, "(thermal_gap 0.508)");
-    e.line(3, "(thermal_bridge_width 0.508)");
+    e.line(
+        3,
+        &format!("(thermal_gap {})", num(z.thermal_gap.unwrap_or(0.508))),
+    );
+    e.line(
+        3,
+        &format!(
+            "(thermal_bridge_width {})",
+            num(z.thermal_spoke_width.unwrap_or(0.508))
+        ),
+    );
     e.line(2, ")");
     e.line(2, "(polygon");
     write_pts(e, 3, &z.outline);
@@ -2428,6 +2668,12 @@ fn write_label(e: &mut Emitter, l: &SchematicLabel) {
 // Project bundle writer
 // ---------------------------------------------------------------------------
 
+/// A `.kicad_pro` for a board exported on its own, carrying its design rules -
+/// without one, KiCad DRC checks the board against KiCad's defaults instead.
+pub fn write_kicad_pro_for_board(name: &str, pcb: &Pcb) -> String {
+    write_kicad_pro(name, "00000000-0000-0000-0000-000000000000", pcb)
+}
+
 /// Serialize a linked KiCad 9 project bundle: `<name>.kicad_pro`,
 /// `<name>.kicad_sch`, and `<name>.kicad_pcb` as `(filename, contents)` pairs.
 ///
@@ -2440,7 +2686,7 @@ fn write_label(e: &mut Emitter, l: &SchematicLabel) {
 pub fn write_kicad_project(sheet: &SchematicSheet, pcb: &Pcb, name: &str) -> Vec<(String, String)> {
     let sch_filename = format!("{}.kicad_sch", name);
     let (sch, links) = write_kicad_sch_impl(sheet, name, &sch_filename);
-    let board = write_kicad_pcb_impl(pcb, Some(&links));
+    let board = write_kicad_pcb_impl(pcb, Some(&links), true);
     let pro = write_kicad_pro(name, &links.root_uuid, pcb);
     vec![
         (format!("{}.kicad_pro", name), pro),
@@ -2467,6 +2713,9 @@ fn write_kicad_pro(name: &str, root_uuid: &str, pcb: &Pcb) -> String {
         "min_through_hole_diameter": min_via_drill(pcb),
         "min_via_annular_width": r.min_annular_ring,
         "min_hole_to_hole": r.hole_to_hole,
+        // copper-to-hole: without it KiCad applies its own 0.25 mm default, which
+        // flags manufacturers' own land patterns (USB-C shell pins sit ~0.19 mm off)
+        "min_hole_clearance": r.default_rules.clearance,
         "min_copper_edge_clearance": r.edge_clearance,
     });
     let by_id: BTreeMap<&str, &str> = pcb
@@ -3087,6 +3336,25 @@ mod tests {
         );
         // and it writes back out as KiCad's 90
         assert!(write_kicad_pcb(&pcb).contains("(at 10 10 90)"));
+    }
+
+    /// KiCad 9 reads legacy `(setup)` rule tokens as a pre-project board and
+    /// ignores the `.kicad_pro` rules when they are present.
+    #[test]
+    fn board_for_a_project_leaves_legacy_rule_tokens_to_the_project() {
+        let pcb = sample_pcb();
+        let with = write_kicad_pcb(&pcb);
+        let without = write_kicad_pcb_for_project(&pcb);
+        assert!(with.contains("(trace_min "));
+        for k in [
+            "trace_min",
+            "via_min_size",
+            "via_min_drill",
+            "hole_to_hole_min",
+        ] {
+            assert!(!without.contains(&format!("({k} ")), "{k} still written");
+        }
+        assert!(write_kicad_pro_for_board("b", &pcb).contains("min_hole_clearance"));
     }
 
     #[test]

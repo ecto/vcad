@@ -845,6 +845,11 @@
 [type EcadPour [EcadPour Str Str]]
 ; Art (not on the schematic): [EcadArt ref footprint-id x y rotation] - logos, labels
 [type EcadArt [EcadArt Str Str f64 f64 f64]]
+; Pour over a rectangle: [EcadPourRect net layer x0 y0 x1 y1 priority]
+[type EcadPourRect [EcadPourRect Str Str f64 f64 f64 f64 f64]]
+; Net class: [EcadClass name trace-width clearance via-dia via-drill]; [EcadInClass net class]
+[type EcadClass [EcadClass Str f64 f64 f64 f64]]
+[type EcadInClass [EcadInClass Str Str]]
 ; Net: [EcadNet id name]
 [type EcadNet [EcadNet Str Str]]
 ; Design rules: [EcadRules trace-width clearance via-dia via-drill edge-clr hole-to-hole]

@@ -112,7 +112,21 @@ pub fn value_to_document_in(
             spec.rules = r;
         }
         spec.pours = std::mem::take(&mut ctx.pours);
+        spec.pour_regions = std::mem::take(&mut ctx.pour_regions);
         spec.art = std::mem::take(&mut ctx.art);
+        spec.rules
+            .class_rules
+            .extend(std::mem::take(&mut ctx.classes));
+        for (net, class) in std::mem::take(&mut ctx.class_nets) {
+            if !spec.rules.class_rules.iter().any(|c| c.name == class) {
+                return Err(format!("EcadInClass: no EcadClass named '{class}'"));
+            }
+            spec.rules
+                .net_class_assignments
+                .entry(class)
+                .or_default()
+                .push(net);
+        }
         let sheet = ctx
             .doc
             .schematic
@@ -585,6 +599,9 @@ fn is_ecad_tag(tag: &str) -> bool {
             | "EcadPlace"
             | "EcadPour"
             | "EcadArt"
+            | "EcadPourRect"
+            | "EcadClass"
+            | "EcadInClass"
             | "EcadWire"
             | "EcadLabel"
             | "EcadTrace"
@@ -702,6 +719,7 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
                 layers,
                 rules: vcad_ecad_symbols::kicad_board::default_rules(),
                 pours: vec![],
+                pour_regions: vec![],
                 art: vec![],
             });
         }
@@ -726,6 +744,51 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
                 rotation: ctx.f64_val(&fields[4])?,
             };
             ctx.art.push((reference, id, placement));
+        }
+        // [EcadPourRect net layer x0 y0 x1 y1 priority] - a pour over a rectangle;
+        // where pours overlap, the higher priority fills first.
+        "EcadPourRect" => {
+            assert_fields(tag, fields, 7)?;
+            let net = ctx.str_val(&fields[0])?;
+            let layer_s = ctx.str_val(&fields[1])?;
+            let layer: ecad::PcbLayer = serde_json::from_str(&format!("\"{layer_s}\""))
+                .map_err(|_| format!("EcadPourRect: unknown layer '{layer_s}'"))?;
+            let f: Vec<f64> = (2..7)
+                .map(|k| ctx.f64_val(&fields[k]))
+                .collect::<Result<_, _>>()?;
+            let outline = vec![
+                Vec2::new(f[0], f[1]),
+                Vec2::new(f[2], f[1]),
+                Vec2::new(f[2], f[3]),
+                Vec2::new(f[0], f[3]),
+            ];
+            ctx.pour_regions.push((net, layer, outline, f[4] as u32));
+        }
+        // [EcadClass name trace-width clearance via-dia via-drill] - a net class;
+        // the router lays its nets at its width.
+        "EcadClass" => {
+            assert_fields(tag, fields, 5)?;
+            let name = ctx.str_val(&fields[0])?;
+            let f: Vec<f64> = (1..5)
+                .map(|k| ctx.f64_val(&fields[k]))
+                .collect::<Result<_, _>>()?;
+            ctx.classes.push(ecad::NetClassRules {
+                name,
+                trace_width: f[0],
+                clearance: f[1],
+                via_diameter: f[2],
+                via_drill: f[3],
+                diff_pair_gap: None,
+                diff_pair_width: None,
+                target_impedance: None,
+                target_diff_impedance: None,
+            });
+        }
+        // [EcadInClass net class]
+        "EcadInClass" => {
+            assert_fields(tag, fields, 2)?;
+            ctx.class_nets
+                .push((ctx.str_val(&fields[0])?, ctx.str_val(&fields[1])?));
         }
         // [EcadPour net layer] - a copper plane over the whole board ("In1.Cu", ...)
         "EcadPour" => {
@@ -972,8 +1035,13 @@ struct ConvertCtx {
     places: Vec<vcad_ecad_symbols::kicad_board::Placement>,
     /// `EcadPour` (net, layer) pairs.
     pours: Vec<(String, ecad::PcbLayer)>,
+    /// `EcadPourRect` regions.
+    pour_regions: Vec<(String, ecad::PcbLayer, Vec<Vec2>, u32)>,
     /// `EcadRules`, if given.
     rules: Option<ecad::DesignRules>,
+    /// `EcadClass` net classes and `EcadInClass` assignments.
+    classes: Vec<ecad::NetClassRules>,
+    class_nets: Vec<(String, String)>,
     /// `EcadArt` footprints (not on the schematic).
     art: Vec<(String, String, vcad_ecad_symbols::kicad_board::Placement)>,
 }
@@ -988,8 +1056,11 @@ impl ConvertCtx {
             board: None,
             places: Vec::new(),
             pours: Vec::new(),
+            pour_regions: Vec::new(),
             rules: None,
             art: Vec::new(),
+            classes: Vec::new(),
+            class_nets: Vec::new(),
         }
     }
 
