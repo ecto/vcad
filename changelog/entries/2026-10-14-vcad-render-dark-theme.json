@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-14-vcad-render-dark-theme",
+  "version": "0.10.0",
+  "date": "2026-10-14",
+  "category": "feat",
+  "title": "vcad-render: --theme dark",
+  "summary": "vcad-render gains a native dark theme: light linework over a dark blue-tinted tonal ramp on a near-black ground, across SVG, JPEG, PNG, raytrace, sheets and overlays.",
+  "features": ["render", "vcad-render", "theme"]
+}

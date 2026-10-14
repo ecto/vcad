@@ -16,6 +16,7 @@
 //!   vcad-render <path.vcad> --animate [keys.json] -o <dir> [--frames N] [--fps F] [--mp4 out.mp4]
 //!                              [--raytrace | --photoreal]   # drafting line art by default
 //!   vcad-render <path.vcad> --sheet [--size <sheet-width-px>] [-o out.svg|out.jpg]
+//!   vcad-render <path.vcad> --theme dark [-o out.svg|out.jpg|out.png]   # light lines on #0b0907
 //!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg|png]
 //!
 //! With a single input and no output flag, a self-contained `<svg>` goes to
@@ -69,7 +70,7 @@ use std::str::FromStr;
 
 use clap::{Parser, ValueEnum};
 use vcad_render::{
-    render_svg_str_opts, RenderAnnotations, RenderStyle, SectionPlane, SvgOptions, View,
+    render_svg_str_opts, RenderAnnotations, RenderStyle, SectionPlane, SvgOptions, Theme, View,
     DEFAULT_SCALE,
 };
 
@@ -270,6 +271,15 @@ struct Cli {
     /// colour keep the navy). SVG, JPEG and PNG.
     #[arg(long, default_value = "drafting", value_parser = RenderStyle::from_str)]
     style: RenderStyle,
+
+    /// Colour theme: `light` (default; ink on warm vellum) or `dark` (light
+    /// linework over a dark tonal ramp on a near-black #0b0907 ground; on
+    /// transparent PNG/SVG the light linework sits over alpha). SVG, JPEG,
+    /// PNG, `--raytrace`, `--sheet` and `--animate`. Refused with
+    /// `--photoreal` (it has its own studio lighting); the PCB board view
+    /// is already dark and ignores it.
+    #[arg(long, default_value = "light", value_parser = Theme::from_str)]
+    theme: Theme,
 
     /// Output path; format inferred from extension (.svg/.jpg/.jpeg/.png).
     /// Use `-o -` for SVG on stdout. Single input only.
@@ -605,6 +615,7 @@ fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
         annotations: cli.annotations(),
         aa: cli.aa,
         style: cli.style,
+        theme: cli.theme,
     }
 }
 
@@ -894,6 +905,7 @@ fn render_sheet_jpeg(raw: &str, input: &Path, cli: &Cli) -> Result<Vec<u8>, Stri
             width_px: cli.sheet_width_px(),
             quality: cli.quality,
             title: sheet_title(input),
+            theme: cli.theme,
         },
     )
 }
@@ -925,6 +937,7 @@ fn render_sheet_one(
                 &vcad_render::sheet::SheetOptions {
                     width_px: cli.sheet_width_px() as f64,
                     title: sheet_title(input),
+                    theme: cli.theme,
                 },
             )?;
             match dest {
@@ -1137,6 +1150,7 @@ fn render_one_uncached(
                     focus: cli.focus.clone(),
                     annotations: cli.annotations(),
                     style: cli.style,
+                    theme: cli.theme,
                     ..Default::default()
                 },
             )?;
@@ -1242,6 +1256,7 @@ fn run_assembly(spec: &Path, cli: &Cli) -> Result<(), String> {
             focus: cli.focus.clone(),
             annotations: cli.annotations(),
             style: cli.style,
+            theme: cli.theme,
             ..Default::default()
         },
     )?;
@@ -1256,6 +1271,13 @@ fn run_assembly(spec: &Path, cli: &Cli) -> Result<(), String> {
 }
 
 fn run(cli: &Cli) -> Result<(), String> {
+    if cli.photoreal && cli.theme != Theme::Light {
+        return Err(
+            "--theme dark does not apply to --photoreal (studio-lit, its own backdrop); \
+             use --raytrace or the default raster path for a dark drafting render"
+                .to_string(),
+        );
+    }
     if let Some(spec) = &cli.assembly {
         return run_assembly(spec, cli);
     }

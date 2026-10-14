@@ -13,7 +13,7 @@
 //! dimensionally consistent: a feature that measures 10mm reads the same
 //! length in every view.
 
-use crate::{evaluate_vcad, render_svg_str_opts, SvgOptions, View, INK, PADDING_PX, PAPER};
+use crate::{evaluate_vcad, render_svg_str_opts, SvgOptions, Theme, View, PADDING_PX};
 
 /// Landscape drawing-sheet aspect ratio (A-series: height = width / √2).
 const SHEET_ASPECT: f64 = 0.707;
@@ -36,6 +36,8 @@ pub struct SheetOptions {
     pub width_px: f64,
     /// Title shown in the title block (typically the document/file name).
     pub title: String,
+    /// Colour theme for the sheet and every view.
+    pub theme: Theme,
 }
 
 impl Default for SheetOptions {
@@ -43,6 +45,7 @@ impl Default for SheetOptions {
         SheetOptions {
             width_px: 1600.0,
             title: "UNTITLED".to_string(),
+            theme: Theme::Light,
         }
     }
 }
@@ -220,6 +223,7 @@ fn push_sheet_text(
     baseline: f64,
     height: f64,
     centered: bool,
+    ink: &str,
 ) {
     let strokes = vcad_ir::stroke_font::text_strokes(text, height);
     if strokes.is_empty() {
@@ -232,7 +236,7 @@ fn push_sheet_text(
     };
     let sw = (height * 0.09).clamp(0.6, 2.0);
     out.push_str(&format!(
-        r#"<g stroke="{INK}" stroke-width="{sw:.2}" stroke-linecap="round" stroke-linejoin="round" fill="none">"#
+        r#"<g stroke="{ink}" stroke-width="{sw:.2}" stroke-linecap="round" stroke-linejoin="round" fill="none">"#
     ));
     for stroke in &strokes {
         let mut d = String::new();
@@ -255,7 +259,7 @@ fn xml_escape(s: &str) -> String {
 
 /// Append the title block: a bordered box with the document name, overall
 /// bounding-box dimensions, the shared scale, and a date placeholder.
-fn push_title_block(body: &mut String, lay: &SheetLayout, title: &str) {
+fn push_title_block(body: &mut String, lay: &SheetLayout, title: &str, ink: &str) {
     let (tx, ty, tw, th) = lay.tb;
     let lines = title_block_lines(title, lay);
     body.push_str(&format!(
@@ -264,14 +268,14 @@ fn push_title_block(body: &mut String, lay: &SheetLayout, title: &str) {
         xml_escape(&lines[1]),
     ));
     body.push_str(&format!(
-        r#"<rect x="{tx:.2}" y="{ty:.2}" width="{tw:.2}" height="{th:.2}" fill="none" stroke="{INK}" stroke-width="1.2"/>"#
+        r#"<rect x="{tx:.2}" y="{ty:.2}" width="{tw:.2}" height="{th:.2}" fill="none" stroke="{ink}" stroke-width="1.2"/>"#
     ));
     let pad = tw * 0.05;
     let title_h = (th * 0.22).clamp(8.0, 30.0);
     let line_h = (th * 0.14).clamp(6.0, 20.0);
     let rule_y = ty + th * 0.34;
     body.push_str(&format!(
-        r#"<line x1="{tx:.2}" y1="{rule_y:.2}" x2="{:.2}" y2="{rule_y:.2}" stroke="{INK}" stroke-width="0.6"/>"#,
+        r#"<line x1="{tx:.2}" y1="{rule_y:.2}" x2="{:.2}" y2="{rule_y:.2}" stroke="{ink}" stroke-width="0.6"/>"#,
         tx + tw,
     ));
     let fit_w = tw - 2.0 * pad;
@@ -282,6 +286,7 @@ fn push_title_block(body: &mut String, lay: &SheetLayout, title: &str) {
         ty + th * 0.26,
         fit_text_height(&lines[0], title_h, fit_w),
         false,
+        ink,
     );
     for (i, line) in lines[1..].iter().enumerate() {
         let baseline = rule_y + th * 0.2 * (i as f64 + 1.0);
@@ -292,6 +297,7 @@ fn push_title_block(body: &mut String, lay: &SheetLayout, title: &str) {
             baseline,
             fit_text_height(line, line_h, fit_w),
             false,
+            ink,
         );
     }
     body.push_str("</g>");
@@ -308,6 +314,8 @@ fn push_title_block(body: &mut String, lay: &SheetLayout, title: &str) {
 pub fn render_sheet_svg_str(raw_vcad: &str, opts: &SheetOptions) -> Result<String, String> {
     let (lo, hi) = document_bbox(raw_vcad)?;
     let lay = sheet_layout(opts.width_px, lo, hi)?;
+    let pal = opts.theme.palette();
+    let (ink, paper) = (pal.ink, pal.paper);
 
     let mut body = String::new();
     for (idx, (view, caption, col, row)) in SHEET_VIEWS.iter().enumerate() {
@@ -319,6 +327,7 @@ pub fn render_sheet_svg_str(raw_vcad: &str, opts: &SheetOptions) -> Result<Strin
             &SvgOptions {
                 view: *view,
                 transparent: true,
+                theme: opts.theme,
                 ..Default::default()
             },
         )?;
@@ -341,9 +350,10 @@ pub fn render_sheet_svg_str(raw_vcad: &str, opts: &SheetOptions) -> Result<Strin
             cy + lay.cell + lay.caption_h,
             lay.caption_h * 0.66,
             true,
+            ink,
         );
     }
-    push_title_block(&mut body, &lay, &opts.title);
+    push_title_block(&mut body, &lay, &opts.title, ink);
 
     // Assemble: paper ground, thin border frame, views, title block.
     let (w, h) = (lay.w, lay.h);
@@ -354,10 +364,10 @@ pub fn render_sheet_svg_str(raw_vcad: &str, opts: &SheetOptions) -> Result<Strin
         xml_escape(&opts.title),
     ));
     out.push_str(&format!(
-        r#"<rect x="0" y="0" width="{w:.2}" height="{h:.2}" fill="{PAPER}"/>"#
+        r#"<rect x="0" y="0" width="{w:.2}" height="{h:.2}" fill="{paper}"/>"#
     ));
     out.push_str(&format!(
-        r#"<rect x="{frame:.2}" y="{frame:.2}" width="{:.2}" height="{:.2}" fill="none" stroke="{INK}" stroke-width="1.2"/>"#,
+        r#"<rect x="{frame:.2}" y="{frame:.2}" width="{:.2}" height="{:.2}" fill="none" stroke="{ink}" stroke-width="1.2"/>"#,
         w - 2.0 * frame,
         h - 2.0 * frame,
     ));
@@ -372,7 +382,7 @@ pub use raster_sheet::{render_sheet_jpeg_str, SheetRasterOptions};
 #[cfg(feature = "raster")]
 mod raster_sheet {
     use super::*;
-    use crate::{render_png_str, RasterOptions, FILL_DARK, PAPER_RGB};
+    use crate::{render_png_str, RasterOptions};
 
     /// Options for [`render_sheet_jpeg_str`].
     #[derive(Debug, Clone)]
@@ -383,6 +393,8 @@ mod raster_sheet {
         pub quality: u8,
         /// Title shown in the title block.
         pub title: String,
+        /// Colour theme for the sheet and every view.
+        pub theme: Theme,
     }
 
     impl Default for SheetRasterOptions {
@@ -391,12 +403,13 @@ mod raster_sheet {
                 width_px: 1600,
                 quality: 92,
                 title: "UNTITLED".to_string(),
+                theme: Theme::Light,
             }
         }
     }
 
     /// Paint a plain 2D line — sheet frame, captions, title-block linework.
-    fn draw_line(rgb: &mut [u8], cw: usize, ch: usize, a: (f64, f64), b: (f64, f64)) {
+    fn draw_line(rgb: &mut [u8], cw: usize, ch: usize, a: (f64, f64), b: (f64, f64), ink: [u8; 3]) {
         let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
         let steps = (len * 2.0).ceil().max(1.0) as usize;
         for s in 0..=steps {
@@ -409,13 +422,14 @@ mod raster_sheet {
                     continue;
                 }
                 let qi = (qy as usize * cw + qx as usize) * 3;
-                rgb[qi..qi + 3].copy_from_slice(&FILL_DARK);
+                rgb[qi..qi + 3].copy_from_slice(&ink);
             }
         }
     }
 
     /// Draw single-stroke text into the canvas. `at` is `(x, baseline)`;
     /// `x` is the left edge, or the centre when `centered`.
+    #[allow(clippy::too_many_arguments)]
     fn draw_text(
         rgb: &mut [u8],
         cw: usize,
@@ -424,6 +438,7 @@ mod raster_sheet {
         at: (f64, f64),
         height: f64,
         centered: bool,
+        ink: [u8; 3],
     ) {
         let (x, baseline) = at;
         let x0 = if centered {
@@ -439,6 +454,7 @@ mod raster_sheet {
                     ch,
                     (x0 + pair[0].0, baseline - pair[0].1),
                     (x0 + pair[1].0, baseline - pair[1].1),
+                    ink,
                 );
             }
         }
@@ -464,7 +480,15 @@ mod raster_sheet {
 
         let w = lay.w.round() as usize;
         let h = lay.h.round() as usize;
-        let mut rgb: Vec<u8> = PAPER_RGB.iter().copied().cycle().take(w * h * 3).collect();
+        let pal = opts.theme.palette();
+        let ink = pal.edge_rgb;
+        let mut rgb: Vec<u8> = pal
+            .paper_rgb
+            .iter()
+            .copied()
+            .cycle()
+            .take(w * h * 3)
+            .collect();
 
         let cell = lay.cell.round() as u32;
         for (view, caption, col, row) in SHEET_VIEWS {
@@ -484,6 +508,7 @@ mod raster_sheet {
                     size_px: cell,
                     fill_frac,
                     quality: opts.quality,
+                    theme: opts.theme,
                     ..Default::default()
                 },
             )?;
@@ -519,6 +544,7 @@ mod raster_sheet {
                 ),
                 lay.caption_h * 0.66,
                 true,
+                ink,
             );
         }
 
@@ -530,7 +556,7 @@ mod raster_sheet {
             ((lay.w - f, lay.h - f), (f, lay.h - f)),
             ((f, lay.h - f), (f, f)),
         ] {
-            draw_line(&mut rgb, w, h, a, b);
+            draw_line(&mut rgb, w, h, a, b, ink);
         }
 
         // Title block.
@@ -542,7 +568,7 @@ mod raster_sheet {
             ((tx, ty + th), (tx, ty)),
             ((tx, ty + th * 0.34), (tx + tw, ty + th * 0.34)),
         ] {
-            draw_line(&mut rgb, w, h, a, b);
+            draw_line(&mut rgb, w, h, a, b, ink);
         }
         let lines = title_block_lines(&opts.title, &lay);
         let pad = tw * 0.05;
@@ -557,6 +583,7 @@ mod raster_sheet {
             (tx + pad, ty + th * 0.26),
             fit_text_height(&lines[0], title_h, fit_w),
             false,
+            ink,
         );
         for (i, line) in lines[1..].iter().enumerate() {
             let baseline = ty + th * 0.34 + th * 0.2 * (i as f64 + 1.0);
@@ -568,6 +595,7 @@ mod raster_sheet {
                 (tx + pad, baseline),
                 fit_text_height(line, line_h, fit_w),
                 false,
+                ink,
             );
         }
 
@@ -613,6 +641,7 @@ mod tests {
             &SheetOptions {
                 width_px: 900.0,
                 title: "widget".to_string(),
+                theme: Theme::Light,
             },
         )
         .expect("sheet should render");
@@ -674,6 +703,7 @@ mod tests {
             &SheetOptions {
                 width_px: 900.0,
                 title: "t".to_string(),
+                theme: Theme::Light,
             },
         )
         .unwrap();
@@ -705,6 +735,7 @@ mod tests {
                 width_px: 640,
                 quality: 85,
                 title: "widget".to_string(),
+                theme: Theme::Light,
             },
         )
         .expect("sheet jpeg should render");
