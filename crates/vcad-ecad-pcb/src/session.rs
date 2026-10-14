@@ -244,6 +244,40 @@ pub struct RouteSession {
     dirty: DirtyGrid,
     /// Monotonic change counter, bumped on every commit/remove.
     change_epoch: u64,
+    /// Outlines of keepouts that forbid vias (`Keepout::no_vias`), e.g. the
+    /// pogo-pin field of a Tag-Connect footprint. The via oracle refuses any
+    /// site inside one, matching DRC's `check_keepout`.
+    no_via_zones: Vec<Vec<Vec2>>,
+    /// Via annulus radius, for testing a via against no-via keepouts.
+    via_keepout_r: f64,
+}
+
+fn pcb_no_via_zones(pcb: &Pcb) -> Vec<Vec<Vec2>> {
+    pcb.keepouts
+        .iter()
+        .filter(|k| k.no_vias && k.outline.len() >= 3)
+        .map(|k| k.outline.clone())
+        .collect()
+}
+
+/// Whether a via disc of radius `r` at `c` touches keepout polygon `z`:
+/// its centre inside, or any edge within `r`.
+fn disc_touches_polygon(c: Vec2, r: f64, z: &[Vec2]) -> bool {
+    if crate::spatial::point_in_polygon(c, z) {
+        return true;
+    }
+    (0..z.len()).any(|i| {
+        let (a, b) = (z[i], z[(i + 1) % z.len()]);
+        let (dx, dy) = (b.x - a.x, b.y - a.y);
+        let l2 = dx * dx + dy * dy;
+        let t = if l2 > 0.0 {
+            (((c.x - a.x) * dx + (c.y - a.y) * dy) / l2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let (px, py) = (a.x + t * dx - c.x, a.y + t * dy - c.y);
+        px * px + py * py < r * r
+    })
 }
 
 impl RouteSession {
@@ -411,6 +445,8 @@ impl RouteSession {
             bounds,
             dirty,
             change_epoch: 0,
+            no_via_zones: pcb_no_via_zones(pcb),
+            via_keepout_r: pcb.rules.default_rules.via_diameter / 2.0,
         }
     }
 
@@ -425,6 +461,11 @@ impl RouteSession {
     /// since the session was built.
     pub fn region_epoch(&self, lo: [f64; 2], hi: [f64; 2]) -> u64 {
         self.dirty.max_epoch(lo, hi)
+    }
+
+    /// Bounding box `[min_x, min_y, max_x, max_y]` of a span (debugging aid).
+    pub fn span_bounds(&self, id: SpanId) -> Option<[f64; 4]> {
+        self.bounds.get(id).copied()
     }
 
     /// The required clearance for `net` from the design rules.
@@ -664,6 +705,17 @@ impl RouteSession {
     /// [`RouteSession::probe_drill`] for a via on `net`, sized from its net
     /// class — the shape every via-placement site in the router uses.
     pub fn probe_via_drill(&self, center: Vec2, net: &str) -> DrillProbe {
+        if self
+            .no_via_zones
+            .iter()
+            .any(|z| disc_touches_polygon(center, self.via_keepout_r, z))
+        {
+            return DrillProbe {
+                legal: false,
+                min_spacing: 0.0,
+                nearest: Some(center),
+            };
+        }
         self.probe_drill(center, self.via_drill_for(net))
     }
 
@@ -1068,6 +1120,27 @@ mod tests {
             "after rip-up the region must be routable"
         );
         assert!(!session.remove(id), "double-remove returns false");
+    }
+
+    #[test]
+    fn via_probe_refuses_a_no_vias_keepout() {
+        let mut pcb = empty_pcb();
+        pcb.keepouts.push(Keepout {
+            outline: vec![
+                Vec2::new(45.0, 45.0),
+                Vec2::new(55.0, 45.0),
+                Vec2::new(55.0, 55.0),
+                Vec2::new(45.0, 55.0),
+            ],
+            layers: vec![PcbLayer::FCu],
+            no_tracks: false,
+            no_vias: true,
+            no_pour: false,
+            no_components: false,
+        });
+        let session = RouteSession::from_pcb(&pcb);
+        assert!(!session.probe_via_drill(Vec2::new(50.0, 50.0), "SIG").legal);
+        assert!(session.probe_via_drill(Vec2::new(20.0, 20.0), "SIG").legal);
     }
 
     #[test]

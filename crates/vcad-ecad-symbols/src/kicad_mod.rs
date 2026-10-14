@@ -118,7 +118,24 @@ pub enum GraphicDef {
         position: (f64, f64),
         /// Layer name.
         layer: String,
+        /// Rotation in degrees.
+        #[serde(default)]
+        rotation: f64,
+        /// Font height in mm (KiCad's default 1.0 when absent).
+        #[serde(default = "default_text_size")]
+        size: f64,
+        /// Stroke thickness in mm.
+        #[serde(default = "default_text_thickness")]
+        thickness: f64,
     },
+}
+
+fn default_text_size() -> f64 {
+    1.0
+}
+
+fn default_text_thickness() -> f64 {
+    0.15
 }
 
 // ---------------------------------------------------------------------------
@@ -275,7 +292,37 @@ fn parse_pad(node: &SExpr<'_>) -> Option<PadDef> {
     // (roundrect_rratio R)
     let roundrect_rratio = node.find("roundrect_rratio").and_then(|n| child_f64(n, 1));
 
-    let shape = parse_pad_shape(shape_str, size, roundrect_rratio);
+    let mut shape = parse_pad_shape(shape_str, size, roundrect_rratio);
+    // A custom pad's copper is its primitives, not its (small) anchor: a TOLL
+    // drain tab drawn as a gr_poly read back as a 1 mm square, and the router
+    // ran gate traces across the real tab.
+    if shape_str == "custom" {
+        if let Some(prims) = node.find("primitives") {
+            // The copper is the anchor plus every primitive; the router wants
+            // one polygon, so take their convex hull (conservative: it never
+            // under-states the copper).
+            let (hw, hh) = (size.0 / 2.0, size.1 / 2.0);
+            let mut pts: Vec<vcad_ir::Vec2> = vec![
+                vcad_ir::Vec2::new(-hw, -hh),
+                vcad_ir::Vec2::new(hw, -hh),
+                vcad_ir::Vec2::new(hw, hh),
+                vcad_ir::Vec2::new(-hw, hh),
+            ];
+            let n0 = pts.len();
+            for poly in prims.find_all("gr_poly") {
+                if let Some(p) = poly.find("pts") {
+                    pts.extend(p.find_all("xy").into_iter().filter_map(|xy| {
+                        Some(vcad_ir::Vec2::new(child_f64(xy, 1)?, child_f64(xy, 2)?))
+                    }));
+                }
+            }
+            if pts.len() > n0 {
+                shape = vcad_ir::ecad::PadShape::Custom {
+                    vertices: convex_hull(pts),
+                };
+            }
+        }
+    }
 
     // (layers ...)
     let layers_node = node.find("layers");
@@ -393,13 +440,25 @@ fn parse_graphic(node: &SExpr<'_>) -> Option<GraphicDef> {
             let text_type = child_str(node, 1)?.to_string();
             let content = child_str(node, 2).unwrap_or("").to_string();
             let at_node = node.find("at")?;
-            let (position, _) = parse_at(at_node)?;
+            let (position, rotation) = parse_at(at_node)?;
             let layer = extract_layer(node);
+            let font = node.find("effects").and_then(|e| e.find("font"));
+            let size = font
+                .and_then(|f| f.find("size"))
+                .and_then(|s| child_f64(s, 1))
+                .unwrap_or(1.0);
+            let thickness = font
+                .and_then(|f| f.find("thickness"))
+                .and_then(|t| child_f64(t, 1))
+                .unwrap_or(0.15);
             Some(GraphicDef::Text {
                 text_type,
                 content,
                 position,
                 layer,
+                rotation,
+                size,
+                thickness,
             })
         }
         _ => None,
@@ -704,4 +763,33 @@ mod tests {
         let restored: FootprintLib = serde_json::from_str(&json).unwrap();
         assert_eq!(lib, restored);
     }
+}
+
+/// Convex hull (Andrew's monotone chain), counter-clockwise.
+fn convex_hull(mut p: Vec<vcad_ir::Vec2>) -> Vec<vcad_ir::Vec2> {
+    p.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    p.dedup_by(|a, b| (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9);
+    if p.len() < 3 {
+        return p;
+    }
+    let cross = |o: vcad_ir::Vec2, a: vcad_ir::Vec2, b: vcad_ir::Vec2| {
+        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    };
+    let mut h: Vec<vcad_ir::Vec2> = Vec::new();
+    for pass in 0..2 {
+        let start = h.len();
+        let it: Box<dyn Iterator<Item = &vcad_ir::Vec2>> = if pass == 0 {
+            Box::new(p.iter())
+        } else {
+            Box::new(p.iter().rev())
+        };
+        for &q in it {
+            while h.len() >= start + 2 && cross(h[h.len() - 2], h[h.len() - 1], q) <= 0.0 {
+                h.pop();
+            }
+            h.push(q);
+        }
+        h.pop();
+    }
+    h
 }

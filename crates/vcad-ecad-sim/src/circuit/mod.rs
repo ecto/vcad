@@ -34,6 +34,7 @@ pub use devices::{BjtModel, Device, DiodeModel, MosfetModel, MotorParams, Polari
 
 pub mod ac;
 pub mod adjoint;
+pub mod chips;
 pub mod dc;
 pub mod netlist;
 pub mod receipt;

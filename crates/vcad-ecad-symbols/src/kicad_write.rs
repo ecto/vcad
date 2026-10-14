@@ -246,10 +246,21 @@ struct SchematicLinks {
 
 /// Serialize a [`Pcb`] to a KiCad 9 `.kicad_pcb` board file.
 pub fn write_kicad_pcb(pcb: &Pcb) -> String {
-    write_kicad_pcb_impl(pcb, None)
+    write_kicad_pcb_impl(pcb, None, false)
 }
 
-fn write_kicad_pcb_impl(pcb: &Pcb, links: Option<&SchematicLinks>) -> String {
+/// The board half of a board + `.kicad_pro` pair (see [`write_kicad_pro_for_board`]).
+///
+/// KiCad 9 treats the legacy rule tokens in a board's `(setup …)` (`trace_min`,
+/// `via_min_size`, `hole_to_hole_min`, …) as a pre-project board and uses them
+/// *instead of* the project's design rules, so a board written next to its
+/// project leaves them out - otherwise every project rule, hole clearance
+/// included, is silently replaced by KiCad's defaults.
+pub fn write_kicad_pcb_for_project(pcb: &Pcb) -> String {
+    write_kicad_pcb_impl(pcb, None, true)
+}
+
+fn write_kicad_pcb_impl(pcb: &Pcb, links: Option<&SchematicLinks>, with_project: bool) -> String {
     let mut e = Emitter::new();
     let nets = NetTable::build(pcb);
 
@@ -266,7 +277,7 @@ fn write_kicad_pcb_impl(pcb: &Pcb, links: Option<&SchematicLinks>) -> String {
     e.line(1, "(paper \"A4\")");
 
     write_layers(&mut e, pcb);
-    write_setup(&mut e, pcb);
+    write_setup(&mut e, pcb, with_project);
 
     // Nets
     for (idx, name) in &nets.ordered {
@@ -374,11 +385,16 @@ fn write_layers(e: &mut Emitter, pcb: &Pcb) {
 /// to load the board at all). Clearance and per-net widths travel in the
 /// `(net_class …)` blocks instead; edge clearance, which has no board token,
 /// travels in the project file (see `write_kicad_pro`).
-fn write_setup(e: &mut Emitter, pcb: &Pcb) {
+fn write_setup(e: &mut Emitter, pcb: &Pcb, with_project: bool) {
     let r = &pcb.rules;
     let d = &r.default_rules;
     e.line(1, "(setup");
     e.line(2, "(pad_to_mask_clearance 0)");
+    if with_project {
+        e.line(2, "(allow_soldermask_bridges_in_footprints no)");
+        e.line(1, ")");
+        return;
+    }
     e.line(2, &format!("(trace_min {})", num(d.trace_width)));
     e.line(2, &format!("(via_size {})", num(d.via_diameter)));
     e.line(2, &format!("(via_drill {})", num(d.via_drill)));
@@ -526,8 +542,26 @@ fn write_footprint(
     };
     e.line(2, &at);
 
-    write_fp_property(e, "Reference", &fp.reference, "F.SilkS");
-    write_fp_property(e, "Value", &fp.value, "F.Fab");
+    // Art (logos, labels: `properties["art"]`) is its own silkscreen; its designator would only clutter it.
+    let art = fp.properties.contains_key("art");
+    // Designator placement, when the board builder chose one (`ref_layer`,
+    // `ref_at` "x y" in footprint coordinates): small parts carry it on the fab
+    // layer, larger ones just outside their courtyard instead of on their pads.
+    let ref_layer = fp
+        .properties
+        .get("ref_layer")
+        .map(String::as_str)
+        .unwrap_or("F.SilkS");
+    let ref_at = fp
+        .properties
+        .get("ref_at")
+        .and_then(|s| {
+            let mut it = s.split_whitespace().filter_map(|v| v.parse::<f64>().ok());
+            Some((it.next()?, it.next()?))
+        })
+        .unwrap_or((0.0, 0.0));
+    write_fp_property_at(e, "Reference", &fp.reference, ref_layer, art, ref_at);
+    write_fp_property(e, "Value", &fp.value, "F.Fab", art);
 
     // Cross-probe linkage: point the footprint at its schematic symbol
     // instance (KiCad 9 root-sheet paths are "/<symbol-uuid>").
@@ -539,11 +573,31 @@ fn write_footprint(
         }
     }
 
+    // A footprint built from a KiCad library carries that library's source
+    // (`properties["kicad_mod"]`): write it faithfully - graphics, attributes,
+    // 3D model and pad shapes exactly as the library has them - so KiCad sees
+    // the library footprint, not a simplified look-alike
+    // (`lib_footprint_mismatch`). Only placement changes: pad angles become
+    // absolute and pads get their nets.
+    if let Some(src) = fp.properties.get("kicad_mod") {
+        if write_library_body(e, fp, src, nets) {
+            e.line(1, ")");
+            return;
+        }
+    }
     for g in &fp.graphics {
         write_fp_graphic(e, g);
     }
     for pad in &fp.pads {
         write_pad(e, pad, fp, nets);
+    }
+    // The 3D body, so KiCad's 3D view and STEP export show the part, not a bare land pattern.
+    if let Some(m) = &fp.model_3d {
+        e.line(2, &format!("(model {}", q(m)));
+        e.line(3, "(offset (xyz 0 0 0))");
+        e.line(3, "(scale (xyz 1 1 1))");
+        e.line(3, "(rotate (xyz 0 0 0))");
+        e.line(2, ")");
     }
 
     e.line(1, ")");
@@ -561,11 +615,185 @@ pub(crate) fn kicad_angle(vcad_deg: f64) -> f64 {
     }
 }
 
-fn write_fp_property(e: &mut Emitter, key: &str, value: &str, layer: &str) {
+/// Print an s-expression back as KiCad text.
+fn sx_print(x: &crate::sexpr::SExpr<'_>, out: &mut String) {
+    use crate::sexpr::SExpr;
+    match x {
+        SExpr::Atom(a) => out.push_str(a),
+        SExpr::Str(t) => out.push_str(&q(t)),
+        SExpr::List(items) => {
+            out.push('(');
+            for (i, it) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(' ');
+                }
+                sx_print(it, out);
+            }
+            out.push(')');
+        }
+    }
+}
+
+/// The body of a library footprint (`.kicad_mod` source), placed: everything
+/// but the header, the Reference/Value fields (written by the caller) and
+/// placement tokens, with each pad's angle made absolute and its net added.
+/// Returns false if the source does not parse (the caller falls back to the IR).
+fn write_library_body(e: &mut Emitter, fp: &Footprint, src: &str, nets: &NetTable) -> bool {
+    use crate::sexpr::{parse_sexpr, SExpr};
+    let Ok((_, root)) = parse_sexpr(src) else {
+        return false;
+    };
+    let Some(children) = root.children() else {
+        return false;
+    };
+    if root.tag_name() != Some("footprint") {
+        return false;
+    }
+    let fp_angle = kicad_angle(fp.rotation);
+    let pad_net: BTreeMap<&str, &str> = fp
+        .pads
+        .iter()
+        .filter_map(|p| p.net.as_deref().map(|n| (p.number.as_str(), n)))
+        .collect();
+    // Thermal vias: a plated hole sharing its number with an SMD pad (an
+    // exposed pad's via array). Their job is heat, so they tie into planes
+    // solid, not through thermal spokes.
+    let pad_kind = |c: &SExpr<'_>| -> Option<(String, String)> {
+        let k = c.children()?;
+        Some((
+            k.get(1)?.as_str()?.to_string(),
+            k.get(2)?.as_str()?.to_string(),
+        ))
+    };
+    let smd_numbers: std::collections::BTreeSet<String> = children
+        .iter()
+        .filter(|c| c.tag_name() == Some("pad"))
+        .filter_map(&pad_kind)
+        .filter(|(_, kind)| kind == "smd")
+        .map(|(n, _)| n)
+        .collect();
+    for child in children.iter().skip(2) {
+        let tag = child.tag_name().unwrap_or("");
+        let field = |c: &SExpr<'_>| {
+            c.children()
+                .and_then(|k| k.get(1))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string()
+        };
+        match tag {
+            "version" | "generator" | "generator_version" | "layer" | "at" | "uuid" | "tstamp"
+            | "path" => continue,
+            "property" if matches!(field(child).as_str(), "Reference" | "Value") => continue,
+            "fp_text" if matches!(field(child).as_str(), "reference" | "value") => continue,
+            "pad" => {
+                let SExpr::List(items) = child else { continue };
+                let number = items
+                    .get(1)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let mut out_items: Vec<SExpr<'_>> = Vec::new();
+                for it in items {
+                    if it.tag_name() == Some("at") {
+                        // pad angle: library-relative -> absolute on the board
+                        let c = it.children().unwrap_or(&[]);
+                        let x = c.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let y = c.get(2).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let a = c.get(3).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let abs = (a + fp_angle).rem_euclid(360.0);
+                        let mut s = format!("(at {} {}", num(x), num(y));
+                        if abs.abs() > 1e-9 {
+                            s.push_str(&format!(" {}", num(abs)));
+                        }
+                        s.push(')');
+                        out_items.push(SExpr::Atom(Box::leak(s.into_boxed_str())));
+                    } else if it.tag_name() == Some("net") || it.tag_name() == Some("uuid") {
+                        continue;
+                    } else {
+                        out_items.push(it.clone());
+                    }
+                }
+                let thermal_via = pad_kind(child).is_some_and(|(n, kind)| {
+                    kind == "thru_hole" && !n.is_empty() && smd_numbers.contains(&n)
+                }) && !out_items
+                    .iter()
+                    .any(|it| it.tag_name() == Some("zone_connect"));
+                if thermal_via {
+                    out_items.push(SExpr::Atom("(zone_connect 2)"));
+                }
+                let mut line = String::new();
+                sx_print(&SExpr::List(out_items), &mut line);
+                if let Some(n) = pad_net.get(number.as_str()) {
+                    // insert the net before the closing paren
+                    line.pop();
+                    line.push_str(&format!(" (net {} {}))", nets.id(n), q(n)));
+                }
+                e.line(2, &line);
+            }
+            // footprint zones (keepouts) live in board coordinates in a .kicad_pcb
+            "zone" => {
+                let (sn, cs) = fp.rotation.to_radians().sin_cos();
+                let place = |x: f64, y: f64| {
+                    (
+                        fp.position.x + x * cs - y * sn,
+                        fp.position.y + x * sn + y * cs,
+                    )
+                };
+                fn walk<'a>(x: &SExpr<'a>, place: &dyn Fn(f64, f64) -> (f64, f64)) -> SExpr<'a> {
+                    match x {
+                        SExpr::List(items) if x.tag_name() == Some("xy") => {
+                            let c = |i: usize| items.get(i).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let (wx, wy) = place(c(1), c(2));
+                            SExpr::Atom(Box::leak(
+                                format!("(xy {} {})", num(wx), num(wy)).into_boxed_str(),
+                            ))
+                        }
+                        SExpr::List(items)
+                            if x.tag_name() == Some("uuid") || x.tag_name() == Some("tstamp") =>
+                        {
+                            let _ = items;
+                            SExpr::Atom("")
+                        }
+                        SExpr::List(items) => {
+                            SExpr::List(items.iter().map(|i| walk(i, place)).collect())
+                        }
+                        other => other.clone(),
+                    }
+                }
+                let mut line = String::new();
+                sx_print(&walk(child, &place), &mut line);
+                e.line(2, &line);
+            }
+            _ => {
+                let mut line = String::new();
+                sx_print(child, &mut line);
+                e.line(2, &line);
+            }
+        }
+    }
+    true
+}
+
+fn write_fp_property(e: &mut Emitter, key: &str, value: &str, layer: &str, hidden: bool) {
+    write_fp_property_at(e, key, value, layer, hidden, (0.0, 0.0));
+}
+
+fn write_fp_property_at(
+    e: &mut Emitter,
+    key: &str,
+    value: &str,
+    layer: &str,
+    hidden: bool,
+    at: (f64, f64),
+) {
     let uuid = e.uuid();
     e.line(2, &format!("(property {} {}", q(key), q(value)));
-    e.line(3, "(at 0 0 0)");
+    e.line(3, &format!("(at {} {} 0)", num(at.0), num(at.1)));
     e.line(3, &format!("(layer {})", q(layer)));
+    if hidden {
+        e.line(3, "(hide yes)");
+    }
     e.line(3, &format!("(uuid {})", q(&uuid)));
     e.line(3, "(effects");
     e.line(4, "(font");
@@ -687,6 +915,10 @@ fn write_fp_graphic(e: &mut Emitter, g: &FootprintGraphic) {
             e.line(5, &format!("(size {} {})", num(*height), num(*height)));
             e.line(5, &format!("(thickness {})", num(*width)));
             e.line(4, ")");
+            // back-side text reads correctly from the back only when mirrored
+            if layer_name(*layer).starts_with("B.") {
+                e.line(4, "(justify mirror)");
+            }
             e.line(3, ")");
             e.line(2, ")");
         }
@@ -889,14 +1121,31 @@ fn write_zone(e: &mut Emitter, z: &Zone, nets: &NetTable) {
     e.line(2, &format!("(layer {})", q(layer_name(z.layer))));
     e.line(2, &format!("(uuid {})", q(&uuid)));
     e.line(2, "(hatch edge 0.508)");
-    e.line(2, "(connect_pads");
+    if z.priority > 0 {
+        e.line(2, &format!("(priority {})", z.priority));
+    }
+    // pad connection: relief (default), solid (`Direct` - high-current pours), or none
+    match z.thermal_relief {
+        vcad_ir::ecad::ThermalReliefStyle::Direct => e.line(2, "(connect_pads yes"),
+        vcad_ir::ecad::ThermalReliefStyle::None => e.line(2, "(connect_pads no"),
+        vcad_ir::ecad::ThermalReliefStyle::Relief => e.line(2, "(connect_pads"),
+    }
     e.line(3, &format!("(clearance {})", num(z.clearance)));
     e.line(2, ")");
     e.line(2, &format!("(min_thickness {})", num(z.clearance.max(0.0))));
     e.line(2, "(filled_areas_thickness no)");
     e.line(2, "(fill yes");
-    e.line(3, "(thermal_gap 0.508)");
-    e.line(3, "(thermal_bridge_width 0.508)");
+    e.line(
+        3,
+        &format!("(thermal_gap {})", num(z.thermal_gap.unwrap_or(0.508))),
+    );
+    e.line(
+        3,
+        &format!(
+            "(thermal_bridge_width {})",
+            num(z.thermal_spoke_width.unwrap_or(0.508))
+        ),
+    );
     e.line(2, ")");
     e.line(2, "(polygon");
     write_pts(e, 3, &z.outline);
@@ -963,7 +1212,7 @@ fn write_kicad_sch_impl(
     e.line(1, "(generator \"vcad\")");
     e.line(1, "(generator_version \"9.0\")");
     e.line(1, &format!("(uuid {})", q(&root_uuid)));
-    e.line(1, "(paper \"A4\")");
+    e.line(1, &format!("(paper {})", paper_for(sheet, &placements)));
 
     // Title block. No date — output must be byte-stable (golden tests, diffs).
     if let Some(title) = &sheet.title {
@@ -1457,12 +1706,43 @@ fn pin_ref_comp<'a>(sheet: &SchematicSheet, pin_ref: &'a str) -> Option<(usize, 
 /// signal sources into columns (sources left, sinks right), each column
 /// ordered top-to-bottom by shared-net count, spaced by symbol extents plus
 /// label clearance, all origins snapped to the schematic grid.
+/// Auto-layout columns wrap past this height (mm): an A2 sheet's usable height.
+const MAX_COLUMN_HEIGHT: f64 = 380.0;
+
+/// Smallest ISO landscape sheet (KiCad paper name) that holds the placed
+/// symbols with a margin; "User" with explicit size beyond A0.
+fn paper_for(sheet: &SchematicSheet, placements: &[Vec2]) -> String {
+    let (mut w, mut h) = (0.0f64, 0.0f64);
+    for (c, p) in sheet.components.iter().zip(placements) {
+        let (hx, hy) = comp_half_extents(c);
+        w = w.max(p.x + hx + 20.0);
+        h = h.max(p.y + hy + 20.0);
+    }
+    for (name, pw, ph) in [
+        ("A4", 297.0, 210.0),
+        ("A3", 420.0, 297.0),
+        ("A2", 594.0, 420.0),
+        ("A1", 841.0, 594.0),
+        ("A0", 1189.0, 841.0),
+    ] {
+        // leave room for the title block in the lower right
+        if w <= pw - 10.0 && h <= ph - 40.0 {
+            return format!("\"{name}\"");
+        }
+    }
+    format!("\"User\" {:.0} {:.0}", (w + 20.0).ceil(), (h + 50.0).ceil())
+}
+
 fn auto_layout(sheet: &SchematicSheet) -> Vec<Vec2> {
     let n = sheet.components.len();
 
     // Per-component net degree and adjacency, from the declared netlist.
     let mut degree = vec![0u32; n];
     let mut adjacency: Vec<std::collections::BTreeSet<usize>> = vec![Default::default(); n];
+    // Rail nets (GND, supplies) touch most of the board; ranking through them
+    // puts every part one hop from every other and the layout collapses into
+    // one column. Rank on signal nets only.
+    let rail_size = 8usize.max(n / 10);
     if let Some(nets) = &sheet.nets {
         for pins in nets.values() {
             let mut members = std::collections::BTreeSet::new();
@@ -1470,6 +1750,9 @@ fn auto_layout(sheet: &SchematicSheet) -> Vec<Vec2> {
                 if let Some((idx, _)) = pin_ref_comp(sheet, pin_ref) {
                     members.insert(idx);
                 }
+            }
+            if members.len() > rail_size {
+                continue;
             }
             for &i in &members {
                 degree[i] += 1;
@@ -1537,9 +1820,34 @@ fn auto_layout(sheet: &SchematicSheet) -> Vec<Vec2> {
     const LABEL_CLEARANCE_Y: f64 = 6.35;
     const ORIGIN: f64 = 25.4;
 
+    // Wrap a column that would run taller than this into side-by-side
+    // sub-columns, so a wide rank lays out as a block rather than a strip.
+    // Never shorter than the tallest single symbol.
+    let tallest = (0..n)
+        .map(|i| 2.0 * (comp_half_extents(&sheet.components[i]).1 + LABEL_CLEARANCE_Y))
+        .fold(0.0f64, f64::max);
+    let max_col_h = MAX_COLUMN_HEIGHT.max(tallest);
+    let mut wrapped: Vec<Vec<usize>> = Vec::new();
+    for col in &cols {
+        let mut cur: Vec<usize> = Vec::new();
+        let mut h = 0.0;
+        for &i in col {
+            let dh = 2.0 * (comp_half_extents(&sheet.components[i]).1 + LABEL_CLEARANCE_Y);
+            if !cur.is_empty() && h + dh > max_col_h {
+                wrapped.push(std::mem::take(&mut cur));
+                h = 0.0;
+            }
+            cur.push(i);
+            h += dh;
+        }
+        if !cur.is_empty() {
+            wrapped.push(cur);
+        }
+    }
+
     let mut positions = vec![Vec2::new(0.0, 0.0); n];
     let mut x_cursor = ORIGIN;
-    for col in &cols {
+    for col in &wrapped {
         let col_half_w = col
             .iter()
             .map(|&i| comp_half_extents(&sheet.components[i]).0 + LABEL_CLEARANCE_X)
@@ -2139,6 +2447,29 @@ fn symbol_body(comp: &SchematicComponent) -> (Vec2, Vec2) {
         maxx = maxx.max(p.position.x);
         maxy = maxy.max(p.position.y);
     }
+    // A single column (or row) of pins - a 1xN connector - has no pin ring to
+    // inset into. KiCad draws symbols about their origin, so the body lies
+    // between the column and the origin; put it there, so every pin reads as a
+    // side pin. Collapsing it instead made the box degenerate and gave the
+    // pins vertical stubs that ran into their neighbours, merging their nets.
+    if comp.pins.len() > 1 && (maxx - minx).abs() < 1e-9 && (maxy - miny).abs() > 1e-9 {
+        let x = minx;
+        let toward = if x <= 0.0 { 1.0 } else { -1.0 };
+        let (a, b) = (x + toward * 1.27, x + toward * 3.81);
+        return (
+            Vec2::new(a.min(b), maxy + 1.27),
+            Vec2::new(a.max(b), miny - 1.27),
+        );
+    }
+    if comp.pins.len() > 1 && (maxy - miny).abs() < 1e-9 && (maxx - minx).abs() > 1e-9 {
+        let y = miny;
+        let toward = if y <= 0.0 { 1.0 } else { -1.0 };
+        let (a, b) = (y + toward * 1.27, y + toward * 3.81);
+        return (
+            Vec2::new(minx - 1.27, a.max(b)),
+            Vec2::new(maxx + 1.27, a.min(b)),
+        );
+    }
     // Shrink the box inside the pin ring so pin stubs read as connecting in.
     let inset = 1.27;
     let (mut x0, mut y0, mut x1, mut y1) = (minx + inset, miny + inset, maxx - inset, maxy - inset);
@@ -2154,13 +2485,34 @@ fn symbol_body(comp: &SchematicComponent) -> (Vec2, Vec2) {
 }
 
 /// Pin rotation (degrees) so the stub points from the body toward the pin.
+///
+/// Classified by the body edge the pin sits beyond, not by direction from the
+/// body centre: on a tall IC a side pin near a corner is closer to the centre
+/// line vertically than horizontally, and a centre-relative test turned it into
+/// a top/bottom pin whose vertical net stub landed on its neighbour - shorting
+/// the two nets in the exported schematic.
 fn pin_angle(_comp: &SchematicComponent, pos: Vec2, body: (Vec2, Vec2)) -> f64 {
-    let cx = (body.0.x + body.1.x) / 2.0;
-    let cy = (body.0.y + body.1.y) / 2.0;
+    let (x0, y1) = (body.0.x, body.0.y);
+    let (x1, y0) = (body.1.x, body.1.y);
+    // How far the pin lies outside each edge (negative = inside).
+    let out = [
+        (x0 - pos.x, 0.0),   // left: stub points right, toward the body
+        (pos.x - x1, 180.0), // right
+        (pos.y - y1, 270.0), // top (Y-up)
+        (y0 - pos.y, 90.0),  // bottom
+    ];
+    let best = out.iter().copied().fold(
+        (f64::NEG_INFINITY, 0.0),
+        |a, b| if b.0 > a.0 { b } else { a },
+    );
+    if best.0 > 0.0 {
+        return best.1;
+    }
+    // Inside the body (degenerate box): fall back to the centre-relative test.
+    let cx = (x0 + x1) / 2.0;
+    let cy = (y0 + y1) / 2.0;
     let dx = pos.x - cx;
     let dy = pos.y - cy;
-    // KiCad pin angle points from the pin's connection end toward the body, so
-    // a pin on the right of the body has angle 180.
     if dx.abs() >= dy.abs() {
         if dx >= 0.0 {
             180.0
@@ -2171,6 +2523,55 @@ fn pin_angle(_comp: &SchematicComponent, pos: Vec2, body: (Vec2, Vec2)) -> f64 {
         270.0
     } else {
         90.0
+    }
+}
+
+#[cfg(test)]
+mod pin_angle_tests {
+    use super::*;
+
+    fn comp() -> SchematicComponent {
+        SchematicComponent {
+            reference: "U1".into(),
+            value: "X".into(),
+            footprint_id: String::new(),
+            position: Vec2::new(0.0, 0.0),
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![],
+            pads_override: None,
+            properties: Default::default(),
+        }
+    }
+
+    #[test]
+    fn single_column_connector_pins_get_horizontal_stubs() {
+        // KiCad Conn_01x04: pins at x = -5.08, y = 2.54 .. -5.08, body to the right.
+        let mut c = comp();
+        for (i, y) in [2.54, 0.0, -2.54, -5.08].iter().enumerate() {
+            c.pins.push(SchematicPin {
+                number: (i + 1).to_string(),
+                name: format!("Pin_{}", i + 1),
+                pin_type: PinType::Passive,
+                position: Vec2::new(-5.08, *y),
+            });
+        }
+        let body = symbol_body(&c);
+        for p in &c.pins {
+            assert_eq!(pin_angle(&c, p.position, body), 0.0, "pin {}", p.number);
+        }
+    }
+
+    #[test]
+    fn side_pin_near_the_corner_of_a_tall_symbol_stays_a_side_pin() {
+        // 20 mm wide, 120 mm tall pin ring; a left pin 5 mm below the top.
+        let body = (Vec2::new(-8.73, 58.73), Vec2::new(8.73, -58.73));
+        let left_near_top = Vec2::new(-10.0, 55.0);
+        assert_eq!(pin_angle(&comp(), left_near_top, body), 0.0);
+        let right_near_bottom = Vec2::new(10.0, -55.0);
+        assert_eq!(pin_angle(&comp(), right_near_bottom, body), 180.0);
+        let top_mid = Vec2::new(0.0, 60.0);
+        assert_eq!(pin_angle(&comp(), top_mid, body), 270.0);
     }
 }
 
@@ -2267,6 +2668,12 @@ fn write_label(e: &mut Emitter, l: &SchematicLabel) {
 // Project bundle writer
 // ---------------------------------------------------------------------------
 
+/// A `.kicad_pro` for a board exported on its own, carrying its design rules -
+/// without one, KiCad DRC checks the board against KiCad's defaults instead.
+pub fn write_kicad_pro_for_board(name: &str, pcb: &Pcb) -> String {
+    write_kicad_pro(name, "00000000-0000-0000-0000-000000000000", pcb)
+}
+
 /// Serialize a linked KiCad 9 project bundle: `<name>.kicad_pro`,
 /// `<name>.kicad_sch`, and `<name>.kicad_pcb` as `(filename, contents)` pairs.
 ///
@@ -2279,7 +2686,7 @@ fn write_label(e: &mut Emitter, l: &SchematicLabel) {
 pub fn write_kicad_project(sheet: &SchematicSheet, pcb: &Pcb, name: &str) -> Vec<(String, String)> {
     let sch_filename = format!("{}.kicad_sch", name);
     let (sch, links) = write_kicad_sch_impl(sheet, name, &sch_filename);
-    let board = write_kicad_pcb_impl(pcb, Some(&links));
+    let board = write_kicad_pcb_impl(pcb, Some(&links), true);
     let pro = write_kicad_pro(name, &links.root_uuid, pcb);
     vec![
         (format!("{}.kicad_pro", name), pro),
@@ -2306,6 +2713,9 @@ fn write_kicad_pro(name: &str, root_uuid: &str, pcb: &Pcb) -> String {
         "min_through_hole_diameter": min_via_drill(pcb),
         "min_via_annular_width": r.min_annular_ring,
         "min_hole_to_hole": r.hole_to_hole,
+        // copper-to-hole: without it KiCad applies its own 0.25 mm default, which
+        // flags manufacturers' own land patterns (USB-C shell pins sit ~0.19 mm off)
+        "min_hole_clearance": r.default_rules.clearance,
         "min_copper_edge_clearance": r.edge_clearance,
     });
     let by_id: BTreeMap<&str, &str> = pcb
@@ -2926,6 +3336,25 @@ mod tests {
         );
         // and it writes back out as KiCad's 90
         assert!(write_kicad_pcb(&pcb).contains("(at 10 10 90)"));
+    }
+
+    /// KiCad 9 reads legacy `(setup)` rule tokens as a pre-project board and
+    /// ignores the `.kicad_pro` rules when they are present.
+    #[test]
+    fn board_for_a_project_leaves_legacy_rule_tokens_to_the_project() {
+        let pcb = sample_pcb();
+        let with = write_kicad_pcb(&pcb);
+        let without = write_kicad_pcb_for_project(&pcb);
+        assert!(with.contains("(trace_min "));
+        for k in [
+            "trace_min",
+            "via_min_size",
+            "via_min_drill",
+            "hole_to_hole_min",
+        ] {
+            assert!(!without.contains(&format!("({k} ")), "{k} still written");
+        }
+        assert!(write_kicad_pro_for_board("b", &pcb).contains("min_hole_clearance"));
     }
 
     #[test]
