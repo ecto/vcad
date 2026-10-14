@@ -24,6 +24,7 @@
 //! tomorrow (tang's `Scalar` genericity); the objective, not the backend, is
 //! the product.
 
+use super::claims_ir::{self as cir, ClaimSet, PointExpr};
 use tang_expr::{ExprGraph, ExprId};
 use vcad_ir::ecad::Pcb;
 use vcad_ir::Vec2;
@@ -113,191 +114,222 @@ pub fn descend_pair_runs(
     weights: &DescentWeights,
     iters: usize,
 ) -> Option<DescentResult> {
-    if p_pts.len() < 3 || n_pts.len() < 3 {
-        return None;
-    }
-    let mut g = ExprGraph::new();
+    let prob = PairProblem::build(
+        p_pts, n_pts, extra_p, extra_n, springs, gap_centre, obstacles, weights,
+    )?;
+    let (theta, it) = prob.solve_adam(&prob.theta0, iters);
+    Some(prob.result(&theta, it))
+}
 
-    // Variables: interior points of both legs. Var index = position in θ.
-    let mut theta0: Vec<f64> = Vec::new();
-    let var = |g: &mut ExprGraph, v: f64, theta0: &mut Vec<f64>| -> ExprId {
-        let id = g.var(theta0.len() as u16);
-        theta0.push(v);
-        id
-    };
-    let build_leg =
-        |g: &mut ExprGraph, pts: &[Vec2], theta0: &mut Vec<f64>| -> Vec<(ExprId, ExprId)> {
-            let mut out = Vec::with_capacity(pts.len());
-            for (i, p) in pts.iter().enumerate() {
-                if i == 0 || i + 1 == pts.len() {
-                    let x = g.lit(p.x);
-                    let y = g.lit(p.y);
-                    out.push((x, y));
-                } else {
-                    let x = var(g, p.x, theta0);
-                    let y = var(g, p.y, theta0);
-                    out.push((x, y));
-                }
-            }
-            out
-        };
-    let pe = build_leg(&mut g, p_pts, &mut theta0);
-    let ne = build_leg(&mut g, n_pts, &mut theta0);
-    let n_vars = theta0.len();
-    if n_vars == 0 || n_vars > u16::MAX as usize {
-        return None;
-    }
+/// One pair's descent problem: the graph, its variables, and the claims the
+/// objective is compiled from (see [`super::claims_ir`]).
+pub(crate) struct PairProblem {
+    pub(crate) g: ExprGraph,
+    pub(crate) theta0: Vec<f64>,
+    pe: Vec<PointExpr>,
+    ne: Vec<PointExpr>,
+    p_pts: Vec<Vec2>,
+    n_pts: Vec<Vec2>,
+    pub(crate) claims: ClaimSet,
+    clearance_weight: f64,
+}
 
-    let eps = g.lit(1e-9);
-    let dist2 = |g: &mut ExprGraph, a: (ExprId, ExprId), b: (ExprId, ExprId)| -> ExprId {
-        let nax = g.neg(a.0);
-        let nay = g.neg(a.1);
-        let dx = g.add(b.0, nax);
-        let dy = g.add(b.1, nay);
-        let dx2 = g.mul(dx, dx);
-        let dy2 = g.mul(dy, dy);
-        g.add(dx2, dy2)
-    };
-    let dist =
-        |g: &mut ExprGraph, a: (ExprId, ExprId), b: (ExprId, ExprId), eps: ExprId| -> ExprId {
-            let d2 = dist2(g, a, b);
-            let d2e = g.add(d2, eps);
-            g.sqrt(d2e)
-        };
-    let leg_len = |g: &mut ExprGraph, leg: &[(ExprId, ExprId)], eps: ExprId| -> ExprId {
-        let mut total = g.lit(0.0);
-        for w in leg.windows(2) {
-            let d = dist(g, w[0], w[1], eps);
-            total = g.add(total, d);
+impl PairProblem {
+    /// Author the pair's claims: wirelength, skew, gap springs, and point
+    /// clearance against every obstacle near a moving point's start.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn build(
+        p_pts: &[Vec2],
+        n_pts: &[Vec2],
+        extra_p: f64,
+        extra_n: f64,
+        springs: bool,
+        gap_centre: f64,
+        obstacles: &[DescentObstacle],
+        weights: &DescentWeights,
+    ) -> Option<Self> {
+        if p_pts.len() < 3 || n_pts.len() < 3 {
+            return None;
         }
-        total
-    };
+        // Var ids are u16: bail before building rather than overflow.
+        if 2 * (p_pts.len() + n_pts.len()) > u16::MAX as usize {
+            return None;
+        }
+        let mut g = ExprGraph::new();
+        // Variables: interior points of both legs. Var index = position in θ.
+        let mut theta0: Vec<f64> = Vec::new();
+        let mut build_leg = |g: &mut ExprGraph, pts: &[Vec2]| -> Vec<PointExpr> {
+            pts.iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    if i == 0 || i + 1 == pts.len() {
+                        (g.lit(p.x), g.lit(p.y))
+                    } else {
+                        let x = g.var(theta0.len() as u16);
+                        theta0.push(p.x);
+                        let y = g.var(theta0.len() as u16);
+                        theta0.push(p.y);
+                        (x, y)
+                    }
+                })
+                .collect()
+        };
+        let pe = build_leg(&mut g, p_pts);
+        let ne = build_leg(&mut g, n_pts);
+        if theta0.is_empty() {
+            return None;
+        }
 
-    let run_p = leg_len(&mut g, &pe, eps);
-    let run_n = leg_len(&mut g, &ne, eps);
-    let extra_p_lit = g.lit(extra_p);
-    let extra_n_lit = g.lit(extra_n);
-    let len_p = g.add(run_p, extra_p_lit);
-    let len_n = g.add(run_n, extra_n_lit);
+        let mut claims = ClaimSet::new();
+        let run_p = cir::polyline_len(&mut g, &pe);
+        let run_n = cir::polyline_len(&mut g, &ne);
+        let extra_p_lit = g.lit(extra_p);
+        let extra_n_lit = g.lit(extra_n);
+        let len_p = g.add(run_p, extra_p_lit);
+        let len_n = g.add(run_n, extra_n_lit);
+        let len_sum = g.add(len_p, len_n);
+        claims.push(cir::wirelength(len_sum, weights.len));
+        // Skew with a zero bound: the descent drives skew to zero (the
+        // receipt's 1.1 mm bound is judged on the committed board).
+        claims.push(cir::skew(&mut g, len_p, len_n, 0.0, weights.skew));
 
-    // Wirelength.
-    let w_len = g.lit(weights.len);
-    let len_sum = g.add(len_p, len_n);
-    let mut loss = g.mul(w_len, len_sum);
+        // Gap springs between arclength-matched samples (index-proportional
+        // pairing keeps the term smooth and cheap).
+        let n_springs = if springs { pe.len().min(ne.len()) } else { 0 };
+        for k in 1..n_springs.saturating_sub(1) {
+            let pi = pe[k * (pe.len() - 1) / (n_springs - 1)];
+            let ni = ne[k * (ne.len() - 1) / (n_springs - 1)];
+            claims.push(cir::gap(&mut g, pi, ni, gap_centre, 0.0, weights.gap));
+        }
 
-    // Skew: (len_P − len_N)².
-    let w_skew = g.lit(weights.skew);
-    let nln = g.neg(len_n);
-    let skew = g.add(len_p, nln);
-    let skew2 = g.mul(skew, skew);
-    let skew_term = g.mul(w_skew, skew2);
-    loss = g.add(loss, skew_term);
-
-    // Gap springs between arclength-matched samples (index-proportional
-    // pairing keeps the term smooth and cheap).
-    let w_gap = g.lit(weights.gap);
-    let gap_lit = g.lit(gap_centre);
-    let n_springs = if springs { pe.len().min(ne.len()) } else { 0 };
-    for k in 1..n_springs.saturating_sub(1) {
-        let pi = pe[k * (pe.len() - 1) / (n_springs - 1)];
-        let ni = ne[k * (ne.len() - 1) / (n_springs - 1)];
-        let d = dist(&mut g, pi, ni, eps);
-        let ng = g.neg(gap_lit);
-        let dev = g.add(d, ng);
-        let dev2 = g.mul(dev, dev);
-        let spring = g.mul(w_gap, dev2);
-        loss = g.add(loss, spring);
+        let mut prob = Self {
+            g,
+            theta0,
+            pe,
+            ne,
+            p_pts: p_pts.to_vec(),
+            n_pts: n_pts.to_vec(),
+            claims,
+            clearance_weight: weights.clearance,
+        };
+        for ob in obstacles {
+            prob.add_point_clearance(ob, None);
+        }
+        Some(prob)
     }
 
-    // Clearance hinge: for each moving point vs each obstacle,
-    // hinge(required − dist_pt_seg)² with a select-based smooth hinge.
-    let w_clr = g.lit(weights.clearance);
-    let zero = g.lit(0.0);
-    for (leg, pts) in [(&pe, p_pts), (&ne, n_pts)] {
-        for (i, &pt) in leg.iter().enumerate() {
-            if i == 0 || i + 1 == pts.len() {
-                continue;
-            }
-            for ob in obstacles {
-                // Prefilter: obstacles far from the ORIGINAL point can't be
-                // reached within a few descent steps; skip to keep the graph
-                // small. (Conservative radius: required + 2mm.)
-                let p0 = pts[i];
-                let seg_d = pt_seg_dist_f64(p0, ob.a, ob.b);
-                if seg_d > ob.required + 2.0 {
+    /// Point positions at `theta` (pinned endpoints included).
+    fn points(&self, theta: &[f64]) -> (Vec<Vec2>, Vec<Vec2>) {
+        let mut idx = 0usize;
+        let rebuild = |pts: &[Vec2], idx: &mut usize| -> Vec<Vec2> {
+            pts.iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    if i == 0 || i + 1 == pts.len() {
+                        *p
+                    } else {
+                        let out = Vec2::new(theta[*idx], theta[*idx + 1]);
+                        *idx += 2;
+                        out
+                    }
+                })
+                .collect()
+        };
+        let p = rebuild(&self.p_pts, &mut idx);
+        let n = rebuild(&self.n_pts, &mut idx);
+        (p, n)
+    }
+
+    /// Clearance claims for every MOVING point near `ob`. Proximity is
+    /// judged at `at` (current θ) or, when `None`, at the starting geometry:
+    /// obstacles far from a point can't be reached within a few descent
+    /// steps, so skipping them keeps the graph small (radius required + 2mm).
+    /// Returns the number of claims added.
+    pub(crate) fn add_point_clearance(
+        &mut self,
+        ob: &DescentObstacle,
+        at: Option<&[f64]>,
+    ) -> usize {
+        let (pp, nn) = match at {
+            Some(th) => self.points(th),
+            None => (self.p_pts.clone(), self.n_pts.clone()),
+        };
+        let mut added = 0;
+        for (leg, pts) in [(self.pe.clone(), pp), (self.ne.clone(), nn)] {
+            for (i, &pt) in leg.iter().enumerate() {
+                if i == 0 || i + 1 == pts.len() {
                     continue;
                 }
-                let (ax, ay) = (g.lit(ob.a.x), g.lit(ob.a.y));
-                let (bx, by) = (g.lit(ob.b.x), g.lit(ob.b.y));
-                let d = pt_seg_dist_expr(&mut g, pt, (ax, ay), (bx, by), eps);
-                let req = g.lit(ob.required);
-                let ndist = g.neg(d);
-                let short = g.add(req, ndist); // > 0 when violating
-                let short2 = g.mul(short, short);
-                let hinge = g.select(short, short2, zero); // select(cond>0, a, b)
-                let term = g.mul(w_clr, hinge);
-                loss = g.add(loss, term);
-            }
-        }
-    }
-
-    // Symbolic gradient for every variable.
-    let grads: Vec<ExprId> = (0..n_vars as u16).map(|v| g.diff(loss, v)).collect();
-
-    // Adam.
-    let mut theta = theta0.clone();
-    let (mut m, mut v_) = (vec![0.0; n_vars], vec![0.0; n_vars]);
-    let (b1, b2, lr, eps_a) = (0.9, 0.999, 0.02, 1e-8);
-    let mut last_loss = f64::INFINITY;
-    let mut it = 0;
-    while it < iters {
-        it += 1;
-        let gvals = g.eval_many(&grads, &theta);
-        for i in 0..n_vars {
-            m[i] = b1 * m[i] + (1.0 - b1) * gvals[i];
-            v_[i] = b2 * v_[i] + (1.0 - b2) * gvals[i] * gvals[i];
-            let mh = m[i] / (1.0 - b1.powi(it as i32));
-            let vh = v_[i] / (1.0 - b2.powi(it as i32));
-            theta[i] -= lr * mh / (vh.sqrt() + eps_a);
-        }
-        if it % 50 == 0 {
-            let l = g.eval(loss, &theta);
-            if (last_loss - l).abs() < 1e-9 {
-                break;
-            }
-            last_loss = l;
-        }
-    }
-    let final_loss = g.eval(loss, &theta);
-
-    // Rebuild point lists.
-    let mut idx = 0usize;
-    let rebuild = |pts: &[Vec2], idx: &mut usize, theta: &[f64]| -> Vec<Vec2> {
-        pts.iter()
-            .enumerate()
-            .map(|(i, p)| {
-                if i == 0 || i + 1 == pts.len() {
-                    *p
-                } else {
-                    let out = Vec2::new(theta[*idx], theta[*idx + 1]);
-                    *idx += 2;
-                    out
+                if pt_seg_dist_f64(pts[i], ob.a, ob.b) > ob.required + 2.0 {
+                    continue;
                 }
-            })
-            .collect()
-    };
-    let p_out = rebuild(p_pts, &mut idx, &theta);
-    let n_out = rebuild(n_pts, &mut idx, &theta);
-    let plen: f64 = p_out.windows(2).map(|w| (w[1] - w[0]).length()).sum();
-    let nlen: f64 = n_out.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+                let c = cir::clearance(
+                    &mut self.g,
+                    pt,
+                    (ob.a.x, ob.a.y),
+                    (ob.b.x, ob.b.y),
+                    ob.required,
+                    self.clearance_weight,
+                );
+                self.claims.push(c);
+                added += 1;
+            }
+        }
+        added
+    }
 
-    Some(DescentResult {
-        p_pts: p_out,
-        n_pts: n_out,
-        loss: final_loss,
-        skew: (plen - nlen).abs(),
-        iters: it,
-    })
+    /// Adam on the claim-compiled loss (the original M5 optimizer).
+    pub(crate) fn solve_adam(&self, theta0: &[f64], iters: usize) -> (Vec<f64>, usize) {
+        let mut g = self.g.clone();
+        let loss = self.claims.loss(&mut g);
+        let n_vars = theta0.len();
+        let grads: Vec<ExprId> = (0..n_vars as u16).map(|v| g.diff(loss, v)).collect();
+        let mut theta = theta0.to_vec();
+        let (mut m, mut v_) = (vec![0.0; n_vars], vec![0.0; n_vars]);
+        let (b1, b2, lr, eps_a) = (0.9, 0.999, 0.02, 1e-8);
+        let mut last_loss = f64::INFINITY;
+        let mut it = 0;
+        while it < iters {
+            it += 1;
+            let gvals = g.eval_many(&grads, &theta);
+            for i in 0..n_vars {
+                m[i] = b1 * m[i] + (1.0 - b1) * gvals[i];
+                v_[i] = b2 * v_[i] + (1.0 - b2) * gvals[i] * gvals[i];
+                let mh = m[i] / (1.0 - b1.powi(it as i32));
+                let vh = v_[i] / (1.0 - b2.powi(it as i32));
+                theta[i] -= lr * mh / (vh.sqrt() + eps_a);
+            }
+            if it % 50 == 0 {
+                let l = g.eval(loss, &theta);
+                if (last_loss - l).abs() < 1e-9 {
+                    break;
+                }
+                last_loss = l;
+            }
+        }
+        (theta, it)
+    }
+
+    /// Smooth loss at `theta`.
+    pub(crate) fn loss_at(&self, theta: &[f64]) -> f64 {
+        let mut g = self.g.clone();
+        let loss = self.claims.loss(&mut g);
+        g.eval(loss, theta)
+    }
+
+    /// Package `theta` as a [`DescentResult`].
+    pub(crate) fn result(&self, theta: &[f64], iters: usize) -> DescentResult {
+        let (p_out, n_out) = self.points(theta);
+        let plen: f64 = p_out.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+        let nlen: f64 = n_out.windows(2).map(|w| (w[1] - w[0]).length()).sum();
+        DescentResult {
+            p_pts: p_out,
+            n_pts: n_out,
+            loss: self.loss_at(theta),
+            skew: (plen - nlen).abs(),
+            iters,
+        }
+    }
 }
 
 /// What [`descend_board`] did.
@@ -619,54 +651,6 @@ fn pt_seg_dist_f64(p: Vec2, a: Vec2, b: Vec2) -> f64 {
     (p - (a + ab.scale(t))).length()
 }
 
-/// Differentiable point-to-segment distance: parameter t clamped to [0, 1]
-/// via two selects, then Euclidean distance to the clamped foot point.
-fn pt_seg_dist_expr(
-    g: &mut ExprGraph,
-    p: (ExprId, ExprId),
-    a: (ExprId, ExprId),
-    b: (ExprId, ExprId),
-    eps: ExprId,
-) -> ExprId {
-    let nax = g.neg(a.0);
-    let nay = g.neg(a.1);
-    let abx = g.add(b.0, nax);
-    let aby = g.add(b.1, nay);
-    let apx = g.add(p.0, nax);
-    let apy = g.add(p.1, nay);
-    let abx2 = g.mul(abx, abx);
-    let aby2 = g.mul(aby, aby);
-    let l2 = g.add(abx2, aby2);
-    let l2e = g.add(l2, eps);
-    let dx = g.mul(apx, abx);
-    let dy = g.mul(apy, aby);
-    let dot = g.add(dx, dy);
-    let inv = g.recip(l2e);
-    let t_raw = g.mul(dot, inv);
-    // clamp: t = select(t_raw, select(t_raw - 1, 1, t_raw), 0)  — i.e.
-    // t_raw <= 0 → 0; t_raw >= 1 → 1; else t_raw. select(c, x, y) = x when
-    // c > 0 else y.
-    let one = g.lit(1.0);
-    let none = g.neg(one);
-    let tm1 = g.add(t_raw, none);
-    let hi = g.select(tm1, one, t_raw);
-    let zero_t = g.lit(0.0);
-    let t = g.select(t_raw, hi, zero_t);
-    let fx_off = g.mul(abx, t);
-    let fy_off = g.mul(aby, t);
-    let fx = g.add(a.0, fx_off);
-    let fy = g.add(a.1, fy_off);
-    let nfx = g.neg(fx);
-    let nfy = g.neg(fy);
-    let ex = g.add(p.0, nfx);
-    let ey = g.add(p.1, nfy);
-    let ex2 = g.mul(ex, ex);
-    let ey2 = g.mul(ey, ey);
-    let e2 = g.add(ex2, ey2);
-    let e2e = g.add(e2, eps);
-    g.sqrt(e2e)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -716,5 +700,64 @@ mod tests {
                 pt.y
             );
         }
+    }
+
+    /// M1 equivalence: the claim-compiled objective equals the original
+    /// hand-written M5 formula (len + skew² + gap springs + clearance
+    /// hinge²) evaluated directly in f64 at a perturbed θ.
+    #[test]
+    fn claim_objective_matches_handwritten_formula() {
+        let p: Vec<Vec2> = (0..=6).map(|i| Vec2::new(2.0 * i as f64, 0.0)).collect();
+        let n: Vec<Vec2> = (0..=6)
+            .map(|i| Vec2::new(2.0 * i as f64, 0.5 + 0.3 * (i % 2) as f64))
+            .collect();
+        let obs = vec![DescentObstacle {
+            a: Vec2::new(5.0, -0.5),
+            b: Vec2::new(7.0, -0.5),
+            required: 0.6,
+        }];
+        let w = DescentWeights::default();
+        let prob = PairProblem::build(&p, &n, 0.3, 0.0, true, 0.45, &obs, &w).unwrap();
+        let theta: Vec<f64> = prob
+            .theta0
+            .iter()
+            .enumerate()
+            .map(|(i, v)| v + 0.07 * ((i * 7 % 5) as f64 - 2.0))
+            .collect();
+        let (pp, nn) = prob.points(&theta);
+        let len = |v: &[Vec2]| -> f64 {
+            v.windows(2)
+                .map(|w| ((w[1] - w[0]).length().powi(2) + 1e-9).sqrt())
+                .sum()
+        };
+        let (lp, ln) = (len(&pp) + 0.3, len(&nn));
+        let mut want = w.len * (lp + ln) + w.skew * (lp - ln).powi(2);
+        let ns = pp.len().min(nn.len());
+        for k in 1..ns - 1 {
+            let a = pp[k * (pp.len() - 1) / (ns - 1)];
+            let b = nn[k * (nn.len() - 1) / (ns - 1)];
+            let d = ((b - a).length().powi(2) + 1e-9).sqrt();
+            want += w.gap * (d - 0.45).powi(2);
+        }
+        for leg in [&pp, &nn] {
+            for (i, &pt) in leg.iter().enumerate() {
+                if i == 0 || i + 1 == leg.len() {
+                    continue;
+                }
+                let start = if std::ptr::eq(leg, &pp) { p[i] } else { n[i] };
+                if pt_seg_dist_f64(start, obs[0].a, obs[0].b) > obs[0].required + 2.0 {
+                    continue;
+                }
+                let short = obs[0].required - pt_seg_dist_f64(pt, obs[0].a, obs[0].b);
+                if short > 0.0 {
+                    want += w.clearance * short * short;
+                }
+            }
+        }
+        let got = prob.loss_at(&theta);
+        assert!(
+            (got - want).abs() < 1e-6 * (1.0 + want),
+            "claims {got} vs formula {want}"
+        );
     }
 }

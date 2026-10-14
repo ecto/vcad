@@ -11,6 +11,7 @@
 //! - [`congestion`] -- PathFinder-style negotiated-congestion history-cost field
 
 pub mod auto;
+pub mod claims_ir;
 pub mod classes;
 pub mod descent;
 #[cfg(feature = "gpu")]
