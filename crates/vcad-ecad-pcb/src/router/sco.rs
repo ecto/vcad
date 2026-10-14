@@ -39,6 +39,9 @@ pub struct ScoOptions {
     pub penalty_growth: f64,
     /// Initial trust radius (θ units, mm).
     pub init_radius: f64,
+    /// Inner-iteration cap per outer round: chattering on a hinge kink
+    /// should hand over to the multiplier update, not burn the budget.
+    pub max_inner: usize,
 }
 
 impl Default for ScoOptions {
@@ -48,6 +51,7 @@ impl Default for ScoOptions {
             max_outer: 10,
             penalty_growth: 2.0,
             init_radius: 0.5,
+            max_inner: 60,
         }
     }
 }
@@ -218,7 +222,8 @@ impl ResidualSystem {
             self.residuals(&theta, &mut buf);
             let mut f = self.merit(&buf, &scale);
             let mut stall = 0;
-            while report.iters < opts.max_iters {
+            let round_end = (report.iters + opts.max_inner).min(opts.max_iters);
+            while report.iters < round_end {
                 report.iters += 1;
                 // Normal equations from the sparse Jacobian.
                 let mut h = vec![0.0; n * n];
@@ -323,7 +328,7 @@ impl ResidualSystem {
                         radius *= 0.5;
                         lambda *= 2.0;
                     }
-                    stall = if rel < 1e-9 { stall + 1 } else { 0 };
+                    stall = if rel < 1e-8 { stall + 1 } else { 0 };
                     if stall >= 3 || step < 1e-9 {
                         break;
                     }

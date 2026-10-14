@@ -134,6 +134,87 @@ pub fn descend_pair_runs(
     Some(prob.result(&theta, it))
 }
 
+/// What the exact oracle said about a candidate geometry.
+#[derive(Debug, Clone, Default)]
+pub struct OracleVerdict {
+    /// No violation at all.
+    pub clean: bool,
+    /// Obstacles behind the violations, as clearance cuts to mine. May be
+    /// empty for a dirty verdict the claim vocabulary cannot express.
+    pub cuts: Vec<DescentObstacle>,
+}
+
+/// Outcome of [`descend_pair_mined`].
+pub struct MinedOutcome {
+    /// Final geometry.
+    pub result: DescentResult,
+    /// Solve rounds run (1 = the oracle was clean after the first solve).
+    pub rounds: usize,
+    /// Clearance claims added from oracle violations.
+    pub cuts: usize,
+    /// The oracle accepted the final geometry. When false the caller MUST
+    /// reject the descent (fail-closed).
+    pub clean: bool,
+}
+
+/// Lazy constraint generation ("tang-route" M3): descend with only the
+/// cheap claims plus clearance against `seed` obstacles, then run the exact
+/// `oracle` on the result. The oracle's verdict carries the obstacles the
+/// geometry violates; each becomes new clearance claims (points and
+/// segment midpoints near it), and the problem is re-solved warm-started
+/// from the previous θ — until the oracle is clean, `max_rounds` is spent,
+/// or a round mines nothing new (a violation the claim vocabulary can't
+/// express, e.g. the pair's own gap rule). Never returns oracle-dirty
+/// geometry as clean.
+#[allow(clippy::too_many_arguments)]
+pub fn descend_pair_mined(
+    p_pts: &[Vec2],
+    n_pts: &[Vec2],
+    extra_p: f64,
+    extra_n: f64,
+    springs: bool,
+    gap_centre: f64,
+    seed: &[DescentObstacle],
+    weights: &DescentWeights,
+    solver: DescentSolver,
+    iters: usize,
+    max_rounds: usize,
+    mut oracle: impl FnMut(&[Vec2], &[Vec2]) -> OracleVerdict,
+) -> Option<MinedOutcome> {
+    let mut prob = PairProblem::build(
+        p_pts, n_pts, extra_p, extra_n, springs, gap_centre, seed, weights,
+    )?;
+    let mut theta = prob.theta0.clone();
+    let mut cuts = 0;
+    let mut total_iters = 0;
+    for round in 1..=max_rounds.max(1) {
+        let (th, it) = prob.solve(&theta, solver, iters);
+        theta = th;
+        total_iters += it;
+        let r = prob.result(&theta, total_iters);
+        let verdict = oracle(&r.p_pts, &r.n_pts);
+        if verdict.clean {
+            return Some(MinedOutcome {
+                result: r,
+                rounds: round,
+                cuts,
+                clean: true,
+            });
+        }
+        let added: usize = verdict.cuts.iter().map(|ob| prob.add_cut(ob, &theta)).sum();
+        cuts += added;
+        if added == 0 || round == max_rounds.max(1) {
+            return Some(MinedOutcome {
+                result: r,
+                rounds: round,
+                cuts,
+                clean: false,
+            });
+        }
+    }
+    None
+}
+
 /// One pair's descent problem: the graph, its variables, and the claims the
 /// objective is compiled from (see [`super::claims_ir`]).
 pub(crate) struct PairProblem {
@@ -145,6 +226,18 @@ pub(crate) struct PairProblem {
     n_pts: Vec<Vec2>,
     pub(crate) claims: ClaimSet,
     clearance_weight: f64,
+    /// Obstacles the claim set knows, and which (sample, obstacle) pairs
+    /// already carry a clearance claim — so mined cuts never duplicate.
+    known: Vec<DescentObstacle>,
+    claimed: std::collections::HashSet<(Sample, usize)>,
+}
+
+/// A clearance sample site: a moving point, or the midpoint of the segment
+/// starting at that index (leg 0 = P, 1 = N).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Sample {
+    Point(u8, usize),
+    Mid(u8, usize),
 }
 
 impl PairProblem {
@@ -224,6 +317,8 @@ impl PairProblem {
             n_pts: n_pts.to_vec(),
             claims,
             clearance_weight: weights.clearance,
+            known: Vec::new(),
+            claimed: Default::default(),
         };
         for ob in obstacles {
             prob.add_point_clearance(ob, None);
@@ -263,29 +358,60 @@ impl PairProblem {
         ob: &DescentObstacle,
         at: Option<&[f64]>,
     ) -> usize {
+        self.add_clearance(ob, at, false)
+    }
+
+    /// A mined cut: like [`Self::add_point_clearance`] at the current θ,
+    /// plus segment-MIDPOINT claims — the oracle judges whole segments, and
+    /// a segment can cross an obstacle between two legal points.
+    pub(crate) fn add_cut(&mut self, ob: &DescentObstacle, at: &[f64]) -> usize {
+        self.add_clearance(ob, Some(at), true)
+    }
+
+    fn add_clearance(&mut self, ob: &DescentObstacle, at: Option<&[f64]>, mids: bool) -> usize {
+        let oi =
+            match self.known.iter().position(|k| {
+                k.a == ob.a && k.b == ob.b && (k.required - ob.required).abs() < 1e-12
+            }) {
+                Some(i) => i,
+                None => {
+                    self.known.push(*ob);
+                    self.known.len() - 1
+                }
+            };
         let (pp, nn) = match at {
             Some(th) => self.points(th),
             None => (self.p_pts.clone(), self.n_pts.clone()),
         };
+        let reach = ob.required + 2.0;
         let mut added = 0;
-        for (leg, pts) in [(self.pe.clone(), pp), (self.ne.clone(), nn)] {
-            for (i, &pt) in leg.iter().enumerate() {
-                if i == 0 || i + 1 == pts.len() {
-                    continue;
+        for (li, leg, pts) in [(0u8, self.pe.clone(), pp), (1u8, self.ne.clone(), nn)] {
+            let last = pts.len() - 1;
+            for i in 0..=last {
+                let moving = i != 0 && i != last;
+                let mut sites: Vec<(Sample, PointExpr, Vec2)> = Vec::new();
+                if moving {
+                    sites.push((Sample::Point(li, i), leg[i], pts[i]));
                 }
-                if pt_seg_dist_f64(pts[i], ob.a, ob.b) > ob.required + 2.0 {
-                    continue;
+                if mids && i < last && (moving || i + 1 != last) {
+                    let m = cir::midpoint(&mut self.g, leg[i], leg[i + 1]);
+                    sites.push((Sample::Mid(li, i), m, (pts[i] + pts[i + 1]).scale(0.5)));
                 }
-                let c = cir::clearance(
-                    &mut self.g,
-                    pt,
-                    (ob.a.x, ob.a.y),
-                    (ob.b.x, ob.b.y),
-                    ob.required,
-                    self.clearance_weight,
-                );
-                self.claims.push(c);
-                added += 1;
+                for (key, pe, now) in sites {
+                    if pt_seg_dist_f64(now, ob.a, ob.b) > reach || !self.claimed.insert((key, oi)) {
+                        continue;
+                    }
+                    let c = cir::clearance(
+                        &mut self.g,
+                        pe,
+                        (ob.a.x, ob.a.y),
+                        (ob.b.x, ob.b.y),
+                        ob.required,
+                        self.clearance_weight,
+                    );
+                    self.claims.push(c);
+                    added += 1;
+                }
             }
         }
         added
@@ -383,6 +509,8 @@ pub struct DescentReport {
     /// Attempts thrown away because the exact oracle rejected the geometry
     /// or the whole-net skew did not actually improve.
     pub rejected: usize,
+    /// Clearance claims mined from oracle violations (M3 lazy cuts).
+    pub cuts: usize,
 }
 
 /// Run the differentiable pair polish over every classified pair on a routed
@@ -537,6 +665,35 @@ pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) ->
         ob_board.traces.retain(|t| t.net != *pn && t.net != *nn);
         ob_board.vias.retain(|v| v.net != *pn && v.net != *nn);
         let ob_session = RouteSession::from_pcb(&ob_board);
+        // +0.05mm safety: the hinge is a soft penalty traded against skew,
+        // so its equilibrium must land OUTSIDE the hard rule the oracle
+        // enforces.
+        let to_obstacle =
+            |geom: &CopperGeom, emin: [f64; 2], emax: [f64; 2], req: f64| -> DescentObstacle {
+                let required = req + run_w / 2.0 + 0.05;
+                match geom {
+                    CopperGeom::Segment { a, b, half_w } => DescentObstacle {
+                        a: *a,
+                        b: *b,
+                        required: required + half_w,
+                    },
+                    CopperGeom::Disc { center, r } => DescentObstacle {
+                        a: *center,
+                        b: *center,
+                        required: required + r,
+                    },
+                    _ => {
+                        let c = Vec2::new((emin[0] + emax[0]) / 2.0, (emin[1] + emax[1]) / 2.0);
+                        let hd = ((emax[0] - emin[0]).powi(2) + (emax[1] - emin[1]).powi(2)).sqrt()
+                            / 2.0;
+                        DescentObstacle {
+                            a: c,
+                            b: c,
+                            required: required + hd,
+                        }
+                    }
+                }
+            };
         let mut obstacles = Vec::new();
         let mut ob_layers = vec![pl];
         if nlayer != pl {
@@ -548,64 +705,21 @@ pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) ->
                 "",
                 [lo.x, lo.y],
                 [hi.x, hi.y],
-                |geom, emin, emax, req| {
-                    // +0.05mm safety: the hinge is a soft penalty traded
-                    // against skew, so its equilibrium must land OUTSIDE the
-                    // hard rule the oracle enforces.
-                    let required = req + run_w / 2.0 + 0.05;
-                    match geom {
-                        CopperGeom::Segment { a, b, half_w } => obstacles.push(DescentObstacle {
-                            a: *a,
-                            b: *b,
-                            required: required + half_w,
-                        }),
-                        CopperGeom::Disc { center, r } => obstacles.push(DescentObstacle {
-                            a: *center,
-                            b: *center,
-                            required: required + r,
-                        }),
-                        _ => {
-                            let c = Vec2::new((emin[0] + emax[0]) / 2.0, (emin[1] + emax[1]) / 2.0);
-                            let hd = ((emax[0] - emin[0]).powi(2) + (emax[1] - emin[1]).powi(2))
-                                .sqrt()
-                                / 2.0;
-                            obstacles.push(DescentObstacle {
-                                a: c,
-                                b: c,
-                                required: required + hd,
-                            });
-                        }
-                    }
-                },
+                |geom, emin, emax, req| obstacles.push(to_obstacle(geom, emin, emax, req)),
             );
         }
 
-        let Some(prob) = PairProblem::build(
-            &p_pts,
-            &n_pts,
-            extra_p,
-            extra_n,
-            pl == nlayer,
-            gap_centre,
-            &obstacles,
-            &DescentWeights::default(),
-        ) else {
-            continue;
-        };
-        let (theta, it) = prob.solve(&prob.theta0, solver, iters);
-        let r = prob.result(&theta, it);
-
-        // Fail-closed: every optimized segment passes the exact oracle. Each
-        // leg is checked against a board with only ITS OWN old copper removed,
-        // so the twin stays an obstacle — the session applies the declared
-        // pair gap to it, so a correctly coupled leg passes while one that has
-        // drifted into its partner does not. (Dropping both nets would let the
-        // descent short the pair to itself unnoticed: the gap spring is a soft
-        // term, not a guarantee.)
-        // Both legs move together, so the twin must be present at its NEW
-        // position: checking P-new against N-old rejects every descent,
-        // because the pair as a whole has shifted.
-        let with_new = |keep: &str, moved: &[Vec2], moved_net: &str, layer: PcbLayer, w: f64| {
+        // The exact oracle, as a cut generator (M3). Every optimized segment
+        // must pass `RouteSession::probe`. Each leg is checked against a
+        // board with only ITS OWN old copper removed, so the twin stays an
+        // obstacle — the session applies the declared pair gap to it, so a
+        // correctly coupled leg passes while one that has drifted into its
+        // partner does not. (Dropping both nets would let the descent short
+        // the pair to itself unnoticed: the gap spring is a soft term, not a
+        // guarantee.) Both legs move together, so the twin must be present
+        // at its NEW position: checking P-new against N-old rejects every
+        // descent, because the pair as a whole has shifted.
+        let with_new = |moved: &[Vec2], moved_net: &str, layer: PcbLayer, w: f64| {
             let mut b = pcb.clone();
             b.traces.retain(|t| t.net != *pn && t.net != *nn);
             b.traces.extend(moved.windows(2).map(|s| Trace {
@@ -616,34 +730,72 @@ pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) ->
                 net: moved_net.to_string(),
                 source: None,
             }));
-            let _ = keep;
             RouteSession::from_pcb(&b)
         };
-        // P is judged against a board holding N's descended copper, and
-        // vice versa.
-        let p_session = with_new(pn, &r.n_pts, nn, nlayer, n_w);
-        let n_session = with_new(nn, &r.p_pts, pn, pl, p_w);
-        let legal = |sess: &RouteSession, pts: &[Vec2], net: &str, layer: PcbLayer, w: f64| {
-            pts.windows(2).all(|seg| {
-                sess.probe(
-                    &CopperGeom::Segment {
+        // Each violating segment mines the third-party copper around it as
+        // new clearance claims. A violation against the twin (the pair gap
+        // rule) mines nothing — descend_pair_mined then stops, not clean.
+        let oracle = |pp: &[Vec2], np: &[Vec2]| -> OracleVerdict {
+            let p_session = with_new(np, nn, nlayer, n_w);
+            let n_session = with_new(pp, pn, pl, p_w);
+            let mut bad = Vec::new();
+            let mut dirty = false;
+            for (sess, pts, net, layer, w) in [
+                (&p_session, pp, pn.as_str(), pl, p_w),
+                (&n_session, np, nn.as_str(), nlayer, n_w),
+            ] {
+                for seg in pts.windows(2) {
+                    let geom = CopperGeom::Segment {
                         a: seg[0],
                         b: seg[1],
                         half_w: w / 2.0,
-                    },
-                    layer,
-                    net,
-                    clearance,
-                )
-                .legal
-            })
+                    };
+                    if sess.probe(&geom, layer, net, clearance).legal {
+                        continue;
+                    }
+                    dirty = true;
+                    let m = 1.0;
+                    ob_session.for_each_blocking(
+                        layer,
+                        "",
+                        [seg[0].x.min(seg[1].x) - m, seg[0].y.min(seg[1].y) - m],
+                        [seg[0].x.max(seg[1].x) + m, seg[0].y.max(seg[1].y) + m],
+                        |g, emin, emax, req| {
+                            if g.distance_to(&geom) < req + 0.05 {
+                                bad.push(to_obstacle(g, emin, emax, req));
+                            }
+                        },
+                    );
+                }
+            }
+            OracleVerdict {
+                clean: !dirty,
+                cuts: bad,
+            }
         };
-        if !legal(&p_session, &r.p_pts, pn, pl, p_w)
-            || !legal(&n_session, &r.n_pts, nn, nlayer, n_w)
-        {
+
+        let Some(mined) = descend_pair_mined(
+            &p_pts,
+            &n_pts,
+            extra_p,
+            extra_n,
+            pl == nlayer,
+            gap_centre,
+            &obstacles,
+            &DescentWeights::default(),
+            solver,
+            iters,
+            4,
+            oracle,
+        ) else {
+            continue;
+        };
+        report.cuts += mined.cuts;
+        if !mined.clean {
             report.rejected += 1;
             continue;
         }
+        let r = mined.result;
         // Whole-net accounting: r.skew is run-only; judge the committed
         // outcome on the full nets and accept only real improvements.
         let before = (plen - nlen).abs();
@@ -899,5 +1051,99 @@ mod tests {
             );
             assert!(rs.skew < 0.15, "{name}: sco skew {}", rs.skew);
         }
+    }
+
+    /// M3: lazy constraint generation. The seed obstacle set deliberately
+    /// omits one obstacle that the straightened N leg would cut through. One
+    /// solve against the incomplete set is oracle-dirty (fail-closed: not
+    /// clean); with mining, the violation becomes clearance cuts, the warm
+    /// re-solve routes around it, and the result is oracle-clean.
+    #[test]
+    fn mined_cuts_make_incomplete_obstacle_set_oracle_clean() {
+        use crate::spatial::CopperGeom;
+        let (p, n, seed) = long_fixture();
+        // Hidden: a short trace just above where N straightens to (y=0.45),
+        // clear of N's starting bump (y≈1.05 there). Claims carry a 0.05
+        // cushion over the oracle's rule, as descend_board's do.
+        let hidden = DescentObstacle {
+            a: Vec2::new(13.0, 0.62),
+            b: Vec2::new(13.6, 0.62),
+            required: 0.3,
+        };
+        let all: Vec<DescentObstacle> = seed.iter().copied().chain([hidden]).collect();
+        let oracle = |pp: &[Vec2], np: &[Vec2]| -> OracleVerdict {
+            let mut v = OracleVerdict {
+                clean: true,
+                cuts: Vec::new(),
+            };
+            for pts in [pp, np] {
+                for seg in pts.windows(2) {
+                    let s = CopperGeom::Segment {
+                        a: seg[0],
+                        b: seg[1],
+                        half_w: 0.0,
+                    };
+                    for o in &all {
+                        let og = CopperGeom::Segment {
+                            a: o.a,
+                            b: o.b,
+                            half_w: 0.0,
+                        };
+                        if s.distance_to(&og) < o.required - 0.05 {
+                            v.clean = false;
+                            if !v.cuts.iter().any(|c| c.a == o.a && c.b == o.b) {
+                                v.cuts.push(*o);
+                            }
+                        }
+                    }
+                }
+            }
+            v
+        };
+        // The starting geometry is legal against everything.
+        assert!(oracle(&p, &n).clean, "fixture must start legal");
+        let w = DescentWeights::default();
+        let once = descend_pair_mined(
+            &p,
+            &n,
+            0.0,
+            0.0,
+            true,
+            0.45,
+            &seed,
+            &w,
+            DescentSolver::Sco,
+            400,
+            1,
+            oracle,
+        )
+        .unwrap();
+        assert!(
+            !once.clean,
+            "the incomplete seed set must let descent cut the hidden obstacle"
+        );
+        let mined = descend_pair_mined(
+            &p,
+            &n,
+            0.0,
+            0.0,
+            true,
+            0.45,
+            &seed,
+            &w,
+            DescentSolver::Sco,
+            400,
+            8,
+            oracle,
+        )
+        .unwrap();
+        eprintln!(
+            "mined: rounds={} cuts={} clean={} skew={:.4} iters={}",
+            mined.rounds, mined.cuts, mined.clean, mined.result.skew, mined.result.iters
+        );
+        assert!(mined.clean, "mining must reach an oracle-clean result");
+        assert!(mined.rounds >= 2 && mined.cuts > 0);
+        assert!(oracle(&mined.result.p_pts, &mined.result.n_pts).clean);
+        assert_eq!(mined.result.n_pts[0], n[0]);
     }
 }
