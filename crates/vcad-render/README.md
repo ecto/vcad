@@ -81,6 +81,7 @@ vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 | `--dims` | off | Overlay overall W×D×H bounding-box dimensions in mm. See below. |
 | `--callouts` | off | Call out holes and bolt circles: "Ø<d>" leaders per hole/boss, "<n>× Ø<d> on Ø<pcd> PCD" for equal-pitch patterns. See below. |
 | `--style <S>` | `drafting` | Shading style: `drafting` (navy tonal family), `shaded` (full material colour), or `tinted` (drafting look with material-tinted fills). See below. |
+| `--theme <T>` | `light` | Colour theme: `light` (ink on vellum) or `dark` (light linework on a near-black ground). See below. |
 | `-o, --output <PATH>` | stdout | Output path; format inferred from `.svg`/`.jpg`/`.jpeg`/`.png`. `-o -` = SVG on stdout. Single input only. |
 | `--jpeg <PATH>` | — | Legacy alias for `-o <path.jpg>`. |
 | `--raytrace` | off | Render the raster output via direct BRep ray tracing (needs `.png`/`.jpg`). |
@@ -204,6 +205,22 @@ to SVG, JPEG and PNG.
 
 ```bash
 vcad-render gripper.vcad --style tinted -o gripper.png
+```
+
+### Dark theme (`--theme dark`)
+
+`--theme dark` swaps the vellum palette for one that sits on a near-black
+page: a `#0b0907` ground, `#e8e1d2` linework (hidden lines dimmer), a dark
+tonal ramp that keeps a hint of vcad blue, a dark section-hatch ground, and
+text halos in the ground colour. Ghosted parts fade toward the ground and
+the orange accent is unchanged. It covers SVG, JPEG, PNG (on transparent
+PNG/SVG the light linework sits over alpha), `--raytrace`, `--sheet`,
+`--animate`, and every overlay. `--photoreal` refuses it (it is studio-lit
+with its own backdrop); the PCB board view is already dark and ignores it.
+Light output is byte-identical to before the flag existed.
+
+```bash
+vcad-render gripper.vcad --theme dark --labels -o gripper-dark.jpg
 ```
 
 ### Drawing-sheet mode (`--sheet`)

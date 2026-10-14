@@ -182,6 +182,118 @@ const RAMP: [[u8; 3]; 4] = [
     [205, 224, 238], // ice highlight
 ];
 
+/// Every colour a drafting render draws with. [`Palette::LIGHT`] is the
+/// historical vellum plate (ink on paper); [`Palette::DARK`] is the same
+/// plate inverted for a near-black page — light linework over a dark tonal
+/// ramp that keeps a hint of vcad blue. Pick one with [`Theme`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Palette {
+    /// Linework, annotation text and hatch lines (SVG).
+    pub ink: &'static str,
+    /// [`Self::ink`] as RGB (raster annotations).
+    pub ink_rgb: [u8; 3],
+    /// Ground behind the render; also text halos, and where ghosted parts fade to.
+    pub paper: &'static str,
+    /// [`Self::paper`] as RGB.
+    pub paper_rgb: [u8; 3],
+    /// Raster edge strokes and hatch lines.
+    pub edge_rgb: [u8; 3],
+    /// Two-stop monochrome raster shading: shadow end.
+    pub fill_dark: [u8; 3],
+    /// Two-stop monochrome raster shading: lit end.
+    pub fill_light: [u8; 3],
+    /// Tonal ramp: deep shadow → highlight.
+    pub ramp: [[u8; 3]; 4],
+    /// Highlight outline colour.
+    pub accent: &'static str,
+    /// Section-cut face background, under the hatch.
+    pub hatch_bg: &'static str,
+    /// [`Self::hatch_bg`] as RGB.
+    pub hatch_bg_rgb: [u8; 3],
+    /// Axis gizmo colours (X, Y, Z).
+    pub axis: [&'static str; 3],
+    /// [`Self::axis`] as RGB.
+    pub axis_rgb: [[u8; 3]; 3],
+    /// Luminance range a material colour is clamped to in
+    /// [`RenderStyle::Tinted`], so fills stay legible under the linework.
+    pub tint_luma: (f64, f64),
+}
+
+impl Palette {
+    /// Ink on warm vellum — the default, byte-identical to the original consts.
+    pub const LIGHT: Palette = Palette {
+        ink: INK,
+        ink_rgb: [11, 39, 66],
+        paper: PAPER,
+        paper_rgb: PAPER_RGB,
+        edge_rgb: FILL_DARK,
+        fill_dark: FILL_DARK,
+        fill_light: FILL_LIGHT,
+        ramp: RAMP,
+        accent: ACCENT,
+        hatch_bg: HATCH_BG,
+        hatch_bg_rgb: [220, 232, 242],
+        axis: AXIS_COLORS,
+        axis_rgb: [[192, 57, 43], [30, 142, 62], [43, 108, 176]],
+        tint_luma: TINT_MATERIAL_LUMA,
+    };
+    /// Light linework on a near-black ground.
+    pub const DARK: Palette = Palette {
+        ink: "#e8e1d2",
+        ink_rgb: [232, 225, 210],
+        paper: "#0b0907",
+        paper_rgb: [11, 9, 7],
+        edge_rgb: [232, 225, 210],
+        fill_dark: [18, 26, 36],
+        fill_light: [84, 108, 132],
+        ramp: [
+            [14, 20, 28],   // deep shadow
+            [28, 42, 58],   // core
+            [50, 70, 92],   // mid
+            [88, 112, 136], // highlight
+        ],
+        accent: ACCENT,
+        hatch_bg: "#1c2733",
+        hatch_bg_rgb: [28, 39, 51],
+        axis: ["#e5675a", "#4cc26a", "#5b9be0"],
+        axis_rgb: [[229, 103, 90], [76, 194, 106], [91, 155, 224]],
+        tint_luma: (0.10, 0.45),
+    };
+}
+
+/// Colour theme: which [`Palette`] a drafting render uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Theme {
+    /// [`Palette::LIGHT`] (default).
+    #[default]
+    Light,
+    /// [`Palette::DARK`].
+    Dark,
+}
+
+impl Theme {
+    /// The palette for this theme.
+    pub fn palette(self) -> &'static Palette {
+        match self {
+            Theme::Light => &Palette::LIGHT,
+            Theme::Dark => &Palette::DARK,
+        }
+    }
+}
+
+impl std::str::FromStr for Theme {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "" | "light" => Ok(Theme::Light),
+            "dark" => Ok(Theme::Dark),
+            other => Err(format!(
+                "unknown theme '{other}' — supported: 'light', 'dark'"
+            )),
+        }
+    }
+}
+
 /// Long-side resolution of the off-screen depth buffer used for vector
 /// hidden-line removal in the SVG path. Decoupled from `scale` and the
 /// final raster size: a fixed budget keeps occlusion decisions crisp for
@@ -1194,10 +1306,10 @@ enum Emphasis {
 
 /// Fade `ramp` toward [`PAPER_RGB`] by [`GHOST_MIX`] — the ghosted look
 /// for parts outside the highlight set.
-fn ghost_ramp(ramp: [[u8; 3]; 4]) -> [[u8; 3]; 4] {
+fn ghost_ramp(ramp: [[u8; 3]; 4], pal: &Palette) -> [[u8; 3]; 4] {
     let mut out = ramp;
     for stop in out.iter_mut() {
-        *stop = mix_rgb(*stop, PAPER_RGB, GHOST_MIX);
+        *stop = mix_rgb(*stop, pal.paper_rgb, GHOST_MIX);
     }
     out
 }
@@ -1289,6 +1401,7 @@ fn build_artifacts(
     rules: &EdgeRules,
     section: Option<SectionPlane>,
     style: RenderStyle,
+    pal: &Palette,
 ) -> Vec<SolidArtifacts> {
     let highlighting = accents.iter().any(|&a| a);
     let mut out = Vec::new();
@@ -1304,14 +1417,14 @@ fn build_artifacts(
             .get(si)
             .copied()
             .flatten()
-            .map(match style {
-                RenderStyle::Drafting => tint_ramp,
-                RenderStyle::Shaded => shaded_ramp,
-                RenderStyle::Tinted => tinted_ramp,
+            .map(|c| match style {
+                RenderStyle::Drafting => tint_ramp(c, pal),
+                RenderStyle::Shaded => shaded_ramp(c, pal),
+                RenderStyle::Tinted => tinted_ramp(c, pal),
             })
-            .unwrap_or(RAMP);
+            .unwrap_or(pal.ramp);
         if emphasis == Emphasis::Ghost {
-            ramp = ghost_ramp(ramp);
+            ramp = ghost_ramp(ramp, pal);
         }
         let mesh = catch_unwind(AssertUnwindSafe(|| solid.to_mesh(segments)));
         let Ok(mesh) = mesh else { continue };
@@ -1557,7 +1670,7 @@ fn luma(c: [f64; 3]) -> f64 {
 /// default) leave the navy essentially untouched while chromatic ones
 /// (copper, brass, gold, wood) warm or cool the whole ramp — one
 /// disciplined tint per part, never an arbitrary rainbow.
-fn tint_ramp(color: [f64; 3]) -> [[u8; 3]; 4] {
+fn tint_ramp(color: [f64; 3], pal: &Palette) -> [[u8; 3]; 4] {
     let mx = color[0].max(color[1]).max(color[2]).max(1e-3);
     let mn = color[0].min(color[1]).min(color[2]);
     let sat = (mx - mn) / mx; // HSV saturation
@@ -1570,15 +1683,15 @@ fn tint_ramp(color: [f64; 3]) -> [[u8; 3]; 4] {
                               // every preset at ≤20% material contribution, so even fully
                               // saturated red rendered as navy with the faintest pink hint.
     let k = sat.clamp(0.0, 0.85);
-    tint_ramp_k(color, k)
+    tint_ramp_k(color, k, pal)
 }
 
 /// Full-material-colour ramp for [`RenderStyle::Shaded`]: the material colour
 /// drives every stop outright (k = 1), rescaled to each stop's luminance so
 /// the lighting ladder is preserved. Achromatic materials (steel, aluminium)
 /// therefore render as true greys instead of staying in the navy family.
-fn shaded_ramp(color: [f64; 3]) -> [[u8; 3]; 4] {
-    tint_ramp_k(color, 1.0)
+fn shaded_ramp(color: [f64; 3], pal: &Palette) -> [[u8; 3]; 4] {
+    tint_ramp_k(color, 1.0, pal)
 }
 
 /// Share of the material colour in a [`RenderStyle::Tinted`] fill; the
@@ -1621,10 +1734,11 @@ fn clamp_luma(c: [f64; 3], lo: f64, hi: f64) -> [f64; 3] {
 /// rescaled to the stop's, which is what lets a 0.2-grey steel and a
 /// 0.78-grey aluminium render as visibly different parts on the same
 /// white-paper, ink-linework plate.
-fn tinted_ramp(color: [f64; 3]) -> [[u8; 3]; 4] {
-    let color = clamp_luma(color, TINT_MATERIAL_LUMA.0, TINT_MATERIAL_LUMA.1);
-    let top = luma([RAMP[3][0] as f64, RAMP[3][1] as f64, RAMP[3][2] as f64]) / 255.0;
-    let mut out = RAMP;
+fn tinted_ramp(color: [f64; 3], pal: &Palette) -> [[u8; 3]; 4] {
+    let color = clamp_luma(color, pal.tint_luma.0, pal.tint_luma.1);
+    let r = pal.ramp;
+    let top = luma([r[3][0] as f64, r[3][1] as f64, r[3][2] as f64]) / 255.0;
+    let mut out = r;
     for stop in out.iter_mut() {
         let sl = luma([stop[0] as f64, stop[1] as f64, stop[2] as f64]) / 255.0;
         let lit = TINT_LADDER_MIN + (1.0 - TINT_LADDER_MIN) * (sl / top).min(1.0);
@@ -1640,9 +1754,9 @@ fn tinted_ramp(color: [f64; 3]) -> [[u8; 3]; 4] {
 
 /// Shared ramp construction: blend the navy [`RAMP`] toward the material
 /// colour (rescaled per-stop to the stop's luminance) by strength `k`.
-fn tint_ramp_k(color: [f64; 3], k: f64) -> [[u8; 3]; 4] {
+fn tint_ramp_k(color: [f64; 3], k: f64, pal: &Palette) -> [[u8; 3]; 4] {
     let ml = luma(color).max(1e-3);
-    let mut out = RAMP;
+    let mut out = pal.ramp;
     for stop in out.iter_mut() {
         let sl = luma([stop[0] as f64, stop[1] as f64, stop[2] as f64]) / 255.0;
         let scale = sl / ml; // material rescaled to this stop's luminance
@@ -2203,6 +2317,8 @@ pub struct SvgOptions {
     /// [`RenderStyle::Shaded`] renders each part in its full material
     /// colour (luminance-laddered so lighting is preserved).
     pub style: RenderStyle,
+    /// Colour theme: light (ink on vellum, default) or dark.
+    pub theme: Theme,
 }
 
 /// Shading style for the SVG render path.
@@ -2462,6 +2578,7 @@ fn render_svg_impl(
     let transparent = opts.transparent;
     let section = opts.section;
     let annos = &opts.annotations;
+    let pal = opts.theme.palette();
 
     let cam = view.cam();
     let right = view.right();
@@ -2478,6 +2595,7 @@ fn render_svg_impl(
         &EdgeRules::svg(),
         section,
         opts.style,
+        pal,
     );
 
     // First pass: screen-space bbox + 3D bbox (for the depth-cue bias),
@@ -2619,7 +2737,7 @@ fn render_svg_impl(
                 polys.push(ProjPoly {
                     s: ps,
                     fill: "url(#section-hatch)".to_string(),
-                    stroke: HATCH_BG.to_string(),
+                    stroke: pal.hatch_bg.to_string(),
                     depth: (vd[0] + vd[1] + vd[2]) / 3.0,
                 });
                 continue;
@@ -2839,8 +2957,10 @@ fn render_svg_impl(
     // convention). Only emitted when a section plane is active.
     let hatch_def = if section.is_some() {
         format!(
-            r#"<pattern id="section-hatch" patternUnits="userSpaceOnUse" width="{sp:.2}" height="{sp:.2}" patternTransform="rotate(45)"><rect width="{sp:.2}" height="{sp:.2}" fill="{HATCH_BG}"/><line x1="0" y1="0" x2="0" y2="{sp:.2}" stroke="{INK}" stroke-width="{HATCH_STROKE_PX}"/></pattern>"#,
+            r#"<pattern id="section-hatch" patternUnits="userSpaceOnUse" width="{sp:.2}" height="{sp:.2}" patternTransform="rotate(45)"><rect width="{sp:.2}" height="{sp:.2}" fill="{hbg}"/><line x1="0" y1="0" x2="0" y2="{sp:.2}" stroke="{ink}" stroke-width="{HATCH_STROKE_PX}"/></pattern>"#,
             sp = HATCH_SPACING_PX,
+            hbg = pal.hatch_bg,
+            ink = pal.ink,
         )
     } else {
         String::new()
@@ -2851,7 +2971,8 @@ fn render_svg_impl(
     // transparent render so the SVG composites over any background.
     if !transparent {
         out.push_str(&format!(
-            r#"<rect x="0" y="0" width="{w:.2}" height="{h:.2}" fill="{PAPER}"/>"#
+            r#"<rect x="0" y="0" width="{w:.2}" height="{h:.2}" fill="{}"/>"#,
+            pal.paper
         ));
     }
 
@@ -2921,7 +3042,7 @@ fn render_svg_impl(
         &mut out,
         &hidden_lines,
         &hidden_arcs,
-        INK,
+        pal.ink,
         STROKE_HIDDEN_PX,
         0.5,
         Some(dash),
@@ -2931,7 +3052,7 @@ fn render_svg_impl(
         &mut out,
         &ghost_crease_lines,
         &no_arcs,
-        INK,
+        pal.ink,
         STROKE_CREASE_PX,
         GHOST_LINE_OPACITY,
         None,
@@ -2940,7 +3061,7 @@ fn render_svg_impl(
         &mut out,
         &ghost_outline_lines,
         &no_arcs,
-        INK,
+        pal.ink,
         STROKE_OUTLINE_PX,
         GHOST_LINE_OPACITY,
         None,
@@ -2949,7 +3070,7 @@ fn render_svg_impl(
         &mut out,
         &crease_lines,
         &crease_arcs,
-        INK,
+        pal.ink,
         STROKE_CREASE_PX,
         1.0,
         None,
@@ -2958,7 +3079,7 @@ fn render_svg_impl(
         &mut out,
         &outline_lines,
         &outline_arcs,
-        INK,
+        pal.ink,
         STROKE_OUTLINE_PX,
         1.0,
         None,
@@ -2969,7 +3090,7 @@ fn render_svg_impl(
         &mut out,
         &accent_outline_lines,
         &no_arcs,
-        ACCENT,
+        pal.accent,
         STROKE_ACCENT_PX,
         1.0,
         None,
@@ -2982,7 +3103,7 @@ fn render_svg_impl(
         // clear of them.
         let mut occupied: Vec<callouts::Rect> = Vec::new();
         if annos.dims {
-            emit_svg_dims(&mut out, lo3, hi3, w, h, &world_to_fin, &mut occupied);
+            emit_svg_dims(&mut out, lo3, hi3, w, h, &world_to_fin, &mut occupied, pal);
         }
         if annos.labels {
             for (ai, art) in arts.iter().enumerate() {
@@ -2999,7 +3120,7 @@ fn render_svg_impl(
                     continue;
                 }
                 let anchor = fin(((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0));
-                occupied.push(emit_svg_label(&mut out, name, anchor, w));
+                occupied.push(emit_svg_label(&mut out, name, anchor, w, pal));
             }
         }
         if annos.callouts {
@@ -3027,10 +3148,10 @@ fn render_svg_impl(
                     }),
                 },
             );
-            emit_svg_callouts(&mut out, &plan);
+            emit_svg_callouts(&mut out, &plan, pal);
         }
         if annos.axes {
-            emit_svg_axes(&mut out, view, h);
+            emit_svg_axes(&mut out, view, h, pal);
         }
     }
 
@@ -3041,7 +3162,14 @@ fn render_svg_impl(
 /// Emit the part-label annotation: an anchor dot at the part's projected
 /// bbox centre, a leader line, and the name with a paper-coloured halo so
 /// it stays legible over fills.
-fn emit_svg_label(out: &mut String, name: &str, anchor: (f64, f64), w: f64) -> callouts::Rect {
+fn emit_svg_label(
+    out: &mut String,
+    name: &str,
+    anchor: (f64, f64),
+    w: f64,
+    pal: &Palette,
+) -> callouts::Rect {
+    let (ink, paper) = (pal.ink, pal.paper);
     // Lead up-right by default; flip left when close to the right edge.
     let dir = if anchor.0 + 70.0 > w { -1.0 } else { 1.0 };
     let elbow = (anchor.0 + 18.0 * dir, anchor.1 - 18.0);
@@ -3060,7 +3188,7 @@ fn emit_svg_label(out: &mut String, name: &str, anchor: (f64, f64), w: f64) -> c
         y1: elbow.1 + 3.0,
     };
     out.push_str(&format!(
-        r#"<g class="annot-label"><circle cx="{:.2}" cy="{:.2}" r="1.6" fill="{INK}"/><line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="0.6"/><text x="{tx:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="10" fill="{INK}" text-anchor="{ta}" paint-order="stroke" stroke="{PAPER}" stroke-width="3">{}</text></g>"#,
+        r#"<g class="annot-label"><circle cx="{:.2}" cy="{:.2}" r="1.6" fill="{ink}"/><line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{ink}" stroke-width="0.6"/><text x="{tx:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="10" fill="{ink}" text-anchor="{ta}" paint-order="stroke" stroke="{paper}" stroke-width="3">{}</text></g>"#,
         anchor.0,
         anchor.1,
         anchor.0,
@@ -3076,16 +3204,17 @@ fn emit_svg_label(out: &mut String, name: &str, anchor: (f64, f64), w: f64) -> c
 /// Emit the hole / pitch-circle callouts planned by [`callouts::plan`]:
 /// dashed construction circles, rim-anchored leaders in the part-label
 /// style, and haloed labels.
-fn emit_svg_callouts(out: &mut String, plan: &callouts::Plan) {
+fn emit_svg_callouts(out: &mut String, plan: &callouts::Plan, pal: &Palette) {
+    let (ink, paper) = (pal.ink, pal.paper);
     out.push_str(r#"<g class="annot-callouts">"#);
     for &((cx, cy), r) in &plan.dashed_circles {
         out.push_str(&format!(
-            r#"<circle cx="{cx:.2}" cy="{cy:.2}" r="{r:.2}" fill="none" stroke="{INK}" stroke-width="0.5" stroke-dasharray="4 2.5" opacity="0.8"/>"#,
+            r#"<circle cx="{cx:.2}" cy="{cy:.2}" r="{r:.2}" fill="none" stroke="{ink}" stroke-width="0.5" stroke-dasharray="4 2.5" opacity="0.8"/>"#,
         ));
     }
     for (&(a, b), &dot) in plan.leaders.iter().zip(&plan.dots) {
         out.push_str(&format!(
-            r#"<circle cx="{:.2}" cy="{:.2}" r="1.6" fill="{INK}"/><line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="0.6"/>"#,
+            r#"<circle cx="{:.2}" cy="{:.2}" r="1.6" fill="{ink}"/><line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{ink}" stroke-width="0.6"/>"#,
             dot.0, dot.1, a.0, a.1, b.0, b.1,
         ));
     }
@@ -3093,7 +3222,7 @@ fn emit_svg_callouts(out: &mut String, plan: &callouts::Plan) {
         // `pos` is the text box's top-left; the box is 10 units tall, so
         // the baseline sits 2 units above its bottom edge.
         out.push_str(&format!(
-            r#"<text x="{:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="10" fill="{INK}" text-anchor="start" paint-order="stroke" stroke="{PAPER}" stroke-width="3">{}</text>"#,
+            r#"<text x="{:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="10" fill="{ink}" text-anchor="start" paint-order="stroke" stroke="{paper}" stroke-width="3">{}</text>"#,
             t.pos.0,
             t.pos.1 + 8.0,
             xml_escape(&t.text),
@@ -3106,6 +3235,7 @@ fn emit_svg_callouts(out: &mut String, plan: &callouts::Plan) {
 /// from the bbox corners, a dimension line offset outside the silhouette,
 /// and the mm value at its midpoint. Each value's text box is appended to
 /// `occupied` so later overlays can avoid it.
+#[allow(clippy::too_many_arguments)]
 fn emit_svg_dims(
     out: &mut String,
     lo3: [f64; 3],
@@ -3114,7 +3244,9 @@ fn emit_svg_dims(
     h: f64,
     world_to_fin: &dyn Fn([f64; 3]) -> (f64, f64),
     occupied: &mut Vec<callouts::Rect>,
+    pal: &Palette,
 ) {
+    let (ink, paper) = (pal.ink, pal.paper);
     out.push_str(r#"<g class="annot-dims">"#);
     for dim in bbox_dim_specs(lo3, hi3) {
         let pa = world_to_fin(dim.a);
@@ -3138,7 +3270,7 @@ fn emit_svg_dims(
         // Extension lines (slightly past the dimension line).
         for (p, e) in [(pa, a1), (pb, a2)] {
             out.push_str(&format!(
-                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="0.45" opacity="0.75"/>"#,
+                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{ink}" stroke-width="0.45" opacity="0.75"/>"#,
                 p.0,
                 p.1,
                 e.0 + n.0 * 4.0,
@@ -3147,14 +3279,14 @@ fn emit_svg_dims(
         }
         // Dimension line with drafting tick marks at both ends.
         out.push_str(&format!(
-            r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="0.6"/>"#,
+            r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{ink}" stroke-width="0.6"/>"#,
             a1.0, a1.1, a2.0, a2.1,
         ));
         let (ux, uy) = (dx / len, dy / len);
         for p in [a1, a2] {
             let t = ((ux - n.0) * 3.0, (uy - n.1) * 3.0);
             out.push_str(&format!(
-                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="0.8"/>"#,
+                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{ink}" stroke-width="0.8"/>"#,
                 p.0 - t.0,
                 p.1 - t.1,
                 p.0 + t.0,
@@ -3163,7 +3295,7 @@ fn emit_svg_dims(
         }
         let text = (mid.0 + n.0 * (off + 10.0), mid.1 + n.1 * (off + 10.0));
         out.push_str(&format!(
-            r#"<text x="{:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="9" fill="{INK}" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="{PAPER}" stroke-width="3">{}</text>"#,
+            r#"<text x="{:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="9" fill="{ink}" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="{paper}" stroke-width="3">{}</text>"#,
             text.0,
             text.1,
             xml_escape(&dim.label),
@@ -3182,7 +3314,8 @@ fn emit_svg_dims(
 /// Emit the origin/axes gizmo in the lower-left corner: world X/Y/Z arrows
 /// projected through the current view (kernel is Z-up). An axis parallel to
 /// the camera projects to nothing and is skipped.
-fn emit_svg_axes(out: &mut String, view: View, h: f64) {
+fn emit_svg_axes(out: &mut String, view: View, h: f64, pal: &Palette) {
+    let paper = pal.paper;
     let right = view.right();
     let down = view.down();
     // Inset far enough that an arrow pointing toward the corner (plus its
@@ -3199,7 +3332,7 @@ fn emit_svg_axes(out: &mut String, view: View, h: f64) {
         }
         let (ux, uy) = (d.0 / m, d.1 / m);
         let tip = (origin.0 + ux * AXIS_LEN_PX, origin.1 + uy * AXIS_LEN_PX);
-        let color = AXIS_COLORS[i];
+        let color = pal.axis[i];
         out.push_str(&format!(
             r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{color}" stroke-width="1.4" stroke-linecap="round"/>"#,
             origin.0, origin.1, tip.0, tip.1,
@@ -3216,7 +3349,7 @@ fn emit_svg_axes(out: &mut String, view: View, h: f64) {
             ));
         }
         out.push_str(&format!(
-            r#"<text x="{:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="9" fill="{color}" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="{PAPER}" stroke-width="2.5">{}</text>"#,
+            r#"<text x="{:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="9" fill="{color}" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="{paper}" stroke-width="2.5">{}</text>"#,
             tip.0 + ux * 8.0,
             tip.1 + uy * 8.0,
             AXIS_NAMES[i],
@@ -3270,7 +3403,8 @@ mod raster {
     const RASTER_COPLANAR_DOT_TOL: f64 = 0.985; // cos(~10°)
 
     /// Matte, neutral background per the mecheval capture rules.
-    pub(crate) const BACKGROUND: [u8; 3] = [244, 243, 241];
+    #[cfg(test)]
+    pub(crate) const BACKGROUND: [u8; 3] = Palette::LIGHT.paper_rgb;
 
     /// Output canvas dimensions in pixels. Row-major, `w` pixels per row.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3556,6 +3690,9 @@ mod raster {
         /// family (default), full material colour, or drafting fills
         /// tinted from each part's material.
         pub style: RenderStyle,
+        /// Colour theme, as for [`SvgOptions::theme`]. Honoured by the
+        /// tessellated and `--raytrace` paths; the photoreal path ignores it.
+        pub theme: Theme,
     }
 
     /// Supersampling factor for a given output width when the caller
@@ -3586,6 +3723,7 @@ mod raster {
                 annotations: RenderAnnotations::default(),
                 aa: None,
                 style: RenderStyle::Drafting,
+                theme: Theme::Light,
             }
         }
     }
@@ -3810,7 +3948,9 @@ mod raster {
             },
             opts.section,
             opts.style,
+            opts.theme.palette(),
         );
+        let pal = opts.theme.palette();
 
         // Screen-plane (mm) and 3D bounding boxes over all vertices.
         let mut min = [f64::INFINITY; 2];
@@ -3894,7 +4034,8 @@ mod raster {
         };
         let to_ss = |p: (f64, f64, f64)| (p.0 * ss as f64, p.1 * ss as f64, p.2);
 
-        let mut rgb: Vec<u8> = BACKGROUND
+        let mut rgb: Vec<u8> = pal
+            .paper_rgb
             .iter()
             .copied()
             .cycle()
@@ -3936,6 +4077,7 @@ mod raster {
                 let shade = TriShade {
                     lit: lambertian(art.normals[ti], light),
                     ramp: tinted.then_some(art.ramp),
+                    pal,
                     dmin,
                     dspan,
                 };
@@ -3968,7 +4110,15 @@ mod raster {
             let proj: Vec<(f64, f64, f64)> = art.verts.iter().map(|v| to_ss(to_px(*v))).collect();
             for &(a, b, _kind) in &art.edges {
                 draw_edge(
-                    &mut rgb, &zbuf, &mut mask, sc, proj[a], proj[b], bias_base, stroke_px,
+                    &mut rgb,
+                    &zbuf,
+                    &mut mask,
+                    sc,
+                    proj[a],
+                    proj[b],
+                    bias_base,
+                    stroke_px,
+                    pal.edge_rgb,
                 );
             }
         }
@@ -4002,7 +4152,7 @@ mod raster {
                         }
                     }
                     if hits == 0 {
-                        out_rgb.extend_from_slice(&BACKGROUND);
+                        out_rgb.extend_from_slice(&pal.paper_rgb);
                         out_mask.push(0);
                         continue;
                     }
@@ -4011,7 +4161,7 @@ mod raster {
                         let v = if png {
                             a / hits as f64
                         } else {
-                            (a + (n - hits as f64) * BACKGROUND[k] as f64) / n
+                            (a + (n - hits as f64) * pal.paper_rgb[k] as f64) / n
                         };
                         out_rgb.push(v.round().clamp(0.0, 255.0) as u8);
                     }
@@ -4042,8 +4192,6 @@ mod raster {
     const HATCH_PERIOD_PX: usize = 9;
     /// Hatch line thickness (px) within each period.
     const HATCH_LINE_PX: usize = 2;
-    /// Cut-face background — a pale ice tint (matches the SVG `HATCH_BG`).
-    const HATCH_BG_RGB: [u8; 3] = [220, 232, 242];
 
     /// A triangle's shading inputs, resolved to a colour **per pixel**.
     ///
@@ -4060,6 +4208,8 @@ mod raster {
         lit: f64,
         /// Material ramp for a tinted solid; `None` = two-stop monochrome.
         ramp: Option<[[u8; 3]; 4]>,
+        /// Theme colours (monochrome stops, hatch).
+        pal: &'static Palette,
         /// Depth-cue normalization over the whole scene.
         dmin: f64,
         dspan: f64,
@@ -4072,7 +4222,7 @@ mod raster {
             let lit = (self.lit * cue).clamp(0.0, 1.0);
             match &self.ramp {
                 Some(ramp) => ramp_sample(ramp, lit),
-                None => mix_rgb(FILL_DARK, FILL_LIGHT, lit),
+                None => mix_rgb(self.pal.fill_dark, self.pal.fill_light, lit),
             }
         }
     }
@@ -4144,9 +4294,9 @@ mod raster {
                         // 45° drafting hatch: ink line over pale ice.
                         if (px + py) % (HATCH_PERIOD_PX * hatch_scale) < HATCH_LINE_PX * hatch_scale
                         {
-                            FILL_DARK
+                            shade.pal.edge_rgb
                         } else {
-                            HATCH_BG_RGB
+                            shade.pal.hatch_bg_rgb
                         }
                     } else {
                         shade.at(depth)
@@ -4161,12 +4311,11 @@ mod raster {
 
     // ── raster annotation overlay ─────────────────────────────────────────
 
-    /// Visible linework ink as RGB (the raster twin of [`INK`]).
-    const INK_RGB: [u8; 3] = [11, 39, 66];
     /// Axis gizmo colours (X, Y, Z), matching [`AXIS_COLORS`]. These appear
     /// nowhere else in a render, which makes them a clean handle on the
     /// overlay in tests.
-    pub(crate) const AXIS_RGB: [[u8; 3]; 3] = [[192, 57, 43], [30, 142, 62], [43, 108, 176]];
+    #[cfg(test)]
+    pub(crate) const AXIS_RGB: [[u8; 3]; 3] = Palette::LIGHT.axis_rgb;
     /// Text glyph pixel scale (5×7 font → 10×14 px per glyph) on the
     /// reference canvas; multiplied by [`AnnoScale`] in practice.
     const FONT_SCALE: usize = 2;
@@ -4226,6 +4375,8 @@ mod raster {
         hi3: [f64; 3],
     ) {
         let annos = &opts.annotations;
+        let pal = opts.theme.palette();
+        let halo = pal.paper_rgb;
         let s = AnnoScale::for_canvas(canvas);
         let hair = s.i(1.0);
         // Text boxes already drawn, so callout labels can steer clear.
@@ -4279,11 +4430,11 @@ mod raster {
                         canvas,
                         p,
                         (e.0 + n.0 * tick, e.1 + n.1 * tick),
-                        INK_RGB,
+                        pal.ink_rgb,
                         hair,
                     );
                 }
-                draw_line_col(rgb, mask, canvas, a1, a2, INK_RGB, hair);
+                draw_line_col(rgb, mask, canvas, a1, a2, pal.ink_rgb, hair);
                 let (ux, uy) = (dx / len, dy / len);
                 for p in [a1, a2] {
                     let t = ((ux - n.0) * tick, (uy - n.1) * tick);
@@ -4293,13 +4444,13 @@ mod raster {
                         canvas,
                         (p.0 - t.0, p.1 - t.1),
                         (p.0 + t.0, p.1 + t.1),
-                        INK_RGB,
+                        pal.ink_rgb,
                         hair,
                     );
                 }
                 let out = off + s.u(14.0);
                 let text = (mid.0 + n.0 * out, mid.1 + n.1 * out);
-                draw_text_centered(rgb, mask, canvas, text, &dim.label, INK_RGB, s);
+                draw_text_centered(rgb, mask, canvas, text, &dim.label, pal.ink_rgb, halo, s);
                 let half_w = text_width_px(&dim.label, s) as f64 / 2.0;
                 occupied.push(callouts::Rect {
                     x0: text.0 - half_w,
@@ -4347,7 +4498,7 @@ mod raster {
                     .expect("pts is non-empty");
                 let reach = s.u(22.0);
                 let elbow = (anchor.0 + reach * dir, anchor.1 - reach);
-                draw_line_col(rgb, mask, canvas, anchor, elbow, INK_RGB, hair);
+                draw_line_col(rgb, mask, canvas, anchor, elbow, pal.ink_rgb, hair);
                 // Anchor dot.
                 let dot = s.u(1.0);
                 draw_line_col(
@@ -4356,7 +4507,7 @@ mod raster {
                     canvas,
                     (anchor.0 - dot, anchor.1),
                     (anchor.0 + dot, anchor.1),
-                    INK_RGB,
+                    pal.ink_rgb,
                     s.i(2.0),
                 );
                 let tw = text_width_px(name, s) as f64;
@@ -4369,7 +4520,7 @@ mod raster {
                 // Keep the plate on-canvas even when the part crowds an edge.
                 let tx = tx.clamp(0.0, (canvas.w as f64 - tw).max(0.0));
                 let ty = (elbow.1 - s.text_h() / 2.0).clamp(0.0, canvas.h as f64 - s.text_h());
-                draw_text(rgb, mask, canvas, (tx, ty), name, INK_RGB, s);
+                draw_text(rgb, mask, canvas, (tx, ty), name, pal.ink_rgb, halo, s);
                 occupied.push(callouts::Rect {
                     x0: tx,
                     y0: ty,
@@ -4437,7 +4588,7 @@ mod raster {
                             canvas,
                             (c.0 + r * t0.cos(), c.1 + r * t0.sin()),
                             (c.0 + r * t1.cos(), c.1 + r * t1.sin()),
-                            INK_RGB,
+                            pal.ink_rgb,
                             hair,
                         );
                     }
@@ -4445,14 +4596,14 @@ mod raster {
             }
             let dot_r = s.u(1.0);
             for (&(a, b), &d) in plan.leaders.iter().zip(&plan.dots) {
-                draw_line_col(rgb, mask, canvas, a, b, INK_RGB, hair);
+                draw_line_col(rgb, mask, canvas, a, b, pal.ink_rgb, hair);
                 draw_line_col(
                     rgb,
                     mask,
                     canvas,
                     (d.0 - dot_r, d.1),
                     (d.0 + dot_r, d.1),
-                    INK_RGB,
+                    pal.ink_rgb,
                     s.i(2.0),
                 );
             }
@@ -4460,7 +4611,7 @@ mod raster {
                 let tw = text_width_px(&t.text, s) as f64;
                 let tx = t.pos.0.clamp(0.0, (canvas.w as f64 - tw).max(0.0));
                 let ty = t.pos.1.clamp(0.0, (canvas.h as f64 - s.text_h()).max(0.0));
-                draw_text(rgb, mask, canvas, (tx, ty), &t.text, INK_RGB, s);
+                draw_text(rgb, mask, canvas, (tx, ty), &t.text, pal.ink_rgb, halo, s);
             }
         }
         if annos.axes {
@@ -4481,7 +4632,7 @@ mod raster {
                 }
                 let (ux, uy) = (d.0 / m, d.1 / m);
                 let tip = (origin.0 + ux * arm, origin.1 + uy * arm);
-                let color = AXIS_RGB[i];
+                let color = pal.axis_rgb[i];
                 draw_line_col(rgb, mask, canvas, origin, tip, color, weight);
                 for a in [0.45f64, -0.45] {
                     let (bx, by) = (-ux * a.cos() - uy * a.sin(), ux * a.sin() - uy * a.cos());
@@ -4503,6 +4654,7 @@ mod raster {
                     (tip.0 + ux * label, tip.1 + uy * label),
                     AXIS_NAMES[i],
                     color,
+                    halo,
                     s,
                 );
             }
@@ -4607,6 +4759,7 @@ mod raster {
 
     /// Draw `text` with its top-left at `pos`, over a paper-coloured pad so
     /// it stays legible on part fills.
+    #[allow(clippy::too_many_arguments)]
     fn draw_text(
         rgb: &mut [u8],
         mask: &mut [u8],
@@ -4614,6 +4767,7 @@ mod raster {
         pos: (f64, f64),
         text: &str,
         color: [u8; 3],
+        halo: [u8; 3],
         s: AnnoScale,
     ) {
         let font = s.font();
@@ -4631,9 +4785,7 @@ mod raster {
                 }
                 let cell = canvas.idx(px as usize, py as usize);
                 let qi = cell * 3;
-                rgb[qi] = BACKGROUND[0];
-                rgb[qi + 1] = BACKGROUND[1];
-                rgb[qi + 2] = BACKGROUND[2];
+                rgb[qi..qi + 3].copy_from_slice(&halo);
                 mask[cell] = 255;
             }
         }
@@ -4674,6 +4826,7 @@ mod raster {
         pos: (f64, f64),
         text: &str,
         color: [u8; 3],
+        halo: [u8; 3],
         s: AnnoScale,
     ) {
         let w = text_width_px(text, s) as f64;
@@ -4684,6 +4837,7 @@ mod raster {
             (pos.0 - w / 2.0, pos.1 - s.text_h() / 2.0),
             text,
             color,
+            halo,
             s,
         );
     }
@@ -4698,8 +4852,8 @@ mod raster {
         b: (f64, f64, f64),
         bias_base: f64,
         stroke_px: usize,
+        stroke: [u8; 3],
     ) {
-        let stroke = FILL_DARK;
         let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
         let steps = (len * 2.0).ceil().max(1.0) as usize;
         for s in 0..=steps {
@@ -4785,7 +4939,7 @@ pub use raytrace::{render_raytrace_jpeg_str, render_raytrace_png_str};
 /// paths are drop-in alternatives that read as the same house style.
 #[cfg(feature = "raytrace")]
 mod raytrace {
-    use super::raster::{canvas_for, encode_jpeg, encode_png, fit_scale, Frame, BACKGROUND};
+    use super::raster::{canvas_for, encode_jpeg, encode_png, fit_scale, Frame};
     use super::*;
     use vcad_kernel::vcad_kernel_math::{Point3, Vec3};
     use vcad_kernel_raytrace::{BrepBvh, Bvh, Instance, Ray, Tlas};
@@ -4849,6 +5003,7 @@ mod raytrace {
         png: bool,
         framing: Option<&FixedFraming>,
     ) -> Result<Frame, String> {
+        let pal = opts.theme.palette();
         if tinted.is_empty() {
             return Err("no solids produced".to_string());
         }
@@ -4888,7 +5043,7 @@ mod raytrace {
                 continue;
             };
             instances.push(inst);
-            ramps.push(s.tint.map(tint_ramp));
+            ramps.push(s.tint.map(|c| tint_ramp(c, pal)));
         }
         if instances.is_empty() {
             return Err(format!(
@@ -4970,7 +5125,8 @@ mod raytrace {
         let d0 = dmax + dspan + 1.0;
         let dir = Vec3::new(-cam[0], -cam[1], -cam[2]);
 
-        let mut rgb: Vec<u8> = BACKGROUND
+        let mut rgb: Vec<u8> = pal
+            .paper_rgb
             .iter()
             .copied()
             .cycle()
@@ -4999,7 +5155,15 @@ mod raytrace {
                         let ray = Ray::new(origin, dir);
 
                         let shaded = scene.trace_closest(&ray).map(|found| {
-                            shade_hit(&found.hit, &ramps[found.payload], cam, light, dmin, dspan)
+                            shade_hit(
+                                &found.hit,
+                                &ramps[found.payload],
+                                cam,
+                                light,
+                                dmin,
+                                dspan,
+                                pal,
+                            )
                         });
                         if let Some(c) = shaded {
                             for k in 0..3 {
@@ -5021,7 +5185,7 @@ mod raytrace {
                         (acc[k] / hits as f64).round() as u8
                     } else {
                         // Composite coverage over the opaque vellum ground.
-                        ((acc[k] + (n - hits as f64) * BACKGROUND[k] as f64) / n).round() as u8
+                        ((acc[k] + (n - hits as f64) * pal.paper_rgb[k] as f64) / n).round() as u8
                     };
                 }
             }
@@ -5040,6 +5204,7 @@ mod raytrace {
         light: [f64; 3],
         dmin: f64,
         dspan: f64,
+        pal: &Palette,
     ) -> [u8; 3] {
         let mut n = [hit.normal.x, hit.normal.y, hit.normal.z];
         if dot(n, cam) < 0.0 {
@@ -5050,7 +5215,7 @@ mod raytrace {
         let lit = (lambertian(n, light) * cue).clamp(0.0, 1.0);
         match ramp {
             Some(r) => ramp_sample(r, lit),
-            None => mix_rgb(FILL_DARK, FILL_LIGHT, lit),
+            None => mix_rgb(pal.fill_dark, pal.fill_light, lit),
         }
     }
 }
@@ -5172,7 +5337,11 @@ mod tests {
         let steel = [0.2, 0.2, 0.22];
         let black = [0.05, 0.05, 0.05];
         let lum = |c: [u8; 3]| luma([c[0] as f64, c[1] as f64, c[2] as f64]) / 255.0;
-        let (ra, rs, rb) = (tinted_ramp(alu), tinted_ramp(steel), tinted_ramp(black));
+        let (ra, rs, rb) = (
+            tinted_ramp(alu, &Palette::LIGHT),
+            tinted_ramp(steel, &Palette::LIGHT),
+            tinted_ramp(black, &Palette::LIGHT),
+        );
         for i in 0..4 {
             // Aluminium reads lighter than steel at every stop — the whole
             // point; drafting's luminance-rescaled tint can't do this.
@@ -5198,8 +5367,8 @@ mod tests {
             );
         }
         // Achromatic materials no longer land on the navy ramp.
-        assert_ne!(ra, tint_ramp(alu));
-        assert_ne!(rs, tint_ramp(steel));
+        assert_ne!(ra, tint_ramp(alu, &Palette::LIGHT));
+        assert_ne!(rs, tint_ramp(steel, &Palette::LIGHT));
     }
 
     /// Two cubes, one aluminium and one steel: same fill in drafting mode
@@ -5328,8 +5497,8 @@ mod tests {
         // Achromatic steel grey: drafting keeps navy (blue-dominant stops),
         // shaded must produce true greys (r ≈ g ≈ b at every stop).
         let grey = [0.5, 0.5, 0.5];
-        let drafting = tint_ramp(grey);
-        let shaded = shaded_ramp(grey);
+        let drafting = tint_ramp(grey, &Palette::LIGHT);
+        let shaded = shaded_ramp(grey, &Palette::LIGHT);
         assert!(
             drafting.iter().any(|s| s[2] > s[0] + 10),
             "drafting ramp should stay navy for achromatic materials: {drafting:?}"
@@ -5416,6 +5585,47 @@ mod tests {
         .to_string()
     }
 
+    #[test]
+    fn dark_theme_svg_has_no_light_palette_colours() {
+        let all = RenderAnnotations {
+            axes: true,
+            labels: true,
+            dims: true,
+            callouts: true,
+        };
+        let opts = |theme| SvgOptions {
+            theme,
+            annotations: all,
+            section: Some(SectionPlane {
+                axis: Axis::X,
+                coord: 5.0,
+            }),
+            highlight: vec![],
+            ..Default::default()
+        };
+        let doc = cube_vcad(20.0, 30.0, 10.0);
+        let light = render_svg_str_opts(&doc, DEFAULT_SCALE, &opts(Theme::Light)).unwrap();
+        let dark = render_svg_str_opts(&doc, DEFAULT_SCALE, &opts(Theme::Dark)).unwrap();
+        let l = Palette::LIGHT;
+        for c in [l.ink, l.paper, l.hatch_bg] {
+            assert!(light.contains(c), "light render should use {c}");
+            assert!(!dark.contains(c), "dark render leaked light colour {c}");
+        }
+        for c in l.ramp.iter().chain([&l.fill_dark, &l.fill_light]) {
+            assert!(
+                !dark.contains(&hex(*c)),
+                "dark render leaked light ramp {}",
+                hex(*c)
+            );
+        }
+        let d = Palette::DARK;
+        for c in [d.ink, d.paper, d.hatch_bg] {
+            assert!(dark.contains(c), "dark render should use {c}");
+        }
+        // Ghosting fades toward the dark ground, not toward paper.
+        assert_ne!(ghost_ramp(d.ramp, &d)[3], ghost_ramp(d.ramp, &l)[3]);
+    }
+
     /// [`SvgOptions`] selecting the given highlight ids on the isometric view.
     fn highlight_opts(ids: &[&str]) -> SvgOptions {
         SvgOptions {
@@ -5450,7 +5660,10 @@ mod tests {
             hl.contains(&format!(r#"opacity="{GHOST_LINE_OPACITY}""#)),
             "ghosted part's linework must fade"
         );
-        let ghosted_fill = hex(ghost_ramp(tint_ramp([0.72, 0.45, 0.2]))[1]);
+        let ghosted_fill = hex(ghost_ramp(
+            tint_ramp([0.72, 0.45, 0.2], &Palette::LIGHT),
+            &Palette::LIGHT,
+        )[1]);
         assert!(
             hl.contains(&ghosted_fill) && !plain.contains(&ghosted_fill),
             "ghosted fills must fade toward paper (expected {ghosted_fill})"
@@ -6307,6 +6520,44 @@ mod tests {
             assert!(opaque, "central region should contain an opaque pixel");
         }
 
+        #[test]
+        fn dark_theme_raster_ground_is_dark() {
+            let opts = |png_size| RasterOptions {
+                size_px: png_size,
+                theme: Theme::Dark,
+                annotations: RenderAnnotations {
+                    axes: true,
+                    labels: true,
+                    dims: true,
+                    callouts: true,
+                },
+                ..Default::default()
+            };
+            let doc = cube_vcad(20.0, 30.0, 10.0);
+            let jpg = render_jpeg_str(&doc, &opts(256)).unwrap();
+            let img = image::load_from_memory(&jpg).unwrap().to_rgb8();
+            // JPEG is lossy: the corner must sit within a few levels of the ground.
+            let g = Palette::DARK.paper_rgb;
+            let p = img.get_pixel(2, 2).0;
+            for c in 0..3 {
+                assert!(
+                    (p[c] as i32 - g[c] as i32).abs() <= 4,
+                    "corner {p:?} should be the dark ground {g:?}"
+                );
+            }
+            // PNG keeps the exact ground under alpha 0, and the linework is light.
+            let png = render_png_str(&doc, &opts(256)).unwrap();
+            let img = image::load_from_memory(&png).unwrap().to_rgba8();
+            let c = img.get_pixel(0, 0).0;
+            assert_eq!((c[0], c[1], c[2], c[3]), (g[0], g[1], g[2], 0));
+            let ink = Palette::DARK.ink_rgb;
+            assert!(
+                img.pixels()
+                    .any(|p| p[3] == 255 && p[0] == ink[0] && p[1] == ink[1] && p[2] == ink[2]),
+                "dark render should draw light ink"
+            );
+        }
+
         /// The axes gizmo sits in the lower-left corner over the background;
         /// its linework must mark the coverage mask so it stays opaque in the
         /// transparent PNG (regression: annotations that only wrote RGB would
@@ -6715,8 +6966,8 @@ mod tests {
     #[test]
     fn tint_ramp_respects_saturated_materials() {
         let navy_ramp = RAMP;
-        let red = tint_ramp([1.0, 0.0, 0.0]);
-        let green = tint_ramp([0.0, 1.0, 0.0]);
+        let red = tint_ramp([1.0, 0.0, 0.0], &Palette::LIGHT);
+        let green = tint_ramp([0.0, 1.0, 0.0], &Palette::LIGHT);
 
         // Pure red shifts the highlight to look red-dominant.
         let red_hi = red[3]; // brightest stop
@@ -6754,7 +7005,7 @@ mod tests {
         // Achromatic materials (zero saturation) leave navy essentially
         // untouched — the brand-look contract documented above the
         // function still holds.
-        let achromatic = tint_ramp([0.5, 0.5, 0.5]);
+        let achromatic = tint_ramp([0.5, 0.5, 0.5], &Palette::LIGHT);
         for (a, n) in achromatic.iter().zip(navy_ramp.iter()) {
             for c in 0..3 {
                 assert_eq!(
