@@ -1045,7 +1045,24 @@ impl Grid {
                 (wlo, whi)
             }
         } else if outline.len() >= 3 {
-            bbox(outline)
+            // A corridor round this connection, not the whole board: the grid
+            // is capped at MAX_DIM cells a side, so on a big board a whole-board
+            // grid coarsens past what a fine-pitch fan-out needs (a 230 mm board
+            // at 0.57 mm can't pass between 0.5 mm-pitch pins). The margin leaves
+            // room to detour; the board outline still bounds legality.
+            let (blo, bhi) = bbox(outline);
+            let span = ((start.x - end.x).powi(2) + (start.y - end.y).powi(2)).sqrt();
+            let m = 10.0 + 0.3 * span;
+            (
+                Vec2::new(
+                    (start.x.min(end.x) - m).max(blo.x),
+                    (start.y.min(end.y) - m).max(blo.y),
+                ),
+                Vec2::new(
+                    (start.x.max(end.x) + m).min(bhi.x),
+                    (start.y.max(end.y) + m).min(bhi.y),
+                ),
+            )
         } else {
             // Fall back to the start/end span with a margin.
             let lo = Vec2::new(start.x.min(end.x) - 5.0, start.y.min(end.y) - 5.0);

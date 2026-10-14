@@ -108,6 +108,10 @@ pub fn value_to_document_in(
     // A declared board is built last, so placements and pours may appear
     // before or after the parts and nets they refer to.
     if let Some(mut spec) = ctx.board.take() {
+        // an authored outline (EcadOutlinePt, in order) replaces EcadBoard's rectangle
+        if ctx.outline.len() >= 3 {
+            spec.outline = std::mem::take(&mut ctx.outline);
+        }
         if let Some(r) = ctx.rules.take() {
             spec.rules = r;
         }
@@ -600,6 +604,7 @@ fn is_ecad_tag(tag: &str) -> bool {
             | "EcadPour"
             | "EcadArt"
             | "EcadPourRect"
+            | "EcadOutlinePt"
             | "EcadClass"
             | "EcadInClass"
             | "EcadWire"
@@ -722,6 +727,15 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
                 pour_regions: vec![],
                 art: vec![],
             });
+        }
+        // [EcadOutlinePt x y] - one point of the board outline, in order; any
+        // three or more replace EcadBoard's rectangle (a ring, a horseshoe)
+        "EcadOutlinePt" => {
+            assert_fields(tag, fields, 2)?;
+            ctx.outline.push(Vec2::new(
+                ctx.f64_val(&fields[0])?,
+                ctx.f64_val(&fields[1])?,
+            ));
         }
         // [EcadPlace ref x y rotation] - where a schematic part's footprint goes
         "EcadPlace" => {
@@ -1033,6 +1047,8 @@ struct ConvertCtx {
     board: Option<vcad_ecad_symbols::kicad_board::BoardSpec>,
     /// `EcadPlace` placements, in source order.
     places: Vec<vcad_ecad_symbols::kicad_board::Placement>,
+    /// `EcadOutlinePt` points, in source order: the board outline when present.
+    outline: Vec<Vec2>,
     /// `EcadPour` (net, layer) pairs.
     pours: Vec<(String, ecad::PcbLayer)>,
     /// `EcadPourRect` regions.
@@ -1054,6 +1070,7 @@ impl ConvertCtx {
             base_dir: base_dir.map(|p| p.to_path_buf()),
             sheet_chains: HashMap::new(),
             board: None,
+            outline: Vec::new(),
             places: Vec::new(),
             pours: Vec::new(),
             pour_regions: Vec::new(),

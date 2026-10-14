@@ -845,6 +845,8 @@
 [type EcadPour [EcadPour Str Str]]
 ; Art (not on the schematic): [EcadArt ref footprint-id x y rotation] - logos, labels
 [type EcadArt [EcadArt Str Str f64 f64 f64]]
+; Board outline point: [EcadOutlinePt x y], in order; three or more replace EcadBoard's rectangle
+[type EcadOutlinePt [EcadOutlinePt f64 f64]]
 ; Pour over a rectangle: [EcadPourRect net layer x0 y0 x1 y1 priority]
 [type EcadPourRect [EcadPourRect Str Str f64 f64 f64 f64 f64]]
 ; Net class: [EcadClass name trace-width clearance via-dia via-drill]; [EcadInClass net class]
