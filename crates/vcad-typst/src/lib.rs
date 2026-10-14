@@ -122,6 +122,7 @@ pub fn sheet(config_json: &str, source: &str) -> Result<String, String> {
         &SheetOptions {
             width_px: cfg.sheet_width.unwrap_or(1600.0),
             title: cfg.title.clone().unwrap_or_else(|| "UNTITLED".to_string()),
+            theme: Default::default(),
         },
     )
 }
