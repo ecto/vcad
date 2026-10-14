@@ -62,6 +62,13 @@ pub fn set_no_route_layers(layers: &[PcbLayer]) {
     *NO_ROUTE_LAYERS.write().unwrap() = layers.to_vec();
 }
 
+/// Is `layer` a plane layer no trace may run on? Consulted by the session's
+/// legality probe, so every emitter (escape, push-and-shove, joint repair, the
+/// maze itself) honours it, not only the maze search.
+pub(crate) fn is_no_route(layer: PcbLayer) -> bool {
+    NO_ROUTE_LAYERS.read().unwrap().contains(&layer)
+}
+
 /// Cost (mm-equivalent) of placing a via, i.e. taking a layer-transition edge
 /// in the 3D search. A through via consumes routing space on *every* copper
 /// layer, so it must cost noticeably more than a modest same-layer detour —

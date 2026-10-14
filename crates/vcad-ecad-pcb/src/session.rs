@@ -831,6 +831,14 @@ impl RouteSession {
         net: &str,
         clearance: f64,
     ) -> ProbeResult {
+        // No trace on a plane layer (vias pass through): see maze::is_no_route.
+        if matches!(geom, CopperGeom::Segment { .. }) && crate::router::maze::is_no_route(layer) {
+            return ProbeResult {
+                legal: false,
+                min_clearance: 0.0,
+                blockers: Vec::new(),
+            };
+        }
         // Reach by the larger of the candidate's clearance and the biggest
         // clearance any net requires, so a wide net beyond the candidate's own
         // clearance is still found in the broadphase.
