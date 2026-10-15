@@ -410,7 +410,9 @@ pub fn route_net_maze3d(
         if via_ok(center, lo, hi) {
             return Some(center);
         }
-        if !offgrid_vias {
+        // HDI boards bring their own fanout (vias in the BGA pads): no hunting
+        // for off-grid sites between balls, which costs 16 probes per span.
+        if !offgrid_vias || micro.is_some() {
             return None;
         }
         let r1 = grid.pitch / 3.0;
@@ -579,6 +581,12 @@ pub fn route_net_maze3d(
                 if lj == li {
                     continue;
                 }
+                // HDI: one dielectric per hop (microvia, or one buried step);
+                // a deep descent is a stack of hops at the same cell. 2 layer
+                // changes per node instead of nl-1, each probing one span.
+                if micro.is_some() && li.abs_diff(lj) != 1 {
+                    continue;
+                }
                 let nb = lj * plane + cell;
                 if closed[nb] || raster.state(cell, lj) == CELL_BLOCKED {
                     continue;
@@ -589,6 +597,11 @@ pub fn route_net_maze3d(
                     (li.min(lj), li.max(lj))
                 };
                 let key = cell * nl * nl + lo * nl + hi;
+                // the raster already knows a trace can't sit here on a spanned
+                // layer; a via (wider than a trace) can't either - no probe needed
+                if via_cache[key] < 0 && (lo..=hi).any(|l| raster.state(cell, l) == CELL_BLOCKED) {
+                    via_cache[key] = 0;
+                }
                 if via_cache[key] < 0 {
                     match find_via_site(grid.world(ix, iy), lo, hi) {
                         Some(p) => {

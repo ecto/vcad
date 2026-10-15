@@ -2111,6 +2111,23 @@ fn try_route(
     )
 }
 
+/// Pin fields depend only on footprints, which never change during a route:
+/// detect them once per board instead of once per connection.
+fn cached_pin_fields(pcb: &Pcb) -> std::sync::Arc<Vec<escape::PinField>> {
+    use std::sync::{Arc, Mutex};
+    static CACHE: Mutex<Option<(usize, usize, Arc<Vec<escape::PinField>>)>> = Mutex::new(None);
+    let key = (pcb.footprints.as_ptr() as usize, pcb.footprints.len());
+    let mut c = CACHE.lock().unwrap();
+    if let Some((p, n, f)) = c.as_ref() {
+        if (*p, *n) == key {
+            return f.clone();
+        }
+    }
+    let f = Arc::new(escape::detect_pin_fields(pcb));
+    *c = Some((key.0, key.1, f.clone()));
+    f
+}
+
 /// Escape-assisted retry for a connection the direct maze could not place
 /// (tier-2 BGA escape stage; see [`super::escape`]).
 ///
@@ -2134,7 +2151,12 @@ fn try_route_escape(
     use_push_shove: bool,
     max_expansions: usize,
 ) -> Option<Placed> {
-    let fields = escape::detect_pin_fields(pcb);
+    // A board that brings its own fanout (via-in-pad microvias, `microvia`
+    // set) needs no planned escapes: its balls already reach the inner layers.
+    if super::maze::microvia().is_some() {
+        return None;
+    }
+    let fields = cached_pin_fields(pcb);
     if fields.is_empty() {
         return None;
     }
