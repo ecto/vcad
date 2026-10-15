@@ -11,7 +11,7 @@
 //! net as skipped with a reason instead of guessing. Replacement traces are
 //! returned as data — the caller decides whether to commit them.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use vcad_ir::ecad::{Pcb, Trace};
 use vcad_ir::Vec2;
@@ -118,7 +118,10 @@ pub fn net_polyline(pcb: &Pcb, net: &str) -> Result<(Vec<Vec2>, usize), String> 
             (p.y / CHAIN_EPS).round() as i64,
         )
     };
-    let mut adj: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+    // BTreeMap, not HashMap: the walk starts at the first endpoint in map
+    // order, so a hashed map made the chain direction (and, for equal-length
+    // chains, the chain itself) vary run to run.
+    let mut adj: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
     for (i, t) in segs.iter().enumerate() {
         adj.entry(key(t.start)).or_default().push(i);
         adj.entry(key(t.end)).or_default().push(i);
@@ -624,7 +627,10 @@ pub fn longest_chain(segs: &[&Trace]) -> Option<Vec<Vec2>> {
             (p.y / CHAIN_EPS).round() as i64,
         )
     };
-    let mut adj: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+    // BTreeMap, not HashMap: the walk starts at the first endpoint in map
+    // order, so a hashed map made the chain direction (and, for equal-length
+    // chains, the chain itself) vary run to run.
+    let mut adj: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
     for (i, t) in segs.iter().enumerate() {
         adj.entry(key(t.start)).or_default().push(i);
         adj.entry(key(t.end)).or_default().push(i);

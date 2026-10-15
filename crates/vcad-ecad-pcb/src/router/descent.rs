@@ -783,12 +783,22 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
 
     let mut report = DescentReport::default();
     for (pn, nn) in &c.pairs {
-        let (Some((pl, p_raw, extra_p, p_w)), Some((nlayer, n_raw, extra_n, n_w))) =
+        let (Some((pl, p_raw, extra_p, p_w)), Some((nlayer, mut n_raw, extra_n, n_w))) =
             (net_run(pcb, pn), net_run(pcb, nn))
         else {
             log::debug!(target: "descent_stats", "pair={pn} skip=no-run");
             continue;
         };
+        // Walk both legs the same way: the gap springs pair samples by
+        // index, so an N run walked end-to-start couples P's head to N's
+        // tail and drags the legs across each other.
+        {
+            let (p0, p1) = (p_raw[0], p_raw[p_raw.len() - 1]);
+            let (n0, n1) = (n_raw[0], n_raw[n_raw.len() - 1]);
+            if (p0 - n1).length() + (p1 - n0).length() < (p0 - n0).length() + (p1 - n1).length() {
+                n_raw.reverse();
+            }
+        }
         // Point hinges only constrain POINTS — a long segment between two
         // legal points sweeps across the board unconstrained. Resampling at
         // ~0.4mm makes point coverage approximate segment coverage.
@@ -1598,6 +1608,84 @@ mod tests {
             "twin-gap claims must make the pair oracle-clean"
         );
         assert!(with.result.skew < 0.6, "skew {}", with.result.skew);
+    }
+
+    /// M8: the board pass is bit-for-bit deterministic. Every hashed
+    /// container on the path gets fresh random keys per instance, so
+    /// repeating the pass on clones of one board exercises the orders that
+    /// used to vary (chain walk direction, which flipped the gap-spring
+    /// pairing).
+    #[test]
+    fn descend_board_is_deterministic() {
+        use vcad_ir::ecad::*;
+        let pad = |num: &str, x: f64, y: f64, net: &str| Pad {
+            number: num.into(),
+            pad_type: PadType::SMD,
+            shape: PadShape::Rect {
+                width: 0.2,
+                height: 0.2,
+            },
+            position: Vec2::new(x, y),
+            rotation: 0.0,
+            drill: None,
+            net: Some(net.into()),
+            layers: vec![PcbLayer::FCu],
+        };
+        let tr = |net: &str, a: (f64, f64), b: (f64, f64)| Trace {
+            start: Vec2::new(a.0, a.1),
+            end: Vec2::new(b.0, b.1),
+            width: 0.1,
+            layer: PcbLayer::FCu,
+            net: net.into(),
+            source: None,
+        };
+        let mut pcb: Pcb = serde_json::from_str(
+            r#"{"outline":{"vertices":[{"x":0,"y":0},{"x":30,"y":0},{"x":30,"y":30},{"x":0,"y":30}],"cutouts":[],"thickness":1.6},
+                "stackup":{"layers":[]},
+                "rules":{"defaultRules":{"name":"Default","traceWidth":0.1,"clearance":0.1,
+                         "viaDiameter":0.4,"viaDrill":0.2},
+                         "edgeClearance":0.3,"holeToHole":0.25,"minAnnularRing":0.1,"minDrill":0.2}}"#,
+        )
+        .expect("minimal board");
+        pcb.footprints = vec![Footprint {
+            reference: "J1".into(),
+            value: "usb".into(),
+            footprint_name: "test".into(),
+            position: Vec2::new(0.0, 0.0),
+            rotation: 0.0,
+            front: true,
+            pads: vec![
+                pad("1", 2.0, 10.0, "USB_DP"),
+                pad("2", 2.0, 10.6, "USB_DM"),
+                pad("3", 22.0, 10.0, "USB_DP"),
+                pad("4", 22.0, 10.6, "USB_DM"),
+            ],
+            graphics: vec![],
+            model_3d: None,
+            properties: Default::default(),
+        }];
+        pcb.traces = vec![
+            tr("USB_DP", (2.0, 10.0), (12.0, 10.0)),
+            tr("USB_DP", (12.0, 10.0), (22.0, 10.0)),
+            tr("USB_DM", (2.0, 10.6), (7.0, 11.6)),
+            tr("USB_DM", (7.0, 11.6), (12.0, 10.6)),
+            tr("USB_DM", (12.0, 10.6), (17.0, 11.6)),
+            tr("USB_DM", (17.0, 11.6), (22.0, 10.6)),
+            tr("OTHER", (2.0, 13.0), (22.0, 13.0)),
+        ];
+        let run = || {
+            let mut b = pcb.clone();
+            let r = descend_board(&mut b, 400);
+            (r, serde_json::to_string(&b.traces).unwrap())
+        };
+        let (r0, t0) = run();
+        eprintln!("determinism fixture: {r0:?}");
+        assert_eq!(r0.attempted, 1, "fixture pair must be attempted");
+        for _ in 0..5 {
+            let (r, t) = run();
+            assert_eq!(r, r0);
+            assert!(t == t0, "descent output differs between identical runs");
+        }
     }
 
     /// A run that commits nothing must not change the board: classifying
