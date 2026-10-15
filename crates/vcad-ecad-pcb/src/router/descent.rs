@@ -27,7 +27,7 @@
 use super::claims_ir::{self as cir, ClaimSet, PointExpr};
 use super::sco::{ResidualSystem, ScoOptions, ScoReport};
 use tang_expr::{ExprGraph, ExprId};
-use vcad_ir::ecad::Pcb;
+use vcad_ir::ecad::{Pcb, PcbLayer, Trace};
 use vcad_ir::Vec2;
 
 /// Weights for the objective's terms.
@@ -567,7 +567,6 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
     use super::length_match::longest_chain;
     use crate::session::RouteSession;
     use crate::spatial::CopperGeom;
-    use vcad_ir::ecad::{PcbLayer, Trace};
 
     let nets: Vec<String> = {
         let mut v: std::collections::BTreeSet<String> = Default::default();
@@ -629,11 +628,17 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
             }
         }
         best.map(|(len, pts, layer)| {
+            // The run is rewritten at ONE width: take the widest segment ON
+            // the run (the coupled leg). Any trace of the net on the layer —
+            // the old pick — could be a breakout neck, and rewriting the
+            // whole run at neck width is a MinTraceWidth violation the
+            // oracle (which probes at the same width) never sees.
             let width = pcb
                 .traces
                 .iter()
-                .find(|t| t.net == net && t.layer == layer)
+                .filter(|t| on_run(t, net, layer, &pts))
                 .map(|t| t.width)
+                .fold(None, |m: Option<f64>, w| Some(m.map_or(w, |m| m.max(w))))
                 .unwrap_or(0.08);
             (layer, pts, total - len, width)
         })
@@ -774,17 +779,14 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
         // at its NEW position: checking P-new against N-old rejects every
         // descent, because the pair as a whole has shifted.
         let with_new = |moved: &[Vec2], moved_net: &str, layer: PcbLayer, w: f64| {
-            let mut b = pcb.clone();
-            b.traces.retain(|t| t.net != *pn && t.net != *nn);
-            b.traces.extend(moved.windows(2).map(|s| Trace {
-                start: s[0],
-                end: s[1],
-                width: w,
+            RouteSession::from_pcb(&oracle_board(
+                pcb,
+                [(pn.as_str(), pl, &p_raw), (nn.as_str(), nlayer, &n_raw)],
+                moved,
+                moved_net,
                 layer,
-                net: moved_net.to_string(),
-                source: None,
-            }));
-            RouteSession::from_pcb(&b)
+                w,
+            ))
         };
         // Each violating segment mines the third-party copper around it as
         // new clearance claims. A violation against the twin (the pair gap
@@ -903,15 +905,7 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
                            old: &[Vec2],
                            new: &[Vec2],
                            width: f64| {
-            let on_old = |t: &Trace| {
-                t.net == net
-                    && t.layer == layer
-                    && old.windows(2).any(|w| {
-                        (t.start - w[0]).length() < 1e-6 && (t.end - w[1]).length() < 1e-6
-                            || (t.start - w[1]).length() < 1e-6 && (t.end - w[0]).length() < 1e-6
-                    })
-            };
-            work2.traces.retain(|t| !on_old(t));
+            work2.traces.retain(|t| !on_run(t, net, layer, old));
             work2.traces.extend(new.windows(2).map(|w| Trace {
                 start: w[0],
                 end: w[1],
@@ -935,6 +929,44 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
         );
     }
     report
+}
+
+/// Whether `t` is one of the segments of `run` (a chain on `net`/`layer`).
+fn on_run(t: &Trace, net: &str, layer: PcbLayer, run: &[Vec2]) -> bool {
+    t.net == net
+        && t.layer == layer
+        && run.windows(2).any(|w| {
+            (t.start - w[0]).length() < 1e-6 && (t.end - w[1]).length() < 1e-6
+                || (t.start - w[1]).length() < 1e-6 && (t.end - w[0]).length() < 1e-6
+        })
+}
+
+/// The board the oracle probes one leg against: both legs' OLD runs
+/// removed, `moved` (the twin's new run) added, and every other trace —
+/// including the twin's copper OFF its run — kept. Removing the twin's whole
+/// net let a run on one layer descend straight through the twin's copper on
+/// that layer (its run lived on another layer): the oracle passed, the DRC
+/// then reported a pair shorted to itself.
+fn oracle_board(
+    pcb: &Pcb,
+    old_runs: [(&str, PcbLayer, &[Vec2]); 2],
+    moved: &[Vec2],
+    moved_net: &str,
+    layer: PcbLayer,
+    w: f64,
+) -> Pcb {
+    let mut b = pcb.clone();
+    b.traces
+        .retain(|t| !old_runs.iter().any(|(n, l, run)| on_run(t, n, *l, run)));
+    b.traces.extend(moved.windows(2).map(|s| Trace {
+        start: s[0],
+        end: s[1],
+        width: w,
+        layer,
+        net: moved_net.to_string(),
+        source: None,
+    }));
+    b
 }
 
 fn pt_seg_dist_f64(p: Vec2, a: Vec2, b: Vec2) -> f64 {
@@ -1322,5 +1354,74 @@ mod tests {
             pcb.rules, before,
             "descent leaked its diff-pair class onto the board"
         );
+    }
+
+    /// The oracle board must keep the twin's copper OFF its run: a pair
+    /// whose legs' longest runs sit on different layers otherwise descends
+    /// one leg straight through the twin's copper on its layer, and the
+    /// committed board shorts the pair to itself.
+    #[test]
+    fn oracle_board_keeps_twin_copper_off_its_run() {
+        let tr = |net: &str, layer: PcbLayer, a: (f64, f64), b: (f64, f64)| Trace {
+            start: Vec2::new(a.0, a.1),
+            end: Vec2::new(b.0, b.1),
+            width: 0.1,
+            layer,
+            net: net.into(),
+            source: None,
+        };
+        let p_run = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(5.0, 0.0),
+            Vec2::new(10.0, 0.0),
+        ];
+        let n_run = [Vec2::new(0.0, 1.0), Vec2::new(10.0, 1.0)];
+        let mut pcb: Pcb = serde_json::from_str(
+            r#"{"outline":{"vertices":[],"cutouts":[],"thickness":1.6},
+                "stackup":{"layers":[]},
+                "rules":{"defaultRules":{"name":"Default","traceWidth":0.1,"clearance":0.1,
+                         "viaDiameter":0.4,"viaDrill":0.2},
+                         "edgeClearance":0.3,"holeToHole":0.25,"minAnnularRing":0.1,"minDrill":0.2}}"#,
+        )
+        .expect("minimal board");
+        pcb.traces = vec![
+            tr("P", PcbLayer::FCu, (0.0, 0.0), (5.0, 0.0)),
+            tr("P", PcbLayer::FCu, (5.0, 0.0), (10.0, 0.0)),
+            tr("N", PcbLayer::BCu, (0.0, 1.0), (10.0, 1.0)),
+            // The twin's breakout on P's layer — not part of its run.
+            tr("N", PcbLayer::FCu, (5.0, 0.5), (5.0, 2.0)),
+            tr("OTHER", PcbLayer::FCu, (0.0, 3.0), (10.0, 3.0)),
+        ];
+        let moved = [
+            Vec2::new(0.0, 1.0),
+            Vec2::new(5.0, 1.2),
+            Vec2::new(10.0, 1.0),
+        ];
+        let b = oracle_board(
+            &pcb,
+            [("P", PcbLayer::FCu, &p_run), ("N", PcbLayer::BCu, &n_run)],
+            &moved,
+            "N",
+            PcbLayer::BCu,
+            0.1,
+        );
+        let has = |net: &str, layer: PcbLayer| {
+            b.traces
+                .iter()
+                .filter(|t| t.net == net && t.layer == layer)
+                .count()
+        };
+        assert_eq!(has("P", PcbLayer::FCu), 0, "P's old run must be gone");
+        assert_eq!(
+            has("N", PcbLayer::BCu),
+            2,
+            "N's old run replaced by the 2 moved segments"
+        );
+        assert_eq!(
+            has("N", PcbLayer::FCu),
+            1,
+            "the twin's off-run copper must stay an obstacle"
+        );
+        assert_eq!(has("OTHER", PcbLayer::FCu), 1);
     }
 }
