@@ -1612,6 +1612,23 @@ fn check_connectivity(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<D
     detect_same_net_bypass(&nodes, net_ties, &contacts, violations);
 }
 
+thread_local! {
+    static FROZEN_FILLS: std::cell::RefCell<Option<std::sync::Arc<Vec<crate::copper_pour::FilledZone>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` with the zone pours frozen at their current fill: connectivity
+/// queries inside reuse them instead of re-pouring every zone per call. For
+/// repair loops that add a few vias / stubs of one net and ask "did the island
+/// count drop?" thousands of times - the new copper can only carve other nets'
+/// pours, which doesn't change that net's own continuity.
+pub fn with_frozen_fills<R>(fills: Vec<crate::copper_pour::FilledZone>, f: impl FnOnce() -> R) -> R {
+    let prev = FROZEN_FILLS.with(|c| c.replace(Some(std::sync::Arc::new(fills))));
+    let r = f();
+    FROZEN_FILLS.with(|c| *c.borrow_mut() = prev);
+    r
+}
+
 /// Build connectivity nodes from all copper on the board.
 fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
     let mut nodes = Vec::new();
@@ -1671,7 +1688,10 @@ fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
     // clearance voids), not the raw rectangle — otherwise a ground plane reads
     // as touching every net it overlaps. `fill_zones` returns one result per
     // zone in order, so the index lines up with `pcb.zones`.
-    let filled = crate::copper_pour::fill_zones(pcb);
+    let filled = FROZEN_FILLS
+        .with(|f| f.borrow().clone())
+        .filter(|f| f.len() == pcb.zones.len())
+        .unwrap_or_else(|| std::sync::Arc::new(crate::copper_pour::fill_zones(pcb)));
     for (i, zone) in pcb.zones.iter().enumerate() {
         if zone.outline.len() < 3 {
             continue;

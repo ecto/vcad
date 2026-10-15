@@ -1350,7 +1350,9 @@ fn route_file(
             vcad_ir::ecad::PcbLayer::FCu | vcad_ir::ecad::PcbLayer::BCu
         )
     });
+    progress(format!("routing {} nets", route_pcb.nets.len()));
     let r = vcad_ecad_pcb::router::auto::route_all_with_opts(&route_pcb, w, &[], &opts);
+    progress(format!("first pass done: {} traces, {} vias", r.traces.len(), r.vias.len()));
     let (vd, vdrill) = (
         pcb.rules.default_rules.via_diameter,
         pcb.rules.default_rules.via_drill,
@@ -1452,6 +1454,7 @@ fn route_file(
             .filter(|v| keep(&v.net) || manual(&v.source))
             .cloned()
             .collect();
+        progress(format!("second pass on {} split nets", split.len()));
         let r2 = vcad_ecad_pcb::router::auto::route_all_with_opts(&again, w, &[], &opts);
         let before: usize = vcad_ecad_pcb::drc::net_islands(&pcb, &split).values().sum();
         let mut trial = pcb.clone();
@@ -1504,6 +1507,7 @@ fn route_file(
     let links = if fast {
         Vec::new()
     } else {
+        progress(format!("direct links on {} split nets", split.len()));
         direct_links(&route_pcb, &pcb, &split, w)
     };
     if !links.is_empty() {
@@ -1513,8 +1517,10 @@ fn route_file(
     let (st, sv) = if fast {
         (Vec::new(), Vec::new())
     } else {
+        progress(format!("stitching {} split nets to planes", split.len()));
         stitch_to_planes(&route_pcb, &pcb, &split, w)
     };
+    progress("repairs done");
     if !sv.is_empty() {
         println!("stitched {} pads to their planes", sv.len());
     }
@@ -3641,6 +3647,14 @@ fn anchor_track_ends(pcb: &mut vcad_ir::ecad::Pcb) -> usize {
 /// Last resort for connections the router left open: join near pairs of
 /// same-net pads with a straight or L-shaped trace on a layer they share,
 /// accepted only where the router's own legality oracle says it is clear.
+/// Route progress on stderr (unbuffered, unlike a redirected stdout), with
+/// the time since the route started: `[  95.2s] stitch 12/40 VDD_CPU_LIT_S0`.
+fn progress(msg: impl std::fmt::Display) {
+    static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let t = T0.get_or_init(std::time::Instant::now).elapsed().as_secs_f64();
+    eprintln!("[{t:7.1}s] {msg}");
+}
+
 fn direct_links(
     route_pcb: &vcad_ir::ecad::Pcb,
     pcb: &vcad_ir::ecad::Pcb,
@@ -3653,7 +3667,10 @@ fn direct_links(
     work.traces = pcb.traces.clone();
     work.vias = pcb.vias.clone();
     let mut out = Vec::new();
-    for net in nets {
+    let fills = vcad_ecad_pcb::copper_pour::fill_zones(&work);
+    vcad_ecad_pcb::drc::with_frozen_fills(fills, || {
+    for (ni, net) in nets.iter().enumerate() {
+        progress(format!("link {}/{} {net}", ni + 1, nets.len()));
         let pads: Vec<_> = work
             .footprints
             .iter()
@@ -3743,6 +3760,7 @@ fn direct_links(
             }
         }
     }
+    });
     out
 }
 
@@ -3773,7 +3791,10 @@ fn stitch_to_planes(
         .collect();
     let (front, back) = (copper[0], copper[copper.len() - 1]);
     let (mut ts, mut vs) = (Vec::new(), Vec::new());
-    for net in nets {
+    let fills = vcad_ecad_pcb::copper_pour::fill_zones(&work);
+    vcad_ecad_pcb::drc::with_frozen_fills(fills, || {
+    for (ni, net) in nets.iter().enumerate() {
+        progress(format!("stitch {}/{} {net}", ni + 1, nets.len()));
         if !route_pcb.zones.iter().any(|z| &z.net == net) {
             continue;
         }
@@ -3886,6 +3907,7 @@ fn stitch_to_planes(
             }
         }
     }
+    });
     (ts, vs)
 }
 
