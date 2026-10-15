@@ -1622,7 +1622,10 @@ thread_local! {
 /// repair loops that add a few vias / stubs of one net and ask "did the island
 /// count drop?" thousands of times - the new copper can only carve other nets'
 /// pours, which doesn't change that net's own continuity.
-pub fn with_frozen_fills<R>(fills: Vec<crate::copper_pour::FilledZone>, f: impl FnOnce() -> R) -> R {
+pub fn with_frozen_fills<R>(
+    fills: Vec<crate::copper_pour::FilledZone>,
+    f: impl FnOnce() -> R,
+) -> R {
     let prev = FROZEN_FILLS.with(|c| c.replace(Some(std::sync::Arc::new(fills))));
     let r = f();
     FROZEN_FILLS.with(|c| *c.borrow_mut() = prev);
