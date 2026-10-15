@@ -1,6 +1,6 @@
-; plates — sheet-plate vocabulary shared by the rose-pro links.
+; plates — sheet-plate vocabulary shared by the rose-full links.
 ;
-; A loon module: every top-level `let` here is an export. rose-pro.loon says
+; A loon module: every top-level `let` here is an export. rose-full.loon says
 ;   [use plates [plate-x plate-y plate-z bore-x bore-y bore-z act-x act-y act-z]]
 ; and gets these as unqualified names; `[use plates]` gives plates.plate-x.
 ; Evaluated once, in its own environment, with the vcad library in scope.

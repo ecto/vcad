@@ -1,4 +1,4 @@
-# rose-pro
+# rose-full
 
 Original 22-DOF humanoid, 1130 mm, 17.58 kg. Not a K1 clone — the K1's joint axes
 are too tightly packed for off-the-shelf actuators (its hip roll and yaw axes
@@ -9,10 +9,10 @@ X-series envelopes.
 
 ```
 cargo build --release -p vcad-cli -p vcad-render   # needs sibling tang/ and phyz/
-target/release/vcad info   hardware/rose-pro/rose-pro.loon
-target/release/vcad export hardware/rose-pro/rose-pro.loon /tmp/rose-pro.stl
-target/release/vcad-render hardware/rose-pro/rose-pro.loon --view iso --size 1400 \
-    --fill 0.92 --auto-aspect -o /tmp/rose-pro.png
+target/release/vcad info   hardware/rose-full/rose-full.loon
+target/release/vcad export hardware/rose-full/rose-full.loon /tmp/rose-full.stl
+target/release/vcad-render hardware/rose-full/rose-full.loon --view iso --size 1400 \
+    --fill 0.92 --auto-aspect -o /tmp/rose-full.png
 ```
 
 `vcad-render` takes `.loon` directly. Evaluated root meshes are cached under
@@ -24,8 +24,8 @@ second render is ~1 s and editing one plate re-evaluates one plate
 
 | file | what |
 |---|---|
-| `rose-pro.loon` | **generated** — 137 roots (115 plates, 22 actuator envelopes). Do not hand-edit; regenerate with `rose/pro/rose_pro_loon.py`. |
-| `plates.loon` | hand-maintained loon **module**: `plate-x/y/z` rounded-rect builders, `bore-x/y/z` through-bores, `act-x/y/z` actuator envelopes. `rose-pro.loon` imports it with `[use plates [...]]`; vcad resolves it next to the file. |
+| `rose-full.loon` | **generated** — 137 roots (115 plates, 22 actuator envelopes). Do not hand-edit; regenerate with `rose/full/rose_full_loon.py`. |
+| `plates.loon` | hand-maintained loon **module**: `plate-x/y/z` rounded-rect builders, `bore-x/y/z` through-bores, `act-x/y/z` actuator envelopes. `rose-full.loon` imports it with `[use plates [...]]`; vcad resolves it next to the file. |
 
 ## Actuators
 
@@ -43,20 +43,20 @@ against the vendor STEP files.
 3 mm 5052 sheet, cut and bent. Bend radius 1.5 (0.5t). Couplings are one blank where
 the bend line clears both bolt circles, two bends with a corner relief where it
 crosses one, and two lapped pieces where it lands inside a circle. See
-`ipse/scripts/rose_pro_bent.py` for the per-coupling determination.
+`rose/full/rose_full_bent.py` for the per-coupling determination.
 
 ## Source of truth
 
-Geometry is generated from `ipse/scripts/rose_pro_links.py`, which carries the
+Geometry is generated from `rose/full/rose_full_links.py`, which carries the
 clearance, hole-edge and bend-rule checks. Regenerate with
-`ipse/scripts/rose_pro_loon.py`. Do not hand-edit `rose-pro.loon`.
+`rose/full/rose_full_loon.py`. Do not hand-edit `rose-full.loon`.
 
 ## Verification
 
 - volume cross-check against the independent analytic plate model:
-  `ipse/scripts/rose_pro_vcad_check.py` — vcad 1379.0 cm³ / 3696 g vs Fusion 3768 g,
+  `rose/full/rose_full_vcad_check.py` — vcad 1379.0 cm³ / 3696 g vs Fusion 3768 g,
   1.9% across two kernels.
-- the robot description (`ipse/scripts/rose_pro_export.py`) loads in phyz and stands
+- the robot description (`rose/full/rose_full_export.py`) loads in phyz and stands
   at +0.0% ground-force error.
 
 ## Notes for whoever touches this next

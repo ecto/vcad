@@ -33,7 +33,7 @@ vcad new robot.vcad --template assembly
 `vcad info`, `vcad export` (STL/GLB) and `vcad-render` keep a
 content-addressed cache of evaluated root geometry on disk, so a document
 where one root changed re-evaluates one root. A 108-root sheet-metal
-humanoid (`hardware/rose-pro`) renders cold in ~150 s and warm in 0.8 s; an
+humanoid (`hardware/rose-full`) renders cold in ~150 s and warm in 0.8 s; an
 edit to one plate costs ~3 s.
 
 Each root's key is the SHA-256 of its fully resolved IR subgraph
