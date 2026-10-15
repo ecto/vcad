@@ -142,6 +142,12 @@ pub struct OracleVerdict {
     /// Obstacles behind the violations, as clearance cuts to mine. May be
     /// empty for a dirty verdict the claim vocabulary cannot express.
     pub cuts: Vec<DescentObstacle>,
+    /// Twin-gap violations to mine (M6): `(P segment, N segment)` index
+    /// pairs into the two point lists — segment `i` runs `pts[i]→pts[i+1]`.
+    pub twin_cuts: Vec<(usize, usize)>,
+    /// Every dirty segment, `(leg, segment)` with leg 0 = P, 1 = N. Lets the
+    /// caller compare two verdicts violation-for-violation.
+    pub dirty: Vec<(u8, usize)>,
 }
 
 /// Outcome of [`descend_pair_mined`].
@@ -155,6 +161,15 @@ pub struct MinedOutcome {
     /// The oracle accepted the final geometry. When false the caller MUST
     /// reject the descent (fail-closed).
     pub clean: bool,
+    /// Dirty segments of the UNMODIFIED copper against the same oracle
+    /// (non-zero = the pair was "pre-dirty").
+    pub baseline_dirty: usize,
+    /// Dirty segments of the final geometry.
+    pub final_dirty: usize,
+    /// Final geometry is dirty but strictly less so than the baseline, with
+    /// no violation the baseline didn't already have ("improved-but-dirty").
+    /// Diagnostics only — never committed.
+    pub improved: bool,
 }
 
 /// Lazy constraint generation ("tang-route" M3): descend with only the
@@ -164,8 +179,9 @@ pub struct MinedOutcome {
 /// segment midpoints near it), and the problem is re-solved warm-started
 /// from the previous θ — until the oracle is clean, `max_rounds` is spent,
 /// or a round mines nothing new (a violation the claim vocabulary can't
-/// express, e.g. the pair's own gap rule). Never returns oracle-dirty
-/// geometry as clean.
+/// express). Twin violations (M6) mine [`cir::twin_gap`] claims between the
+/// offending P and N segments when `twin_required` (centre-line separation)
+/// is given. Never returns oracle-dirty geometry as clean.
 #[allow(clippy::too_many_arguments)]
 pub fn descend_pair_mined(
     p_pts: &[Vec2],
@@ -174,6 +190,7 @@ pub fn descend_pair_mined(
     extra_n: f64,
     springs: bool,
     gap_centre: f64,
+    twin_required: Option<f64>,
     seed: &[DescentObstacle],
     weights: &DescentWeights,
     solver: DescentSolver,
@@ -184,19 +201,36 @@ pub fn descend_pair_mined(
     let mut prob = PairProblem::build(
         p_pts, n_pts, extra_p, extra_n, springs, gap_centre, seed, weights,
     )?;
+    if let Some(req) = twin_required {
+        prob.seed_twin(req);
+    }
     let mut theta = prob.theta0.clone();
     let mut cuts = 0;
     let mut total_iters = 0;
-    if log::log_enabled!(target: "descent_stats", log::Level::Debug) {
-        // Baseline: is the UNCHANGED geometry oracle-clean? (Diagnostics only.)
-        let v0 = oracle(p_pts, n_pts);
-        log::debug!(
-            target: "descent_stats",
-            "round=0 baseline_clean={} viol_cuts={}",
-            v0.clean,
-            v0.cuts.len()
-        );
-    }
+    // Baseline: is the UNCHANGED geometry oracle-clean? A pair that starts
+    // dirty is reported distinctly, and is the reference for
+    // "improved-but-dirty".
+    let v0 = oracle(p_pts, n_pts);
+    log::debug!(
+        target: "descent_stats",
+        "round=0 baseline_clean={} viol_cuts={} dirty_segs={}",
+        v0.clean,
+        v0.cuts.len(),
+        v0.dirty.len()
+    );
+    let base: std::collections::BTreeSet<(u8, usize)> = v0.dirty.iter().copied().collect();
+    let finish = |result: DescentResult, rounds, cuts, v: &OracleVerdict| {
+        let fin: std::collections::BTreeSet<(u8, usize)> = v.dirty.iter().copied().collect();
+        MinedOutcome {
+            result,
+            rounds,
+            cuts,
+            clean: v.clean,
+            baseline_dirty: base.len(),
+            final_dirty: fin.len(),
+            improved: !v.clean && fin.len() < base.len() && fin.is_subset(&base),
+        }
+    };
     for round in 1..=max_rounds.max(1) {
         let t0 = std::time::Instant::now();
         let (th, it) = prob.solve(&theta, solver, iters);
@@ -216,22 +250,19 @@ pub fn descend_pair_mined(
             verdict.cuts.len()
         );
         if verdict.clean {
-            return Some(MinedOutcome {
-                result: r,
-                rounds: round,
-                cuts,
-                clean: true,
-            });
+            return Some(finish(r, round, cuts, &verdict));
         }
-        let added: usize = verdict.cuts.iter().map(|ob| prob.add_cut(ob, &theta)).sum();
+        let mut added: usize = verdict.cuts.iter().map(|ob| prob.add_cut(ob, &theta)).sum();
+        if let Some(req) = twin_required {
+            added += verdict
+                .twin_cuts
+                .iter()
+                .map(|&(i, j)| prob.add_twin(i, j, req))
+                .sum::<usize>();
+        }
         cuts += added;
         if added == 0 || round == max_rounds.max(1) {
-            return Some(MinedOutcome {
-                result: r,
-                rounds: round,
-                cuts,
-                clean: false,
-            });
+            return Some(finish(r, round, cuts, &verdict));
         }
     }
     None
@@ -251,12 +282,14 @@ pub(crate) struct PairProblem {
     /// Obstacles the claim set knows, and which (sample, obstacle) pairs
     /// already carry a clearance claim — so mined cuts never duplicate.
     known: Vec<DescentObstacle>,
-    claimed: std::collections::HashSet<(Sample, usize)>,
+    claimed: std::collections::BTreeSet<(Sample, usize)>,
+    /// (P segment, N segment) pairs already carrying a twin-gap claim.
+    twin_claimed: std::collections::BTreeSet<(usize, usize)>,
 }
 
 /// A clearance sample site: a moving point, or the midpoint of the segment
 /// starting at that index (leg 0 = P, 1 = N).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Sample {
     Point(u8, usize),
     Mid(u8, usize),
@@ -341,6 +374,7 @@ impl PairProblem {
             clearance_weight: weights.clearance,
             known: Vec::new(),
             claimed: Default::default(),
+            twin_claimed: Default::default(),
         };
         for ob in obstacles {
             prob.add_point_clearance(ob, None);
@@ -439,6 +473,50 @@ impl PairProblem {
         added
     }
 
+    /// Twin-gap claim between P segment `i` and N segment `j` (centre-line
+    /// separation `required`). Returns 1 if added, 0 if already present.
+    pub(crate) fn add_twin(&mut self, i: usize, j: usize, required: f64) -> usize {
+        if i + 1 >= self.pe.len() || j + 1 >= self.ne.len() || !self.twin_claimed.insert((i, j)) {
+            return 0;
+        }
+        let c = cir::twin_gap(
+            &mut self.g,
+            (self.pe[i], self.pe[i + 1]),
+            (self.ne[j], self.ne[j + 1]),
+            required,
+            self.clearance_weight,
+        );
+        self.claims.push(c);
+        1
+    }
+
+    /// Seed twin-gap claims for every P/N segment pair that starts within
+    /// `required + 0.25` of each other but still holds — the ones a descent
+    /// step can push through the gap. Pairs already closer than `required`
+    /// at the start (breakouts converging on their pads, where the oracle
+    /// relaxes the rule) are left to mining: forcing them apart against
+    /// pinned endpoints would make the problem infeasible.
+    pub(crate) fn seed_twin(&mut self, required: f64) -> usize {
+        let mut pairs = Vec::new();
+        for i in 0..self.p_pts.len() - 1 {
+            for j in 0..self.n_pts.len() - 1 {
+                let d = seg_seg_dist_f64(
+                    self.p_pts[i],
+                    self.p_pts[i + 1],
+                    self.n_pts[j],
+                    self.n_pts[j + 1],
+                );
+                if d >= required && d < required + 0.25 {
+                    pairs.push((i, j));
+                }
+            }
+        }
+        pairs
+            .into_iter()
+            .map(|(i, j)| self.add_twin(i, j, required))
+            .sum()
+    }
+
     /// Solve from `theta0` with `solver`; `iters` is Adam's step budget, or
     /// the SCO inner-iteration cap (SCO stops far earlier on convergence).
     pub(crate) fn solve(
@@ -533,6 +611,11 @@ pub struct DescentReport {
     pub rejected: usize,
     /// Clearance claims mined from oracle violations (M3 lazy cuts).
     pub cuts: usize,
+    /// Attempted pairs whose UNMODIFIED copper already fails the oracle.
+    pub pre_dirty: usize,
+    /// Rejected pairs whose result was strictly less dirty than the original
+    /// against the same oracle, adding no violation (not committed).
+    pub improved_but_dirty: usize,
 }
 
 /// Run the differentiable pair polish over every classified pair on a routed
@@ -791,18 +874,51 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
         // Each violating segment mines the third-party copper around it as
         // new clearance claims. A violation against the twin (the pair gap
         // rule) mines nothing — descend_pair_mined then stops, not clean.
+        // The twin's copper OFF its run, per leg: a twin blocker that isn't
+        // the moving run is static copper, mined as an ordinary obstacle at
+        // the pair-gap requirement.
+        let twin_static = |twin: &str, layer: PcbLayer, run: &[Vec2]| -> Vec<(Vec2, Vec2, f64)> {
+            pcb.traces
+                .iter()
+                .filter(|t| t.net == twin && t.layer == layer && !on_run(t, twin, layer, run))
+                .map(|t| (t.start, t.end, t.width / 2.0))
+                .collect()
+        };
+        let p_twin_static = twin_static(nn, pl, &n_raw);
+        let n_twin_static = twin_static(pn, nlayer, &p_raw);
+        let twin_edge = clearance.max(gap_edge);
         let oracle = |pp: &[Vec2], np: &[Vec2]| -> OracleVerdict {
             let p_session = with_new(np, nn, nlayer, n_w);
             let n_session = with_new(pp, pn, pl, p_w);
             let mut bad = Vec::new();
+            let mut twin_cuts: std::collections::BTreeSet<(usize, usize)> = Default::default();
+            let mut dirty_list = Vec::new();
             let mut dirty = false;
             let (mut dirty_segs, mut twin_only) = (0usize, 0usize);
             let mut blk: std::collections::BTreeMap<&str, usize> = Default::default();
-            for (sess, pts, net, layer, w) in [
-                (&p_session, pp, pn.as_str(), pl, p_w),
-                (&n_session, np, nn.as_str(), nlayer, n_w),
+            for (leg, sess, pts, other, net, layer, w, statics) in [
+                (
+                    0u8,
+                    &p_session,
+                    pp,
+                    np,
+                    pn.as_str(),
+                    pl,
+                    p_w,
+                    &p_twin_static,
+                ),
+                (
+                    1u8,
+                    &n_session,
+                    np,
+                    pp,
+                    nn.as_str(),
+                    nlayer,
+                    n_w,
+                    &n_twin_static,
+                ),
             ] {
-                for seg in pts.windows(2) {
+                for (si, seg) in pts.windows(2).enumerate() {
                     let geom = CopperGeom::Segment {
                         a: seg[0],
                         b: seg[1],
@@ -812,8 +928,10 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
                     if pr.legal {
                         continue;
                     }
+                    let mut twin_hit = false;
                     for bl in &pr.blockers {
                         let kind = if bl.net == *pn || bl.net == *nn {
+                            twin_hit = true;
                             "twin"
                         } else {
                             "third"
@@ -822,6 +940,35 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
                     }
                     dirty = true;
                     dirty_segs += 1;
+                    dirty_list.push((leg, si));
+                    if twin_hit {
+                        // Which twin copper: the moving run (same layer
+                        // only) → twin-gap claims; otherwise static copper.
+                        let other_w = if leg == 0 { n_w } else { p_w };
+                        let need = twin_edge - 0.005 + (w + other_w) / 2.0;
+                        let mut found = false;
+                        if pl == nlayer {
+                            for (oj, os) in other.windows(2).enumerate() {
+                                if seg_seg_dist_f64(seg[0], seg[1], os[0], os[1]) < need {
+                                    found = true;
+                                    twin_cuts.insert(if leg == 0 { (si, oj) } else { (oj, si) });
+                                }
+                            }
+                        }
+                        if !found {
+                            for &(a, b, hw) in statics.iter() {
+                                if seg_seg_dist_f64(seg[0], seg[1], a, b)
+                                    < need - other_w / 2.0 + hw
+                                {
+                                    bad.push(DescentObstacle {
+                                        a,
+                                        b,
+                                        required: twin_edge + run_w / 2.0 + hw + 0.05,
+                                    });
+                                }
+                            }
+                        }
+                    }
                     let before_n = bad.len();
                     let m = 1.0;
                     ob_session.for_each_blocking(
@@ -842,13 +989,20 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
             }
             log::debug!(
                 target: "descent_stats",
-                "oracle dirty_segs={dirty_segs} no_third_party={twin_only} blockers={blk:?}"
+                "oracle dirty_segs={dirty_segs} no_third_party={twin_only} twin_cuts={} blockers={blk:?}",
+                twin_cuts.len()
             );
             OracleVerdict {
                 clean: !dirty,
                 cuts: bad,
+                twin_cuts: twin_cuts.into_iter().collect(),
+                dirty: dirty_list,
             }
         };
+        // Centre-line separation the twin-gap claims demand: the oracle's
+        // edge rule plus both half-widths plus a 10 um cushion (the claims
+        // are hard, so the cushion only has to clear the predicate).
+        let twin_required = (pl == nlayer).then_some(twin_edge + (p_w + n_w) / 2.0 + 0.01);
 
         let Some(mined) = descend_pair_mined(
             &p_pts,
@@ -857,6 +1011,7 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
             extra_n,
             pl == nlayer,
             gap_centre,
+            twin_required,
             &obstacles,
             &DescentWeights::default(),
             solver,
@@ -868,15 +1023,25 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
             continue;
         };
         report.cuts += mined.cuts;
+        if mined.baseline_dirty > 0 {
+            report.pre_dirty += 1;
+        }
         if !mined.clean {
             report.rejected += 1;
+            if mined.improved {
+                report.improved_but_dirty += 1;
+            }
             log::debug!(
                 target: "descent_stats",
-                "pair={pn} reject=oracle-dirty rounds={} cuts={} ms={:.0} reason={}",
+                "pair={pn} reject=oracle-dirty rounds={} cuts={} ms={:.0} reason={} pre_dirty={} base_dirty={} final_dirty={} improved_but_dirty={}",
                 mined.rounds,
                 mined.cuts,
                 pair_t0.elapsed().as_secs_f64() * 1e3,
-                if mined.rounds >= 4 { "round-budget" } else { "no-new-cuts" }
+                if mined.rounds >= 4 { "round-budget" } else { "no-new-cuts" },
+                mined.baseline_dirty > 0,
+                mined.baseline_dirty,
+                mined.final_dirty,
+                mined.improved
             );
             continue;
         }
@@ -967,6 +1132,20 @@ fn oracle_board(
         source: None,
     }));
     b
+}
+
+/// Segment-segment distance (0 when they cross).
+fn seg_seg_dist_f64(a0: Vec2, a1: Vec2, b0: Vec2, b1: Vec2) -> f64 {
+    let cross = |o: Vec2, p: Vec2, q: Vec2| (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
+    let (d1, d2) = (cross(a0, a1, b0), cross(a0, a1, b1));
+    let (d3, d4) = (cross(b0, b1, a0), cross(b0, b1, a1));
+    if d1 * d2 < 0.0 && d3 * d4 < 0.0 {
+        return 0.0;
+    }
+    pt_seg_dist_f64(a0, b0, b1)
+        .min(pt_seg_dist_f64(a1, b0, b1))
+        .min(pt_seg_dist_f64(b0, a0, a1))
+        .min(pt_seg_dist_f64(b1, a0, a1))
 }
 
 fn pt_seg_dist_f64(p: Vec2, a: Vec2, b: Vec2) -> f64 {
@@ -1203,10 +1382,10 @@ mod tests {
         let oracle = |pp: &[Vec2], np: &[Vec2]| -> OracleVerdict {
             let mut v = OracleVerdict {
                 clean: true,
-                cuts: Vec::new(),
+                ..Default::default()
             };
-            for pts in [pp, np] {
-                for seg in pts.windows(2) {
+            for (leg, pts) in [pp, np].into_iter().enumerate() {
+                for (si, seg) in pts.windows(2).enumerate() {
                     let s = CopperGeom::Segment {
                         a: seg[0],
                         b: seg[1],
@@ -1220,6 +1399,7 @@ mod tests {
                         };
                         if s.distance_to(&og) < o.required - 0.05 {
                             v.clean = false;
+                            v.dirty.push((leg as u8, si));
                             if !v.cuts.iter().any(|c| c.a == o.a && c.b == o.b) {
                                 v.cuts.push(*o);
                             }
@@ -1239,6 +1419,7 @@ mod tests {
             0.0,
             true,
             0.45,
+            None,
             &seed,
             &w,
             DescentSolver::Sco,
@@ -1258,6 +1439,7 @@ mod tests {
             0.0,
             true,
             0.45,
+            None,
             &seed,
             &w,
             DescentSolver::Sco,
@@ -1274,6 +1456,81 @@ mod tests {
         assert!(mined.rounds >= 2 && mined.cuts > 0);
         assert!(oracle(&mined.result.p_pts, &mined.result.n_pts).clean);
         assert_eq!(mined.result.n_pts[0], n[0]);
+    }
+
+    /// M6: a violation against the TWIN is expressible. The gap springs
+    /// here target a centre separation (0.30) tighter than the oracle's
+    /// twin rule (0.40), so descent pulls the legs into each other. Without
+    /// twin claims the oracle verdict mines nothing and the result stays
+    /// dirty; with them the twin hits become twin-gap claims and the
+    /// re-solve is oracle-clean.
+    #[test]
+    fn twin_cuts_make_pair_gap_violation_expressible() {
+        let p: Vec<Vec2> = (0..=50).map(|i| Vec2::new(0.4 * i as f64, 0.0)).collect();
+        let n: Vec<Vec2> = (0..=50)
+            .map(|i| {
+                let x = 0.4 * i as f64;
+                let bump = if (4.0..16.0).contains(&x) {
+                    0.5 * (std::f64::consts::PI * (x - 4.0) / 12.0).sin()
+                } else {
+                    0.0
+                };
+                Vec2::new(x, 0.45 + bump)
+            })
+            .collect();
+        let oracle = |pp: &[Vec2], np: &[Vec2]| -> OracleVerdict {
+            let mut v = OracleVerdict {
+                clean: true,
+                ..Default::default()
+            };
+            for (i, a) in pp.windows(2).enumerate() {
+                for (j, b) in np.windows(2).enumerate() {
+                    if seg_seg_dist_f64(a[0], a[1], b[0], b[1]) < 0.40 {
+                        v.clean = false;
+                        v.dirty.push((0, i));
+                        v.twin_cuts.push((i, j));
+                    }
+                }
+            }
+            v.dirty.sort();
+            v.dirty.dedup();
+            v
+        };
+        assert!(oracle(&p, &n).clean, "fixture must start legal");
+        let w = DescentWeights::default();
+        let run = |twin: Option<f64>| {
+            descend_pair_mined(
+                &p,
+                &n,
+                0.0,
+                0.0,
+                true,
+                0.30,
+                twin,
+                &[],
+                &w,
+                DescentSolver::Sco,
+                400,
+                6,
+                oracle,
+            )
+            .unwrap()
+        };
+        let without = run(None);
+        assert!(
+            !without.clean,
+            "springs at 0.30 must breach a 0.40 twin rule"
+        );
+        let with = run(Some(0.41));
+        eprintln!(
+            "twin: rounds={} cuts={} clean={} skew={:.4}",
+            with.rounds, with.cuts, with.clean, with.result.skew
+        );
+        assert!(
+            with.clean,
+            "twin-gap claims must make the pair oracle-clean"
+        );
+        assert!(with.result.skew < 0.6, "skew {}", with.result.skew);
     }
 
     /// A run that commits nothing must not change the board: classifying

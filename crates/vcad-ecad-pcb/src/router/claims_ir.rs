@@ -65,6 +65,9 @@ pub enum ClaimKind {
     LengthWindow,
     /// Wirelength objective.
     Wirelength,
+    /// Hard minimum edge-to-edge separation between a P-leg and an N-leg
+    /// segment (the intra-pair gap rule the oracle enforces on the twin).
+    TwinGap,
 }
 
 /// One claim: a residual expression plus how to penalize it.
@@ -305,6 +308,53 @@ pub fn clearance(
     let nd = g.neg(d);
     Claim {
         kind: ClaimKind::Clearance,
+        residual: g.add(req, nd),
+        weight,
+        penalty: Penalty::SquaredHinge,
+        hard: true,
+    }
+}
+
+/// `min(a, b)` as an expression.
+pub fn min(g: &mut ExprGraph, a: ExprId, b: ExprId) -> ExprId {
+    let nb = g.neg(b);
+    let d = g.add(a, nb);
+    g.select(d, b, a)
+}
+
+/// Segment-to-segment distance as the minimum of the four endpoint-to-
+/// segment distances. Exact for non-crossing segments; a CROSSING pair reads
+/// its endpoint distance instead of 0 — the exact oracle still catches it.
+pub fn seg_seg_dist(
+    g: &mut ExprGraph,
+    a0: PointExpr,
+    a1: PointExpr,
+    b0: PointExpr,
+    b1: PointExpr,
+) -> ExprId {
+    let d0 = pt_seg_dist(g, a0, b0, b1);
+    let d1 = pt_seg_dist(g, a1, b0, b1);
+    let d2 = pt_seg_dist(g, b0, a0, a1);
+    let d3 = pt_seg_dist(g, b1, a0, a1);
+    let m01 = min(g, d0, d1);
+    let m23 = min(g, d2, d3);
+    min(g, m01, m23)
+}
+
+/// Twin gap (hard): `required − seg_seg_dist(P seg, N seg)`, with
+/// `required` the centre-line separation (edge gap + both half-widths).
+pub fn twin_gap(
+    g: &mut ExprGraph,
+    p_seg: (PointExpr, PointExpr),
+    n_seg: (PointExpr, PointExpr),
+    required: f64,
+    weight: f64,
+) -> Claim {
+    let d = seg_seg_dist(g, p_seg.0, p_seg.1, n_seg.0, n_seg.1);
+    let req = g.lit(required);
+    let nd = g.neg(d);
+    Claim {
+        kind: ClaimKind::TwinGap,
         residual: g.add(req, nd),
         weight,
         penalty: Penalty::SquaredHinge,
@@ -771,6 +821,28 @@ mod tests {
             }
         }
         assert!(checked > 2000);
+    }
+
+    /// Twin gap: holds iff the two segments' centre lines are `required`
+    /// apart, judged on whole segments (an interior approach counts).
+    #[test]
+    fn twin_gap_is_segment_to_segment() {
+        let mut g = ExprGraph::new();
+        let a0 = (g.lit(0.0), g.lit(0.0));
+        let a1 = (g.lit(10.0), g.lit(0.0));
+        let b0 = (g.var(0), g.var(1));
+        let b1 = (g.var(2), g.var(3));
+        let c = twin_gap(&mut g, (a0, a1), (b0, b1), 0.4, 1.0);
+        // Parallel at 0.5: holds; at 0.3: fails.
+        assert!(ClaimSet::verdict(&g, &c, &[0.0, 0.5, 10.0, 0.5]).holds);
+        assert!(!ClaimSet::verdict(&g, &c, &[0.0, 0.3, 10.0, 0.3]).holds);
+        // A V whose apex dips to 0.2 above the middle of A: endpoints far,
+        // segment b's endpoint near A's interior.
+        let v = ClaimSet::verdict(&g, &c, &[5.0, 0.2, 5.0, 3.0]);
+        assert!(!v.holds && (v.margin + 0.2).abs() < 1e-6, "{v:?}");
+        // A's endpoint near b's interior (b far off to the side otherwise).
+        let v = ClaimSet::verdict(&g, &c, &[10.3, -5.0, 10.3, 5.0]);
+        assert!(!v.holds && (v.margin + 0.1).abs() < 1e-6, "{v:?}");
     }
 
     /// The folded differentiator agrees with tang's `diff` numerically and
