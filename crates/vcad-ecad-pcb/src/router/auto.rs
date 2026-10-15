@@ -2135,9 +2135,11 @@ static FAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
 
 /// Pin fields depend only on footprints, which never change during a route:
 /// detect them once per board instead of once per connection.
+type PinFieldCache = Option<(usize, usize, std::sync::Arc<Vec<escape::PinField>>)>;
+
 fn cached_pin_fields(pcb: &Pcb) -> std::sync::Arc<Vec<escape::PinField>> {
     use std::sync::{Arc, Mutex};
-    static CACHE: Mutex<Option<(usize, usize, Arc<Vec<escape::PinField>>)>> = Mutex::new(None);
+    static CACHE: Mutex<PinFieldCache> = Mutex::new(None);
     let key = (pcb.footprints.as_ptr() as usize, pcb.footprints.len());
     let mut c = CACHE.lock().unwrap();
     if let Some((p, n, f)) = c.as_ref() {
