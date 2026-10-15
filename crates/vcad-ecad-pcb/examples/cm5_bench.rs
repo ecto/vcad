@@ -100,7 +100,16 @@ fn main() {
     // Keyed by the pad net strings — the exact names the router's pad-derived
     // netlist and ratsnest match on (`pcb.nets` ids can differ from pad net
     // names on imported boards, which made the filter silently select nothing).
-    let filter: Vec<String> = if max_nets == usize::MAX {
+    // VCAD_NETS_FILE=<json list> routes exactly those nets (overrides
+    // max_nets) — e.g. the diff pairs plus their pad neighbours, when the
+    // full board is too slow for a benchmark loop.
+    let nets_file: Option<Vec<String>> = std::env::var("VCAD_NETS_FILE").ok().map(|p| {
+        serde_json::from_str(&std::fs::read_to_string(p).expect("read nets file"))
+            .expect("parse nets file")
+    });
+    let filter: Vec<String> = if let Some(list) = nets_file {
+        list
+    } else if max_nets == usize::MAX {
         Vec::new()
     } else {
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();

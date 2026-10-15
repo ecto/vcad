@@ -187,12 +187,34 @@ pub fn descend_pair_mined(
     let mut theta = prob.theta0.clone();
     let mut cuts = 0;
     let mut total_iters = 0;
+    if log::log_enabled!(target: "descent_stats", log::Level::Debug) {
+        // Baseline: is the UNCHANGED geometry oracle-clean? (Diagnostics only.)
+        let v0 = oracle(p_pts, n_pts);
+        log::debug!(
+            target: "descent_stats",
+            "round=0 baseline_clean={} viol_cuts={}",
+            v0.clean,
+            v0.cuts.len()
+        );
+    }
     for round in 1..=max_rounds.max(1) {
+        let t0 = std::time::Instant::now();
         let (th, it) = prob.solve(&theta, solver, iters);
+        let solve_ms = t0.elapsed().as_secs_f64() * 1e3;
         theta = th;
         total_iters += it;
         let r = prob.result(&theta, total_iters);
+        let t1 = std::time::Instant::now();
         let verdict = oracle(&r.p_pts, &r.n_pts);
+        log::debug!(
+            target: "descent_stats",
+            "round={round} vars={} claims={} iters={it} solve_ms={solve_ms:.1} oracle_ms={:.1} clean={} viol_cuts={}",
+            prob.theta0.len(),
+            prob.claims.claims.len(),
+            t1.elapsed().as_secs_f64() * 1e3,
+            verdict.clean,
+            verdict.cuts.len()
+        );
         if verdict.clean {
             return Some(MinedOutcome {
                 result: r,
@@ -529,6 +551,18 @@ pub fn descend_board(pcb: &mut Pcb, iters: usize) -> DescentReport {
 
 /// [`descend_board`] with an explicit optimizer (Adam kept for comparison).
 pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> DescentReport {
+    // The pass classifies nets and installs the diff-pair class so the oracle
+    // session enforces the pair gap — but that is working state, not an
+    // edit: leaving it on the board changes DRC for pairs the descent never
+    // touched (an imported board whose USB legs are narrower than the 0.2 mm
+    // class default gained MinTraceWidth violations from a no-op run).
+    let rules = pcb.rules.clone();
+    let report = descend_board_inner(pcb, iters, solver);
+    pcb.rules = rules;
+    report
+}
+
+fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> DescentReport {
     use super::classes::{apply_classes, classify_nets};
     use super::length_match::longest_chain;
     use crate::session::RouteSession;
@@ -610,6 +644,7 @@ pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) ->
         let (Some((pl, p_raw, extra_p, p_w)), Some((nlayer, n_raw, extra_n, n_w))) =
             (net_run(pcb, pn), net_run(pcb, nn))
         else {
+            log::debug!(target: "descent_stats", "pair={pn} skip=no-run");
             continue;
         };
         // Point hinges only constrain POINTS — a long segment between two
@@ -641,9 +676,28 @@ pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) ->
             .sum::<f64>()
             + extra_n;
         if (plen - nlen).abs() < 0.2 || p_pts.len() < 3 || n_pts.len() < 3 {
+            log::debug!(
+                target: "descent_stats",
+                "pair={pn} skip={} skew={:.3} layers={:?}/{:?}",
+                if (plen - nlen).abs() < 0.2 { "matched" } else { "no-freedom" },
+                (plen - nlen).abs(),
+                pl,
+                nlayer
+            );
             continue; // already matched, or no interior freedom
         }
         report.attempted += 1;
+        let pair_t0 = std::time::Instant::now();
+        log::debug!(
+            target: "descent_stats",
+            "pair={pn} attempt skew={:.3} pts={}/{} same_layer={} extra={:.2}/{:.2}",
+            (plen - nlen).abs(),
+            p_pts.len(),
+            n_pts.len(),
+            pl == nlayer,
+            extra_p,
+            extra_n
+        );
 
         let session = RouteSession::from_pcb(pcb);
         let clearance = session.clearance_for(pn);
@@ -740,6 +794,8 @@ pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) ->
             let n_session = with_new(pp, pn, pl, p_w);
             let mut bad = Vec::new();
             let mut dirty = false;
+            let (mut dirty_segs, mut twin_only) = (0usize, 0usize);
+            let mut blk: std::collections::BTreeMap<&str, usize> = Default::default();
             for (sess, pts, net, layer, w) in [
                 (&p_session, pp, pn.as_str(), pl, p_w),
                 (&n_session, np, nn.as_str(), nlayer, n_w),
@@ -750,10 +806,21 @@ pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) ->
                         b: seg[1],
                         half_w: w / 2.0,
                     };
-                    if sess.probe(&geom, layer, net, clearance).legal {
+                    let pr = sess.probe(&geom, layer, net, clearance);
+                    if pr.legal {
                         continue;
                     }
+                    for bl in &pr.blockers {
+                        let kind = if bl.net == *pn || bl.net == *nn {
+                            "twin"
+                        } else {
+                            "third"
+                        };
+                        *blk.entry(kind).or_insert(0usize) += 1;
+                    }
                     dirty = true;
+                    dirty_segs += 1;
+                    let before_n = bad.len();
                     let m = 1.0;
                     ob_session.for_each_blocking(
                         layer,
@@ -766,8 +833,15 @@ pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) ->
                             }
                         },
                     );
+                    if bad.len() == before_n {
+                        twin_only += 1;
+                    }
                 }
             }
+            log::debug!(
+                target: "descent_stats",
+                "oracle dirty_segs={dirty_segs} no_third_party={twin_only} blockers={blk:?}"
+            );
             OracleVerdict {
                 clean: !dirty,
                 cuts: bad,
@@ -788,11 +862,20 @@ pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) ->
             4,
             oracle,
         ) else {
+            log::debug!(target: "descent_stats", "pair={pn} reject=build-failed");
             continue;
         };
         report.cuts += mined.cuts;
         if !mined.clean {
             report.rejected += 1;
+            log::debug!(
+                target: "descent_stats",
+                "pair={pn} reject=oracle-dirty rounds={} cuts={} ms={:.0} reason={}",
+                mined.rounds,
+                mined.cuts,
+                pair_t0.elapsed().as_secs_f64() * 1e3,
+                if mined.rounds >= 4 { "round-budget" } else { "no-new-cuts" }
+            );
             continue;
         }
         let r = mined.result;
@@ -804,6 +887,13 @@ pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) ->
         let after = ((run_p_after + extra_p) - (run_n_after + extra_n)).abs();
         if after >= before {
             report.rejected += 1;
+            log::debug!(
+                target: "descent_stats",
+                "pair={pn} reject=no-improvement before={before:.3} after={after:.3} rounds={} cuts={} ms={:.0}",
+                mined.rounds,
+                mined.cuts,
+                pair_t0.elapsed().as_secs_f64() * 1e3
+            );
             continue;
         }
         let mut work2 = pcb.clone();
@@ -836,6 +926,13 @@ pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) ->
         *pcb = work2;
         report.tuned += 1;
         log::info!("descent: {pn} whole-net skew {before:.3} -> {after:.3} mm");
+        log::debug!(
+            target: "descent_stats",
+            "pair={pn} accept before={before:.3} after={after:.3} rounds={} cuts={} ms={:.0}",
+            mined.rounds,
+            mined.cuts,
+            pair_t0.elapsed().as_secs_f64() * 1e3
+        );
     }
     report
 }
@@ -1145,5 +1242,85 @@ mod tests {
         assert!(mined.rounds >= 2 && mined.cuts > 0);
         assert!(oracle(&mined.result.p_pts, &mined.result.n_pts).clean);
         assert_eq!(mined.result.n_pts[0], n[0]);
+    }
+
+    /// A run that commits nothing must not change the board: classifying
+    /// nets installs a diff-pair class (0.2 mm legs) that the pass needs
+    /// internally, and leaking it onto an imported board turned its
+    /// narrower pair traces into MinTraceWidth violations.
+    #[test]
+    fn descend_board_leaves_rules_untouched() {
+        use vcad_ir::ecad::*;
+        let pad = |num: &str, x: f64, net: &str| Pad {
+            number: num.into(),
+            pad_type: PadType::SMD,
+            shape: PadShape::Rect {
+                width: 0.5,
+                height: 0.5,
+            },
+            position: Vec2::new(x, 0.0),
+            rotation: 0.0,
+            drill: None,
+            net: Some(net.into()),
+            layers: vec![PcbLayer::FCu],
+        };
+        let mut pcb = Pcb {
+            outline: BoardOutline {
+                vertices: vec![
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(30.0, 0.0),
+                    Vec2::new(30.0, 30.0),
+                    Vec2::new(0.0, 30.0),
+                ],
+                cutouts: vec![],
+                thickness: 1.6,
+            },
+            stackup: LayerStackup { layers: vec![] },
+            nets: vec![],
+            rules: DesignRules {
+                default_rules: NetClassRules {
+                    name: "Default".into(),
+                    trace_width: 0.1,
+                    clearance: 0.1,
+                    via_diameter: 0.4,
+                    via_drill: 0.2,
+                    diff_pair_gap: None,
+                    diff_pair_width: None,
+                    target_impedance: None,
+                    target_diff_impedance: None,
+                },
+                class_rules: vec![],
+                net_class_assignments: Default::default(),
+                edge_clearance: 0.3,
+                hole_to_hole: 0.25,
+                min_annular_ring: 0.1,
+                min_drill: 0.2,
+            },
+            footprints: vec![Footprint {
+                reference: "J1".into(),
+                value: "usb".into(),
+                footprint_name: "test".into(),
+                position: Vec2::new(15.0, 15.0),
+                rotation: 0.0,
+                front: true,
+                pads: vec![pad("1", -0.5, "USB_DP"), pad("2", 0.5, "USB_DM")],
+                graphics: vec![],
+                model_3d: None,
+                properties: Default::default(),
+            }],
+            traces: vec![],
+            trace_arcs: vec![],
+            vias: vec![],
+            zones: vec![],
+            keepouts: vec![],
+            net_ties: vec![],
+        };
+        let before = pcb.rules.clone();
+        let r = descend_board(&mut pcb, 10);
+        assert_eq!(r.tuned, 0);
+        assert_eq!(
+            pcb.rules, before,
+            "descent leaked its diff-pair class onto the board"
+        );
     }
 }
