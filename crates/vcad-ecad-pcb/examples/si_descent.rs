@@ -9,7 +9,7 @@
 //! the router's own SI finishing pass and this example cannot drift apart.
 //!
 //! ```bash
-//! cargo run --release -p vcad-ecad-pcb --example si_descent -- in.pcb.json out.pcb.json [iters] [--adam]
+//! cargo run --release -p vcad-ecad-pcb --example si_descent -- in.pcb.json out.pcb.json [iters] [--adam|--lm]
 //! ```
 
 use vcad_ecad_pcb::router::descent::{descend_board_with, DescentSolver};
@@ -19,14 +19,17 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
-    // `--adam` swaps the SCO default for the original Adam loop (comparison).
+    // `--adam` swaps the SCO (SQP) default for the original Adam loop,
+    // `--lm` for the M2 penalty/AL SCO (comparison).
     let all: Vec<String> = std::env::args().skip(1).collect();
     let solver = if all.iter().any(|a| a == "--adam") {
         DescentSolver::Adam
+    } else if all.iter().any(|a| a == "--lm") {
+        DescentSolver::ScoLm
     } else {
         DescentSolver::Sco
     };
-    let mut args = all.into_iter().filter(|a| a != "--adam");
+    let mut args = all.into_iter().filter(|a| a != "--adam" && a != "--lm");
     let input = args.next().expect("usage: si_descent <in> <out> [iters]");
     let output = args.next().expect("usage: si_descent <in> <out> [iters]");
     let iters: usize = args.next().and_then(|s| s.parse().ok()).unwrap_or(2000);

@@ -25,7 +25,7 @@
 //! the product.
 
 use super::claims_ir::{self as cir, ClaimSet, PointExpr};
-use super::sco::{ResidualSystem, ScoOptions, ScoReport};
+use super::sco::{ResidualSystem, ScoMethod, ScoOptions, ScoReport};
 use tang_expr::{ExprGraph, ExprId};
 use vcad_ir::ecad::{Pcb, PcbLayer, Trace};
 use vcad_ir::Vec2;
@@ -71,10 +71,14 @@ pub struct DescentObstacle {
 /// Which optimizer drives the descent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DescentSolver {
-    /// Sequential convex optimization (compiled LM + trust region +
-    /// penalty continuation, [`super::sco`]). The default.
+    /// Sequential convex optimization with hard claims as linearized
+    /// constraints in each trust-region QP ([`super::sco::ScoMethod::Sqp`],
+    /// M7). The default.
     #[default]
     Sco,
+    /// The M2 SCO: hard claims as penalty rows in LM + augmented-Lagrangian
+    /// continuation ([`super::sco::ScoMethod::Lm`]) — kept for comparison.
+    ScoLm,
     /// The original Adam loop on the interpreted gradient graph — kept for
     /// comparison.
     Adam,
@@ -287,12 +291,13 @@ pub(crate) struct PairProblem {
     twin_claimed: std::collections::BTreeSet<(usize, usize)>,
 }
 
-/// A clearance sample site: a moving point, or the midpoint of the segment
-/// starting at that index (leg 0 = P, 1 = N).
+/// A clearance site: a moving point, or the whole segment starting at that
+/// index (leg 0 = P, 1 = N).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Sample {
     Point(u8, usize),
-    Mid(u8, usize),
+    /// The whole segment `i → i+1` (mined cuts).
+    Seg(u8, usize),
 }
 
 impl PairProblem {
@@ -417,9 +422,10 @@ impl PairProblem {
         self.add_clearance(ob, at, false)
     }
 
-    /// A mined cut: like [`Self::add_point_clearance`] at the current θ,
-    /// plus segment-MIDPOINT claims — the oracle judges whole segments, and
-    /// a segment can cross an obstacle between two legal points.
+    /// A mined cut: WHOLE-segment clearance claims ([`cir::seg_clearance`])
+    /// for every segment near `ob` at the current θ — the oracle judges whole
+    /// segments, and a segment can cross an obstacle between two legal
+    /// points.
     pub(crate) fn add_cut(&mut self, ob: &DescentObstacle, at: &[f64]) -> usize {
         self.add_clearance(ob, Some(at), true)
     }
@@ -443,15 +449,45 @@ impl PairProblem {
         let mut added = 0;
         for (li, leg, pts) in [(0u8, self.pe.clone(), pp), (1u8, self.ne.clone(), nn)] {
             let last = pts.len() - 1;
+            if mids {
+                // Mined cut: claim WHOLE segments. Point/midpoint samples
+                // leave the stretches between them unconstrained, and a
+                // solver that rides the constraint boundary exactly (the M7
+                // SQP) puts segment interiors through the obstacle there —
+                // the oracle judges segments, so the cut does too.
+                for i in 0..last {
+                    let (a, b) = (pts[i], pts[i + 1]);
+                    if seg_seg_dist_f64(a, b, ob.a, ob.b) > reach
+                        || !self.claimed.insert((Sample::Seg(li, i), oi))
+                    {
+                        continue;
+                    }
+                    // A pinned endpoint can't move: never demand more than
+                    // it already has (the oracle, not the cushion, rules).
+                    let mut req = ob.required;
+                    for (k, p) in [(i, a), (i + 1, b)] {
+                        if k == 0 || k == last {
+                            req = req.min(pt_seg_dist_f64(p, ob.a, ob.b) - 1e-6);
+                        }
+                    }
+                    let c = cir::seg_clearance(
+                        &mut self.g,
+                        (leg[i], leg[i + 1]),
+                        (ob.a.x, ob.a.y),
+                        (ob.b.x, ob.b.y),
+                        req,
+                        self.clearance_weight,
+                    );
+                    self.claims.push(c);
+                    added += 1;
+                }
+                continue;
+            }
             for i in 0..=last {
                 let moving = i != 0 && i != last;
                 let mut sites: Vec<(Sample, PointExpr, Vec2)> = Vec::new();
                 if moving {
                     sites.push((Sample::Point(li, i), leg[i], pts[i]));
-                }
-                if mids && i < last && (moving || i + 1 != last) {
-                    let m = cir::midpoint(&mut self.g, leg[i], leg[i + 1]);
-                    sites.push((Sample::Mid(li, i), m, (pts[i] + pts[i + 1]).scale(0.5)));
                 }
                 for (key, pe, now) in sites {
                     if pt_seg_dist_f64(now, ob.a, ob.b) > reach || !self.claimed.insert((key, oi)) {
@@ -527,17 +563,35 @@ impl PairProblem {
     ) -> (Vec<f64>, usize) {
         match solver {
             DescentSolver::Adam => self.solve_adam(theta0, iters),
-            DescentSolver::Sco => {
-                let (th, rep) = self.solve_sco(theta0, iters);
+            DescentSolver::Sco | DescentSolver::ScoLm => {
+                let method = if solver == DescentSolver::ScoLm {
+                    ScoMethod::Lm
+                } else {
+                    ScoMethod::Sqp
+                };
+                let (th, rep) = self.solve_sco(theta0, iters, method);
+                log::debug!(
+                    target: "descent_stats",
+                    "sco method={method:?} iters={} cap_hit={} hard_ok={} mu={:.0}",
+                    rep.iters,
+                    rep.cap_hit,
+                    rep.hard_ok,
+                    rep.mu
+                );
                 (th, rep.iters)
             }
         }
     }
 
     /// SCO on the claim-compiled residual system.
-    pub(crate) fn solve_sco(&self, theta0: &[f64], iters: usize) -> (Vec<f64>, ScoReport) {
+    pub(crate) fn solve_sco(
+        &self,
+        theta0: &[f64],
+        iters: usize,
+        method: ScoMethod,
+    ) -> (Vec<f64>, ScoReport) {
         let mut g = self.g.clone();
-        let sys = ResidualSystem::compile(&mut g, &self.claims, theta0.len());
+        let sys = ResidualSystem::compile_with(&mut g, &self.claims, theta0.len(), method);
         let opts = ScoOptions {
             max_iters: iters.clamp(1, 400),
             ..ScoOptions::default()
@@ -1337,6 +1391,18 @@ mod tests {
             let adam_ms = t.elapsed().as_secs_f64() * 1e3;
             let ra = prob.result(&ta, ia);
             let t = std::time::Instant::now();
+            let (tl, il) = prob.solve(&prob.theta0, DescentSolver::ScoLm, 3000);
+            let lm_ms = t.elapsed().as_secs_f64() * 1e3;
+            let rl = prob.result(&tl, il);
+            eprintln!(
+                "{name}: sco-lm loss={:.5} skew={:.4} margin={:+.4} iters={} {:.1}ms",
+                rl.loss,
+                rl.skew,
+                min_margin(&rl, &obs),
+                rl.iters,
+                lm_ms
+            );
+            let t = std::time::Instant::now();
             let (ts, is) = prob.solve(&prob.theta0, DescentSolver::Sco, 3000);
             let sco_ms = t.elapsed().as_secs_f64() * 1e3;
             let rs = prob.result(&ts, is);
@@ -1460,7 +1526,8 @@ mod tests {
 
     /// M6: a violation against the TWIN is expressible. The gap springs
     /// here target a centre separation (0.30) tighter than the oracle's
-    /// twin rule (0.40), so descent pulls the legs into each other. Without
+    /// twin rule (0.40), so descent pulls the legs into each other (N starts
+    /// 0.75 off, outside the seeding band, so nothing is pre-claimed). Without
     /// twin claims the oracle verdict mines nothing and the result stays
     /// dirty; with them the twin hits become twin-gap claims and the
     /// re-solve is oracle-clean.
@@ -1475,7 +1542,7 @@ mod tests {
                 } else {
                     0.0
                 };
-                Vec2::new(x, 0.45 + bump)
+                Vec2::new(x, 0.75 + bump)
             })
             .collect();
         let oracle = |pp: &[Vec2], np: &[Vec2]| -> OracleVerdict {

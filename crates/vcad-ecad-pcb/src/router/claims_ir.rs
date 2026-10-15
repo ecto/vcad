@@ -341,6 +341,31 @@ pub fn seg_seg_dist(
     min(g, m01, m23)
 }
 
+/// Segment clearance (hard): `required − seg_seg_dist(seg, obstacle)` —
+/// the whole moving segment, not samples on it, against a fixed obstacle
+/// segment (`a == b` for a disc). What the oracle judges, up to crossing.
+pub fn seg_clearance(
+    g: &mut ExprGraph,
+    seg: (PointExpr, PointExpr),
+    a: (f64, f64),
+    b: (f64, f64),
+    required: f64,
+    weight: f64,
+) -> Claim {
+    let a = (g.lit(a.0), g.lit(a.1));
+    let b = (g.lit(b.0), g.lit(b.1));
+    let d = seg_seg_dist(g, seg.0, seg.1, a, b);
+    let req = g.lit(required);
+    let nd = g.neg(d);
+    Claim {
+        kind: ClaimKind::Clearance,
+        residual: g.add(req, nd),
+        weight,
+        penalty: Penalty::SquaredHinge,
+        hard: true,
+    }
+}
+
 /// Twin gap (hard): `required − seg_seg_dist(P seg, N seg)`, with
 /// `required` the centre-line separation (edge gap + both half-widths).
 pub fn twin_gap(
