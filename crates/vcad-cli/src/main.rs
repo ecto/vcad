@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::{Path, PathBuf};
 
+mod telemetry;
 mod app;
 mod chat_session;
 mod fabprep;
@@ -593,6 +594,7 @@ impl From<UpAxisArg> for crate::render::UpAxis {
 }
 
 fn main() -> Result<()> {
+    let _otel = telemetry::init();
     vcad_i18n::init(&vcad_i18n::Locale::from_env());
     let cli = Cli::parse();
     if cli.no_cache {
@@ -1351,6 +1353,7 @@ fn route_file(
         )
     });
     progress(format!("routing {} nets", route_pcb.nets.len()));
+    let _route_span = tracing::info_span!("route", nets = route_pcb.nets.len()).entered();
     let r = vcad_ecad_pcb::router::auto::route_all_with_opts(&route_pcb, w, &[], &opts);
     progress(format!("first pass done: {} traces, {} vias", r.traces.len(), r.vias.len()));
     let (vd, vdrill) = (
@@ -1455,6 +1458,7 @@ fn route_file(
             .cloned()
             .collect();
         progress(format!("second pass on {} split nets", split.len()));
+        let _pass_span = tracing::info_span!("second_pass", split = split.len()).entered();
         let r2 = vcad_ecad_pcb::router::auto::route_all_with_opts(&again, w, &[], &opts);
         let before: usize = vcad_ecad_pcb::drc::net_islands(&pcb, &split).values().sum();
         let mut trial = pcb.clone();
@@ -3655,6 +3659,7 @@ fn progress(msg: impl std::fmt::Display) {
     eprintln!("[{t:7.1}s] {msg}");
 }
 
+#[tracing::instrument(skip_all, fields(nets = nets.len()))]
 fn direct_links(
     route_pcb: &vcad_ir::ecad::Pcb,
     pcb: &vcad_ir::ecad::Pcb,
@@ -3671,6 +3676,7 @@ fn direct_links(
     vcad_ecad_pcb::drc::with_frozen_fills(fills, || {
     for (ni, net) in nets.iter().enumerate() {
         progress(format!("link {}/{} {net}", ni + 1, nets.len()));
+        let _net_span = tracing::info_span!("link_net", net = %net).entered();
         let pads: Vec<_> = work
             .footprints
             .iter()
@@ -3767,6 +3773,7 @@ fn direct_links(
 /// Pads of a plane net that the router left without a via to the plane: drop
 /// one nearby with a short stub, where the legality oracle allows it, and keep
 /// it only if it joins two islands of the net.
+#[tracing::instrument(skip_all, fields(nets = nets.len()))]
 fn stitch_to_planes(
     route_pcb: &vcad_ir::ecad::Pcb,
     pcb: &vcad_ir::ecad::Pcb,
@@ -3795,6 +3802,7 @@ fn stitch_to_planes(
     vcad_ecad_pcb::drc::with_frozen_fills(fills, || {
     for (ni, net) in nets.iter().enumerate() {
         progress(format!("stitch {}/{} {net}", ni + 1, nets.len()));
+        let _net_span = tracing::info_span!("stitch_net", net = %net).entered();
         if !route_pcb.zones.iter().any(|z| &z.net == net) {
             continue;
         }

@@ -43,6 +43,7 @@ pub struct FilledZone {
 /// # Returns
 ///
 /// A vector of [`FilledZone`] results, one per input zone.
+#[tracing::instrument(level = "info", skip_all)]
 pub fn fill_zones(pcb: &Pcb) -> Vec<FilledZone> {
     pcb.zones.iter().map(|zone| fill_zone(pcb, zone)).collect()
 }

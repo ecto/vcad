@@ -371,6 +371,7 @@ pub fn route_all(pcb: &Pcb, width: f64, nets_filter: &[String]) -> RouteAllResul
 /// relaxes clearance, so every intermediate pass — and the final result — stays
 /// DRC-clean. With `negotiation_rounds == 1` this reduces exactly to the
 /// historical greedy + rip-up router.
+#[tracing::instrument(level = "info", skip_all)]
 pub fn route_all_with_opts(
     pcb: &Pcb,
     width: f64,
@@ -1225,6 +1226,7 @@ fn deposit_congestion(
 /// the fan-out rescue's input). A flat `cong` makes this identical to the
 /// historical greedy + rip-up router.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all)]
 fn route_pass(
     pcb: &Pcb,
     width: f64,
@@ -1666,6 +1668,7 @@ fn audit_stitch(session: &RouteSession, pcb: &Pcb, stitch: &Stitch, width: f64) 
 /// to every connection the speculative search missed.
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(not(feature = "gpu"), allow(dead_code))]
+#[tracing::instrument(level = "info", skip_all)]
 fn arsenal_sweep(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -1730,6 +1733,7 @@ fn arsenal_sweep(
 /// victims after. Everything else on the board stays put, so a round costs a
 /// fraction of a whole-board re-route with the same negotiation semantics.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all)]
 fn incremental_round(
     base: &Pass,
     pcb: &Pcb,
@@ -1813,6 +1817,7 @@ fn incremental_round(
 /// Bounded retries keep a pathological cluster from ping-ponging. Returns
 /// the connections that could not be routed; successes land in `placed`.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all)]
 fn route_batch(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -2040,6 +2045,7 @@ fn route_batch(
 /// [`try_route_fanout`], a monotonic rescue that only runs on connections this
 /// leaves unrouted.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all)]
 fn try_route(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -3399,6 +3405,7 @@ struct Stitch {
 /// copper pour voids around it on every other-net plane it passes through, so
 /// the result is clearance-legal by construction. A pad already sitting on one
 /// of its planes floods directly and needs no via.
+#[tracing::instrument(level = "info", skip_all)]
 fn stitch_planes(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -3502,6 +3509,7 @@ fn stitch_planes(
 /// DRC-clean invariant always holds because every (re)route goes through
 /// [`try_route`]. Returns the connections still unrouted after the pass.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all)]
 fn ripup_pass(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -3716,6 +3724,7 @@ fn reroute_victims_with_restore(
 /// two components) where per-net rip-up thrashes: the routes must be decided
 /// TOGETHER, and the window guarantees every entangled neighbor is in play.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all)]
 fn joint_window_repair(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -5810,6 +5819,7 @@ mod tests {
 /// CPU rescue arsenal is the caller's choice — see the routerbench
 /// finding at the call sites.
 #[cfg(feature = "gpu")]
+#[tracing::instrument(level = "info", skip_all)]
 fn gpu_negotiate_rounds(
     session: &mut RouteSession,
     pcb: &Pcb,

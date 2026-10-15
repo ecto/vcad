@@ -2977,6 +2977,7 @@ fn continuity_of(pcb: &Pcb, nodes: &[ConnNode], dsu: &mut Dsu, net: &str) -> Net
 /// island. `continuous` is the single bit those gates key off.
 /// Continuity of a single net. Rebuilds the whole board's connectivity per call,
 /// so it is not the tool for scoring every net on a large board.
+#[tracing::instrument(level = "info", skip_all)]
 pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
     let (nodes, mut dsu) = build_connectivity(pcb);
     continuity_of(pcb, &nodes, &mut dsu, net)
@@ -2984,6 +2985,7 @@ pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
 
 /// Island counts for many nets from ONE connectivity build: the batch form of
 /// [`analyze_net_continuity`] for whole-board passes (which nets are split?).
+#[tracing::instrument(level = "info", skip_all)]
 pub fn net_islands(pcb: &Pcb, nets: &[String]) -> std::collections::HashMap<String, usize> {
     let (nodes, mut dsu) = build_connectivity(pcb);
     nets.iter()
