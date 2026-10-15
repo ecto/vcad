@@ -162,6 +162,9 @@ pub struct RouteOptions {
     pub pour_policy: PourPolicy,
     /// Only through vias (front to back); no blind or buried vias.
     pub through_vias_only: bool,
+    /// Microvia `(diameter, drill)` for outer-to-adjacent spans (see
+    /// [`super::maze::set_microvia`]); `None` sizes every via by the rules.
+    pub microvia: Option<(f64, f64)>,
     /// Plane layers no trace may run on (vias still pass through them).
     pub no_route_layers: Vec<PcbLayer>,
     /// Stitch plane pads to their planes *before* signal routing, so each
@@ -210,6 +213,7 @@ impl Default for RouteOptions {
             prune_dangling_copper: true,
             pour_policy: PourPolicy::default(),
             through_vias_only: false,
+            microvia: None,
             no_route_layers: Vec::new(),
             prestitch_planes: true,
         }
@@ -370,6 +374,7 @@ pub fn route_all_with_opts(
     // Nets that already own a pour are left alone, so this complements existing
     // zones rather than duplicating them.
     super::maze::set_through_vias_only(opts.through_vias_only);
+    super::maze::set_microvia(opts.microvia);
     super::maze::set_no_route_layers(&opts.no_route_layers);
     let synthesized = synthesize_pours(pcb, &opts.pour_policy, nets_filter);
     let poured_board;

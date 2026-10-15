@@ -107,6 +107,10 @@ enum Commands {
         /// charge extra for the others on a 4-layer board)
         #[arg(long)]
         blind_vias: bool,
+        /// Microvia size "DIAMETER,DRILL" (mm) for vias one dielectric deep from
+        /// an outer layer - an HDI board's via-in-pad (implies --blind-vias)
+        #[arg(long)]
+        microvia: Option<String>,
         /// Router effort multiplier: scales negotiation and rip-up budgets
         #[arg(long, default_value = "1.0")]
         effort: f64,
@@ -617,6 +621,7 @@ fn main() -> Result<()> {
             currents,
             explain_pours,
             blind_vias,
+            microvia,
             effort,
             priority,
         }) => {
@@ -627,6 +632,7 @@ fn main() -> Result<()> {
                 &currents,
                 explain_pours,
                 blind_vias,
+                microvia.as_deref(),
                 effort,
                 priority,
             )?;
@@ -1117,6 +1123,7 @@ fn route_file(
     currents: &[String],
     explain_pours: bool,
     blind_vias: bool,
+    microvia: Option<&str>,
     effort: f64,
     priority: Vec<String>,
 ) -> Result<()> {
@@ -1131,8 +1138,18 @@ fn route_file(
         .ok_or_else(|| anyhow::anyhow!("{} has no board (EcadBoard)", input.display()))?;
     let w = width.unwrap_or(pcb.rules.default_rules.trace_width);
     let t0 = std::time::Instant::now();
+    let microvia: Option<(f64, f64)> = match microvia {
+        Some(m) => {
+            let (d, dr) = m
+                .split_once(',')
+                .ok_or_else(|| anyhow::anyhow!("--microvia {m}: expected DIAMETER,DRILL"))?;
+            Some((d.trim().parse()?, dr.trim().parse()?))
+        }
+        None => None,
+    };
     let mut opts = vcad_ecad_pcb::router::auto::RouteOptions {
-        through_vias_only: !blind_vias,
+        through_vias_only: !blind_vias && microvia.is_none(),
+        microvia,
         ..Default::default()
     };
     // Inner layers carrying a whole-board plane stay solid: no traces there.
@@ -1226,6 +1243,51 @@ fn route_file(
         for (k, p) in f.pads.iter_mut().enumerate() {
             if p.net.is_none() && p.layers.iter().any(|l| l.is_copper()) {
                 p.net = Some(format!("~nc~{}~{}", f.reference, k));
+            }
+        }
+    }
+    // Via-in-pad: a hand-laid via (a BGA's microvia fanout) inside a pad of
+    // its own net makes that pad reachable on every layer the via spans, so the
+    // router leaves the ball on the inner layer instead of drilling its own via
+    // between balls.
+    {
+        let manual: Vec<&vcad_ir::ecad::Via> = route_pcb
+            .vias
+            .iter()
+            .filter(|v| matches!(v.source, Some(CopperSource::Manual)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .collect();
+        let stack: Vec<vcad_ir::ecad::PcbLayer> = route_pcb
+            .stackup
+            .layers
+            .iter()
+            .map(|l| l.layer)
+            .filter(|l| l.is_copper())
+            .collect();
+        let mut grow: Vec<(usize, usize, Vec<vcad_ir::ecad::PcbLayer>)> = Vec::new();
+        for (fi, f) in route_pcb.footprints.iter().enumerate() {
+            for (pi, p) in f.pads.iter().enumerate() {
+                let Some(net) = &p.net else { continue };
+                let c = vcad_ecad_pcb::geometry::pad_world_position(f, p);
+                for v in manual.iter().filter(|v| &v.net == net) {
+                    if (v.position.x - c.x).hypot(v.position.y - c.y) < 0.05 {
+                        let span: Vec<_> = stack
+                            .iter()
+                            .copied()
+                            .filter(|l| l.spanned_by(v.start_layer, v.end_layer))
+                            .collect();
+                        grow.push((fi, pi, span));
+                    }
+                }
+            }
+        }
+        for (fi, pi, span) in grow {
+            let ls = &mut route_pcb.footprints[fi].pads[pi].layers;
+            for l in span {
+                if !ls.contains(&l) {
+                    ls.push(l);
+                }
             }
         }
     }
@@ -1366,21 +1428,29 @@ fn route_file(
             .collect();
         let mut again = route_pcb.clone();
         let keep = |n: &str| !ripped.iter().any(|r| r.as_str() == n);
+        // copper laid by hand (EcadVia / EcadTrace: a BGA's microvia fanout) is
+        // never ripped - the second pass routes to it like the first
+        let manual = |s: &Option<CopperSource>| matches!(s, Some(CopperSource::Manual));
         again.traces = pcb
             .traces
             .iter()
-            .filter(|t| keep(&t.net))
+            .filter(|t| keep(&t.net) || manual(&t.source))
             .cloned()
             .collect();
-        again.vias = pcb.vias.iter().filter(|v| keep(&v.net)).cloned().collect();
+        again.vias = pcb
+            .vias
+            .iter()
+            .filter(|v| keep(&v.net) || manual(&v.source))
+            .cloned()
+            .collect();
         let r2 = vcad_ecad_pcb::router::auto::route_all_with_opts(&again, w, &[], &opts);
         let before: usize = split
             .iter()
             .map(|n| vcad_ecad_pcb::drc::analyze_net_continuity(&pcb, n).islands)
             .sum();
         let mut trial = pcb.clone();
-        trial.traces.retain(|t| keep(&t.net));
-        trial.vias.retain(|v| keep(&v.net));
+        trial.traces.retain(|t| keep(&t.net) || manual(&t.source));
+        trial.vias.retain(|v| keep(&v.net) || manual(&v.source));
         let in_split = |n: &str| split.iter().any(|s| s == n);
         trial.traces.extend(
             r2.traces
@@ -1439,6 +1509,26 @@ fn route_file(
         println!("trimmed leaf copper: {lt} traces, {lv} vias");
     }
     pcb.zones.extend(outer_zones);
+    // Router vias one dielectric deep from an outer layer are microvias: the
+    // maze cleared them at the microvia size, so write them at it.
+    if let Some((md, mdrill)) = microvia {
+        let copper: Vec<vcad_ir::ecad::PcbLayer> = pcb
+            .stackup
+            .layers
+            .iter()
+            .map(|l| l.layer)
+            .filter(|l| l.is_copper())
+            .collect();
+        let idx = |l: vcad_ir::ecad::PcbLayer| copper.iter().position(|&c| c == l);
+        for v in pcb.vias.iter_mut() {
+            if let (Some(a), Some(b)) = (idx(v.start_layer), idx(v.end_layer)) {
+                if vcad_ecad_pcb::router::maze::is_microvia_span(&copper, a, b) {
+                    v.diameter = md;
+                    v.drill = mdrill;
+                }
+            }
+        }
+    }
     std::fs::write(output, vcad_ecad_symbols::write_kicad_pcb_for_project(&pcb))?;
     write_board_project(output, &pcb)?;
     println!(
@@ -3969,6 +4059,10 @@ fn trim_leaf_copper(pcb: &mut vcad_ir::ecad::Pcb) -> (usize, usize) {
         let v0 = pcb.vias.len();
         let traces = pcb.traces.clone();
         pcb.vias.retain(|v| {
+            // hand-laid copper (a BGA's fanout) stays whether or not it was used
+            if matches!(v.source, Some(vcad_ir::ecad::CopperSource::Manual)) {
+                return true;
+            }
             let mut layers: std::collections::BTreeSet<vcad_ir::ecad::PcbLayer> = traces
                 .iter()
                 .filter(|t| {

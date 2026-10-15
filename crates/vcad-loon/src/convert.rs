@@ -136,11 +136,18 @@ pub fn value_to_document_in(
             .schematic
             .as_ref()
             .ok_or_else(|| "EcadBoard needs a schematic (EcadSymbol / EcadConn)".to_string())?;
-        ctx.doc.pcb = Some(vcad_ecad_symbols::kicad_board::board_from_sheet(
-            sheet,
-            &ctx.places,
-            &spec,
-        )?);
+        let mut pcb = vcad_ecad_symbols::kicad_board::board_from_sheet(sheet, &ctx.places, &spec)?;
+        for v in &ctx.fixed_vias {
+            if !pcb.nets.iter().any(|n| n.name == v.net) {
+                return Err(format!(
+                    "EcadVia at ({}, {}): no net '{}'",
+                    v.position.x, v.position.y, v.net
+                ));
+            }
+        }
+        pcb.vias.extend(std::mem::take(&mut ctx.fixed_vias));
+        pcb.traces.extend(std::mem::take(&mut ctx.fixed_traces));
+        ctx.doc.pcb = Some(pcb);
     }
 
     Ok(ctx.doc)
@@ -612,6 +619,7 @@ fn is_ecad_tag(tag: &str) -> bool {
             | "EcadLabel"
             | "EcadTrace"
             | "EcadVia"
+            | "EcadViaSpan"
             | "EcadFootprint"
             | "EcadNet"
             | "EcadRules"
@@ -727,6 +735,46 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
                 pours: vec![],
                 pour_regions: vec![],
                 art: vec![],
+            });
+        }
+        // [EcadVia x y diameter drill net] - a through via laid by hand (pinned);
+        // [EcadViaSpan x y diameter drill net from-layer to-layer] - a blind,
+        // buried or micro via; [EcadTrace x1 y1 x2 y2 width layer net] - a trace
+        "EcadVia" | "EcadViaSpan" => {
+            let span = tag == "EcadViaSpan";
+            assert_fields(tag, fields, if span { 7 } else { 5 })?;
+            let layer = |i: usize| -> Result<ecad::PcbLayer, String> {
+                let l = ctx.str_val(&fields[i])?;
+                serde_json::from_str(&format!("\"{l}\""))
+                    .map_err(|_| format!("{tag}: unknown layer '{l}'"))
+            };
+            let (start_layer, end_layer) = if span {
+                (layer(5)?, layer(6)?)
+            } else {
+                (ecad::PcbLayer::FCu, ecad::PcbLayer::BCu)
+            };
+            ctx.fixed_vias.push(ecad::Via {
+                position: Vec2::new(ctx.f64_val(&fields[0])?, ctx.f64_val(&fields[1])?),
+                diameter: ctx.f64_val(&fields[2])?,
+                drill: ctx.f64_val(&fields[3])?,
+                start_layer,
+                end_layer,
+                net: ctx.str_val(&fields[4])?,
+                source: Some(ecad::CopperSource::Manual),
+            });
+        }
+        "EcadTrace" => {
+            assert_fields(tag, fields, 7)?;
+            let l = ctx.str_val(&fields[5])?;
+            let layer: ecad::PcbLayer = serde_json::from_str(&format!("\"{l}\""))
+                .map_err(|_| format!("EcadTrace: unknown layer '{l}'"))?;
+            ctx.fixed_traces.push(ecad::Trace {
+                start: Vec2::new(ctx.f64_val(&fields[0])?, ctx.f64_val(&fields[1])?),
+                end: Vec2::new(ctx.f64_val(&fields[2])?, ctx.f64_val(&fields[3])?),
+                width: ctx.f64_val(&fields[4])?,
+                layer,
+                net: ctx.str_val(&fields[6])?,
+                source: Some(ecad::CopperSource::Manual),
             });
         }
         // [EcadOutlinePt x y] - one point of the board outline, in order; any
@@ -1064,6 +1112,10 @@ struct ConvertCtx {
     class_nets: Vec<(String, String)>,
     /// `EcadArt` footprints (not on the schematic).
     art: Vec<(String, String, vcad_ecad_symbols::kicad_board::Placement)>,
+    /// `EcadVia` / `EcadViaSpan` / `EcadTrace`: copper laid by hand (a BGA's
+    /// microvia fanout), pinned - the router routes to it and never rips it.
+    fixed_vias: Vec<ecad::Via>,
+    fixed_traces: Vec<ecad::Trace>,
 }
 
 impl ConvertCtx {
@@ -1082,6 +1134,8 @@ impl ConvertCtx {
             art: Vec::new(),
             classes: Vec::new(),
             class_nets: Vec::new(),
+            fixed_vias: Vec::new(),
+            fixed_traces: Vec::new(),
         }
     }
 

@@ -53,6 +53,29 @@ fn through_only() -> bool {
     THROUGH_VIAS_ONLY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Microvia size `(diameter, drill)` for a via one dielectric deep from an
+/// outer layer (F.Cu-In1.Cu, or B.Cu and the inner layer above it) - the HDI
+/// via that fits inside a 0.4 mm BGA's pad. `None`: every via is the board's
+/// default size.
+static MICROVIA: std::sync::RwLock<Option<(f64, f64)>> = std::sync::RwLock::new(None);
+
+/// Size the router's microvias (see [`MICROVIA`]).
+pub fn set_microvia(size: Option<(f64, f64)>) {
+    *MICROVIA.write().unwrap() = size;
+}
+
+/// The microvia size, if one is set.
+pub fn microvia() -> Option<(f64, f64)> {
+    *MICROVIA.read().unwrap()
+}
+
+/// Whether a via between copper-stack indices `a` and `b` of `layers` (front
+/// to back) is a microvia: adjacent layers, one of them outer.
+pub fn is_microvia_span(layers: &[PcbLayer], a: usize, b: usize) -> bool {
+    let (lo, hi) = (a.min(b), a.max(b));
+    hi == lo + 1 && (lo == 0 || hi + 1 == layers.len())
+}
+
 /// Plane layers: no trace runs on them (a signal there cuts the plane into
 /// islands); vias still pass through. Empty by default.
 static NO_ROUTE_LAYERS: std::sync::RwLock<Vec<PcbLayer>> = std::sync::RwLock::new(Vec::new());
@@ -303,11 +326,13 @@ pub fn route_net_maze3d(
     // A via at `p` spanning layer indices `a..=b` must clear other-net
     // copper on every spanned layer (and only those — a microvia between
     // adjacent layers doesn't care about copper elsewhere in the stack).
+    let micro = microvia();
     let via_ok = |p: Vec2, a: usize, b: usize| -> bool {
-        let disc = CopperGeom::Disc {
-            center: p,
-            r: via_r,
+        let r = match micro {
+            Some((d, _)) if is_microvia_span(layers, a, b) => d / 2.0,
+            _ => via_r,
         };
+        let disc = CopperGeom::Disc { center: p, r };
         // The drill barrel is layer-independent: a blind/buried via must keep
         // the hole-to-hole rule against every other-net hole on the board, not
         // just the ones sharing its copper layers.

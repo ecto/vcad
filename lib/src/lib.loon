@@ -830,6 +830,8 @@
 [type EcadTrace [EcadTrace f64 f64 f64 f64 f64 Str Str]]
 ; PCB via: [EcadVia x y diameter drill net]
 [type EcadVia [EcadVia f64 f64 f64 f64 Str]]
+; Blind / buried / micro via: [EcadViaSpan x y diameter drill net from-layer to-layer]
+[type EcadViaSpan [EcadViaSpan f64 f64 f64 f64 Str Str Str]]
 ; PCB footprint: [EcadFootprint ref value footprint-name x y rotation front]
 [type EcadFootprint [EcadFootprint Str Str Str f64 f64 f64 Bool]]
 ; Library component: [EcadSymbol ref lib-id value footprint-id x y rotation]

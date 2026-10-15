@@ -304,7 +304,7 @@ fn write_kicad_pcb_impl(pcb: &Pcb, links: Option<&SchematicLinks>, with_project:
         write_arc(&mut e, a, &nets);
     }
     for v in &pcb.vias {
-        write_via(&mut e, v, &nets);
+        write_via(&mut e, v, &nets, &copper_layers(&pcb.stackup));
     }
     for z in &pcb.zones {
         write_zone(&mut e, z, &nets);
@@ -1174,7 +1174,7 @@ fn write_arc(e: &mut Emitter, a: &TraceArc, nets: &NetTable) {
     e.line(1, ")");
 }
 
-fn write_via(e: &mut Emitter, v: &Via, nets: &NetTable) {
+fn write_via(e: &mut Emitter, v: &Via, nets: &NetTable, copper: &[PcbLayer]) {
     let uuid = e.uuid();
     // KiCad reads a via's span as (outer, inner) in stack order; handed the
     // pair reversed it falls back to a through-hole, which shorts every layer
@@ -1191,8 +1191,16 @@ fn write_via(e: &mut Emitter, v: &Via, nets: &NetTable) {
     // non-through tokens are `blind` (its BLIND_BURIED type, covering both
     // blind and buried) and `micro` — `buried` is not a token and makes the
     // board fail to load outright.
+    // A microvia is one dielectric deep from an outer layer (F.Cu-In1.Cu, or
+    // B.Cu and the inner layer above it): KiCad checks it against its own
+    // microvia size rules, not the via rules.
+    let idx = |l: PcbLayer| copper.iter().position(|&c| c == l);
+    let adjacent = matches!((idx(top), idx(bottom)), (Some(a), Some(b)) if b == a + 1);
+    let outer = top == PcbLayer::FCu || bottom == PcbLayer::BCu;
     if top == PcbLayer::FCu && bottom == PcbLayer::BCu {
         e.line(1, "(via");
+    } else if adjacent && outer {
+        e.line(1, "(via micro");
     } else {
         e.line(1, "(via blind");
     }
