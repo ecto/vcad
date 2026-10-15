@@ -111,6 +111,10 @@ enum Commands {
         /// an outer layer - an HDI board's via-in-pad (implies --blind-vias)
         #[arg(long)]
         microvia: Option<String>,
+        /// One greedy pass, no rip-up / negotiation / repair / second pass:
+        /// minutes, for iterating on placement and stackup
+        #[arg(long)]
+        fast: bool,
         /// Router effort multiplier: scales negotiation and rip-up budgets
         #[arg(long, default_value = "1.0")]
         effort: f64,
@@ -622,6 +626,7 @@ fn main() -> Result<()> {
             explain_pours,
             blind_vias,
             microvia,
+            fast,
             effort,
             priority,
         }) => {
@@ -633,6 +638,7 @@ fn main() -> Result<()> {
                 explain_pours,
                 blind_vias,
                 microvia.as_deref(),
+                fast,
                 effort,
                 priority,
             )?;
@@ -1124,6 +1130,7 @@ fn route_file(
     explain_pours: bool,
     blind_vias: bool,
     microvia: Option<&str>,
+    fast: bool,
     effort: f64,
     priority: Vec<String>,
 ) -> Result<()> {
@@ -1150,6 +1157,7 @@ fn route_file(
     let mut opts = vcad_ecad_pcb::router::auto::RouteOptions {
         through_vias_only: !blind_vias && microvia.is_none(),
         microvia,
+        fast,
         ..Default::default()
     };
     // Inner layers carrying a whole-board plane stay solid: no traces there.
@@ -1403,11 +1411,12 @@ fn route_file(
         println!("restored {restored} layer-change vias");
     }
     // whatever is still split - unrouted, or opened by the clean-up above
-    let mut split: Vec<String> = pcb
-        .nets
+    let all_nets: Vec<String> = pcb.nets.iter().map(|n| n.name.clone()).collect();
+    let islands0 = vcad_ecad_pcb::drc::net_islands(&pcb, &all_nets);
+    let mut split: Vec<String> = all_nets
         .iter()
-        .map(|n| n.name.clone())
-        .filter(|n| vcad_ecad_pcb::drc::analyze_net_continuity(&pcb, n).islands > 1)
+        .filter(|n| islands0.get(*n).copied().unwrap_or(0) > 1)
+        .cloned()
         .collect();
     split.sort();
     if !split.is_empty() {
@@ -1416,7 +1425,7 @@ fn route_file(
     // Second pass for split nets: rip a signal net's copper and route it
     // again against the finished board (plane nets keep theirs - the pass
     // only adds the missing joins).
-    for _round in 0..3 {
+    for _round in 0..(if fast { 0 } else { 3 }) {
         if split.is_empty() {
             break;
         }
@@ -1444,10 +1453,7 @@ fn route_file(
             .cloned()
             .collect();
         let r2 = vcad_ecad_pcb::router::auto::route_all_with_opts(&again, w, &[], &opts);
-        let before: usize = split
-            .iter()
-            .map(|n| vcad_ecad_pcb::drc::analyze_net_continuity(&pcb, n).islands)
-            .sum();
+        let before: usize = vcad_ecad_pcb::drc::net_islands(&pcb, &split).values().sum();
         let mut trial = pcb.clone();
         trial.traces.retain(|t| keep(&t.net) || manual(&t.source));
         trial.vias.retain(|v| keep(&v.net) || manual(&v.source));
@@ -1479,7 +1485,7 @@ fn route_file(
         anchor_track_ends(&mut trial);
         let after: usize = split
             .iter()
-            .map(|n| vcad_ecad_pcb::drc::analyze_net_continuity(&trial, n).islands)
+            .map(|n| vcad_ecad_pcb::drc::net_islands(&trial, std::slice::from_ref(n))[n])
             .sum();
         println!(
             "second pass on {}: islands {before} -> {after}",
@@ -1487,17 +1493,28 @@ fn route_file(
         );
         if after < before {
             pcb = trial;
-            split.retain(|n| vcad_ecad_pcb::drc::analyze_net_continuity(&pcb, n).islands > 1);
+            let isl = vcad_ecad_pcb::drc::net_islands(&pcb, &split);
+            split.retain(|n| isl[n] > 1);
         } else {
             break;
         }
     }
-    let links = direct_links(&route_pcb, &pcb, &split, w);
+    // --fast: the repair helpers below rebuild the session or the connectivity
+    // per candidate, which on a dense board costs more than the route itself
+    let links = if fast {
+        Vec::new()
+    } else {
+        direct_links(&route_pcb, &pcb, &split, w)
+    };
     if !links.is_empty() {
         println!("direct-linked {} leftover pad pairs", links.len());
     }
     pcb.traces.extend(links);
-    let (st, sv) = stitch_to_planes(&route_pcb, &pcb, &split, w);
+    let (st, sv) = if fast {
+        (Vec::new(), Vec::new())
+    } else {
+        stitch_to_planes(&route_pcb, &pcb, &split, w)
+    };
     if !sv.is_empty() {
         println!("stitched {} pads to their planes", sv.len());
     }
@@ -4091,9 +4108,13 @@ fn trim_leaf_copper(pcb: &mut vcad_ir::ecad::Pcb) -> (usize, usize) {
     // never make a net worse
     let nets: std::collections::BTreeSet<String> =
         orig.traces.iter().map(|t| t.net.clone()).collect();
-    for n in nets {
-        let a = vcad_ecad_pcb::drc::analyze_net_continuity(&orig, &n).islands;
-        let b = vcad_ecad_pcb::drc::analyze_net_continuity(pcb, &n).islands;
+    let names: Vec<String> = nets.into_iter().collect();
+    let (ia, ib) = (
+        vcad_ecad_pcb::drc::net_islands(&orig, &names),
+        vcad_ecad_pcb::drc::net_islands(pcb, &names),
+    );
+    for n in names {
+        let (a, b) = (ia[&n], ib[&n]);
         if b > a {
             pcb.traces.retain(|t| t.net != n);
             pcb.vias.retain(|v| v.net != n);

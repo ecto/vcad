@@ -2962,6 +2962,15 @@ pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
     continuity_of(pcb, &nodes, &mut dsu, net)
 }
 
+/// Island counts for many nets from ONE connectivity build: the batch form of
+/// [`analyze_net_continuity`] for whole-board passes (which nets are split?).
+pub fn net_islands(pcb: &Pcb, nets: &[String]) -> std::collections::HashMap<String, usize> {
+    let (nodes, mut dsu) = build_connectivity(pcb);
+    nets.iter()
+        .map(|n| (n.clone(), continuity_of(pcb, &nodes, &mut dsu, n).islands))
+        .collect()
+}
+
 /// True if a net name looks like a power/ground rail — the nets whose copper is
 /// expected to be a continuous plane, so a [`build_receipt`](crate) verdict
 /// should check their realized continuity. Conservative + case-insensitive:

@@ -165,6 +165,9 @@ pub struct RouteOptions {
     /// Microvia `(diameter, drill)` for outer-to-adjacent spans (see
     /// [`super::maze::set_microvia`]); `None` sizes every via by the rules.
     pub microvia: Option<(f64, f64)>,
+    /// One greedy pass and nothing else: no rip-up, no negotiation, no joint
+    /// repair. For fast iteration on placement and stackup - minutes, not hours.
+    pub fast: bool,
     /// Plane layers no trace may run on (vias still pass through them).
     pub no_route_layers: Vec<PcbLayer>,
     /// Stitch plane pads to their planes *before* signal routing, so each
@@ -176,11 +179,17 @@ pub struct RouteOptions {
 impl RouteOptions {
     /// Negotiation rounds after effort scaling (always at least 1).
     fn effective_rounds(&self) -> usize {
+        if self.fast {
+            return 1;
+        }
         ((self.negotiation_rounds as f64 * self.effort).ceil() as usize).max(1)
     }
 
     /// Rip-up rounds per pass after effort scaling (always at least 1).
     fn effective_ripup_rounds(&self) -> usize {
+        if self.fast {
+            return 0;
+        }
         ((MAX_RIPUP_ROUNDS as f64 * self.effort).ceil() as usize).max(1)
     }
 
@@ -214,6 +223,7 @@ impl Default for RouteOptions {
             pour_policy: PourPolicy::default(),
             through_vias_only: false,
             microvia: None,
+            fast: false,
             no_route_layers: Vec::new(),
             prestitch_planes: true,
         }
@@ -375,6 +385,7 @@ pub fn route_all_with_opts(
     // zones rather than duplicating them.
     super::maze::set_through_vias_only(opts.through_vias_only);
     super::maze::set_microvia(opts.microvia);
+    FAST.store(opts.fast, std::sync::atomic::Ordering::Relaxed);
     super::maze::set_no_route_layers(&opts.no_route_layers);
     let synthesized = synthesize_pours(pcb, &opts.pour_policy, nets_filter);
     let poured_board;
@@ -669,7 +680,7 @@ pub fn route_all_with_opts(
     // Escalating-window joint repair: the last-resort untangler for local
     // knots that per-net rip-up and negotiation provably cannot solve (they
     // require deciding a clique of routes together).
-    if !still_unrouted.is_empty() {
+    if !still_unrouted.is_empty() && !opts.fast {
         still_unrouted = joint_window_repair(
             &mut session,
             pcb,
@@ -888,6 +899,7 @@ pub fn route_all_with_opts(
         &mut vias,
         &stitch_via_pts,
         opts.prune_dangling_copper,
+        opts.fast,
     );
     if legal.merged_vias > 0
         || legal.pruned_traces > 0
@@ -1926,6 +1938,13 @@ fn route_batch(
             .collect();
         for (((net, from, to), attempts), cand) in batch.into_iter().zip(candidates) {
             match cand {
+                // --fast: the speculative search IS the attempt; the
+                // sequential re-run below is single-threaded and mostly
+                // repeats the same search, so skip it
+                None if FAST.load(std::sync::atomic::Ordering::Relaxed) => {
+                    fail_cache.insert(conn_key(&net, from, to), session.epoch());
+                    unrouted.push((net, from, to));
+                }
                 // Speculative search failed: give the connection the full
                 // sequential arsenal (including the escape stage, which only
                 // runs inside try_route) before declaring it unrouted.
@@ -2110,6 +2129,9 @@ fn try_route(
         max_expansions,
     )
 }
+
+/// `RouteOptions::fast` for the batch router, which does not see the options.
+static FAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Pin fields depend only on footprints, which never change during a route:
 /// detect them once per board instead of once per connection.
