@@ -365,6 +365,28 @@ pub enum PcbLayer {
 
 impl PcbLayer {
     /// Returns true if this is a copper layer.
+    /// The same layer seen from the other side of the board: front and back
+    /// swap (copper, silk, mask, paste, fab, courtyard); inner copper and the
+    /// board-wide layers stay. What KiCad does to a footprint it flips.
+    pub fn flipped(&self) -> PcbLayer {
+        use PcbLayer::*;
+        match self {
+            FCu => BCu,
+            BCu => FCu,
+            FSilkS => BSilkS,
+            BSilkS => FSilkS,
+            FMask => BMask,
+            BMask => FMask,
+            FPaste => BPaste,
+            BPaste => FPaste,
+            FFab => BFab,
+            BFab => FFab,
+            FCrtYd => BCrtYd,
+            BCrtYd => FCrtYd,
+            other => *other,
+        }
+    }
+
     pub fn is_copper(&self) -> bool {
         matches!(
             self,

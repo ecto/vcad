@@ -841,6 +841,8 @@
 [type EcadBoard [EcadBoard f64 f64 f64 f64 f64 f64 f64]]
 ; Placement of a schematic part's footprint: [EcadPlace ref x y rotation]
 [type EcadPlace [EcadPlace Str f64 f64 f64]]
+; Back-side placement: [EcadPlaceBack ref x y rotation], flipped as KiCad flips a footprint
+[type EcadPlaceBack [EcadPlaceBack Str f64 f64 f64]]
 ; Copper plane over the board: [EcadPour net layer], layer "F.Cu" / "In1.Cu" / ...
 [type EcadPour [EcadPour Str Str]]
 ; Art (not on the schematic): [EcadArt ref footprint-id x y rotation] - logos, labels

@@ -601,6 +601,7 @@ fn is_ecad_tag(tag: &str) -> bool {
             | "EcadConn"
             | "EcadBoard"
             | "EcadPlace"
+            | "EcadPlaceBack"
             | "EcadPour"
             | "EcadArt"
             | "EcadPourRect"
@@ -738,12 +739,14 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
             ));
         }
         // [EcadPlace ref x y rotation] - where a schematic part's footprint goes
-        "EcadPlace" => {
+        // [EcadPlaceBack ref x y rotation] - the same, on the back side (KiCad's flip)
+        "EcadPlace" | "EcadPlaceBack" => {
             assert_fields(tag, fields, 4)?;
             ctx.places.push(vcad_ecad_symbols::kicad_board::Placement {
                 reference: ctx.str_val(&fields[0])?,
                 position: Vec2::new(ctx.f64_val(&fields[1])?, ctx.f64_val(&fields[2])?),
                 rotation: ctx.f64_val(&fields[3])?,
+                back: tag == "EcadPlaceBack",
             });
         }
         // [EcadArt ref footprint-id x y rotation] - a footprint that is not on the
@@ -756,6 +759,7 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
                 reference: reference.clone(),
                 position: Vec2::new(ctx.f64_val(&fields[2])?, ctx.f64_val(&fields[3])?),
                 rotation: ctx.f64_val(&fields[4])?,
+                back: false,
             };
             ctx.art.push((reference, id, placement));
         }
