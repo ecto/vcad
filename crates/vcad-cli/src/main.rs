@@ -122,6 +122,10 @@ enum Commands {
         /// Route these nets first, before the rest (repeatable)
         #[arg(long = "priority", value_name = "NET")]
         priority: Vec<String>,
+        /// Route only these nets (repeatable); the rest stay unrouted - e.g. to
+        /// route a DDR bus alone and pin it before the full route
+        #[arg(long = "only", value_name = "NET")]
+        only: Vec<String>,
         /// Print which nets would get a synthesized copper pour, on which layer,
         /// and why - then stop without routing
         #[arg(long)]
@@ -631,6 +635,7 @@ fn main() -> Result<()> {
             fast,
             effort,
             priority,
+            only,
         }) => {
             route_file(
                 &input,
@@ -643,6 +648,7 @@ fn main() -> Result<()> {
                 fast,
                 effort,
                 priority,
+                only,
             )?;
         }
         Some(Commands::Import {
@@ -1210,6 +1216,7 @@ fn route_file(
     fast: bool,
     effort: f64,
     priority: Vec<String>,
+    only: Vec<String>,
 ) -> Result<()> {
     use vcad_ir::ecad::{CopperSource, Trace, Via};
     // RUST_LOG=info shows the router's own account (legalization, pruning)
@@ -1432,7 +1439,7 @@ fn route_file(
     let ckpt_key = checkpoint::key(&[
         &serde_json::to_vec(&serde_json::to_value(&route_pcb).unwrap_or_default())
             .unwrap_or_default(),
-        format!("{opts:?} {w}").as_bytes(),
+        format!("{opts:?} {w} {only:?}").as_bytes(),
     ]);
     let r = match checkpoint::load::<vcad_ecad_pcb::router::auto::RouteAllResult>(
         output, "first", &ckpt_key,
@@ -1442,7 +1449,7 @@ fn route_file(
             r
         }
         None => {
-            let r = vcad_ecad_pcb::router::auto::route_all_with_opts(&route_pcb, w, &[], &opts);
+            let r = vcad_ecad_pcb::router::auto::route_all_with_opts(&route_pcb, w, &only, &opts);
             checkpoint::save(output, "first", &ckpt_key, &r);
             r
         }
@@ -1519,6 +1526,9 @@ fn route_file(
         .filter(|n| islands0.get(*n).copied().unwrap_or(0) > 1)
         .cloned()
         .collect();
+    if !only.is_empty() {
+        split.retain(|n| only.contains(n));
+    }
     split.sort();
     if !split.is_empty() {
         println!("split after clean-up: {}", split.join(", "));
@@ -1567,7 +1577,7 @@ fn route_file(
             // whole first pass's search budget on ~all nets (548 s on the brain)
             let mut opts2 = opts.clone();
             opts2.fast = true;
-            let r2 = vcad_ecad_pcb::router::auto::route_all_with_opts(&again, w, &[], &opts2);
+            let r2 = vcad_ecad_pcb::router::auto::route_all_with_opts(&again, w, &only, &opts2);
             let before: usize = vcad_ecad_pcb::drc::net_islands(&pcb, &split).values().sum();
             let mut trial = pcb.clone();
             trial.traces.retain(|t| keep(&t.net) || manual(&t.source));
