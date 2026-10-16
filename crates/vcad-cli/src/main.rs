@@ -1123,7 +1123,6 @@ fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<(
 }
 
 /// Route every net of a document's board with vcad's autorouter and write KiCad.
-#[allow(clippy::too_many_arguments)] // one per CLI flag
 /// Route checkpoints: each finished phase saved next to the output
 /// (`<out>.ckpt/<phase>.json`) under a hash of the routing input (board,
 /// options, width). A rerun with the same input resumes after the last phase
@@ -1199,6 +1198,7 @@ mod checkpoint {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // one per CLI flag
 fn route_file(
     input: &PathBuf,
     output: &PathBuf,
