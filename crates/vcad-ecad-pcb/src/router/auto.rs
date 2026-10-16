@@ -34,7 +34,7 @@ use super::route_net_maze;
 use super::Stopwatch;
 
 /// A trace produced by the auto-router.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RoutedTrace {
     /// Segment start (mm).
     pub start: Vec2,
@@ -50,7 +50,7 @@ pub struct RoutedTrace {
 
 /// A via produced by the auto-router. Outer-layer span = through via;
 /// anything else is a blind/buried (micro)via chosen by the 3D search.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RoutedVia {
     /// Via center (mm).
     pub position: Vec2,
@@ -65,7 +65,7 @@ pub struct RoutedVia {
 /// Why a connection could not be routed, and where — so an agent or human can
 /// act on it (change a layer, free the region, add a via) instead of staring at
 /// a bare "unrouted" list.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UnroutedDiagnostic {
     /// The net that could not be fully routed.
     pub net: String,
@@ -93,7 +93,7 @@ pub struct UnroutedDiagnostic {
 }
 
 /// Result of routing a whole board.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RouteAllResult {
     /// Routed trace segments (each carries its layer).
     pub traces: Vec<RoutedTrace>,

@@ -1124,6 +1124,81 @@ fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<(
 
 /// Route every net of a document's board with vcad's autorouter and write KiCad.
 #[allow(clippy::too_many_arguments)] // one per CLI flag
+/// Route checkpoints: each finished phase saved next to the output
+/// (`<out>.ckpt/<phase>.json`) under a hash of the routing input (board,
+/// options, width). A rerun with the same input resumes after the last phase
+/// it finds: iterating on the repairs reuses a multi-minute first pass.
+/// `VCAD_ROUTE_REDO=first|second` recomputes that phase and the ones after it
+/// (after a router change); `VCAD_ROUTE_CHECKPOINT=0` turns them off.
+mod checkpoint {
+    use std::path::{Path, PathBuf};
+
+    const PHASES: [&str; 2] = ["first", "second"];
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Saved<T> {
+        key: String,
+        value: T,
+    }
+
+    fn on() -> bool {
+        std::env::var("VCAD_ROUTE_CHECKPOINT").map_or(true, |v| v != "0")
+    }
+
+    fn path(out: &Path, phase: &str) -> PathBuf {
+        let mut d = out.as_os_str().to_owned();
+        d.push(".ckpt");
+        PathBuf::from(d).join(format!("{phase}.json"))
+    }
+
+    /// FNV-1a: stable across runs and toolchains, unlike `DefaultHasher`.
+    pub fn key(parts: &[&[u8]]) -> String {
+        let mut h: u64 = 0xcbf29ce484222325;
+        for p in parts {
+            for b in p.iter().chain(b"\0") {
+                h ^= *b as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+        }
+        format!("{h:016x}")
+    }
+
+    pub fn load<T: serde::de::DeserializeOwned>(out: &Path, phase: &str, key: &str) -> Option<T> {
+        if !on() {
+            return None;
+        }
+        if let Ok(redo) = std::env::var("VCAD_ROUTE_REDO") {
+            let r = PHASES.iter().position(|p| *p == redo).unwrap_or(0);
+            let me = PHASES.iter().position(|p| *p == phase).unwrap_or(0);
+            if me >= r {
+                return None;
+            }
+        }
+        let s: Saved<T> = serde_json::from_slice(&std::fs::read(path(out, phase)).ok()?).ok()?;
+        (s.key == key).then_some(s.value)
+    }
+
+    pub fn save<T: serde::Serialize>(out: &Path, phase: &str, key: &str, value: &T) {
+        if !on() {
+            return;
+        }
+        let p = path(out, phase);
+        let r = std::fs::create_dir_all(p.parent().unwrap())
+            .map_err(|e| e.to_string())
+            .and_then(|_| {
+                serde_json::to_vec(&Saved {
+                    key: key.to_string(),
+                    value,
+                })
+                .map_err(|e| e.to_string())
+            })
+            .and_then(|b| std::fs::write(&p, b).map_err(|e| e.to_string()));
+        if let Err(e) = r {
+            eprintln!("warning: checkpoint {}: {e}", p.display());
+        }
+    }
+}
+
 fn route_file(
     input: &PathBuf,
     output: &PathBuf,
@@ -1354,7 +1429,24 @@ fn route_file(
     });
     progress(format!("routing {} nets", route_pcb.nets.len()));
     let _route_span = tracing::info_span!("route", nets = route_pcb.nets.len()).entered();
-    let r = vcad_ecad_pcb::router::auto::route_all_with_opts(&route_pcb, w, &[], &opts);
+    let ckpt_key = checkpoint::key(&[
+        &serde_json::to_vec(&serde_json::to_value(&route_pcb).unwrap_or_default())
+            .unwrap_or_default(),
+        format!("{opts:?} {w}").as_bytes(),
+    ]);
+    let r = match checkpoint::load::<vcad_ecad_pcb::router::auto::RouteAllResult>(
+        output, "first", &ckpt_key,
+    ) {
+        Some(r) => {
+            progress("first pass: from checkpoint");
+            r
+        }
+        None => {
+            let r = vcad_ecad_pcb::router::auto::route_all_with_opts(&route_pcb, w, &[], &opts);
+            checkpoint::save(output, "first", &ckpt_key, &r);
+            r
+        }
+    };
     progress(format!(
         "first pass done: {} traces, {} vias",
         r.traces.len(),
@@ -1434,84 +1526,95 @@ fn route_file(
     // Second pass for split nets: rip a signal net's copper and route it
     // again against the finished board (plane nets keep theirs - the pass
     // only adds the missing joins).
-    for _round in 0..(if fast { 0 } else { 3 }) {
-        if split.is_empty() {
-            break;
-        }
-        let planes: std::collections::BTreeSet<&str> =
-            route_pcb.zones.iter().map(|z| z.net.as_str()).collect();
-        let ripped: Vec<&String> = split
-            .iter()
-            .filter(|n| !planes.contains(n.as_str()))
-            .collect();
-        let mut again = route_pcb.clone();
-        let keep = |n: &str| !ripped.iter().any(|r| r.as_str() == n);
-        // copper laid by hand (EcadVia / EcadTrace: a BGA's microvia fanout) is
-        // never ripped - the second pass routes to it like the first
-        let manual = |s: &Option<CopperSource>| matches!(s, Some(CopperSource::Manual));
-        again.traces = pcb
-            .traces
-            .iter()
-            .filter(|t| keep(&t.net) || manual(&t.source))
-            .cloned()
-            .collect();
-        again.vias = pcb
-            .vias
-            .iter()
-            .filter(|v| keep(&v.net) || manual(&v.source))
-            .cloned()
-            .collect();
-        progress(format!("second pass on {} split nets", split.len()));
-        let _pass_span = tracing::info_span!("second_pass", split = split.len()).entered();
-        // the second pass only joins what the first left split: one greedy
-        // round, no negotiation / rip-up / joint repair - those re-run the
-        // whole first pass's search budget on ~all nets (548 s on the brain)
-        let mut opts2 = opts.clone();
-        opts2.fast = true;
-        let r2 = vcad_ecad_pcb::router::auto::route_all_with_opts(&again, w, &[], &opts2);
-        let before: usize = vcad_ecad_pcb::drc::net_islands(&pcb, &split).values().sum();
-        let mut trial = pcb.clone();
-        trial.traces.retain(|t| keep(&t.net) || manual(&t.source));
-        trial.vias.retain(|v| keep(&v.net) || manual(&v.source));
-        let in_split = |n: &str| split.iter().any(|s| s == n);
-        trial.traces.extend(
-            r2.traces
+    let second = checkpoint::load::<(vcad_ir::ecad::Pcb, Vec<String>)>(output, "second", &ckpt_key)
+        .filter(|_| !fast);
+    if let Some((p, sp)) = second {
+        progress("second pass: from checkpoint");
+        pcb = p;
+        split = sp;
+    } else {
+        for _round in 0..(if fast { 0 } else { 3 }) {
+            if split.is_empty() {
+                break;
+            }
+            let planes: std::collections::BTreeSet<&str> =
+                route_pcb.zones.iter().map(|z| z.net.as_str()).collect();
+            let ripped: Vec<&String> = split
                 .iter()
-                .filter(|t| in_split(&t.net))
-                .map(|t| Trace {
-                    start: t.start,
-                    end: t.end,
-                    width: t.width,
-                    layer: t.layer,
-                    net: t.net.clone(),
+                .filter(|n| !planes.contains(n.as_str()))
+                .collect();
+            let mut again = route_pcb.clone();
+            let keep = |n: &str| !ripped.iter().any(|r| r.as_str() == n);
+            // copper laid by hand (EcadVia / EcadTrace: a BGA's microvia fanout) is
+            // never ripped - the second pass routes to it like the first
+            let manual = |s: &Option<CopperSource>| matches!(s, Some(CopperSource::Manual));
+            again.traces = pcb
+                .traces
+                .iter()
+                .filter(|t| keep(&t.net) || manual(&t.source))
+                .cloned()
+                .collect();
+            again.vias = pcb
+                .vias
+                .iter()
+                .filter(|v| keep(&v.net) || manual(&v.source))
+                .cloned()
+                .collect();
+            progress(format!("second pass on {} split nets", split.len()));
+            let _pass_span = tracing::info_span!("second_pass", split = split.len()).entered();
+            // the second pass only joins what the first left split: one greedy
+            // round, no negotiation / rip-up / joint repair - those re-run the
+            // whole first pass's search budget on ~all nets (548 s on the brain)
+            let mut opts2 = opts.clone();
+            opts2.fast = true;
+            let r2 = vcad_ecad_pcb::router::auto::route_all_with_opts(&again, w, &[], &opts2);
+            let before: usize = vcad_ecad_pcb::drc::net_islands(&pcb, &split).values().sum();
+            let mut trial = pcb.clone();
+            trial.traces.retain(|t| keep(&t.net) || manual(&t.source));
+            trial.vias.retain(|v| keep(&v.net) || manual(&v.source));
+            let in_split = |n: &str| split.iter().any(|s| s == n);
+            trial.traces.extend(
+                r2.traces
+                    .iter()
+                    .filter(|t| in_split(&t.net))
+                    .map(|t| Trace {
+                        start: t.start,
+                        end: t.end,
+                        width: t.width,
+                        layer: t.layer,
+                        net: t.net.clone(),
+                        source: Some(CopperSource::Autoroute),
+                    }),
+            );
+            trial
+                .vias
+                .extend(r2.vias.iter().filter(|v| in_split(&v.net)).map(|v| Via {
+                    position: v.position,
+                    diameter: vd,
+                    drill: vdrill,
+                    start_layer: v.start_layer,
+                    end_layer: v.end_layer,
+                    net: v.net.clone(),
                     source: Some(CopperSource::Autoroute),
-                }),
-        );
-        trial
-            .vias
-            .extend(r2.vias.iter().filter(|v| in_split(&v.net)).map(|v| Via {
-                position: v.position,
-                diameter: vd,
-                drill: vdrill,
-                start_layer: v.start_layer,
-                end_layer: v.end_layer,
-                net: v.net.clone(),
-                source: Some(CopperSource::Autoroute),
-            }));
-        anchor_track_ends(&mut trial);
-        let after: usize = vcad_ecad_pcb::drc::net_islands(&trial, &split)
-            .values()
-            .sum();
-        println!(
-            "second pass on {}: islands {before} -> {after}",
-            split.join(", ")
-        );
-        if after < before {
-            pcb = trial;
-            let isl = vcad_ecad_pcb::drc::net_islands(&pcb, &split);
-            split.retain(|n| isl[n] > 1);
-        } else {
-            break;
+                }));
+            anchor_track_ends(&mut trial);
+            let after: usize = vcad_ecad_pcb::drc::net_islands(&trial, &split)
+                .values()
+                .sum();
+            println!(
+                "second pass on {}: islands {before} -> {after}",
+                split.join(", ")
+            );
+            if after < before {
+                pcb = trial;
+                let isl = vcad_ecad_pcb::drc::net_islands(&pcb, &split);
+                split.retain(|n| isl[n] > 1);
+            } else {
+                break;
+            }
+        }
+        if !fast {
+            checkpoint::save(output, "second", &ckpt_key, &(&pcb, &split));
         }
     }
     // --fast: the repair helpers below rebuild the session or the connectivity
