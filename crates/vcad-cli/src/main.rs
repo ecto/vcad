@@ -3688,6 +3688,10 @@ fn direct_links(
     work.traces = pcb.traces.clone();
     work.vias = pcb.vias.clone();
     let mut out = Vec::new();
+    // plane nets join through their plane: stitch_to_planes does those, and
+    // pairing a GND's ~800 pads here was O(pads^2) whole-board sessions
+    let planes: std::collections::BTreeSet<String> =
+        route_pcb.zones.iter().map(|z| z.net.clone()).collect();
     let fills = vcad_ecad_pcb::copper_pour::fill_zones(&work);
     vcad_ecad_pcb::drc::with_frozen_fills(fills, || {
         let t0 = std::time::Instant::now();
@@ -3699,6 +3703,9 @@ fn direct_links(
                     nets.len() - ni
                 ));
                 break;
+            }
+            if planes.contains(net) {
+                continue;
             }
             progress(format!("link {}/{} {net}", ni + 1, nets.len()));
             let _net_span = tracing::info_span!("link_net", net = %net).entered();
@@ -3724,8 +3731,15 @@ fn direct_links(
                     .filter(|e| &e.1 == net)
                     .map(|e| (e.0, vec![e.2])),
             );
-            for i in 0..pads.len() {
+            // one session and island count per net, rebuilt only after a link
+            // is kept (a rejected link leaves the board as it was)
+            let mut session = vcad_ecad_pcb::RouteSession::from_pcb(&work);
+            let mut before = vcad_ecad_pcb::drc::analyze_net_continuity(&work, net).islands;
+            'pairs: for i in 0..pads.len() {
                 for j in i + 1..pads.len() {
+                    if before <= 1 || t0.elapsed() > REPAIR_BUDGET {
+                        break 'pairs;
+                    }
                     let (a, b) = (pads[i].0, pads[j].0);
                     if (a.x - b.x).hypot(a.y - b.y) > 6.0 {
                         continue;
@@ -3737,7 +3751,6 @@ fn direct_links(
                     else {
                         continue;
                     };
-                    let session = vcad_ecad_pcb::RouteSession::from_pcb(&work);
                     let w = session.width_for(net, width);
                     let clearance = session.clearance_for(net);
                     let corners = [
@@ -3773,7 +3786,6 @@ fn direct_links(
                     });
                     let Some(path) = legal else { continue };
                     // keep the link only if it joins two islands of the net
-                    let before = vcad_ecad_pcb::drc::analyze_net_continuity(&work, net).islands;
                     let n0 = work.traces.len();
                     work.traces.extend(path.windows(2).map(|s| Trace {
                         start: s[0],
@@ -3783,8 +3795,11 @@ fn direct_links(
                         net: net.clone(),
                         source: Some(CopperSource::Autoroute),
                     }));
-                    if vcad_ecad_pcb::drc::analyze_net_continuity(&work, net).islands < before {
+                    let after = vcad_ecad_pcb::drc::analyze_net_continuity(&work, net).islands;
+                    if after < before {
                         out.extend(work.traces[n0..].iter().cloned());
+                        before = after;
+                        session = vcad_ecad_pcb::RouteSession::from_pcb(&work);
                     } else {
                         work.traces.truncate(n0);
                     }
@@ -3872,15 +3887,18 @@ fn stitch_to_planes(
                 .filter(|e| &e.1 == net)
                 .map(|e| (e.0, vec![e.2], 0.0))
                 .collect();
+            let mut session = vcad_ecad_pcb::RouteSession::from_pcb(&work);
+            let mut before = vcad_ecad_pcb::drc::analyze_net_continuity(&work, net).islands;
             for (c, layers, r) in ends.into_iter().chain(pads) {
                 let Some(&layer) = layers.iter().find(|l| l.is_copper()) else {
                     continue;
                 };
-                let before = vcad_ecad_pcb::drc::analyze_net_continuity(&work, net).islands;
+                if t0.elapsed() > REPAIR_BUDGET {
+                    break;
+                }
                 if before <= 1 {
                     break;
                 }
-                let session = vcad_ecad_pcb::RouteSession::from_pcb(&work);
                 let w = session.width_for(net, width);
                 let clearance = session.clearance_for(net);
                 'found: for ring in [-1.0, 0.5, 0.8, 1.1, 1.5, 2.0, 2.6] {
@@ -3939,6 +3957,8 @@ fn stitch_to_planes(
                             eprintln!("stitch {net} pad ({:.2},{:.2}) via ({:.2},{:.2}): islands {before} -> {after}", c.x, c.y, v.x, v.y);
                         }
                         if after < before {
+                            before = after;
+                            session = vcad_ecad_pcb::RouteSession::from_pcb(&work);
                             vs.push(work.vias[n0.1].clone());
                             ts.extend(work.traces[n0.0..].iter().cloned());
                             break 'found;
