@@ -4278,6 +4278,15 @@ fn trim_leaf_copper(pcb: &mut vcad_ir::ecad::Pcb) -> (usize, usize) {
             .collect();
         let v0 = pcb.vias.len();
         let traces = pcb.traces.clone();
+        let vias_all = pcb.vias.clone();
+        let copper: Vec<vcad_ir::ecad::PcbLayer> = pcb
+            .stackup
+            .layers
+            .iter()
+            .map(|l| l.layer)
+            .filter(|l| l.is_copper())
+            .collect();
+        let idx = |l: vcad_ir::ecad::PcbLayer| copper.iter().position(|&c| c == l);
         pcb.vias.retain(|v| {
             // hand-laid copper (a BGA's fanout) stays whether or not it was used
             if matches!(v.source, Some(vcad_ir::ecad::CopperSource::Manual)) {
@@ -4299,6 +4308,26 @@ fn trim_leaf_copper(pcb: &mut vcad_ir::ecad::Pcb) -> (usize, usize) {
                 layers.extend(p.2.iter().filter(|l| l.is_copper()).copied());
             }
             layers.extend(poured.iter().filter(|(n, _)| *n == v.net).map(|(_, l)| *l));
+            // an HDI stack: another same-net via at this point whose span
+            // meets this one's - their shared layer is a live end of it
+            let span = |w: &vcad_ir::ecad::Via| {
+                let (a, b) = (
+                    idx(w.start_layer).unwrap_or(0),
+                    idx(w.end_layer).unwrap_or(0),
+                );
+                (a.min(b), a.max(b))
+            };
+            let (v0_, v1_) = span(v);
+            for w in vias_all.iter().filter(|w| {
+                w.net == v.net
+                    && near(w.position, v.position, v.diameter / 2.0)
+                    && (w.start_layer, w.end_layer) != (v.start_layer, v.end_layer)
+            }) {
+                let (w0, w1) = span(w);
+                for k in w0.max(v0_)..=w1.min(v1_) {
+                    layers.insert(copper[k]);
+                }
+            }
             layers.len() >= 2
         });
         let dv = v0 - pcb.vias.len();
@@ -4371,6 +4400,14 @@ fn dedupe_copper(pcb: &mut vcad_ir::ecad::Pcb) {
         ))
     });
     let mut seen = std::collections::BTreeSet::new();
-    pcb.vias
-        .retain(|v| seen.insert((v.net.clone(), key(v.position))));
+    // a via's span is part of its identity: an HDI stack is two or more vias
+    // at one point (F-In1 + In1-In3), and keying on position alone kept the
+    // first and dropped the rest - the stack's lower hop vanished
+    pcb.vias.retain(|v| {
+        seen.insert((
+            v.net.clone(),
+            key(v.position),
+            format!("{:?}{:?}", v.start_layer, v.end_layer),
+        ))
+    });
 }

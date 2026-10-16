@@ -734,12 +734,19 @@ pub fn route_net_maze3d(
                 run.push(at);
             }
             flush_run(&mut run, layers[run_layer], &mut segments);
-            if vias
-                .last()
-                .map(|&(v, _, _)| dist(v, at) > 1e-9)
-                .unwrap_or(true)
-            {
-                vias.push((at, layers[lo], layers[hi]));
+            // consecutive hops at one point (HDI: F-In1 then In1-In3) are one
+            // stack: widen the via's span - skipping the second hop left an
+            // F-In1 via under a route that carries on on In3
+            match vias.last_mut() {
+                Some((v, a, b)) if dist(*v, at) <= 1e-9 => {
+                    let (ia, ib) = (
+                        layers.iter().position(|x| x == a).unwrap_or(lo),
+                        layers.iter().position(|x| x == b).unwrap_or(hi),
+                    );
+                    *a = layers[ia.min(lo)];
+                    *b = layers[ib.max(hi)];
+                }
+                _ => vias.push((at, layers[lo], layers[hi])),
             }
             run.push(at);
             run_layer = li;
