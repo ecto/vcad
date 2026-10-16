@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-16-root-cache-rigid-placement",
+  "version": "0.9.4",
+  "date": "2026-10-16",
+  "category": "perf",
+  "title": "Root mesh cache keys on shape, not placement",
+  "summary": "With the on-disk root cache on, a root whose top is a chain of Translate/Rotate nodes is cached under the shape beneath the chain and the rigid placement is applied to the mesh afterwards. A posed assembly re-rendered in a new pose (an arm animation) is all hits: a 242-root two-arm frame goes from ~100 s per frame to 0.3 s after the first.",
+  "features": ["render", "cache"]
+}
