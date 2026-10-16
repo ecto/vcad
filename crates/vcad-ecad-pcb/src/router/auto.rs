@@ -2054,8 +2054,39 @@ fn route_batch(
 /// [`try_route_fanout`], a monotonic rescue that only runs on connections this
 /// leaves unrouted.
 #[allow(clippy::too_many_arguments)]
-#[tracing::instrument(level = "info", skip_all)]
+#[tracing::instrument(level = "info", skip_all, fields(net = %net, len_mm = format!("{:.1}", (to - from).length()), ok))]
 fn try_route(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    net: &str,
+    from: Vec2,
+    to: Vec2,
+    placed: &mut Vec<Placed>,
+    cong: &Congestion,
+    use_push_shove: bool,
+    max_expansions: usize,
+    rescue: bool,
+) -> Option<Placed> {
+    let r = try_route_inner(
+        session,
+        pcb,
+        width,
+        net,
+        from,
+        to,
+        placed,
+        cong,
+        use_push_shove,
+        max_expansions,
+        rescue,
+    );
+    tracing::Span::current().record("ok", r.is_some());
+    r
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_route_inner(
     session: &mut RouteSession,
     pcb: &Pcb,
     width: f64,
