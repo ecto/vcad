@@ -1,6 +1,6 @@
 {
   "id": "2026-10-16-root-cache-rigid-placement",
-  "version": "0.9.4",
+  "version": "0.10.0",
   "date": "2026-10-16",
   "category": "perf",
   "title": "Root mesh cache keys on shape, not placement",
