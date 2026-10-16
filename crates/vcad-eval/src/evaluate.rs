@@ -1585,12 +1585,16 @@ fn place_mesh(mut mesh: EvaluatedMesh, t: Option<&Transform>) -> EvaluatedMesh {
     let Some(t) = t else {
         return mesh;
     };
-    for p in mesh.positions.chunks_exact_mut(3) {
-        let q = t.apply_point(&vcad_kernel_math::Point3::new(p[0] as f64, p[1] as f64, p[2] as f64));
+    for p in mesh.positions.as_chunks_mut::<3>().0 {
+        let q = t.apply_point(&vcad_kernel_math::Point3::new(
+            p[0] as f64,
+            p[1] as f64,
+            p[2] as f64,
+        ));
         p.copy_from_slice(&[q.x as f32, q.y as f32, q.z as f32]);
     }
     if let Some(normals) = mesh.normals.as_mut() {
-        for n in normals.chunks_exact_mut(3) {
+        for n in normals.as_chunks_mut::<3>().0 {
             let m = t.apply_vec(&Vec3::new(n[0] as f64, n[1] as f64, n[2] as f64));
             n.copy_from_slice(&[m.x as f32, m.y as f32, m.z as f32]);
         }
@@ -3469,6 +3473,45 @@ mod tests {
             scene.root_keys[0], scene.root_keys[1],
             "same subgraph, same key"
         );
+    }
+
+    /// With a cache, a root under a rigid Translate/Rotate chain is keyed on
+    /// the shape beneath it: the same cube placed twice is one miss and one
+    /// hit, and each copy still lands where its own placement puts it.
+    #[test]
+    fn rigid_placement_is_peeled_off_the_cache_key() {
+        let mut nodes: HashMap<NodeId, vcad_ir::Node> = HashMap::new();
+        let a = cube_at(0, 0.0, &mut nodes);
+        let b = cube_at(1, 30.0, &mut nodes);
+        let entry = |root| vcad_ir::SceneEntry {
+            root,
+            material: "m".into(),
+            visible: None,
+        };
+        let doc = Document {
+            roots: vec![entry(a), entry(b)],
+            nodes,
+            ..Default::default()
+        };
+        let cache = std::rc::Rc::new(crate::cache::MemoryMeshCache::new());
+        let opts = EvalOptions {
+            skip_clash_detection: true,
+            root_cache: Some(cache.clone()),
+            ..Default::default()
+        };
+        let scene = evaluate_document(&doc, &opts).unwrap();
+        let s = cache.stats();
+        assert_eq!((s.misses, s.hits), (1, 1), "one shape, two placements");
+        let min_x = |m: &EvaluatedMesh| {
+            m.positions
+                .chunks_exact(3)
+                .map(|p| p[0])
+                .fold(f32::INFINITY, f32::min)
+        };
+        assert!(min_x(&scene.parts[0].mesh).abs() < 1e-4);
+        assert!((min_x(&scene.parts[1].mesh) - 30.0).abs() < 1e-4);
+        // A bundle can't stand in for a placed shape, so neither reports a key.
+        assert_eq!(scene.root_keys, vec![None, None]);
     }
 
     /// End-to-end: an EdgeBlend node evaluates through the IR pipeline
