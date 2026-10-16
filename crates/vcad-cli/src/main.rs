@@ -4324,8 +4324,9 @@ fn trim_leaf_copper(pcb: &mut vcad_ir::ecad::Pcb) -> (usize, usize) {
                     && (w.start_layer, w.end_layer) != (v.start_layer, v.end_layer)
             }) {
                 let (w0, w1) = span(w);
-                for k in w0.max(v0_)..=w1.min(v1_) {
-                    layers.insert(copper[k]);
+                let (lo, hi) = (w0.max(v0_), w1.min(v1_));
+                if lo <= hi {
+                    layers.extend(&copper[lo..=hi]);
                 }
             }
             layers.len() >= 2
