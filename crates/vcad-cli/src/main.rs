@@ -1619,7 +1619,11 @@ fn route_file(
     }
     // --fast: the repair helpers below rebuild the session or the connectivity
     // per candidate, which on a dense board costs more than the route itself
-    let links = if fast {
+    // VCAD_ROUTE_SKIP=links,stitch: leave a repair out (to measure what each adds)
+    let skip = |what: &str| {
+        std::env::var("VCAD_ROUTE_SKIP").is_ok_and(|v| v.split(',').any(|s| s == what))
+    };
+    let links = if fast || skip("links") {
         Vec::new()
     } else {
         progress(format!("direct links on {} split nets", split.len()));
@@ -1629,7 +1633,7 @@ fn route_file(
         println!("direct-linked {} leftover pad pairs", links.len());
     }
     pcb.traces.extend(links);
-    let (st, sv) = if fast {
+    let (st, sv) = if fast || skip("stitch") {
         (Vec::new(), Vec::new())
     } else {
         progress(format!("stitching {} split nets to planes", split.len()));
@@ -3985,6 +3989,18 @@ fn stitch_to_planes(
                         })
                 })
                 .collect();
+            // only pads off the net's main island need a stitch: trying all
+            // ~800 GND pads x 169 via spots each was hours on the brain
+            let stranded = vcad_ecad_pcb::drc::stranded_pads(&work, net);
+            let pads: Vec<_> = pads
+                .into_iter()
+                .filter(|(c, _, _)| {
+                    stranded
+                        .iter()
+                        .any(|s| (s.x - c.x).abs() < 1e-6 && (s.y - c.y).abs() < 1e-6)
+                })
+                .collect();
+            progress(format!("  {net}: {} stranded pads", pads.len()));
             let ends: Vec<_> = dangling_ends(&work)
                 .into_iter()
                 .filter(|e| &e.1 == net)

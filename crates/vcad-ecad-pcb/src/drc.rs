@@ -2980,13 +2980,12 @@ fn continuity_of(pcb: &Pcb, nodes: &[ConnNode], dsu: &mut Dsu, net: &str) -> Net
 /// island. `continuous` is the single bit those gates key off.
 /// Continuity of a single net. Rebuilds the whole board's connectivity per call,
 /// so it is not the tool for scoring every net on a large board.
-#[tracing::instrument(level = "info", skip_all)]
-pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
-    // Only this net's copper can join its islands, so build connectivity over
-    // just that: on a dense board the whole-board build was ~1.5 s per call,
-    // and the repair loops ask once per candidate via. Its pours are still
-    // filled against the WHOLE board (other nets carve them), or taken from
-    // the frozen fills when a repair loop has pinned them.
+/// This net's copper alone (pads, traces, vias, its own pours) with its
+/// connectivity: only that copper can join the net's islands. Pours are still
+/// filled against the WHOLE board (other nets carve them), or taken from the
+/// frozen fills when a repair loop has pinned them. On a dense board the
+/// whole-board build was ~1.5 s, and the repair loops ask per candidate via.
+fn net_connectivity(pcb: &Pcb, net: &str) -> (Pcb, Vec<ConnNode>, Dsu) {
     let frozen = FROZEN_FILLS
         .with(|f| f.borrow().clone())
         .filter(|f| f.len() == pcb.zones.len());
@@ -3009,8 +3008,15 @@ pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
         fp.pads.retain(|p| p.net.as_deref() == Some(net));
     }
     let prev = FROZEN_FILLS.with(|c| c.replace(Some(std::sync::Arc::new(fills))));
-    let (nodes, mut dsu) = build_connectivity(&own);
+    let (nodes, dsu) = build_connectivity(&own);
     FROZEN_FILLS.with(|c| *c.borrow_mut() = prev);
+    (own, nodes, dsu)
+}
+
+/// Island count, pad coverage and worst island of one net.
+#[tracing::instrument(level = "info", skip_all)]
+pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
+    let (own, nodes, mut dsu) = net_connectivity(pcb, net);
     let mut r = continuity_of(&own, &nodes, &mut dsu, net);
     r.total_pads = pcb
         .footprints
@@ -3019,6 +3025,29 @@ pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
         .filter(|p| p.net.as_deref() == Some(net))
         .count();
     r
+}
+
+/// Positions of the net's pads that are NOT on its main island (the one
+/// holding the most pads): the only pads a repair needs to work on.
+#[tracing::instrument(level = "info", skip_all)]
+pub fn stranded_pads(pcb: &Pcb, net: &str) -> Vec<Vec2> {
+    let (_, nodes, mut dsu) = net_connectivity(pcb, net);
+    let mut pads_of: HashMap<usize, usize> = HashMap::new();
+    let roots: Vec<Option<usize>> = (0..nodes.len())
+        .map(|i| (nodes[i].pad.is_some() && nodes[i].net == net).then(|| dsu.find(i)))
+        .collect();
+    for r in roots.iter().flatten() {
+        *pads_of.entry(*r).or_default() += 1;
+    }
+    let Some((&main, _)) = pads_of.iter().max_by_key(|(_, n)| **n) else {
+        return Vec::new();
+    };
+    nodes
+        .iter()
+        .zip(&roots)
+        .filter(|(_, r)| matches!(r, Some(r) if *r != main))
+        .map(|(n, _)| n.pos)
+        .collect()
 }
 
 /// Island counts for many nets from ONE connectivity build: the batch form of
