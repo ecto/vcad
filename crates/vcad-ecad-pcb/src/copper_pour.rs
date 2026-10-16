@@ -49,7 +49,7 @@ pub fn fill_zones(pcb: &Pcb) -> Vec<FilledZone> {
 }
 
 /// Fill a single zone by subtracting every clearance region from its outline.
-fn fill_zone(pcb: &Pcb, zone: &Zone) -> FilledZone {
+pub(crate) fn fill_zone(pcb: &Pcb, zone: &Zone) -> FilledZone {
     // Subject: the zone outline (CCW) with its user-declared holes (CW).
     let subject = Poly {
         outer: ccw(ring_to_pts(&zone.outline)),

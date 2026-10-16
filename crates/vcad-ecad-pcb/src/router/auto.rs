@@ -243,6 +243,11 @@ const MAX_RIPUP_ROUNDS: usize = 8;
 /// discards wholesale. The budget parks the remainder as pending instead: the
 /// same outcome the round was heading for, minutes rather than an hour later.
 const RIPUP_ROUND_BUDGET_MS: f64 = 300_000.0;
+/// A target whose corridor crosses more placed routes than this is skipped by
+/// rip-up: ripping and restoring a dozen victims costs a dozen maze searches,
+/// and on a dense BGA field (the brain's RK3588) those targets almost never
+/// come through - they were most of a 300 s round for a handful of nets.
+const RIPUP_MAX_VICTIMS: usize = 8;
 
 /// Wall-clock budget for the deferred rescue [`arsenal_sweep`]. The arsenal is
 /// unbounded per connection (escape flow, coupled-pair phantom search, true
@@ -1517,7 +1522,11 @@ fn route_pass(
             (session, placed, pending) = snapshot;
             break;
         }
-        if placed.len() == placed_before {
+        // Diminishing returns: a round that placed under 2% of what it was
+        // given will not be beaten by the next one on the same congestion.
+        let gained = placed.len() - placed_before;
+        let given = pending.len() + gained;
+        if gained == 0 || gained * 50 < given {
             break;
         }
     }
@@ -3567,7 +3576,7 @@ fn ripup_pass(
             .filter(|(_, p)| p.net != net && p.spans.iter().any(|s| blocker_spans.contains(s)))
             .map(|(i, _)| i)
             .collect();
-        if victim_set.is_empty() {
+        if victim_set.is_empty() || victim_set.len() > RIPUP_MAX_VICTIMS {
             still.push((net, from, to));
             continue;
         }

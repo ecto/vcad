@@ -1494,9 +1494,8 @@ fn route_file(
                 source: Some(CopperSource::Autoroute),
             }));
         anchor_track_ends(&mut trial);
-        let after: usize = split
-            .iter()
-            .map(|n| vcad_ecad_pcb::drc::net_islands(&trial, std::slice::from_ref(n))[n])
+        let after: usize = vcad_ecad_pcb::drc::net_islands(&trial, &split)
+            .values()
             .sum();
         println!(
             "second pass on {}: islands {before} -> {after}",

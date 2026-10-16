@@ -2982,8 +2982,43 @@ fn continuity_of(pcb: &Pcb, nodes: &[ConnNode], dsu: &mut Dsu, net: &str) -> Net
 /// so it is not the tool for scoring every net on a large board.
 #[tracing::instrument(level = "info", skip_all)]
 pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
-    let (nodes, mut dsu) = build_connectivity(pcb);
-    continuity_of(pcb, &nodes, &mut dsu, net)
+    // Only this net's copper can join its islands, so build connectivity over
+    // just that: on a dense board the whole-board build was ~1.5 s per call,
+    // and the repair loops ask once per candidate via. Its pours are still
+    // filled against the WHOLE board (other nets carve them), or taken from
+    // the frozen fills when a repair loop has pinned them.
+    let frozen = FROZEN_FILLS
+        .with(|f| f.borrow().clone())
+        .filter(|f| f.len() == pcb.zones.len());
+    let fills: Vec<crate::copper_pour::FilledZone> = pcb
+        .zones
+        .iter()
+        .enumerate()
+        .filter(|(_, z)| z.net == net)
+        .map(|(i, z)| match &frozen {
+            Some(f) => f[i].clone(),
+            None => crate::copper_pour::fill_zone(pcb, z),
+        })
+        .collect();
+    let mut own = pcb.clone();
+    own.traces.retain(|t| t.net == net);
+    own.trace_arcs.retain(|t| t.net == net);
+    own.vias.retain(|v| v.net == net);
+    own.zones.retain(|z| z.net == net);
+    for fp in &mut own.footprints {
+        fp.pads.retain(|p| p.net.as_deref() == Some(net));
+    }
+    let prev = FROZEN_FILLS.with(|c| c.replace(Some(std::sync::Arc::new(fills))));
+    let (nodes, mut dsu) = build_connectivity(&own);
+    FROZEN_FILLS.with(|c| *c.borrow_mut() = prev);
+    let mut r = continuity_of(&own, &nodes, &mut dsu, net);
+    r.total_pads = pcb
+        .footprints
+        .iter()
+        .flat_map(|f| &f.pads)
+        .filter(|p| p.net.as_deref() == Some(net))
+        .count();
+    r
 }
 
 /// Island counts for many nets from ONE connectivity build: the batch form of
