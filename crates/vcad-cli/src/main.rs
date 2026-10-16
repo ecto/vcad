@@ -3665,6 +3665,11 @@ fn progress(msg: impl std::fmt::Display) {
     eprintln!("[{t:7.1}s] {msg}");
 }
 
+/// Wall-clock cap for each leftover repair (direct links, plane stitching):
+/// they try candidate vias / stubs per pad and re-check the net's continuity
+/// after each, which on a dense board ran for many hours.
+const REPAIR_BUDGET: std::time::Duration = std::time::Duration::from_secs(600);
+
 #[tracing::instrument(skip_all, fields(nets = nets.len()))]
 fn direct_links(
     route_pcb: &vcad_ir::ecad::Pcb,
@@ -3680,7 +3685,16 @@ fn direct_links(
     let mut out = Vec::new();
     let fills = vcad_ecad_pcb::copper_pour::fill_zones(&work);
     vcad_ecad_pcb::drc::with_frozen_fills(fills, || {
+        let t0 = std::time::Instant::now();
         for (ni, net) in nets.iter().enumerate() {
+            if t0.elapsed() > REPAIR_BUDGET {
+                progress(format!(
+                    "link: {:?} budget spent, {} nets left as they are",
+                    REPAIR_BUDGET,
+                    nets.len() - ni
+                ));
+                break;
+            }
             progress(format!("link {}/{} {net}", ni + 1, nets.len()));
             let _net_span = tracing::info_span!("link_net", net = %net).entered();
             let pads: Vec<_> = work
@@ -3806,7 +3820,16 @@ fn stitch_to_planes(
     let (mut ts, mut vs) = (Vec::new(), Vec::new());
     let fills = vcad_ecad_pcb::copper_pour::fill_zones(&work);
     vcad_ecad_pcb::drc::with_frozen_fills(fills, || {
+        let t0 = std::time::Instant::now();
         for (ni, net) in nets.iter().enumerate() {
+            if t0.elapsed() > REPAIR_BUDGET {
+                progress(format!(
+                    "stitch: {:?} budget spent, {} nets left as they are",
+                    REPAIR_BUDGET,
+                    nets.len() - ni
+                ));
+                break;
+            }
             progress(format!("stitch {}/{} {net}", ni + 1, nets.len()));
             let _net_span = tracing::info_span!("stitch_net", net = %net).entered();
             if !route_pcb.zones.iter().any(|z| &z.net == net) {
