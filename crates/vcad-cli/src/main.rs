@@ -126,6 +126,12 @@ enum Commands {
         /// route a DDR bus alone and pin it before the full route
         #[arg(long = "only", value_name = "NET")]
         only: Vec<String>,
+        /// Multi-layer BGA escape before routing, over these signal layers in
+        /// order (comma list, e.g. "F.Cu,In3.Cu,In6.Cu,B.Cu"): each fine-pitch
+        /// field's signal balls escape on the first layer with room, the rest
+        /// drop by microvia to the next. Laid as fixed copper.
+        #[arg(long)]
+        escape: Option<String>,
         /// Print which nets would get a synthesized copper pour, on which layer,
         /// and why - then stop without routing
         #[arg(long)]
@@ -636,6 +642,7 @@ fn main() -> Result<()> {
             effort,
             priority,
             only,
+            escape,
         }) => {
             route_file(
                 &input,
@@ -649,6 +656,7 @@ fn main() -> Result<()> {
                 effort,
                 priority,
                 only,
+                escape.as_deref(),
             )?;
         }
         Some(Commands::Import {
@@ -1129,6 +1137,148 @@ fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<(
 }
 
 /// Route every net of a document's board with vcad's autorouter and write KiCad.
+/// Multi-layer escape for every dense pin field (see `--escape`): signal balls
+/// of nets that have somewhere to go and no hand-laid via yet. Adds the escape
+/// copper to `pcb` as Manual (never ripped) and returns (traces, vias) added.
+fn plan_bga_escapes(
+    pcb: &mut vcad_ir::ecad::Pcb,
+    layers: &[vcad_ir::ecad::PcbLayer],
+    via_d: f64,
+    via_drill: f64,
+    width: f64,
+) -> (usize, usize) {
+    use vcad_ecad_pcb::router::escape;
+    use vcad_ir::ecad::{CopperSource, Trace, Via};
+    let copper: Vec<vcad_ir::ecad::PcbLayer> = pcb
+        .stackup
+        .layers
+        .iter()
+        .map(|l| l.layer)
+        .filter(|l| l.is_copper())
+        .collect();
+    let idx = |l: vcad_ir::ecad::PcbLayer| copper.iter().position(|&c| c == l).unwrap_or(0);
+    let planes: std::collections::BTreeSet<String> =
+        pcb.zones.iter().map(|z| z.net.clone()).collect();
+    let mut pads_of: std::collections::HashMap<String, usize> = Default::default();
+    for f in &pcb.footprints {
+        for p in &f.pads {
+            if let Some(n) = &p.net {
+                *pads_of.entry(n.clone()).or_default() += 1;
+            }
+        }
+    }
+    let (n0t, n0v) = (pcb.traces.len(), pcb.vias.len());
+    for field in escape::detect_pin_fields(pcb) {
+        let (lo, hi) = field.bbox();
+        let inside = |p: vcad_ir::Vec2| {
+            p.x >= lo.x - 1e-6 && p.x <= hi.x + 1e-6 && p.y >= lo.y - 1e-6 && p.y <= hi.y + 1e-6
+        };
+        let has_via = |p: vcad_ir::Vec2, n: &str| {
+            pcb.vias.iter().any(|v| {
+                v.net == n && (v.position.x - p.x).abs() < 1e-3 && (v.position.y - p.y).abs() < 1e-3
+            })
+        };
+        let mut endpoints = Vec::new();
+        for f in &pcb.footprints {
+            for p in &f.pads {
+                let Some(n) = &p.net else { continue };
+                let at = vcad_ecad_pcb::geometry::pad_world_position(f, p);
+                if n.is_empty()
+                    || n.starts_with("~nc~")
+                    || planes.contains(n)
+                    || pads_of[n] < 2
+                    || !inside(at)
+                    || has_via(at, n)
+                {
+                    continue;
+                }
+                // where the net goes: the centroid of its pads outside this field
+                let outside: Vec<vcad_ir::Vec2> = pcb
+                    .footprints
+                    .iter()
+                    .flat_map(|g| g.pads.iter().map(move |q| (g, q)))
+                    .filter(|(_, q)| q.net.as_deref() == Some(n.as_str()))
+                    .map(|(g, q)| vcad_ecad_pcb::geometry::pad_world_position(g, q))
+                    .filter(|q| !inside(*q))
+                    .collect();
+                if outside.is_empty() {
+                    continue;
+                }
+                let k = outside.len() as f64;
+                let target = vcad_ir::Vec2::new(
+                    outside.iter().map(|q| q.x).sum::<f64>() / k,
+                    outside.iter().map(|q| q.y).sum::<f64>() / k,
+                );
+                endpoints.push((n.clone(), at, target));
+            }
+        }
+        if endpoints.is_empty() {
+            continue;
+        }
+        let fixed: Vec<(vcad_ir::Vec2, f64, Vec<vcad_ir::ecad::PcbLayer>)> = pcb
+            .vias
+            .iter()
+            .map(|v| {
+                let (a, b) = (
+                    idx(v.start_layer).min(idx(v.end_layer)),
+                    idx(v.start_layer).max(idx(v.end_layer)),
+                );
+                (v.position, v.diameter / 2.0, copper[a..=b].to_vec())
+            })
+            .collect();
+        let session = vcad_ecad_pcb::RouteSession::from_pcb(pcb);
+        let plans = escape::plan_multilayer_escapes(
+            &session,
+            pcb,
+            &field,
+            &endpoints,
+            layers,
+            &fixed,
+            via_d / 2.0,
+            width,
+        );
+        let mut per_layer = vec![0usize; layers.len()];
+        for ((net, at, _), plan) in endpoints.iter().zip(plans) {
+            let Some((li, plan)) = plan else { continue };
+            per_layer[li] += 1;
+            if plan.layer != copper[0] {
+                pcb.vias.push(Via {
+                    position: *at,
+                    diameter: via_d,
+                    drill: via_drill,
+                    start_layer: copper[0],
+                    end_layer: plan.layer,
+                    net: net.clone(),
+                    source: Some(CopperSource::Manual),
+                });
+            }
+            pcb.traces.extend(plan.segments.iter().map(|(a, b)| Trace {
+                start: *a,
+                end: *b,
+                width,
+                layer: plan.layer,
+                net: net.clone(),
+                source: Some(CopperSource::Manual),
+            }));
+        }
+        progress(format!(
+            "escape: field ({:.1},{:.1})-({:.1},{:.1}): {} signal balls, per layer {:?}, {} left",
+            lo.x,
+            lo.y,
+            hi.x,
+            hi.y,
+            endpoints.len(),
+            layers
+                .iter()
+                .zip(&per_layer)
+                .map(|(l, n)| format!("{l:?} {n}"))
+                .collect::<Vec<_>>(),
+            endpoints.len() - per_layer.iter().sum::<usize>()
+        ));
+    }
+    (pcb.traces.len() - n0t, pcb.vias.len() - n0v)
+}
+
 /// Route checkpoints: each finished phase saved next to the output
 /// (`<out>.ckpt/<phase>.json`) under a hash of the routing input (board,
 /// options, width). A rerun with the same input resumes after the last phase
@@ -1217,6 +1367,7 @@ fn route_file(
     effort: f64,
     priority: Vec<String>,
     only: Vec<String>,
+    escape: Option<&str>,
 ) -> Result<()> {
     use vcad_ir::ecad::{CopperSource, Trace, Via};
     // RUST_LOG=info shows the router's own account (legalization, pruning)
@@ -1436,6 +1587,27 @@ fn route_file(
     });
     progress(format!("routing {} nets", route_pcb.nets.len()));
     let _route_span = tracing::info_span!("route", nets = route_pcb.nets.len()).entered();
+    if let Some(layers) = escape {
+        let layers: Vec<vcad_ir::ecad::PcbLayer> = layers
+            .split(',')
+            .map(|l| serde_json::from_str(&format!("\"{}\"", l.trim().replace('.', ""))))
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|e| anyhow::anyhow!("--escape: bad layer list: {e}"))?;
+        let (vd, vdr) = microvia.unwrap_or((
+            route_pcb.rules.default_rules.via_diameter,
+            route_pcb.rules.default_rules.via_drill,
+        ));
+        let (t, v) = plan_bga_escapes(&mut route_pcb, &layers, vd, vdr, w);
+        progress(format!("escape: laid {t} escape traces, {v} microvias"));
+        // the board copy written out carries them too
+        pcb.traces.extend(
+            route_pcb.traces[route_pcb.traces.len() - t..]
+                .iter()
+                .cloned(),
+        );
+        pcb.vias
+            .extend(route_pcb.vias[route_pcb.vias.len() - v..].iter().cloned());
+    }
     let ckpt_key = checkpoint::key(&[
         &serde_json::to_vec(&serde_json::to_value(&route_pcb).unwrap_or_default())
             .unwrap_or_default(),
