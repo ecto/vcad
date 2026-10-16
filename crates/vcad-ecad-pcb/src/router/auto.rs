@@ -283,7 +283,12 @@ fn negotiate_first_regime(pcb: &Pcb) -> bool {
 
 /// Same-net landing points the plane-stitch maze rescue will try, nearest
 /// first, before reporting a pad unstitchable.
-const PLANE_RESCUE_TARGETS: usize = 8;
+const PLANE_RESCUE_TARGETS: usize = 4;
+/// Plane-rescue targets further than this from the pad are not tried: a
+/// plane pad that can't reach a landing point within a few mm is boxed in,
+/// and every failed full-budget maze search costs ~0.4 s (the brain's GND and
+/// rail pads were the router's biggest sink of failed searches).
+const PLANE_RESCUE_MAX_MM: f64 = 5.0;
 
 /// History cost (mm-equivalent) deposited on a contested corridor per
 /// negotiation round. A gentle, accumulating bias: enough that a flexible net
@@ -763,7 +768,7 @@ pub fn route_all_with_opts(
         }
         // Never route the pad to itself (a same-net pad coincident with it, or
         // a zero-length target) — that is not a path to the plane.
-        targets.retain(|t| dist(*t, pad_pt) > 1e-6);
+        targets.retain(|t| dist(*t, pad_pt) > 1e-6 && dist(*t, pad_pt) < PLANE_RESCUE_MAX_MM);
         targets.sort_by(|a, b| dist(*a, pad_pt).total_cmp(&dist(*b, pad_pt)));
         let mut rescued = false;
         // A plane offers many galvanically equivalent landing points; the three
@@ -780,7 +785,9 @@ pub fn route_all_with_opts(
                 &mut placed,
                 &cong,
                 opts.use_push_shove,
-                opts.effective_expansions(),
+                // a short hop to a plane point: a quarter budget finds it
+                // if it exists, and fails 4x cheaper when it doesn't
+                (opts.effective_expansions() / 4).max(1),
                 true,
             ) {
                 placed.push(p);

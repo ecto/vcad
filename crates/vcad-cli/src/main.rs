@@ -1463,7 +1463,12 @@ fn route_file(
             .collect();
         progress(format!("second pass on {} split nets", split.len()));
         let _pass_span = tracing::info_span!("second_pass", split = split.len()).entered();
-        let r2 = vcad_ecad_pcb::router::auto::route_all_with_opts(&again, w, &[], &opts);
+        // the second pass only joins what the first left split: one greedy
+        // round, no negotiation / rip-up / joint repair - those re-run the
+        // whole first pass's search budget on ~all nets (548 s on the brain)
+        let mut opts2 = opts.clone();
+        opts2.fast = true;
+        let r2 = vcad_ecad_pcb::router::auto::route_all_with_opts(&again, w, &[], &opts2);
         let before: usize = vcad_ecad_pcb::drc::net_islands(&pcb, &split).values().sum();
         let mut trial = pcb.clone();
         trial.traces.retain(|t| keep(&t.net) || manual(&t.source));
