@@ -154,10 +154,19 @@ pub fn evaluate_document(
             continue;
         }
 
-        let (cache_key, cached) = lookup(entry.root);
+        // With a cache, key a root on its shape and not its placement: a
+        // rigid Translate/Rotate chain on top is peeled off, the shape under
+        // it is evaluated, meshed and cached in its own frame, and the
+        // placement is applied to the mesh. A posed assembly re-rendered
+        // in a new pose is then all hits.
+        let (eval_root, placement) = match root_cache {
+            Some(_) => peel_rigid_placement(entry.root, &doc.nodes),
+            None => (entry.root, None),
+        };
+        let (cache_key, cached) = lookup(eval_root);
         if let Some(mesh) = cached {
             parts.push(EvaluatedPart {
-                mesh,
+                mesh: place_mesh(mesh, placement.as_ref()),
                 material: entry.material.clone(),
                 solid: None,
             });
@@ -165,7 +174,10 @@ pub fn evaluate_document(
             landed(
                 &parts,
                 &mut root_keys,
-                cache_key.as_ref().map(|k| k.0.clone()),
+                cache_key
+                    .as_ref()
+                    .filter(|_| placement.is_none())
+                    .map(|k| k.0.clone()),
             );
             continue;
         }
@@ -178,7 +190,7 @@ pub fn evaluate_document(
         let eval_outcome = catch_unwind(AssertUnwindSafe(
             || -> Result<(EvaluatedMesh, Option<Solid>), EvalError> {
                 match evaluate_node_timed(
-                    entry.root,
+                    eval_root,
                     &doc.nodes,
                     &mut cache,
                     clock,
@@ -204,9 +216,16 @@ pub fn evaluate_document(
         match eval_outcome {
             Ok(Ok((mesh, solid))) => {
                 store(&cache_key, &mesh);
-                let key = (!mesh.indices.is_empty())
+                // A peeled root's key names the unplaced shape, which a mesh
+                // bundle cannot stand in for: report none.
+                let key = (!mesh.indices.is_empty() && placement.is_none())
                     .then(|| cache_key.as_ref().map(|k| k.0.clone()))
                     .flatten();
+                let mesh = place_mesh(mesh, placement.as_ref());
+                let solid = match (&placement, solid) {
+                    (Some(t), Some(s)) => Some(s.apply_transform(t)),
+                    (_, s) => s,
+                };
                 parts.push(EvaluatedPart {
                     mesh,
                     material: entry.material.clone(),
@@ -1534,6 +1553,53 @@ fn to_bend_direction(
         vcad_ir::SheetMetalDirection::Up => BendDirection::Up,
         vcad_ir::SheetMetalDirection::Down => BendDirection::Down,
     }
+}
+
+/// Split `root` into the shape under its outermost chain of rigid
+/// Translate/Rotate nodes and the placement that chain composes to. A root
+/// that is not such a chain (or whose chain holds a Scale) comes back whole.
+fn peel_rigid_placement(
+    root: NodeId,
+    nodes: &HashMap<NodeId, vcad_ir::Node>,
+) -> (NodeId, Option<Transform>) {
+    let Some(node) = nodes.get(&root) else {
+        return (root, None);
+    };
+    let mut id = root;
+    loop {
+        match nodes.get(&id).map(|n| &n.op) {
+            Some(CsgOp::Translate { child, .. } | CsgOp::Rotate { child, .. }) => id = *child,
+            Some(CsgOp::Scale { .. }) => return (root, None),
+            _ => break,
+        }
+    }
+    if id == root {
+        return (root, None);
+    }
+    let (t, inner) = collect_transform_chain(&node.op, nodes);
+    (inner, Some(t))
+}
+
+/// Apply a rigid placement to a mesh in place (positions and normals).
+fn place_mesh(mut mesh: EvaluatedMesh, t: Option<&Transform>) -> EvaluatedMesh {
+    let Some(t) = t else {
+        return mesh;
+    };
+    for p in mesh.positions.as_chunks_mut::<3>().0 {
+        let q = t.apply_point(&vcad_kernel_math::Point3::new(
+            p[0] as f64,
+            p[1] as f64,
+            p[2] as f64,
+        ));
+        p.copy_from_slice(&[q.x as f32, q.y as f32, q.z as f32]);
+    }
+    if let Some(normals) = mesh.normals.as_mut() {
+        for n in normals.as_chunks_mut::<3>().0 {
+            let m = t.apply_vec(&Vec3::new(n[0] as f64, n[1] as f64, n[2] as f64));
+            n.copy_from_slice(&[m.x as f32, m.y as f32, m.z as f32]);
+        }
+    }
+    mesh
 }
 
 /// Walk a chain of Translate/Rotate/Scale nodes and compose into a single Transform.
@@ -3407,6 +3473,45 @@ mod tests {
             scene.root_keys[0], scene.root_keys[1],
             "same subgraph, same key"
         );
+    }
+
+    /// With a cache, a root under a rigid Translate/Rotate chain is keyed on
+    /// the shape beneath it: the same cube placed twice is one miss and one
+    /// hit, and each copy still lands where its own placement puts it.
+    #[test]
+    fn rigid_placement_is_peeled_off_the_cache_key() {
+        let mut nodes: HashMap<NodeId, vcad_ir::Node> = HashMap::new();
+        let a = cube_at(0, 0.0, &mut nodes);
+        let b = cube_at(1, 30.0, &mut nodes);
+        let entry = |root| vcad_ir::SceneEntry {
+            root,
+            material: "m".into(),
+            visible: None,
+        };
+        let doc = Document {
+            roots: vec![entry(a), entry(b)],
+            nodes,
+            ..Default::default()
+        };
+        let cache = std::rc::Rc::new(crate::cache::MemoryMeshCache::new());
+        let opts = EvalOptions {
+            skip_clash_detection: true,
+            root_cache: Some(cache.clone()),
+            ..Default::default()
+        };
+        let scene = evaluate_document(&doc, &opts).unwrap();
+        let s = cache.stats();
+        assert_eq!((s.misses, s.hits), (1, 1), "one shape, two placements");
+        let min_x = |m: &EvaluatedMesh| {
+            m.positions
+                .chunks_exact(3)
+                .map(|p| p[0])
+                .fold(f32::INFINITY, f32::min)
+        };
+        assert!(min_x(&scene.parts[0].mesh).abs() < 1e-4);
+        assert!((min_x(&scene.parts[1].mesh) - 30.0).abs() < 1e-4);
+        // A bundle can't stand in for a placed shape, so neither reports a key.
+        assert_eq!(scene.root_keys, vec![None, None]);
     }
 
     /// End-to-end: an EdgeBlend node evaluates through the IR pipeline
