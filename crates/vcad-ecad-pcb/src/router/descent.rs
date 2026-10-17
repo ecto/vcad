@@ -1000,6 +1000,11 @@ fn descend_board_inner(
     };
 
     let mut report = DescentReport::default();
+    // Connectivity-gate baseline: same-net component counts on the CURRENT
+    // board, per net. Rebuilding full-board connectivity for every pour net
+    // of every pair dominated the gate; the board only changes when a pair
+    // is committed, so the cache is cleared exactly then.
+    let mut components_before: std::collections::HashMap<String, usize> = Default::default();
     for (pn, nn) in &c.pairs {
         let (Some((pl, p_raw, extra_p, p_w)), Some((nlayer, mut n_raw, extra_n, n_w))) =
             (net_run(pcb, pn), net_run(pcb, nn))
@@ -1452,8 +1457,10 @@ fn descend_board_inner(
             }
         }
         let split = gate_nets.into_iter().filter(|_| guards.gate).find(|net| {
-            crate::drc::net_graph(&work2, net).components
-                > crate::drc::net_graph(pcb, net).components
+            let before = *components_before
+                .entry(net.to_string())
+                .or_insert_with(|| crate::drc::net_graph(pcb, net).components);
+            crate::drc::net_graph(&work2, net).components > before
         });
         if let Some(net) = split {
             report.rejected += 1;
@@ -1468,6 +1475,7 @@ fn descend_board_inner(
             continue;
         }
         *pcb = work2;
+        components_before.clear();
         report.tuned += 1;
         log::info!("descent: {pn} whole-net skew {before:.3} -> {after:.3} mm");
         log::debug!(
