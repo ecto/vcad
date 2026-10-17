@@ -489,6 +489,8 @@ mod tests {
         ]
         .into_iter()
         .map(|layer| vcad_ir::ecad::StackupLayer {
+            role: None,
+            role_inferred: false,
             layer,
             copper_thickness: Some(0.035),
             dielectric_thickness: Some(0.2),

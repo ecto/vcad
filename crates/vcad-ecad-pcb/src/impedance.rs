@@ -414,6 +414,8 @@ mod tests {
     /// core in the middle, symmetric.
     fn populated_stackup() -> LayerStackup {
         let mk = |layer, diel: Option<f64>| StackupLayer {
+            role: None,
+            role_inferred: false,
             layer,
             copper_thickness: Some(0.035),
             dielectric_thickness: diel,

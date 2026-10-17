@@ -619,6 +619,52 @@ pub struct StackupLayer {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub material: Option<String>,
+    /// Copper layer role (signal / plane / split plane). `None`: unknown —
+    /// treated as signal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub role: Option<LayerRole>,
+    /// True when `role` was INFERRED (e.g. from pour coverage on import)
+    /// rather than authored.
+    #[serde(
+        rename = "roleInferred",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    #[cfg_attr(
+        feature = "ts-rs",
+        ts(rename = "roleInferred", optional, as = "Option<bool>")
+    )]
+    pub role_inferred: bool,
+}
+
+/// What a copper layer is for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum LayerRole {
+    /// Routing layer.
+    Signal,
+    /// A solid reference plane for one net: no signal traces (vias and their
+    /// anti-pads only).
+    Plane {
+        /// The plane's net.
+        net: NetId,
+    },
+    /// Power layer split between several pour nets: no signal traces.
+    #[serde(rename = "split")]
+    SplitPlane {
+        /// The pour nets sharing the layer.
+        nets: Vec<NetId>,
+    },
+}
+
+impl LayerRole {
+    /// True for a layer no signal trace may run on.
+    pub fn is_plane(&self) -> bool {
+        !matches!(self, LayerRole::Signal)
+    }
 }
 
 /// Physical layer stackup for impedance calculations.
@@ -1308,6 +1354,115 @@ pub struct Pcb {
     pub net_ties: Vec<NetTie>,
 }
 
+/// Shoelace area of a closed polygon (absolute).
+fn polygon_area(pts: &[Vec2]) -> f64 {
+    let n = pts.len();
+    if n < 3 {
+        return 0.0;
+    }
+    let mut a = 0.0;
+    for k in 0..n {
+        let (p, q) = (pts[k], pts[(k + 1) % n]);
+        a += p.x * q.y - q.x * p.y;
+    }
+    (a / 2.0).abs()
+}
+
+/// Share of all trace length a layer may carry and still be a plane.
+pub const PLANE_MAX_SIGNAL_SHARE: f64 = 0.03;
+/// Board-area share a single net's pour must cover for a plane layer (or the
+/// pour nets together, for a split plane).
+pub const PLANE_MIN_COVERAGE: f64 = 0.6;
+
+impl Pcb {
+    /// Infer each copper layer's [`LayerRole`] from its copper, for layers
+    /// with no authored role. A layer carrying at most
+    /// [`PLANE_MAX_SIGNAL_SHARE`] of the board's trace length whose dominant
+    /// pour net covers at least [`PLANE_MIN_COVERAGE`] of the board area is a
+    /// [`LayerRole::Plane`] for that net; if instead several pour nets (each at
+    /// least 5%) together cover that much, a [`LayerRole::SplitPlane`]; anything
+    /// else is signal. Coverage is the zone OUTLINE area (minus holes), capped
+    /// at the board area. Returns one log line per inferred layer; marks each
+    /// `role_inferred`.
+    pub fn infer_layer_roles(&mut self) -> Vec<String> {
+        let board = polygon_area(&self.outline.vertices);
+        let total: f64 = self.traces.iter().map(|t| (t.end - t.start).length()).sum();
+        let mut log = Vec::new();
+        if board <= 0.0 {
+            return log;
+        }
+        for sl in &mut self.stackup.layers {
+            if !sl.layer.is_copper() || (sl.role.is_some() && !sl.role_inferred) {
+                continue;
+            }
+            let on: f64 = self
+                .traces
+                .iter()
+                .filter(|t| t.layer == sl.layer)
+                .map(|t| (t.end - t.start).length())
+                .sum();
+            let mut by_net: std::collections::BTreeMap<&str, f64> = Default::default();
+            for z in self
+                .zones
+                .iter()
+                .filter(|z| z.layer == sl.layer && !z.net.is_empty())
+            {
+                let a =
+                    polygon_area(&z.outline) - z.holes.iter().map(|h| polygon_area(h)).sum::<f64>();
+                *by_net.entry(z.net.as_str()).or_default() += a.max(0.0);
+            }
+            let cover = |a: f64| (a / board).min(1.0);
+            let share = if total > 0.0 { on / total } else { 0.0 };
+            let best = by_net
+                .iter()
+                .max_by(|a, b| a.1.total_cmp(b.1))
+                .map(|(n, a)| (n.to_string(), cover(*a)));
+            let split: Vec<(String, f64)> = by_net
+                .iter()
+                .map(|(n, a)| (n.to_string(), cover(*a)))
+                .filter(|(_, c)| *c >= 0.05)
+                .collect();
+            let split_cover: f64 = split.iter().map(|(_, c)| c).sum::<f64>().min(1.0);
+            let role = if share > PLANE_MAX_SIGNAL_SHARE {
+                LayerRole::Signal
+            } else if let Some((net, c)) = best.clone().filter(|(_, c)| *c >= PLANE_MIN_COVERAGE) {
+                let _ = c;
+                LayerRole::Plane { net }
+            } else if split.len() >= 2 && split_cover >= PLANE_MIN_COVERAGE {
+                LayerRole::SplitPlane {
+                    nets: split.iter().map(|(n, _)| n.clone()).collect(),
+                }
+            } else {
+                LayerRole::Signal
+            };
+            log.push(format!(
+                "INFERRED layer role {:?}: {:?} (signal {:.0} mm = {:.1}% of all trace length; \
+                 dominant pour {} {:.0}% of board; split-pour cover {:.0}%)",
+                sl.layer,
+                role,
+                on.max(0.0),
+                100.0 * share.max(0.0),
+                best.as_ref().map(|b| b.0.as_str()).unwrap_or("-"),
+                100.0 * best.as_ref().map(|b| b.1).unwrap_or(0.0),
+                100.0 * split_cover
+            ));
+            sl.role = Some(role);
+            sl.role_inferred = true;
+        }
+        log
+    }
+
+    /// Copper layers no signal trace may run on (plane / split-plane role).
+    pub fn plane_layers(&self) -> Vec<PcbLayer> {
+        self.stackup
+            .layers
+            .iter()
+            .filter(|l| l.role.as_ref().is_some_and(|r| r.is_plane()))
+            .map(|l| l.layer)
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1328,6 +1483,8 @@ mod tests {
             stackup: LayerStackup {
                 layers: vec![
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::FCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: Some(0.2),
@@ -1335,6 +1492,8 @@ mod tests {
                         material: Some("FR4".to_string()),
                     },
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::BCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: None,
@@ -1572,6 +1731,94 @@ mod tests {
         assert!(!PcbLayer::FCu.spanned_by(PcbLayer::In1Cu, PcbLayer::In3Cu));
         // Non-copper is never spanned.
         assert!(!PcbLayer::FMask.spanned_by(PcbLayer::FCu, PcbLayer::BCu));
+    }
+
+    #[test]
+    fn layer_roles_inferred_from_pour_coverage_and_signal_share() {
+        let sq = |s: f64| {
+            vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(s, 0.0),
+                Vec2::new(s, s),
+                Vec2::new(0.0, s),
+            ]
+        };
+        let zone = |net: &str, layer: PcbLayer, pts: Vec<Vec2>| Zone {
+            outline: pts,
+            holes: vec![],
+            net: net.into(),
+            layer,
+            clearance: 0.2,
+            min_area: 0.0,
+            fill_type: ZoneFillType::Solid,
+            thermal_relief: ThermalReliefStyle::Relief,
+            thermal_gap: None,
+            thermal_spoke_width: None,
+            priority: 0,
+        };
+        let sl = |layer| StackupLayer {
+            layer,
+            copper_thickness: None,
+            dielectric_thickness: None,
+            dielectric_er: None,
+            material: None,
+            role: None,
+            role_inferred: false,
+        };
+        let mut pcb: Pcb = serde_json::from_str(
+            r#"{"outline":{"vertices":[],"cutouts":[],"thickness":1.6},"stackup":{"layers":[]},
+                "rules":{"defaultRules":{"name":"D","traceWidth":0.1,"clearance":0.1,"viaDiameter":0.4,"viaDrill":0.2},
+                "edgeClearance":0.3,"holeToHole":0.25,"minAnnularRing":0.1,"minDrill":0.2}}"#,
+        )
+        .unwrap();
+        pcb.outline.vertices = sq(10.0);
+        pcb.stackup.layers = vec![
+            sl(PcbLayer::FCu),
+            sl(PcbLayer::In1Cu),
+            sl(PcbLayer::In2Cu),
+            sl(PcbLayer::BCu),
+        ];
+        // In1: one GND pour over the board; In2: two half-board power pours.
+        let half = |x0: f64| {
+            vec![
+                Vec2::new(x0, 0.0),
+                Vec2::new(x0 + 5.0, 0.0),
+                Vec2::new(x0 + 5.0, 10.0),
+                Vec2::new(x0, 10.0),
+            ]
+        };
+        pcb.zones = vec![
+            zone("GND", PcbLayer::FCu, sq(10.0)),
+            zone("GND", PcbLayer::In1Cu, sq(10.0)),
+            zone("V1", PcbLayer::In2Cu, half(0.0)),
+            zone("V2", PcbLayer::In2Cu, half(5.0)),
+        ];
+        // FCu carries the signal; BCu a bit too.
+        for (l, len) in [(PcbLayer::FCu, 50.0), (PcbLayer::BCu, 40.0)] {
+            pcb.traces.push(Trace {
+                start: Vec2::new(0.0, 0.0),
+                end: Vec2::new(len, 0.0),
+                width: 0.1,
+                layer: l,
+                net: "S".into(),
+                source: None,
+            });
+        }
+        // An authored role wins over inference.
+        pcb.stackup.layers[3].role = Some(LayerRole::Signal);
+        let log = pcb.infer_layer_roles();
+        assert_eq!(log.len(), 3);
+        let r = |i: usize| pcb.stackup.layers[i].role.clone().unwrap();
+        assert_eq!(r(0), LayerRole::Signal, "FCu has a pour but carries signal");
+        assert_eq!(r(1), LayerRole::Plane { net: "GND".into() });
+        assert_eq!(
+            r(2),
+            LayerRole::SplitPlane {
+                nets: vec!["V1".into(), "V2".into()]
+            }
+        );
+        assert!(!pcb.stackup.layers[3].role_inferred);
+        assert_eq!(pcb.plane_layers(), vec![PcbLayer::In1Cu, PcbLayer::In2Cu]);
     }
 
     #[test]

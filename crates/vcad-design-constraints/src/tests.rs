@@ -44,6 +44,8 @@ fn board_doc(footprints: Vec<Footprint>) -> Document {
         },
         stackup: LayerStackup {
             layers: vec![StackupLayer {
+                role: None,
+                role_inferred: false,
                 layer: PcbLayer::FCu,
                 copper_thickness: Some(0.035),
                 dielectric_thickness: None,

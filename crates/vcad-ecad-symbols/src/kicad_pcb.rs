@@ -350,6 +350,12 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
         keepouts: vec![],
         net_ties: vec![],
     };
+    // KiCad's layer type is "signal" by default and carries no plane intent
+    // on boards like the CM5, so roles are inferred from the copper itself.
+    let mut pcb = pcb;
+    for line in pcb.infer_layer_roles() {
+        ctx.warn(line);
+    }
     Ok((pcb, ctx.finish()))
 }
 
@@ -613,6 +619,8 @@ fn parse_stackup(root: &SExpr<'_>, warnings: &mut Vec<String>) -> LayerStackup {
     let layers: Vec<StackupLayer> = copper_layers
         .iter()
         .map(|&layer| StackupLayer {
+            role: None,
+            role_inferred: false,
             layer,
             copper_thickness: Some(0.035),
             dielectric_thickness: None,
@@ -665,6 +673,8 @@ fn parse_declared_stackup(root: &SExpr<'_>, copper: &[PcbLayer]) -> Option<Layer
             // between it and this one.
             if let Some((prev, cu_t)) = pending.take() {
                 out.push(StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: prev,
                     copper_thickness: cu_t,
                     dielectric_thickness: (saw_diel && diel_t > 0.0).then_some(diel_t),
@@ -695,6 +705,8 @@ fn parse_declared_stackup(root: &SExpr<'_>, copper: &[PcbLayer]) -> Option<Layer
     }
     if let Some((last, cu_t)) = pending {
         out.push(StackupLayer {
+            role: None,
+            role_inferred: false,
             layer: last,
             copper_thickness: cu_t,
             dielectric_thickness: None,

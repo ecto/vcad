@@ -2460,6 +2460,19 @@ noComponents: boolean, };
 export type LabelScope = "Local" | "Global" | "Hierarchical";
 
 /**
+ * What a copper layer is for.
+ */
+export type LayerRole = { "kind": "signal" } | { "kind": "plane", 
+/**
+ * The plane's net.
+ */
+net: string, } | { "kind": "split", 
+/**
+ * The pour nets sharing the layer.
+ */
+nets: Array<string>, };
+
+/**
  * Physical layer stackup for impedance calculations.
  */
 export type LayerStackup = { 
@@ -3952,7 +3965,17 @@ dielectricEr?: number,
 /**
  * Material name (e.g. "FR4", "Rogers 4350B").
  */
-material?: string, };
+material?: string, 
+/**
+ * Copper layer role (signal / plane / split plane). `None`: unknown —
+ * treated as signal.
+ */
+role?: LayerRole, 
+/**
+ * True when `role` was INFERRED (e.g. from pour coverage on import)
+ * rather than authored.
+ */
+roleInferred?: boolean, };
 
 /**
  * One contributor in a linear tolerance chain.

@@ -2007,6 +2007,8 @@ mod tests {
             stackup: LayerStackup {
                 layers: vec![
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::FCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: Some(1.5),
@@ -2014,6 +2016,8 @@ mod tests {
                         material: Some("FR4".into()),
                     },
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::BCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: None,

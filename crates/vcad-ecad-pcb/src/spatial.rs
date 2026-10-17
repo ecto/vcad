@@ -731,6 +731,8 @@ mod tests {
             },
             stackup: LayerStackup {
                 layers: vec![StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::FCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: None,
@@ -851,6 +853,8 @@ mod tests {
     #[test]
     fn via_indexed_on_all_spanned_layers() {
         let copper = |layer| StackupLayer {
+            role: None,
+            role_inferred: false,
             layer,
             copper_thickness: Some(0.035),
             dielectric_thickness: None,

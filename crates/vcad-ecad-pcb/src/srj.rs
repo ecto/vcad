@@ -149,6 +149,8 @@ pub fn srj_to_pcb(srj: &SimpleRouteJson) -> Result<Pcb, String> {
     let w = srj.min_trace_width;
 
     let copper = |layer| StackupLayer {
+        role: None,
+        role_inferred: false,
         layer,
         copper_thickness: Some(0.035),
         dielectric_thickness: Some(1.6 / stack.len().max(2) as f64),

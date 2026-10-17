@@ -57,6 +57,8 @@ fn board() -> Pcb {
             layers: layers
                 .iter()
                 .map(|l| StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: *l,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: Some(0.4),

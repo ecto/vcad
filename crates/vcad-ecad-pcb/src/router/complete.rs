@@ -1552,6 +1552,8 @@ mod tests {
                 layers: layers
                     .iter()
                     .map(|&layer| StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: Some(0.5),

@@ -855,6 +855,8 @@ pub(crate) fn build_pcb(set: RecordSet) -> Result<Pcb, String> {
                     .find(|e| layers.map(AltiumLayer::from_id(e.id)) == Some(layer));
                 let last = i + 1 >= n;
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer,
                     copper_thickness: declared
                         .and_then(|e| e.copper_mm)

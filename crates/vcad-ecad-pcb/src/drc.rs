@@ -53,6 +53,9 @@ pub enum DrcRuleType {
     /// Invisible to every net-based rule, but it short-circuits the structure
     /// between the two points.
     SameNetBypass,
+    /// Signal copper (a trace) on a layer whose stackup role is plane /
+    /// split plane: it cuts the plane. Plane layers carry vias only.
+    PlaneLayerSignal,
 }
 
 /// DRC violation severity.
@@ -226,6 +229,7 @@ fn check_drc_scoped(pcb: &Pcb, region: Option<DrcRegion>) -> Vec<DrcViolation> {
     check_clearance(pcb, &index, &net_ties, &dp_map, region, &mut violations);
     check_pad_clearance(pcb, &net_ties, &dp_map, region, &mut violations);
     check_min_trace_width(pcb, region, &mut violations);
+    check_plane_layer_signal(pcb, region, &mut violations);
     check_min_drill(pcb, region, &mut violations);
     check_edge_clearance(pcb, region, &mut violations);
     check_hole_to_hole(pcb, region, &mut violations);
@@ -797,6 +801,50 @@ fn check_pad_clearance(
                 });
             }
         }
+    }
+}
+
+/// Report every trace on a plane / split-plane layer (stackup role). The
+/// plane's own net is not exempt: a trace on a plane layer is a cut either way
+/// — pour copper belongs in the zone, not in traces.
+fn check_plane_layer_signal(
+    pcb: &Pcb,
+    region: Option<&DrcRegion>,
+    violations: &mut Vec<DrcViolation>,
+) {
+    let planes = pcb.plane_layers();
+    if planes.is_empty() {
+        return;
+    }
+    for t in pcb.traces.iter().filter(|t| planes.contains(&t.layer)) {
+        if !in_scope(region, |r| r.hits_segment(t.start, t.end, t.width / 2.0)) {
+            continue;
+        }
+        let inferred = pcb
+            .stackup
+            .layers
+            .iter()
+            .any(|l| l.layer == t.layer && l.role_inferred);
+        violations.push(DrcViolation {
+            rule: DrcRuleType::PlaneLayerSignal,
+            severity: DrcSeverity::Error,
+            position: Vec2::new((t.start.x + t.end.x) / 2.0, (t.start.y + t.end.y) / 2.0),
+            message: format!(
+                "Signal trace on plane layer {:?} for net '{}' ({:.2} mm){}",
+                t.layer,
+                t.net,
+                (t.end - t.start).length(),
+                if inferred {
+                    " (layer role INFERRED from pour coverage)"
+                } else {
+                    ""
+                }
+            ),
+            actual: (t.end - t.start).length(),
+            required: 0.0,
+            provenance: DrcProvenance::Routing,
+            generated: false,
+        });
     }
 }
 
@@ -3592,6 +3640,8 @@ mod tests {
             stackup: LayerStackup {
                 layers: vec![
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::FCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: Some(1.5),
@@ -3599,6 +3649,8 @@ mod tests {
                         material: Some("FR4".to_string()),
                     },
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::BCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: None,

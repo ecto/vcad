@@ -1519,6 +1519,8 @@ mod tests {
         LayerStackup {
             layers: vec![
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::FCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: Some(1.5),
@@ -1526,6 +1528,8 @@ mod tests {
                     material: Some("FR4".into()),
                 },
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::BCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: None,
@@ -1738,6 +1742,8 @@ mod tests {
         let mut pcb = base_pcb();
         pcb.stackup.layers = vec![
             StackupLayer {
+                role: None,
+                role_inferred: false,
                 layer: PcbLayer::FCu,
                 copper_thickness: Some(0.035),
                 dielectric_thickness: Some(0.2),
@@ -1745,6 +1751,8 @@ mod tests {
                 material: Some("FR4".into()),
             },
             StackupLayer {
+                role: None,
+                role_inferred: false,
                 layer: PcbLayer::In1Cu,
                 copper_thickness: Some(0.035),
                 dielectric_thickness: Some(0.2),
@@ -1752,6 +1760,8 @@ mod tests {
                 material: Some("FR4".into()),
             },
             StackupLayer {
+                role: None,
+                role_inferred: false,
                 layer: PcbLayer::In2Cu,
                 copper_thickness: Some(0.035),
                 dielectric_thickness: Some(0.2),
@@ -1759,6 +1769,8 @@ mod tests {
                 material: Some("FR4".into()),
             },
             StackupLayer {
+                role: None,
+                role_inferred: false,
                 layer: PcbLayer::BCu,
                 copper_thickness: Some(0.035),
                 dielectric_thickness: None,

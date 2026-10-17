@@ -527,6 +527,8 @@ pub fn board_from_sheet(
         layers: copper
             .iter()
             .map(|l| StackupLayer {
+                role: None,
+                role_inferred: false,
                 layer: *l,
                 copper_thickness: Some(0.035),
                 dielectric_thickness: Some(spec.thickness / spec.layers as f64),

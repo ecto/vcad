@@ -272,6 +272,8 @@ pub fn parse_eagle_brd(text: &str) -> Result<Pcb, String> {
 
     // --- Stackup: FCu + inners + BCu with plausible thicknesses. ---
     let mut layers = vec![StackupLayer {
+        role: None,
+        role_inferred: false,
         layer: PcbLayer::FCu,
         copper_thickness: Some(0.035),
         dielectric_thickness: Some(0.2),
@@ -280,6 +282,8 @@ pub fn parse_eagle_brd(text: &str) -> Result<Pcb, String> {
     }];
     for i in 0..n_inner {
         layers.push(StackupLayer {
+            role: None,
+            role_inferred: false,
             // `used` is bounded above, so every inner index maps.
             layer: map_layer(used[i + 1]).expect("inner layer within COPPER_STACK"),
             copper_thickness: Some(0.035),
@@ -289,6 +293,8 @@ pub fn parse_eagle_brd(text: &str) -> Result<Pcb, String> {
         });
     }
     layers.push(StackupLayer {
+        role: None,
+        role_inferred: false,
         layer: PcbLayer::BCu,
         copper_thickness: Some(0.035),
         dielectric_thickness: None,

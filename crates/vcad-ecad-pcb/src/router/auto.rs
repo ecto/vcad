@@ -445,7 +445,18 @@ pub fn route_all_with_opts(
     super::maze::set_through_vias_only(opts.through_vias_only);
     super::maze::set_microvia(opts.microvia);
     FAST.store(opts.fast, std::sync::atomic::Ordering::Relaxed);
-    super::maze::set_no_route_layers(&opts.no_route_layers);
+    // Plane / split-plane layers (stackup roles, authored or inferred) carry
+    // no signal: a trace there cuts the plane. Union with the caller's list.
+    let mut no_route = opts.no_route_layers.clone();
+    for l in pcb.plane_layers() {
+        if !no_route.contains(&l) {
+            no_route.push(l);
+        }
+    }
+    if !no_route.is_empty() {
+        log::info!("no-route (plane) layers: {no_route:?}");
+    }
+    super::maze::set_no_route_layers(&no_route);
     let synthesized = synthesize_pours(pcb, &opts.pour_policy, nets_filter);
     let poured_board;
     let pcb = if synthesized.is_empty() {
@@ -4690,6 +4701,8 @@ mod tests {
             stackup: LayerStackup {
                 layers: vec![
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::FCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: Some(1.5),
@@ -4697,6 +4710,8 @@ mod tests {
                         material: Some("FR4".into()),
                     },
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::BCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: None,
@@ -4752,6 +4767,8 @@ mod tests {
         ]
         .into_iter()
         .map(|layer| StackupLayer {
+            role: None,
+            role_inferred: false,
             layer,
             copper_thickness: Some(0.035),
             dielectric_thickness: Some(0.5),
@@ -5284,6 +5301,8 @@ mod tests {
         pcb.stackup = LayerStackup {
             layers: vec![
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::FCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: Some(0.2),
@@ -5291,6 +5310,8 @@ mod tests {
                     material: Some("FR4".into()),
                 },
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::In1Cu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: Some(1.1),
@@ -5298,6 +5319,8 @@ mod tests {
                     material: Some("FR4".into()),
                 },
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::In2Cu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: Some(0.2),
@@ -5305,6 +5328,8 @@ mod tests {
                     material: Some("FR4".into()),
                 },
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::BCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: None,
@@ -5629,6 +5654,50 @@ mod tests {
             r.vias.iter().filter(|v| v.net == "GND").count() >= 2,
             "U2 and U3 need stitches"
         );
+    }
+
+    /// Plane-role layers carry no signal: with In1Cu marked a GND plane the
+    /// router routes everything elsewhere, and DRC reports a trace there.
+    #[test]
+    fn no_signal_routing_on_plane_layers() {
+        let mut pcb0 = board4(
+            vec![
+                fp(
+                    "U1",
+                    8.0,
+                    8.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, 2.0, "B")],
+                ),
+                fp(
+                    "U2",
+                    40.0,
+                    22.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, 2.0, "B")],
+                ),
+            ],
+            vec![],
+        );
+        for l in &mut pcb0.stackup.layers {
+            if l.layer == PcbLayer::In1Cu {
+                l.role = Some(vcad_ir::ecad::LayerRole::Plane { net: "GND".into() });
+            }
+        }
+        let r = route_all(&pcb0, 0.25, &[]);
+        assert!(r.unrouted_nets.is_empty(), "{:?}", r.unrouted_nets);
+        assert!(r.traces.iter().all(|t| t.layer != PcbLayer::In1Cu));
+        super::super::maze::set_no_route_layers(&[]);
+        let mut pcb = pcb0.clone();
+        pcb.traces.push(vcad_ir::ecad::Trace {
+            start: Vec2::new(20.0, 5.0),
+            end: Vec2::new(25.0, 5.0),
+            width: 0.25,
+            layer: PcbLayer::In1Cu,
+            net: "A".into(),
+            source: None,
+        });
+        assert!(crate::drc::check_drc(&pcb)
+            .iter()
+            .any(|v| v.rule == crate::drc::DrcRuleType::PlaneLayerSignal));
     }
 
     /// Planned fan-out: an outer-layer plane pin over its plane on the
