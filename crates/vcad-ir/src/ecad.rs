@@ -732,6 +732,47 @@ pub struct DesignRules {
     /// Minimum drill diameter in mm.
     #[serde(rename = "minDrill")]
     pub min_drill: f64,
+    /// Minimum microvia drill (mm) — KiCad's `uvia_min_drill`. Microvias
+    /// ([`ViaType::Micro`]) are judged by these two minimums instead of
+    /// `min_drill` / `min_annular_ring` (laser-drilled, one dielectric deep).
+    #[serde(rename = "minMicroviaDrill", default = "default_min_microvia_drill")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "minMicroviaDrill"))]
+    pub min_microvia_drill: f64,
+    /// Minimum microvia pad diameter (mm) — KiCad's `uvia_min_size`.
+    #[serde(
+        rename = "minMicroviaDiameter",
+        default = "default_min_microvia_diameter"
+    )]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "minMicroviaDiameter"))]
+    pub min_microvia_diameter: f64,
+}
+
+/// KiCad's default minimum microvia drill (board setup `uvia_min_drill`).
+pub const DEFAULT_MIN_MICROVIA_DRILL: f64 = 0.1;
+/// KiCad's default minimum microvia diameter (board setup `uvia_min_size`).
+pub const DEFAULT_MIN_MICROVIA_DIAMETER: f64 = 0.2;
+
+fn default_min_microvia_drill() -> f64 {
+    DEFAULT_MIN_MICROVIA_DRILL
+}
+
+fn default_min_microvia_diameter() -> f64 {
+    DEFAULT_MIN_MICROVIA_DIAMETER
+}
+
+/// Via construction type, KiCad semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+#[serde(rename_all = "lowercase")]
+pub enum ViaType {
+    /// Through via (outer to outer).
+    Through,
+    /// Blind or buried via (KiCad `blind`).
+    Blind,
+    /// Laser microvia (KiCad `micro`): spans exactly two ADJACENT copper
+    /// layers; judged by the microvia minimums.
+    Micro,
 }
 
 // ============================================================================
@@ -1055,6 +1096,18 @@ pub struct Via {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub source: Option<CopperSource>,
+    /// Declared construction type. `None` on documents that predate it: such
+    /// a via is judged by the through/blind rules (never assumed micro).
+    #[serde(rename = "viaType", default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "viaType", optional))]
+    pub via_type: Option<ViaType>,
+}
+
+impl Via {
+    /// True when declared a microvia.
+    pub fn is_micro(&self) -> bool {
+        self.via_type == Some(ViaType::Micro)
+    }
 }
 
 // ============================================================================
@@ -1270,6 +1323,8 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".to_string(),
                     trace_width: 0.25,
@@ -1337,6 +1392,7 @@ mod tests {
             }],
             trace_arcs: vec![],
             vias: vec![Via {
+                via_type: None,
                 position: Vec2::new(10.0, 40.0),
                 diameter: 0.8,
                 drill: 0.4,

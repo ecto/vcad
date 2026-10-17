@@ -749,6 +749,8 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".to_string(),
                     trace_width: 0.25,
@@ -816,6 +818,7 @@ mod tests {
             }],
             trace_arcs: vec![],
             vias: vec![Via {
+                via_type: None,
                 position: Vec2::new(10.0, 40.0),
                 diameter: 0.8,
                 drill: 0.4,
@@ -852,6 +855,7 @@ mod tests {
             material: None,
         };
         let via = |start_layer, end_layer| Via {
+            via_type: None,
             position: Vec2::new(50.0, 40.0),
             diameter: 0.8,
             drill: 0.4,
@@ -884,6 +888,8 @@ mod tests {
                 name: "VCC".to_string(),
             }],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".to_string(),
                     trace_width: 0.25,
@@ -990,6 +996,8 @@ mod tests {
             stackup: LayerStackup { layers: vec![] },
             nets: vec![],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".to_string(),
                     trace_width: 0.25,

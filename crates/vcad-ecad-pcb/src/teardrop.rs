@@ -214,6 +214,8 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".into(),
                     trace_width: 0.25,
@@ -258,6 +260,7 @@ mod tests {
         // A trace ending on a same-net via gets one teardrop, bigger than the
         // bare via land.
         let via = Via {
+            via_type: None,
             position: Vec2::new(20.0, 20.0),
             diameter: 1.0,
             drill: 0.5,
@@ -286,6 +289,7 @@ mod tests {
     #[test]
     fn no_teardrop_for_other_net() {
         let via = Via {
+            via_type: None,
             position: Vec2::new(20.0, 20.0),
             diameter: 1.0,
             drill: 0.5,
@@ -310,6 +314,7 @@ mod tests {
     fn no_teardrop_when_land_not_wider_than_trace() {
         // Via barely wider than the 0.25 trace (radius 0.14 < hw 0.125 + 0.05).
         let via = Via {
+            via_type: None,
             position: Vec2::new(20.0, 20.0),
             diameter: 0.28,
             drill: 0.1,

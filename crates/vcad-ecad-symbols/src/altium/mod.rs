@@ -803,6 +803,7 @@ pub(crate) fn build_pcb(set: RecordSet) -> Result<Pcb, String> {
                     .filter(|l| l.is_copper())
                     .unwrap_or(*span.last().unwrap_or(&PcbLayer::BCu));
                 vias.push(Via {
+                    via_type: None,
                     position,
                     diameter,
                     drill,
@@ -1061,6 +1062,8 @@ fn default_rules(records: &[Record]) -> DesignRules {
             .and_then(|r| r.len_mm(key))
     };
     DesignRules {
+        min_microvia_drill: 0.1,
+        min_microvia_diameter: 0.2,
         default_rules: NetClassRules {
             name: "Default".into(),
             trace_width: rule("Width", "MINLIMIT").unwrap_or(0.25),

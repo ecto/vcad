@@ -392,6 +392,7 @@ mod tests {
         pcb.rules.min_drill = 0.20;
         for i in 0..3 {
             pcb.vias.push(vcad_ir::ecad::Via {
+                via_type: None,
                 position: vcad_ir::Vec2::new(2.0 + i as f64, 2.0),
                 diameter: 0.21,
                 drill: 0.12,
@@ -470,6 +471,7 @@ mod tests {
         with_tht_pad(&mut pcb, "J1", "2", 5.4, 5.0, 0.3);
         // A via at a tighter spacing must NOT be allowed to justify anything.
         pcb.vias.push(vcad_ir::ecad::Via {
+            via_type: None,
             position: vcad_ir::Vec2::new(9.0, 9.0),
             diameter: 0.2,
             drill: 0.1,
@@ -479,6 +481,7 @@ mod tests {
             source: None,
         });
         pcb.vias.push(vcad_ir::ecad::Via {
+            via_type: None,
             position: vcad_ir::Vec2::new(9.11, 9.0),
             diameter: 0.2,
             drill: 0.1,

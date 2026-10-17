@@ -692,6 +692,7 @@ fn candidate_pcb(pcb: &Pcb, traces: &[RoutedTrace], vias: &[RoutedVia]) -> Pcb {
     for v in vias {
         let (diameter, drill) = via_geom_for(pcb, &v.net);
         c.vias.push(Via {
+            via_type: None,
             position: v.position,
             diameter,
             drill,
@@ -850,6 +851,8 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".into(),
                     trace_width: 0.25,
@@ -1002,6 +1005,7 @@ mod tests {
         // A pre-existing (manual) via on net B — a fixed hole the router must
         // respect.
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(10.0, 10.0),
             diameter: 0.8,
             drill: 0.4,
@@ -1112,6 +1116,7 @@ mod tests {
     fn illegal_plane_stitch_is_dropped_without_demoting_the_net() {
         let mut pcb = board();
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(10.0, 10.0),
             diameter: 0.8,
             drill: 0.4,

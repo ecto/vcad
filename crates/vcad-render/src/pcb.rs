@@ -1577,6 +1577,8 @@ mod tests {
                 name: "1".to_string(),
             }],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".to_string(),
                     trace_width: 0.25,
@@ -1636,6 +1638,7 @@ mod tests {
             }],
             trace_arcs: vec![],
             vias: vec![Via {
+                via_type: None,
                 position: Vec2::new(5.0, 7.5),
                 diameter: 0.8,
                 drill: 0.4,

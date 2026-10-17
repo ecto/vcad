@@ -1582,6 +1582,8 @@ fn build_gripper_slice2_board(connector_x: f64) -> Pcb {
 
     // Non-zero rules are load-bearing: zeroed clearance/width routes invalid copper.
     let rules = DesignRules {
+        min_microvia_drill: 0.1,
+        min_microvia_diameter: 0.2,
         default_rules: NetClassRules {
             name: "default".into(),
             trace_width: 0.25,

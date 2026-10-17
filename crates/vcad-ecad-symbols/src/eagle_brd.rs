@@ -180,6 +180,7 @@ pub fn parse_eagle_brd(text: &str) -> Result<Pcb, String> {
                     None => drill * 2.0,
                 };
                 vias.push(Via {
+                    via_type: None,
                     position: Vec2::new(fattr(c, "x"), fattr(c, "y")),
                     diameter: dia,
                     drill,
@@ -304,6 +305,8 @@ pub fn parse_eagle_brd(text: &str) -> Result<Pcb, String> {
         stackup: LayerStackup { layers },
         nets,
         rules: DesignRules {
+            min_microvia_drill: 0.1,
+            min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
                 name: "Default".into(),
                 trace_width: 0.25,

@@ -995,6 +995,8 @@ mod tests {
 
     fn rules() -> DesignRules {
         DesignRules {
+            min_microvia_drill: 0.1,
+            min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
                 name: "Default".into(),
                 trace_width: 0.25,
@@ -1249,6 +1251,7 @@ mod tests {
     fn drill_probe_sees_holes_no_copper_probe_could() {
         let mut pcb = empty_pcb();
         pcb.vias.push(vcad_ir::ecad::Via {
+            via_type: None,
             position: Vec2::new(50.0, 50.0),
             diameter: 0.8,
             drill: 0.4,

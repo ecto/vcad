@@ -839,6 +839,30 @@ fn check_min_trace_width(
 }
 
 /// Check that all drills meet the minimum drill diameter.
+/// A via declared [`vcad_ir::ecad::ViaType::Micro`] whose span really is a
+/// microvia: two ADJACENT copper layers of this board's stack (KiCad 8+
+/// allows a microvia on any adjacent pair — CM5's own file carries In1-In2
+/// and In7-In8 microvias). A declared microvia with any other span is judged
+/// by the ordinary via rules (fail-closed: no microvia minimums).
+pub fn is_legal_microvia(pcb: &Pcb, via: &vcad_ir::ecad::Via) -> bool {
+    if !via.is_micro() {
+        return false;
+    }
+    let stack: Vec<PcbLayer> = PcbLayer::COPPER_STACK
+        .iter()
+        .copied()
+        .filter(|l| {
+            pcb.stackup.layers.is_empty() || pcb.stackup.layers.iter().any(|s| s.layer == *l)
+        })
+        .collect();
+    let idx = |l: PcbLayer| stack.iter().position(|&c| c == l);
+    let (Some(a), Some(b)) = (idx(via.start_layer), idx(via.end_layer)) else {
+        return false;
+    };
+    let (lo, hi) = (a.min(b), a.max(b));
+    hi == lo + 1
+}
+
 fn check_min_drill(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     let min_drill = pcb.rules.min_drill;
 
@@ -847,13 +871,20 @@ fn check_min_drill(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<D
         if !in_scope(region, |r| r.hits_point(via.position, via.diameter / 2.0)) {
             continue;
         }
+        // A legal microvia is judged by the microvia minimum (KiCad
+        // `uvia_min_drill`); anything else by the via minimum.
+        let (min_drill, kind) = if is_legal_microvia(pcb, via) {
+            (pcb.rules.min_microvia_drill, "Microvia")
+        } else {
+            (min_drill, "Via")
+        };
         if via.drill < min_drill - 1e-6 {
             violations.push(DrcViolation {
                 rule: DrcRuleType::MinDrill,
                 severity: DrcSeverity::Error,
                 position: via.position,
                 message: format!(
-                    "Via drill {:.3}mm below minimum {:.3}mm",
+                    "{kind} drill {:.3}mm below minimum {:.3}mm",
                     via.drill, min_drill
                 ),
                 actual: via.drill,
@@ -1058,6 +1089,24 @@ fn check_annular_ring(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Ve
     // Check vias
     for via in &pcb.vias {
         if !in_scope(region, |r| r.hits_point(via.position, via.diameter / 2.0)) {
+            continue;
+        }
+        // KiCad microvia semantics: a microvia's pad is constrained by
+        // `uvia_min_size` (diameter), not by the via annular-ring rule.
+        if is_legal_microvia(pcb, via) {
+            let min_d = pcb.rules.min_microvia_diameter;
+            if via.diameter < min_d - 1e-6 {
+                violations.push(DrcViolation {
+                    rule: DrcRuleType::AnnularRing,
+                    severity: DrcSeverity::Error,
+                    position: via.position,
+                    message: format!("Microvia diameter {:.3}mm < {:.3}mm", via.diameter, min_d),
+                    actual: via.diameter,
+                    required: min_d,
+                    provenance: DrcProvenance::Routing,
+                    generated: false,
+                });
+            }
             continue;
         }
         let ring = (via.diameter - via.drill) / 2.0;
@@ -3503,6 +3552,8 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".to_string(),
                     trace_width: 0.25,
@@ -3542,6 +3593,7 @@ mod tests {
             ],
             trace_arcs: vec![],
             vias: vec![Via {
+                via_type: None,
                 position: Vec2::new(50.0, 40.0),
                 diameter: 0.8,
                 drill: 0.4,
@@ -3587,6 +3639,7 @@ mod tests {
             // A GND (net "2") through-via FCu->BCu that physically passes
             // through the In2Cu 3V3 plane.
             pcb.vias.push(Via {
+                via_type: None,
                 position: Vec2::new(70.0, 40.0),
                 diameter: 0.8,
                 drill: 0.4,
@@ -3966,6 +4019,7 @@ mod tests {
     fn detect_min_drill_violation() {
         let mut pcb = clean_pcb();
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(30.0, 60.0),
             diameter: 0.6,
             drill: 0.15, // below 0.2 minimum
@@ -4016,6 +4070,7 @@ mod tests {
         let mut pcb = clean_pcb();
         // Place two vias very close together
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(50.5, 40.0),
             diameter: 0.8,
             drill: 0.4,
@@ -4041,6 +4096,7 @@ mod tests {
         let mut pcb = clean_pcb();
         // Via with very thin annular ring
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(70.0, 40.0),
             diameter: 0.5,
             drill: 0.4, // ring = 0.05mm < 0.15mm
@@ -4540,6 +4596,7 @@ mod tests {
             no_components: false,
         });
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(50.0, 50.0),
             diameter: 0.8,
             drill: 0.4,
@@ -4861,6 +4918,7 @@ mod tests {
         btrace.layer = PcbLayer::BCu;
         // Via at (40,40) bridging FCu→BCu on net 1.
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(40.0, 40.0),
             diameter: 0.8,
             drill: 0.4,
@@ -5008,11 +5066,54 @@ mod tests {
         }
     }
 
+    /// Microvias are judged by the microvia minimums (KiCad uvia_min_drill /
+    /// uvia_min_size), not the via drill / annular-ring floors; a "micro" via
+    /// whose span is not adjacent-outer gets the ordinary via rules.
+    #[test]
+    fn microvias_judged_by_their_own_minimums() {
+        let via = |d: f64, dr: f64, a: PcbLayer, b: PcbLayer, t| Via {
+            via_type: Some(t),
+            position: Vec2::new(30.0, 60.0),
+            diameter: d,
+            drill: dr,
+            start_layer: a,
+            end_layer: b,
+            net: "2".to_string(),
+            source: None,
+        };
+        use vcad_ir::ecad::ViaType::{Micro, Through};
+        let judge = |v: Via| {
+            let mut pcb = clean_pcb();
+            // Stack = F.Cu, In1.Cu, B.Cu.
+            let mut l1 = pcb.stackup.layers[0].clone();
+            l1.layer = PcbLayer::In1Cu;
+            pcb.stackup.layers.insert(1, l1);
+            pcb.vias.push(v);
+            let r = check_drc(&pcb);
+            (
+                r.iter().any(|x| x.rule == DrcRuleType::MinDrill),
+                r.iter().any(|x| x.rule == DrcRuleType::AnnularRing),
+            )
+        };
+        let (f, i1, b) = (PcbLayer::FCu, PcbLayer::In1Cu, PcbLayer::BCu);
+        // CM5's laser microvia 0.21/0.12 F.Cu-In1.Cu: legal.
+        assert_eq!(judge(via(0.21, 0.12, f, i1, Micro)), (false, false));
+        // Same geometry declared through: fails drill and ring floors.
+        assert_eq!(judge(via(0.21, 0.12, f, b, Through)), (true, true));
+        // In1.Cu-B.Cu: adjacent and outer in this 3-layer stack — legal too.
+        assert_eq!(judge(via(0.21, 0.12, i1, b, Micro)), (false, false));
+        // Microvia below its own minimums still fails.
+        assert_eq!(judge(via(0.18, 0.08, f, i1, Micro)), (true, true));
+        // "Micro" spanning F.Cu-B.Cu is not a microvia: via rules apply.
+        assert_eq!(judge(via(0.21, 0.12, f, b, Micro)), (true, true));
+    }
+
     /// Every violation carries a provenance, and a via drill fault is routing.
     #[test]
     fn via_drill_fault_is_routing_provenance() {
         let mut pcb = clean_pcb();
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(30.0, 60.0),
             diameter: 0.6,
             drill: 0.15,
@@ -5366,6 +5467,7 @@ mod tests {
 
         // Stitch the plane to the net with a via FCu→In1Cu over the trace.
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(30.0, 40.0),
             diameter: 0.8,
             drill: 0.4,
@@ -5433,6 +5535,7 @@ mod tests {
         // A through via joins In7 to In8.
         pcb.traces[0].layer = PcbLayer::In7Cu;
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(15.0, 10.0),
             diameter: 0.4,
             drill: 0.2,
@@ -5575,6 +5678,7 @@ mod tests {
         )];
         // The stitching via: a +3V3 through-via at the pad reaching the In1Cu plane.
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(50.0, 40.0),
             diameter: 0.8,
             drill: 0.4,
@@ -5653,6 +5757,7 @@ mod tests {
         assert!((outer.x - 57.2).abs() < 1e-9 && (outer.y - 40.0).abs() < 1e-9);
         // The coil's inner terminal via.
         pcb.vias.push(Via {
+            via_type: None,
             position: inner,
             diameter: 0.6,
             drill: 0.3,
@@ -5721,6 +5826,7 @@ mod tests {
         let center = Vec2::new(50.0, 40.0);
         let (inner, outer) = add_spiral(&mut pcb, center, 10, 2.6, 7.2, 0.25, "COIL");
         pcb.vias.push(Via {
+            via_type: None,
             position: inner,
             diameter: 0.6,
             drill: 0.3,
@@ -5772,6 +5878,7 @@ mod tests {
         // A GND trace on FCu, terminated by a stitching via into the plane…
         pcb.traces.push(trace((20.0, 40.0), (40.0, 40.0), "2"));
         let via = |x: f64, y: f64| Via {
+            via_type: None,
             position: Vec2::new(x, y),
             diameter: 0.8,
             drill: 0.4,

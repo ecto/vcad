@@ -276,6 +276,20 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
 
     // 5. Parse design rules
     let rules = parse_design_rules(root);
+    let has_micro = root
+        .find_all("via")
+        .iter()
+        .any(|v| v.children().and_then(|c| c.get(1)).and_then(|x| x.as_str()) == Some("micro"));
+    for (key, v) in [
+        ("uvia_min_drill", rules.min_microvia_drill),
+        ("uvia_min_size", rules.min_microvia_diameter),
+    ] {
+        if has_micro && root.find("setup").and_then(|s| child_f64(s, key)).is_none() {
+            ctx.warn(format!(
+                "board setup has no ({key}); using KiCad's default {v} mm for microvias"
+            ));
+        }
+    }
 
     // 6. Parse footprints. Legacy boards (KiCad 4/5, e.g. the VESC 4.12)
     // call them `module`; the inner shape (pads, at, layer) is compatible.
@@ -748,7 +762,16 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
         target_diff_impedance: None,
     });
 
+    let setup = root.find("setup");
+    let uvia = |key: &str, dflt: f64| setup.and_then(|s| child_f64(s, key)).unwrap_or(dflt);
     DesignRules {
+        // KiCad's own defaults when the board omits them (they normally live
+        // in the .kicad_pro); `parse_kicad_pcb` logs which were defaulted.
+        min_microvia_drill: uvia("uvia_min_drill", vcad_ir::ecad::DEFAULT_MIN_MICROVIA_DRILL),
+        min_microvia_diameter: uvia(
+            "uvia_min_size",
+            vcad_ir::ecad::DEFAULT_MIN_MICROVIA_DIAMETER,
+        ),
         default_rules,
         class_rules,
         net_class_assignments,
@@ -1126,7 +1149,20 @@ fn parse_via(node: &SExpr<'_>, ctx: &Ctx<'_>) -> Option<Via> {
             }
         };
 
+    // KiCad's type token sits right after `via`: `micro`, `blind`, or none
+    // (through).
+    let token = node
+        .children()
+        .and_then(|c| c.get(1))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let via_type = Some(match token {
+        "micro" => vcad_ir::ecad::ViaType::Micro,
+        "blind" => vcad_ir::ecad::ViaType::Blind,
+        _ => vcad_ir::ecad::ViaType::Through,
+    });
     Some(Via {
+        via_type,
         position,
         diameter,
         drill,

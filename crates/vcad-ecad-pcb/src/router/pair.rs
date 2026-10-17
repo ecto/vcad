@@ -1768,6 +1768,7 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
             }
             for &(pt, la, lb) in &pl.via_pts {
                 work.vias.push(Via {
+                    via_type: None,
                     position: pt,
                     diameter: work.rules.default_rules.via_diameter,
                     drill: work.rules.default_rules.via_drill,
@@ -1802,6 +1803,7 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
                 }
                 for &(pt, la, lb) in &pl.via_pts {
                     work.vias.push(Via {
+                        via_type: None,
                         position: pt,
                         diameter: work.rules.default_rules.via_diameter,
                         drill: work.rules.default_rules.via_drill,
@@ -1980,6 +1982,8 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".into(),
                     trace_width: 0.25,
@@ -2560,6 +2564,7 @@ mod tests {
         }
         for v in &r.vias {
             pcb.vias.push(Via {
+                via_type: None,
                 position: v.position,
                 diameter: pcb.rules.default_rules.via_diameter,
                 drill: pcb.rules.default_rules.via_drill,

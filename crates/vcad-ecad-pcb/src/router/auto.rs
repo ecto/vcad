@@ -487,6 +487,7 @@ pub fn route_all_with_opts(
             }
             for (v, net) in &ps.vias {
                 p.vias.push(vcad_ir::ecad::Via {
+                    via_type: None,
                     position: *v,
                     diameter: pcb.rules.default_rules.via_diameter,
                     drill: pcb.rules.default_rules.via_drill,
@@ -1155,6 +1156,7 @@ pub fn route_all_with_opts(
             source: None,
         }));
         b.vias.extend(vias.iter().map(|v| Via {
+            via_type: None,
             position: v.position,
             diameter: pcb.rules.default_rules.via_diameter,
             drill: pcb.rules.default_rules.via_drill,
@@ -3721,6 +3723,7 @@ fn realized_board(
     use vcad_ir::ecad::{Trace, Via};
     let mut b = pcb.clone();
     let via = |pt: Vec2, net: &str, a: PcbLayer, z: PcbLayer| Via {
+        via_type: None,
         position: pt,
         diameter: pcb.rules.default_rules.via_diameter,
         drill: pcb.rules.default_rules.via_drill,
@@ -4510,6 +4513,8 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".into(),
                     trace_width: 0.25,
@@ -4636,6 +4641,7 @@ mod tests {
             (b, "B", PcbLayer::In2Cu, PcbLayer::BCu),
         ] {
             judged.vias.push(Via {
+                via_type: None,
                 position: p,
                 diameter: via_r * 2.0,
                 drill,
@@ -4667,6 +4673,7 @@ mod tests {
         }
         for v in &r.vias {
             pcb.vias.push(Via {
+                via_type: None,
                 position: v.position,
                 diameter: 0.8,
                 drill: 0.4,

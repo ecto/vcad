@@ -596,6 +596,7 @@ impl Driver {
             }
             self.session.commit_drill(p, via_drill);
             self.pcb.vias.push(vcad_ir::ecad::Via {
+                via_type: None,
                 position: p,
                 diameter: via_d,
                 drill: via_drill,

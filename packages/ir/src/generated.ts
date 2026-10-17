@@ -1525,7 +1525,17 @@ minAnnularRing: number,
 /**
  * Minimum drill diameter in mm.
  */
-minDrill: number, };
+minDrill: number, 
+/**
+ * Minimum microvia drill (mm) — KiCad's `uvia_min_drill`. Microvias
+ * ([`ViaType::Micro`]) are judged by these two minimums instead of
+ * `min_drill` / `min_annular_ring` (laser-drilled, one dielectric deep).
+ */
+minMicroviaDrill: number, 
+/**
+ * Minimum microvia pad diameter (mm) — KiCad's `uvia_min_size`.
+ */
+minMicroviaDiameter: number, };
 
 /**
  * A vcad document — the `.vcad` file format.
@@ -4305,7 +4315,17 @@ net: string,
  * Who placed this via. Absent on pre-provenance documents (treated as
  * autorouted, i.e. rippable by `route_nets`).
  */
-source?: CopperSource, };
+source?: CopperSource, 
+/**
+ * Declared construction type. `None` on documents that predate it: such
+ * a via is judged by the through/blind rules (never assumed micro).
+ */
+viaType?: ViaType, };
+
+/**
+ * Via construction type, KiCad semantics.
+ */
+export type ViaType = "through" | "blind" | "micro";
 
 /**
  * Vignette effect settings.

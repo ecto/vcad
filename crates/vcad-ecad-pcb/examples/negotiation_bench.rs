@@ -94,6 +94,8 @@ fn board(w: f64, h: f64, footprints: Vec<Footprint>, keepouts: Vec<Keepout>) -> 
         },
         nets: vec![],
         rules: DesignRules {
+            min_microvia_drill: 0.1,
+            min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
                 name: "Default".into(),
                 trace_width: 0.25,
@@ -267,6 +269,7 @@ fn run(pcb: &Pcb, negotiation_rounds: usize) -> Score {
     }
     for v in &r.vias {
         applied.vias.push(Via {
+            via_type: None,
             position: v.position,
             diameter: applied.rules.default_rules.via_diameter,
             drill: applied.rules.default_rules.via_drill,

@@ -43,6 +43,8 @@ pub fn test_board() -> Pcb {
         },
         nets: vec![],
         rules: DesignRules {
+            min_microvia_drill: 0.1,
+            min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
                 name: "Default".into(),
                 trace_width: 0.2,

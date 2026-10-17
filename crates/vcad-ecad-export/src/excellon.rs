@@ -262,6 +262,8 @@ mod tests {
                 name: "VCC".into(),
             }],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".into(),
                     trace_width: 0.25,
@@ -338,6 +340,7 @@ mod tests {
             traces: vec![],
             trace_arcs: vec![],
             vias: vec![Via {
+                via_type: None,
                 position: Vec2::new(30.0, 20.0),
                 diameter: 0.8,
                 drill: 0.3,
@@ -427,6 +430,7 @@ mod tests {
     fn mixed_span_pcb() -> Pcb {
         let mut pcb = test_pcb();
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(31.0, 21.0),
             diameter: 0.4,
             drill: 0.2,
@@ -437,6 +441,7 @@ mod tests {
             source: None,
         });
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(32.0, 22.0),
             diameter: 0.4,
             drill: 0.2,

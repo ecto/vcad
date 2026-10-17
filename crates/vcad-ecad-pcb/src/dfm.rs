@@ -1490,6 +1490,8 @@ mod tests {
 
     fn default_rules() -> DesignRules {
         DesignRules {
+            min_microvia_drill: 0.1,
+            min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
                 name: "Default".into(),
                 trace_width: 0.25,
@@ -1616,6 +1618,7 @@ mod tests {
         // 2) A via with a 0.1mm drill — below JLC 0.2mm min drill, and a
         //    0.05mm annular ring (0.2 dia / 0.1 drill) below 0.13mm.
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(25.0, 20.0),
             diameter: 0.2,
             drill: 0.1,
@@ -1698,6 +1701,7 @@ mod tests {
             properties: std::collections::HashMap::new(),
         });
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(20.0, 20.0),
             diameter: 0.4,
             drill: 0.2,

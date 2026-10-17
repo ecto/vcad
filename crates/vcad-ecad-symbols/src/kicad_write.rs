@@ -388,6 +388,14 @@ fn write_setup(e: &mut Emitter, pcb: &Pcb, with_project: bool) {
     e.line(2, &format!("(via_min_size {})", num(min_via_diameter(pcb))));
     e.line(2, &format!("(via_min_drill {})", num(r.min_drill)));
     e.line(2, &format!("(via_min_annulus {})", num(r.min_annular_ring)));
+    e.line(
+        2,
+        &format!("(uvia_min_size {})", num(r.min_microvia_diameter)),
+    );
+    e.line(
+        2,
+        &format!("(uvia_min_drill {})", num(r.min_microvia_drill)),
+    );
     e.line(2, &format!("(hole_to_hole_min {})", num(r.hole_to_hole)));
     e.line(2, "(allow_soldermask_bridges_in_footprints no)");
     e.line(1, ")");
@@ -1184,9 +1192,15 @@ fn write_via(e: &mut Emitter, v: &Via, nets: &NetTable, copper: &[PcbLayer]) {
     let idx = |l: PcbLayer| copper.iter().position(|&c| c == l);
     let adjacent = matches!((idx(top), idx(bottom)), (Some(a), Some(b)) if b == a + 1);
     let outer = top == PcbLayer::FCu || bottom == PcbLayer::BCu;
-    if top == PcbLayer::FCu && bottom == PcbLayer::BCu {
+    // A declared type wins; legacy (untyped) vias keep the span inference.
+    let micro = match v.via_type {
+        Some(vcad_ir::ecad::ViaType::Micro) => true,
+        Some(_) => false,
+        None => adjacent && outer,
+    };
+    if top == PcbLayer::FCu && bottom == PcbLayer::BCu && !micro {
         e.line(1, "(via");
-    } else if adjacent && outer {
+    } else if micro {
         e.line(1, "(via micro");
     } else {
         e.line(1, "(via blind");
@@ -2992,6 +3006,8 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".into(),
                     trace_width: 0.25,
@@ -3081,6 +3097,7 @@ mod tests {
             }],
             trace_arcs: vec![],
             vias: vec![Via {
+                via_type: None,
                 position: Vec2::new(50.0, 40.0),
                 diameter: 0.8,
                 drill: 0.4,
@@ -3284,6 +3301,39 @@ mod tests {
     /// netclass clearance) — and any calibration applied during fab-prep was
     /// invisible in the file. Re-importing shows the same, since our reader and
     /// KiCad's read the same tokens.
+    #[test]
+    fn microvia_type_and_rules_round_trip() {
+        let text = r#"(kicad_pcb (version 20221018)
+  (general (thickness 1.0))
+  (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (2 "In2.Cu" signal) (31 "B.Cu" signal))
+  (setup (uvia_min_size 0.18) (uvia_min_drill 0.09))
+  (net 1 "SIG")
+  (via micro (at 1 1) (size 0.21) (drill 0.12) (layers "F.Cu" "In1.Cu") (net 1))
+  (via blind (at 2 1) (size 0.4) (drill 0.2) (layers "F.Cu" "In2.Cu") (net 1))
+  (via (at 3 1) (size 0.4) (drill 0.2) (layers "F.Cu" "B.Cu") (net 1))
+)"#;
+        use vcad_ir::ecad::ViaType;
+        let pcb = parse_kicad_pcb(text).unwrap();
+        let types: Vec<_> = pcb.vias.iter().map(|v| v.via_type).collect();
+        assert_eq!(
+            types,
+            vec![
+                Some(ViaType::Micro),
+                Some(ViaType::Blind),
+                Some(ViaType::Through)
+            ]
+        );
+        assert_eq!(pcb.rules.min_microvia_diameter, 0.18);
+        assert_eq!(pcb.rules.min_microvia_drill, 0.09);
+        let back = parse_kicad_pcb(&write_kicad_pcb(&pcb)).unwrap();
+        assert_eq!(
+            back.vias.iter().map(|v| v.via_type).collect::<Vec<_>>(),
+            types
+        );
+        assert_eq!(back.rules.min_microvia_diameter, 0.18);
+        assert_eq!(back.rules.min_microvia_drill, 0.09);
+    }
+
     #[test]
     fn design_rules_round_trip_through_kicad_board() {
         let pcb = fine_pitch_pcb();

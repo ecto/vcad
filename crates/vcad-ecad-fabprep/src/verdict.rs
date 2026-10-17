@@ -367,6 +367,7 @@ fn commit_path(
         }
         session.commit_drill(p, via_drill);
         pcb.vias.push(Via {
+            via_type: None,
             position: p,
             diameter: via_d,
             drill: via_drill,
@@ -463,6 +464,7 @@ mod tests {
         let mut pcb = test_board();
         with_trace(&mut pcb, "A", 1.0, 1.0, 5.0, 1.0);
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(2.0, 2.0),
             diameter: 0.4,
             drill: 0.2,
@@ -555,6 +557,7 @@ mod tests {
         // stackup used here), drill-illegal: centres 0.5mm, drills 0.3 → 0.2mm
         // hole-to-hole against a 0.25mm rule.
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(5.5, 5.0),
             diameter: 0.6,
             drill: 0.3,

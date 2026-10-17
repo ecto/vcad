@@ -1153,6 +1153,8 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".into(),
                     trace_width: 0.25,
@@ -1220,6 +1222,7 @@ mod tests {
             }],
             trace_arcs: vec![],
             vias: vec![Via {
+                via_type: None,
                 position: Vec2::new(10.0, 20.0),
                 diameter: 0.8,
                 drill: 0.4,
@@ -1777,6 +1780,7 @@ mod tests {
         pcb.zones.clear();
         pcb.traces.clear();
         pcb.vias = vec![Via {
+            via_type: None,
             position: Vec2::new(30.0, 20.0),
             diameter: 0.8,
             drill: 0.3,

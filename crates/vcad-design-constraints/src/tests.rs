@@ -53,6 +53,8 @@ fn board_doc(footprints: Vec<Footprint>) -> Document {
         },
         nets: vec![],
         rules: DesignRules {
+            min_microvia_drill: 0.1,
+            min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
                 name: "default".to_string(),
                 trace_width: 0.25,

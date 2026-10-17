@@ -1729,6 +1729,7 @@ mod tests {
             )
             .expect("board");
             pcb.vias.push(vcad_ir::ecad::Via {
+                via_type: None,
                 position: Vec2::new(5.0, via_y),
                 diameter: 0.21,
                 drill: 0.12,
@@ -2352,6 +2353,7 @@ mod tests {
             tr("OTHER", (2.0, 13.0), (22.0, 13.0), f),
         ];
         pcb.vias = vec![Via {
+            via_type: None,
             position: Vec2::new(7.0, 11.6),
             diameter: 0.3,
             drill: 0.15,
@@ -2436,6 +2438,8 @@ mod tests {
             stackup: LayerStackup { layers: vec![] },
             nets: vec![],
             rules: DesignRules {
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
                     name: "Default".into(),
                     trace_width: 0.1,

@@ -242,6 +242,7 @@ fn main() {
     }
     for v in &r.vias {
         pcb.vias.push(Via {
+            via_type: None,
             position: v.position,
             diameter: pcb.rules.default_rules.via_diameter,
             drill: pcb.rules.default_rules.via_drill,
