@@ -709,6 +709,98 @@ pub fn route_all_with_opts(
         }
     }
 
+    // Island stitching. `stitch_planes` trusts a pad that sits on a layer
+    // carrying a same-net zone to flood into it, but a dense outer-layer pour
+    // fragments around other-net copper: on the full CM5 the GND FCu pour left
+    // its pads in 289 disjoint groups, and 33 nets the router reported routed
+    // were split under DRC. Judge the realized copper with DRC's own
+    // connectivity and drop one stitch per stranded island (any pad of it that
+    // escapes to a via reaching the net's other plane layers) — not a via per
+    // pad, which measured 4.8x slower and crowded 14 signal nets out.
+    if !planes.is_empty() {
+        let mut holes_now = holes.clone();
+        holes_now.extend(
+            stitch
+                .vias
+                .iter()
+                .map(|(p, _)| (*p, pcb.rules.default_rules.via_drill / 2.0)),
+        );
+        for p in &placed {
+            holes_now.extend(
+                p.via_pts
+                    .iter()
+                    .map(|(v, _, _)| (*v, pcb.rules.default_rules.via_drill / 2.0)),
+            );
+        }
+        let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+        let drill_r = pcb.rules.default_rules.via_drill / 2.0;
+        let copper = copper_layers(pcb);
+        for round in 0..ISLAND_STITCH_ROUNDS {
+            let board = realized_board(pcb, &placed, &stitch, &session, width);
+            let islands = crate::drc::pad_islands(&board);
+            let mut added = 0usize;
+            let mut stranded = 0usize;
+            for (net, groups) in &islands {
+                if groups.len() < 2 || !planes.contains_key(net) {
+                    continue;
+                }
+                if !nets_filter.is_empty() && !nets_filter.iter().any(|n| n == net) {
+                    continue;
+                }
+                let clearance = session.clearance_for(net);
+                let w = session.width_for(net, width);
+                for group in &groups[1..] {
+                    stranded += 1;
+                    let extra: Vec<Vec2> = stitch
+                        .vias
+                        .iter()
+                        .filter(|(_, n)| n == net)
+                        .map(|(p, _)| *p)
+                        .collect();
+                    for &(pad_pt, pad_layer) in group {
+                        let mut spans: Vec<SpanId> = Vec::new();
+                        match escape_endpoint(
+                            &mut session,
+                            pcb,
+                            net,
+                            pad_pt,
+                            pad_layer,
+                            w,
+                            clearance,
+                            via_r,
+                            &copper,
+                            &placed,
+                            &extra,
+                            &mut spans,
+                            true,
+                            &holes_now,
+                        ) {
+                            Some(Escape {
+                                via: Some(v), stub, ..
+                            }) => {
+                                if let Some((a, b)) = stub {
+                                    stitch.stubs.push((a, b, net.clone(), pad_layer));
+                                }
+                                stitch.vias.push((v, net.clone()));
+                                holes_now.push((v, drill_r));
+                                stitch.nets.insert(net.clone());
+                                added += 1;
+                                break;
+                            }
+                            _ => rollback(&mut session, &spans),
+                        }
+                    }
+                }
+            }
+            log::info!(
+                "island stitch round {round}: {stranded} stranded plane island(s), {added} stitched"
+            );
+            if added == 0 {
+                break;
+            }
+        }
+    }
+
     // Invariant audit over everything this pass is about to emit — placed
     // routes plus the plane stitching — against the settled session.
     audit_placed(&session, pcb, &placed);
@@ -908,6 +1000,56 @@ pub fn route_all_with_opts(
                 at.x, at.y
             ),
         });
+    }
+    // Fail-closed completion: a net is routed only if DRC's own connectivity
+    // over the returned copper agrees its pads form ONE island. The router's
+    // per-connection bookkeeping disagreed with DRC on 33 full-CM5 nets
+    // (plane nets whose same-layer pour fragmented, escapes that ended on a
+    // dead via) and reported 407/408 routed against 374 DRC-connected.
+    {
+        use vcad_ir::ecad::{Trace, Via};
+        let mut b = pcb.clone();
+        b.traces.extend(traces.iter().map(|t| Trace {
+            start: t.start,
+            end: t.end,
+            width: t.width,
+            layer: t.layer,
+            net: t.net.clone(),
+            source: None,
+        }));
+        b.vias.extend(vias.iter().map(|v| Via {
+            position: v.position,
+            diameter: pcb.rules.default_rules.via_diameter,
+            drill: pcb.rules.default_rules.via_drill,
+            start_layer: v.start_layer,
+            end_layer: v.end_layer,
+            net: v.net.clone(),
+            source: None,
+        }));
+        for (net, groups) in crate::drc::pad_islands(&b) {
+            if groups.len() < 2 || !routed.contains(&net) || unrouted.contains(&net) {
+                continue;
+            }
+            let at = groups[1][0].0;
+            unrouted.insert(net.clone());
+            diagnostics.push(UnroutedDiagnostic {
+                net: net.clone(),
+                from: groups[0][0].0,
+                to: at,
+                blocking_nets: Vec::new(),
+                region_min: at,
+                region_max: at,
+                suggested_layer: None,
+                suggested_via: None,
+                reason: format!(
+                    "pads split across {} disjoint copper groups under DRC connectivity \
+                     (a stranded group near ({:.2}, {:.2}))",
+                    groups.len(),
+                    at.x,
+                    at.y
+                ),
+            });
+        }
     }
     // A net both routed and (partially) failed is still incompletely connected —
     // keep it flagged so the caller knows to inspect it.
@@ -3250,6 +3392,65 @@ fn plane_layers(pcb: &Pcb) -> BTreeMap<String, Vec<PcbLayer>> {
     m
 }
 
+/// Rounds of [`route_all_with_opts`]'s island stitching: each round re-judges
+/// connectivity, since a stitch can land in a plane island that is itself
+/// stranded.
+const ISLAND_STITCH_ROUNDS: usize = 3;
+
+/// `pcb` plus everything this pass has realized so far (placed routes and the
+/// plane stitching), as a board DRC can judge.
+fn realized_board(
+    pcb: &Pcb,
+    placed: &[Placed],
+    stitch: &Stitch,
+    session: &RouteSession,
+    width: f64,
+) -> Pcb {
+    use vcad_ir::ecad::{Trace, Via};
+    let mut b = pcb.clone();
+    let via = |pt: Vec2, net: &str, a: PcbLayer, z: PcbLayer| Via {
+        position: pt,
+        diameter: pcb.rules.default_rules.via_diameter,
+        drill: pcb.rules.default_rules.via_drill,
+        start_layer: a,
+        end_layer: z,
+        net: net.to_string(),
+        source: None,
+    };
+    let tr = |a: Vec2, z: Vec2, w: f64, l: PcbLayer, net: &str| Trace {
+        start: a,
+        end: z,
+        width: w,
+        layer: l,
+        net: net.to_string(),
+        source: None,
+    };
+    for p in placed {
+        for &(a, z, l) in &p.segments {
+            b.traces.push(tr(a, z, p.width, l, &p.net));
+        }
+        for &(a, z, l) in &p.stubs {
+            b.traces.push(tr(a, z, p.stub_width, l, &p.net));
+        }
+        for &(pt, la, lb) in &p.via_pts {
+            b.vias.push(via(pt, &p.net, la, lb));
+        }
+    }
+    for (a, z, net, l) in &stitch.stubs {
+        b.traces
+            .push(tr(*a, *z, session.width_for(net, width), *l, net));
+    }
+    let copper = copper_layers(pcb);
+    let (top, bot) = (
+        *copper.first().unwrap_or(&PcbLayer::FCu),
+        *copper.last().unwrap_or(&PcbLayer::BCu),
+    );
+    for (pt, net) in &stitch.vias {
+        b.vias.push(via(*pt, net, top, bot));
+    }
+    b
+}
+
 /// Plane stitching output: dog-bone stubs, stitching vias, and net bookkeeping.
 struct Stitch {
     /// Stub segments (pad → via) with their net and pad layer.
@@ -4795,6 +4996,72 @@ mod tests {
             "planes must connect their pads, still unconnected: {:?}",
             unconnected.iter().map(|v| &v.message).collect::<Vec<_>>()
         );
+    }
+
+    /// A same-layer pour that does not reach every pad is not a plane for
+    /// those pads. GND has an FCu pour covering only U1 plus a whole-board
+    /// In1Cu plane; every GND pad sits on FCu, so stitch_planes trusts all of
+    /// them to "flood" — yet U2/U3 touch no copper at all. The island pass
+    /// must stitch the stranded groups, and the routed claim must agree with
+    /// DRC (full CM5: 33 nets reported routed were split under DRC).
+    #[test]
+    fn island_stitch_connects_pads_a_partial_pour_strands() {
+        let mut fcu = plane("GND", PcbLayer::FCu);
+        fcu.outline = vec![
+            Vec2::new(4.0, 4.0),
+            Vec2::new(12.0, 4.0),
+            Vec2::new(12.0, 12.0),
+            Vec2::new(4.0, 12.0),
+        ];
+        let pcb0 = board4(
+            vec![
+                fp("U1", 8.0, 8.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U2", 25.0, 8.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U3", 42.0, 22.0, vec![pad("1", 0.0, 0.0, "GND")]),
+            ],
+            vec![fcu, plane("GND", PcbLayer::In1Cu)],
+        );
+        let r = route_all(&pcb0, 0.25, &[]);
+        let mut pcb = pcb0.clone();
+        apply(&mut pcb, &r);
+        let split = crate::drc::pad_islands(&pcb)
+            .get("GND")
+            .map(|g| g.len())
+            .unwrap_or(0);
+        assert_eq!(split, 1, "GND pads must form one island");
+        assert!(
+            r.routed_nets.iter().any(|n| n == "GND"),
+            "{:?}",
+            r.diagnostics
+        );
+        assert!(
+            r.vias.iter().filter(|v| v.net == "GND").count() >= 2,
+            "U2 and U3 need stitches"
+        );
+    }
+
+    /// The routed claim is fail-closed: a pad DRC sees stranded makes its net
+    /// unrouted, whatever the per-connection bookkeeping recorded.
+    #[test]
+    fn pad_islands_groups_pads_by_drc_connectivity() {
+        let pcb = board4(
+            vec![
+                fp("U1", 8.0, 8.0, vec![pad("1", 0.0, 0.0, "SIG")]),
+                fp("U2", 25.0, 8.0, vec![pad("1", 0.0, 0.0, "SIG")]),
+            ],
+            vec![],
+        );
+        assert_eq!(crate::drc::pad_islands(&pcb)["SIG"].len(), 2);
+        let mut joined = pcb.clone();
+        joined.traces.push(vcad_ir::ecad::Trace {
+            start: Vec2::new(8.0, 8.0),
+            end: Vec2::new(25.0, 8.0),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: "SIG".into(),
+            source: None,
+        });
+        assert_eq!(crate::drc::pad_islands(&joined)["SIG"].len(), 1);
     }
 
     #[test]

@@ -3019,6 +3019,40 @@ pub(crate) fn net_graph(pcb: &Pcb, net: &str) -> NetGraph {
     }
 }
 
+/// Every net's pads grouped by galvanic island under DRC's own board-wide
+/// connectivity (pours filled with their clearance voids), largest island
+/// first. Each pad is `(world position, first copper layer)`. One
+/// connectivity build for the whole board.
+pub(crate) fn pad_islands(pcb: &Pcb) -> BTreeMap<String, Vec<Vec<(Vec2, PcbLayer)>>> {
+    let (nodes, mut dsu) = build_connectivity(pcb);
+    let mut by_net: BTreeMap<String, BTreeMap<usize, Vec<(Vec2, PcbLayer)>>> = BTreeMap::new();
+    for (i, n) in nodes.iter().enumerate() {
+        if n.pad.is_none() || n.net.is_empty() {
+            continue;
+        }
+        let Some(layer) = (0..COPPER_STACK.len())
+            .find(|b| n.layers & (1 << b) != 0)
+            .map(|b| COPPER_STACK[b])
+        else {
+            continue;
+        };
+        by_net
+            .entry(n.net.clone())
+            .or_default()
+            .entry(dsu.find(i))
+            .or_default()
+            .push((n.pos, layer));
+    }
+    by_net
+        .into_iter()
+        .map(|(net, groups)| {
+            let mut g: Vec<_> = groups.into_values().collect();
+            g.sort_by_key(|v| std::cmp::Reverse(v.len()));
+            (net, g)
+        })
+        .collect()
+}
+
 /// Analyze the galvanic continuity of one net's realized copper.
 ///
 /// The verification leaf behind the power/PDN and impedance PASS-gates: returns
