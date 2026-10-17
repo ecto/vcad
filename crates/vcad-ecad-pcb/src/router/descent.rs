@@ -73,11 +73,12 @@ pub struct DescentObstacle {
 pub enum DescentSolver {
     /// Sequential convex optimization with hard claims as linearized
     /// constraints in each trust-region QP ([`super::sco::ScoMethod::Sqp`],
-    /// M7). The default.
-    #[default]
+    /// M7). Opt-in: after M9-M11 it ties LM on CM5 acceptance (A 13 vs
+    /// 12 of 20, B 19 vs 20 of 45) at 3.4x LM's wall time on B.
     Sco,
     /// The M2 SCO: hard claims as penalty rows in LM + augmented-Lagrangian
-    /// continuation ([`super::sco::ScoMethod::Lm`]) — kept for comparison.
+    /// continuation ([`super::sco::ScoMethod::Lm`]). The default.
+    #[default]
     ScoLm,
     /// The original Adam loop on the interpreted gradient graph — kept for
     /// comparison.
