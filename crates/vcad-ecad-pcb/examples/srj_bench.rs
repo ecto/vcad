@@ -21,7 +21,7 @@ fn main() {
 
     let text = std::fs::read_to_string(&path).expect("read SRJ file");
     let srj: SimpleRouteJson = serde_json::from_str(&text).expect("parse SRJ");
-    let pcb = srj_to_pcb(&srj);
+    let pcb = srj_to_pcb(&srj).expect("SRJ -> board");
     let filter = srj_net_filter(&srj);
 
     let t0 = Instant::now();
