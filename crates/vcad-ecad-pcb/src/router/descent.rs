@@ -477,13 +477,53 @@ impl PairProblem {
         // receipt's 1.1 mm bound is judged on the committed board).
         claims.push(cir::skew(&mut g, len_p, len_n, 0.0, weights.skew));
 
-        // Gap springs between arclength-matched samples (index-proportional
-        // pairing keeps the term smooth and cheap).
-        let n_springs = if springs { pe.len().min(ne.len()) } else { 0 };
-        for k in 1..n_springs.saturating_sub(1) {
-            let pi = pe[k * (pe.len() - 1) / (n_springs - 1)];
-            let ni = ne[k * (ne.len() - 1) / (n_springs - 1)];
-            claims.push(cir::gap(&mut g, pi, ni, gap_centre, 0.0, weights.gap));
+        // Gap springs (M13): each MOVING sample of one leg is tied to its
+        // geometric counterpart on the other — the projection onto the
+        // nearest twin segment in the ORIGINAL geometry, as a lerp of that
+        // segment's two points — not to the index-proportional sample. Index
+        // pairing coupled points that weren't neighbours wherever the legs'
+        // sample densities diverged (a breakout, a meander on one leg), and
+        // its pull dragged legs across each other before any twin claim
+        // existed. Samples with no twin within the coupling band (the legs
+        // have split apart) get no spring. Both directions at half weight
+        // keep the term symmetric.
+        if springs {
+            let band = gap_centre + TWIN_SEED_BAND;
+            for (from_pts, from_e, from_fix, to_pts, to_e) in [
+                (p_pts, &pe, &p_fix, n_pts, &ne),
+                (n_pts, &ne, &n_fix, p_pts, &pe),
+            ] {
+                for k in 0..from_pts.len() {
+                    if from_fix[k] {
+                        continue;
+                    }
+                    let q = from_pts[k];
+                    let Some((j, u, d)) = nearest_on_polyline(q, to_pts) else {
+                        continue;
+                    };
+                    if d > band {
+                        continue;
+                    }
+                    let (a, b) = (to_e[j], to_e[j + 1]);
+                    let lerp = |g: &mut ExprGraph, x0: ExprId, x1: ExprId| {
+                        let nx0 = g.neg(x0);
+                        let dx = g.add(x1, nx0);
+                        let ul = g.lit(u);
+                        let s = g.mul(ul, dx);
+                        g.add(x0, s)
+                    };
+                    let tx = lerp(&mut g, a.0, b.0);
+                    let ty = lerp(&mut g, a.1, b.1);
+                    claims.push(cir::gap(
+                        &mut g,
+                        from_e[k],
+                        (tx, ty),
+                        gap_centre,
+                        0.0,
+                        weights.gap * 0.5,
+                    ));
+                }
+            }
         }
 
         let mut prob = Self {
@@ -1543,6 +1583,26 @@ fn merge_collinear(pts: &[Vec2], tol: f64) -> Vec<Vec2> {
     out
 }
 
+/// Nearest point on polyline `pts` to `q`: `(segment, parameter, distance)`.
+/// Ties go to the lower segment index (deterministic).
+fn nearest_on_polyline(q: Vec2, pts: &[Vec2]) -> Option<(usize, f64, f64)> {
+    let mut best: Option<(usize, f64, f64)> = None;
+    for (j, w) in pts.windows(2).enumerate() {
+        let ab = w[1] - w[0];
+        let l2 = ab.x * ab.x + ab.y * ab.y;
+        let u = if l2 > 0.0 {
+            (((q.x - w[0].x) * ab.x + (q.y - w[0].y) * ab.y) / l2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let d = (q - (w[0] + ab.scale(u))).length();
+        if best.is_none_or(|(_, _, bd)| d < bd) {
+            best = Some((j, u, d));
+        }
+    }
+    best
+}
+
 /// The segments properly cross (endpoints strictly on opposite sides).
 fn seg_cross_f64(a0: Vec2, a1: Vec2, b0: Vec2, b1: Vec2) -> bool {
     let cross = |o: Vec2, p: Vec2, q: Vec2| (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
@@ -1675,12 +1735,19 @@ mod tests {
         };
         let (lp, ln) = (len(&pp) + 0.3, len(&nn));
         let mut want = w.len * (lp + ln) + w.skew * (lp - ln).powi(2);
-        let ns = pp.len().min(nn.len());
-        for k in 1..ns - 1 {
-            let a = pp[k * (pp.len() - 1) / (ns - 1)];
-            let b = nn[k * (nn.len() - 1) / (ns - 1)];
-            let d = ((b - a).length().powi(2) + 1e-9).sqrt();
-            want += w.gap * (d - 0.45).powi(2);
+        // M13 springs: each moving sample to its projection on the nearest
+        // twin segment, correspondence fixed at the START geometry, within
+        // gap + band, both directions at half weight.
+        for (from_now, from0, to_now, to0) in [(&pp, &p, &nn, &n), (&nn, &n, &pp, &p)] {
+            for k in 1..from0.len() - 1 {
+                let (j, u, d0) = nearest_on_polyline(from0[k], to0).unwrap();
+                if d0 > 0.45 + TWIN_SEED_BAND {
+                    continue;
+                }
+                let t = to_now[j] + (to_now[j + 1] - to_now[j]).scale(u);
+                let d = ((t - from_now[k]).length().powi(2) + 1e-9).sqrt();
+                want += 0.5 * w.gap * (d - 0.45).powi(2);
+            }
         }
         // Seed clearance is whole-segment (M9): every segment whose START
         // geometry is within required + 1 of the obstacle, pinned ends
