@@ -1732,7 +1732,7 @@ fn arsenal_sweep(
     let mut rescued = 0usize;
     let mut it = pending.into_iter();
     for (net, from, to) in it.by_ref() {
-        if sw.ms() > ARSENAL_SWEEP_BUDGET_MS {
+        if wall_budgets() && sw.ms() > ARSENAL_SWEEP_BUDGET_MS {
             log::info!("arsenal sweep over budget — deferring remainder");
             still.push((net, from, to));
             break;
@@ -1949,7 +1949,7 @@ fn route_batch(
         // advisory only: they are checked between connections, and one
         // connection's victim re-route is itself a whole batch, so a 92-second
         // round measured 231 seconds.
-        if let Some(d) = deadline_ms {
+        if let Some(d) = deadline_ms.filter(|_| wall_budgets()) {
             if sw.ms() > d {
                 log::info!(
                     "route_batch over {d:.0}ms budget — deferring {} conns",
@@ -3392,6 +3392,17 @@ fn plane_layers(pcb: &Pcb) -> BTreeMap<String, Vec<PcbLayer>> {
     m
 }
 
+/// Whether the router's wall-clock budgets are live. They make a route
+/// load-dependent: the same full-CM5 route deferred 2 connections at load ~8
+/// and 10 at load ~20 (routability 0.998 vs 0.985), so A/B measurements
+/// across loads compare the machine, not the change.
+/// `VCAD_ROUTE_NO_DEADLINES=1` turns every budget off for deterministic
+/// benchmarking (results then depend only on the board and the code).
+fn wall_budgets() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_ROUTE_NO_DEADLINES").as_deref() != Ok("1"))
+}
+
 /// Rounds of [`route_all_with_opts`]'s island stitching: each round re-judges
 /// connectivity, since a stitch can land in a plane island that is itself
 /// stranded.
@@ -3599,7 +3610,7 @@ fn ripup_pass(
     for (net, from, to) in unrouted.by_ref() {
         // Over-deadline: park the rest as pending — negotiation's keep-best
         // treats an abandoned round exactly like a converged one.
-        if let Some(d) = deadline_ms {
+        if let Some(d) = deadline_ms.filter(|_| wall_budgets()) {
             if sw_pass.ms() > d {
                 log::info!("ripup pass over {d:.0}ms budget — deferring remainder");
                 still.push((net, from, to));
@@ -3850,7 +3861,7 @@ fn joint_window_repair(
         let round_budget_ms = 300_000.0 * (max_expansions as f64 / 200_000.0).max(1.0);
         let sw_round = Stopwatch::start();
         for (gw, stuck) in groups {
-            if sw_round.ms() > round_budget_ms {
+            if wall_budgets() && sw_round.ms() > round_budget_ms {
                 still.extend(stuck);
                 continue;
             }
