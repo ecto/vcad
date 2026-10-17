@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-17-pcb-layer-coverage",
+  "version": "0.10.0",
+  "date": "2026-10-17",
+  "category": "fix",
+  "title": "Inner copper beyond In2Cu renders on 6–10 layer boards",
+  "summary": "Layer colours, toggles, dielectric slabs and copper Z now derive from the board stackup, so In3Cu–In8Cu draw and toggle; new boards up to 10 layers get valid layer names; MCP accepts In7/In8.",
+  "features": ["pcb", "electronics", "layers"],
+  "mcpTools": ["get_copper", "render_stackup"]
+}
