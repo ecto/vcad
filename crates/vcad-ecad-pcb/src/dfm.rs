@@ -392,16 +392,7 @@ pub fn run_pack(pcb: &Pcb, profile: PcbFabProfile, pack: &PcbRulePack) -> PcbDfm
 // ============================================================================
 
 /// All copper layers, ordered top → bottom (mirrors the DRC stack).
-const COPPER_STACK: [PcbLayer; 8] = [
-    PcbLayer::FCu,
-    PcbLayer::In1Cu,
-    PcbLayer::In2Cu,
-    PcbLayer::In3Cu,
-    PcbLayer::In4Cu,
-    PcbLayer::In5Cu,
-    PcbLayer::In6Cu,
-    PcbLayer::BCu,
-];
+const COPPER_STACK: [PcbLayer; 10] = PcbLayer::COPPER_STACK;
 
 /// Single-copper-layer bit (0 for non-copper).
 fn copper_bit(layer: PcbLayer) -> u16 {

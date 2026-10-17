@@ -1271,18 +1271,14 @@ fn pad_min_dimension(pad: &Pad) -> f64 {
 // ============================================================================
 
 /// All copper layers, ordered top → bottom, for via span enumeration.
-const COPPER_STACK: [PcbLayer; 10] = [
-    PcbLayer::FCu,
-    PcbLayer::In1Cu,
-    PcbLayer::In2Cu,
-    PcbLayer::In3Cu,
-    PcbLayer::In4Cu,
-    PcbLayer::In5Cu,
-    PcbLayer::In6Cu,
-    PcbLayer::In7Cu,
-    PcbLayer::In8Cu,
-    PcbLayer::BCu,
-];
+///
+/// Must list EVERY copper layer the IR has: a layer missing here gets an
+/// empty mask, so its copper touches nothing and every segment on it reads
+/// as its own island. In7Cu/In8Cu were missing — on the 10-layer CM5 every
+/// In7/In8 segment was a separate `NetIslands` fragment (1575 phantom
+/// islands), and a descent that rewrote an In7 run into more segments
+/// "added" exactly that many disjoint fragments.
+const COPPER_STACK: [PcbLayer; 10] = PcbLayer::COPPER_STACK;
 
 /// Bitmask of copper layers between `start` and `end` (inclusive) in the
 /// physical stack. Used so a via bridges every layer it spans.
