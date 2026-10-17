@@ -49,32 +49,23 @@ pub fn parse_eagle_brd(text: &str) -> Result<Pcb, String> {
         used.push(16);
     }
     // Fail closed on boards deeper than the IR's copper vocabulary
-    // (FCu + In1..In8 + BCu = 10): silently merging extra inner layers
-    // would fabricate connectivity.
-    if used.len() > 10 {
+    // (FCu + In1..In30 + BCu = 32; Eagle itself tops out at 16): silently
+    // merging extra inner layers would fabricate connectivity.
+    if used.len() > PcbLayer::COPPER_STACK.len() {
         return Err(format!(
-            "board uses {} copper layers; importer supports at most 10 (FCu + In1..In8 + BCu)",
-            used.len()
+            "board uses {} copper layers; importer supports at most {}",
+            used.len(),
+            PcbLayer::COPPER_STACK.len()
         ));
     }
     let n_inner = used.len().saturating_sub(2);
     let map_layer = |e: u8| -> Option<PcbLayer> {
         let idx = used.iter().position(|&u| u == e)?;
-        Some(match idx {
-            0 => PcbLayer::FCu,
-            i if i == used.len() - 1 => PcbLayer::BCu,
-            i => match i {
-                1 => PcbLayer::In1Cu,
-                2 => PcbLayer::In2Cu,
-                3 => PcbLayer::In3Cu,
-                4 => PcbLayer::In4Cu,
-                5 => PcbLayer::In5Cu,
-                6 => PcbLayer::In6Cu,
-                7 => PcbLayer::In7Cu,
-                8 => PcbLayer::In8Cu,
-                _ => return None,
-            },
-        })
+        match idx {
+            0 => Some(PcbLayer::FCu),
+            i if i == used.len() - 1 => Some(PcbLayer::BCu),
+            i => PcbLayer::inner(i),
+        }
     };
 
     let fattr = |n: roxmltree::Node<'_, '_>, a: &str| -> f64 {
@@ -288,7 +279,8 @@ pub fn parse_eagle_brd(text: &str) -> Result<Pcb, String> {
     }];
     for i in 0..n_inner {
         layers.push(StackupLayer {
-            layer: map_layer(used[i + 1]).unwrap_or(PcbLayer::In1Cu),
+            // `used` is bounded above, so every inner index maps.
+            layer: map_layer(used[i + 1]).expect("inner layer within COPPER_STACK"),
             copper_thickness: Some(0.035),
             dielectric_thickness: Some(0.2),
             dielectric_er: Some(4.5),
@@ -386,6 +378,27 @@ fn chain_outline(segs: &[(Vec2, Vec2)]) -> Vec<Vec2> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 16-layer Eagle board (every copper layer 1..16 carries a wire) maps
+    /// to F.Cu, In1..In14, B.Cu — the importer used to refuse past In8.
+    #[test]
+    fn sixteen_layer_board_maps_every_inner_layer() {
+        let wires: String = (1..=16)
+            .map(|l| format!(r#"<wire x1="0" y1="{l}" x2="5" y2="{l}" width="0.2" layer="{l}"/>"#))
+            .collect();
+        let brd = format!(
+            r##"<?xml version="1.0"?>
+<eagle version="9.6.0"><drawing><board><plain/><libraries/><elements/>
+<signals><signal name="N">{wires}</signal></signals>
+</board></drawing></eagle>"##
+        );
+        let pcb = parse_eagle_brd(&brd).expect("parse");
+        let stack: Vec<_> = pcb.stackup.layers.iter().map(|l| l.layer).collect();
+        assert_eq!(stack, PcbLayer::copper_stack(16).unwrap());
+        let mut on: Vec<_> = pcb.traces.iter().map(|t| t.layer).collect();
+        on.sort_by_key(|l| l.copper_position());
+        assert_eq!(on, PcbLayer::copper_stack(16).unwrap());
+    }
 
     #[test]
     fn parses_minimal_board() {

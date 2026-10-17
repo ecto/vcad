@@ -5,6 +5,7 @@
 
 import type { Pad, PcbLayer } from "@vcad/ir";
 import type { LayerConfig } from "@/stores/electronics-store";
+import { layerConfigFor } from "@/lib/pcb-layer-config";
 
 interface PcbPadShapeProps {
   pad: Pad;
@@ -18,8 +19,8 @@ interface PcbPadShapeProps {
 
 function getLayerColor(layers: LayerConfig[], padLayers: PcbLayer[]): string {
   for (const pl of padLayers) {
-    const cfg = layers.find((l) => l.layer === pl && l.visible);
-    if (cfg) return cfg.color;
+    const cfg = layerConfigFor(layers, pl);
+    if (cfg.visible) return cfg.color;
   }
   return "#888";
 }

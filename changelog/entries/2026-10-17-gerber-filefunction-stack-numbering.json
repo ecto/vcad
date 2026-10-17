@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-17-gerber-filefunction-stack-numbering",
+  "version": "0.10.0",
+  "date": "2026-10-17",
+  "category": "fix",
+  "title": "Gerber: number copper layers by real stack position",
+  "summary": "Gerber .FileFunction now numbers copper L1 (top) to Ln (bottom) for the board's layer count; B.Cu on a 4-layer board was tagged L2, colliding with In1.Cu.",
+  "features": ["pcb", "gerber", "export"],
+  "mcpTools": ["export_gerber"]
+}

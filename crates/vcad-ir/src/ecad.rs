@@ -316,6 +316,72 @@ pub enum PcbLayer {
     /// Inner copper layer 8.
     #[serde(alias = "In8.Cu")]
     In8Cu,
+    /// Inner copper layer 9.
+    #[serde(alias = "In9.Cu")]
+    In9Cu,
+    /// Inner copper layer 10.
+    #[serde(alias = "In10.Cu")]
+    In10Cu,
+    /// Inner copper layer 11.
+    #[serde(alias = "In11.Cu")]
+    In11Cu,
+    /// Inner copper layer 12.
+    #[serde(alias = "In12.Cu")]
+    In12Cu,
+    /// Inner copper layer 13.
+    #[serde(alias = "In13.Cu")]
+    In13Cu,
+    /// Inner copper layer 14.
+    #[serde(alias = "In14.Cu")]
+    In14Cu,
+    /// Inner copper layer 15.
+    #[serde(alias = "In15.Cu")]
+    In15Cu,
+    /// Inner copper layer 16.
+    #[serde(alias = "In16.Cu")]
+    In16Cu,
+    /// Inner copper layer 17.
+    #[serde(alias = "In17.Cu")]
+    In17Cu,
+    /// Inner copper layer 18.
+    #[serde(alias = "In18.Cu")]
+    In18Cu,
+    /// Inner copper layer 19.
+    #[serde(alias = "In19.Cu")]
+    In19Cu,
+    /// Inner copper layer 20.
+    #[serde(alias = "In20.Cu")]
+    In20Cu,
+    /// Inner copper layer 21.
+    #[serde(alias = "In21.Cu")]
+    In21Cu,
+    /// Inner copper layer 22.
+    #[serde(alias = "In22.Cu")]
+    In22Cu,
+    /// Inner copper layer 23.
+    #[serde(alias = "In23.Cu")]
+    In23Cu,
+    /// Inner copper layer 24.
+    #[serde(alias = "In24.Cu")]
+    In24Cu,
+    /// Inner copper layer 25.
+    #[serde(alias = "In25.Cu")]
+    In25Cu,
+    /// Inner copper layer 26.
+    #[serde(alias = "In26.Cu")]
+    In26Cu,
+    /// Inner copper layer 27.
+    #[serde(alias = "In27.Cu")]
+    In27Cu,
+    /// Inner copper layer 28.
+    #[serde(alias = "In28.Cu")]
+    In28Cu,
+    /// Inner copper layer 29.
+    #[serde(alias = "In29.Cu")]
+    In29Cu,
+    /// Inner copper layer 30.
+    #[serde(alias = "In30.Cu")]
+    In30Cu,
 
     // Mask/paste layers
     /// Front solder mask.
@@ -370,7 +436,7 @@ impl PcbLayer {
     /// geometry all derive their layer masks / Z order from this. Hand-copied
     /// lists drifted (In7Cu/In8Cu went missing in three places, so a 10-layer
     /// board's In7/In8 copper touched nothing).
-    pub const COPPER_STACK: [PcbLayer; 10] = [
+    pub const COPPER_STACK: [PcbLayer; 32] = [
         PcbLayer::FCu,
         PcbLayer::In1Cu,
         PcbLayer::In2Cu,
@@ -380,43 +446,132 @@ impl PcbLayer {
         PcbLayer::In6Cu,
         PcbLayer::In7Cu,
         PcbLayer::In8Cu,
+        PcbLayer::In9Cu,
+        PcbLayer::In10Cu,
+        PcbLayer::In11Cu,
+        PcbLayer::In12Cu,
+        PcbLayer::In13Cu,
+        PcbLayer::In14Cu,
+        PcbLayer::In15Cu,
+        PcbLayer::In16Cu,
+        PcbLayer::In17Cu,
+        PcbLayer::In18Cu,
+        PcbLayer::In19Cu,
+        PcbLayer::In20Cu,
+        PcbLayer::In21Cu,
+        PcbLayer::In22Cu,
+        PcbLayer::In23Cu,
+        PcbLayer::In24Cu,
+        PcbLayer::In25Cu,
+        PcbLayer::In26Cu,
+        PcbLayer::In27Cu,
+        PcbLayer::In28Cu,
+        PcbLayer::In29Cu,
+        PcbLayer::In30Cu,
         PcbLayer::BCu,
     ];
 
+    /// Every inner copper layer, `In1Cu..=In30Cu` (KiCad's full inner range).
+    pub const INNER_COPPER: [PcbLayer; 30] = [
+        PcbLayer::In1Cu,
+        PcbLayer::In2Cu,
+        PcbLayer::In3Cu,
+        PcbLayer::In4Cu,
+        PcbLayer::In5Cu,
+        PcbLayer::In6Cu,
+        PcbLayer::In7Cu,
+        PcbLayer::In8Cu,
+        PcbLayer::In9Cu,
+        PcbLayer::In10Cu,
+        PcbLayer::In11Cu,
+        PcbLayer::In12Cu,
+        PcbLayer::In13Cu,
+        PcbLayer::In14Cu,
+        PcbLayer::In15Cu,
+        PcbLayer::In16Cu,
+        PcbLayer::In17Cu,
+        PcbLayer::In18Cu,
+        PcbLayer::In19Cu,
+        PcbLayer::In20Cu,
+        PcbLayer::In21Cu,
+        PcbLayer::In22Cu,
+        PcbLayer::In23Cu,
+        PcbLayer::In24Cu,
+        PcbLayer::In25Cu,
+        PcbLayer::In26Cu,
+        PcbLayer::In27Cu,
+        PcbLayer::In28Cu,
+        PcbLayer::In29Cu,
+        PcbLayer::In30Cu,
+    ];
+
+    /// Inner copper layer `n` (1-based), or `None` outside `1..=30`.
+    pub fn inner(n: usize) -> Option<PcbLayer> {
+        n.checked_sub(1)
+            .and_then(|i| Self::INNER_COPPER.get(i).copied())
+    }
+
+    /// 1-based inner-layer number (`In3Cu` → 3); `None` for outer/non-copper.
+    pub fn inner_index(&self) -> Option<usize> {
+        Self::INNER_COPPER
+            .iter()
+            .position(|l| l == self)
+            .map(|i| i + 1)
+    }
+
+    /// Copper stack of a board with `copper_count` copper layers, top →
+    /// bottom: `FCu, In1Cu..In(n-2)Cu, BCu`. A count of 1 is `[FCu]`; counts
+    /// above 32 return `None` — never silently truncated.
+    pub fn copper_stack(copper_count: usize) -> Option<Vec<PcbLayer>> {
+        match copper_count {
+            0 => Some(Vec::new()),
+            1 => Some(vec![PcbLayer::FCu]),
+            n if n <= Self::COPPER_STACK.len() => {
+                let mut v = vec![PcbLayer::FCu];
+                v.extend_from_slice(&Self::INNER_COPPER[..n - 2]);
+                v.push(PcbLayer::BCu);
+                Some(v)
+            }
+            _ => None,
+        }
+    }
+
     /// Returns true if this is a copper layer.
+    /// The same layer seen from the other side of the board: front and back
+    /// swap (copper, silk, mask, paste, fab, courtyard); inner copper and the
+    /// board-wide layers stay. What KiCad does to a footprint it flips.
+    pub fn flipped(&self) -> PcbLayer {
+        use PcbLayer::*;
+        match self {
+            FCu => BCu,
+            BCu => FCu,
+            FSilkS => BSilkS,
+            BSilkS => FSilkS,
+            FMask => BMask,
+            BMask => FMask,
+            FPaste => BPaste,
+            BPaste => FPaste,
+            FFab => BFab,
+            BFab => FFab,
+            FCrtYd => BCrtYd,
+            BCrtYd => FCrtYd,
+            other => *other,
+        }
+    }
+
     pub fn is_copper(&self) -> bool {
-        matches!(
-            self,
-            PcbLayer::FCu
-                | PcbLayer::BCu
-                | PcbLayer::In1Cu
-                | PcbLayer::In2Cu
-                | PcbLayer::In3Cu
-                | PcbLayer::In4Cu
-                | PcbLayer::In5Cu
-                | PcbLayer::In6Cu
-                | PcbLayer::In7Cu
-                | PcbLayer::In8Cu
-        )
+        self.copper_position().is_some()
     }
 
     /// Position of a copper layer in the physical stack, for span ordering:
-    /// front copper is 0, inner layers are 1..=8, back copper is always the
+    /// front copper is 0, inner layers are 1..=30, back copper is always the
     /// deepest regardless of how many inner layers the board actually has.
     /// Returns `None` for non-copper layers.
     pub fn copper_position(&self) -> Option<u8> {
         match self {
             PcbLayer::FCu => Some(0),
-            PcbLayer::In1Cu => Some(1),
-            PcbLayer::In2Cu => Some(2),
-            PcbLayer::In3Cu => Some(3),
-            PcbLayer::In4Cu => Some(4),
-            PcbLayer::In5Cu => Some(5),
-            PcbLayer::In6Cu => Some(6),
-            PcbLayer::In7Cu => Some(7),
-            PcbLayer::In8Cu => Some(8),
             PcbLayer::BCu => Some(u8::MAX),
-            _ => None,
+            l => l.inner_index().map(|i| i as u8),
         }
     }
 
@@ -1293,6 +1448,24 @@ mod tests {
         assert!(!PcbLayer::EdgeCuts.is_copper());
         assert!(PcbLayer::In7Cu.is_copper());
         assert!(PcbLayer::In8Cu.is_copper());
+        assert!(PcbLayer::In30Cu.is_copper());
+    }
+
+    #[test]
+    fn copper_stack_by_count() {
+        assert_eq!(
+            PcbLayer::copper_stack(2).unwrap(),
+            vec![PcbLayer::FCu, PcbLayer::BCu]
+        );
+        let s32 = PcbLayer::copper_stack(32).unwrap();
+        assert_eq!(s32, PcbLayer::COPPER_STACK.to_vec());
+        assert_eq!(PcbLayer::copper_stack(12).unwrap()[10], PcbLayer::In10Cu);
+        assert!(PcbLayer::copper_stack(33).is_none());
+        assert_eq!(PcbLayer::inner(30), Some(PcbLayer::In30Cu));
+        assert_eq!(PcbLayer::inner(31), None);
+        assert_eq!(PcbLayer::In17Cu.inner_index(), Some(17));
+        let l: PcbLayer = serde_json::from_str("\"In22.Cu\"").unwrap();
+        assert_eq!(l, PcbLayer::In22Cu);
     }
 
     #[test]
@@ -1319,8 +1492,11 @@ mod tests {
         fn all(l: PcbLayer) -> PcbLayer {
             match l {
                 FCu | BCu | In1Cu | In2Cu | In3Cu | In4Cu | In5Cu | In6Cu | In7Cu | In8Cu
-                | FSilkS | BSilkS | FMask | BMask | FPaste | BPaste | FFab | BFab | FCrtYd
-                | BCrtYd | EdgeCuts | UserDrawings | UserComments => l,
+                | In9Cu | In10Cu | In11Cu | In12Cu | In13Cu | In14Cu | In15Cu | In16Cu | In17Cu
+                | In18Cu | In19Cu | In20Cu | In21Cu | In22Cu | In23Cu | In24Cu | In25Cu
+                | In26Cu | In27Cu | In28Cu | In29Cu | In30Cu | FSilkS | BSilkS | FMask | BMask
+                | FPaste | BPaste | FFab | BFab | FCrtYd | BCrtYd | EdgeCuts | UserDrawings
+                | UserComments => l,
             }
         }
         let every = [
@@ -1334,6 +1510,28 @@ mod tests {
             In6Cu,
             In7Cu,
             In8Cu,
+            In9Cu,
+            In10Cu,
+            In11Cu,
+            In12Cu,
+            In13Cu,
+            In14Cu,
+            In15Cu,
+            In16Cu,
+            In17Cu,
+            In18Cu,
+            In19Cu,
+            In20Cu,
+            In21Cu,
+            In22Cu,
+            In23Cu,
+            In24Cu,
+            In25Cu,
+            In26Cu,
+            In27Cu,
+            In28Cu,
+            In29Cu,
+            In30Cu,
             FSilkS,
             BSilkS,
             FMask,

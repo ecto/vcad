@@ -89,7 +89,7 @@ pub struct Palette {
     pub f_cu: &'static str,
     /// Back copper.
     pub b_cu: &'static str,
-    /// Intermediate copper layers In1..In6.
+    /// Intermediate copper colours; In1..In30 cycle through these.
     pub inner_cu: [&'static str; 6],
     /// Front silkscreen.
     pub f_silk: &'static str,
@@ -308,14 +308,6 @@ fn layer_color(layer: PcbLayer, p: &Palette) -> &'static str {
     match layer {
         PcbLayer::FCu => p.f_cu,
         PcbLayer::BCu => p.b_cu,
-        PcbLayer::In1Cu => p.inner_cu[0],
-        PcbLayer::In2Cu => p.inner_cu[1],
-        PcbLayer::In3Cu => p.inner_cu[2],
-        PcbLayer::In4Cu => p.inner_cu[3],
-        PcbLayer::In5Cu => p.inner_cu[4],
-        PcbLayer::In6Cu => p.inner_cu[5],
-        PcbLayer::In7Cu => p.inner_cu[0],
-        PcbLayer::In8Cu => p.inner_cu[1],
         PcbLayer::FSilkS => p.f_silk,
         PcbLayer::BSilkS => p.b_silk,
         PcbLayer::FMask => p.f_mask,
@@ -329,6 +321,11 @@ fn layer_color(layer: PcbLayer, p: &Palette) -> &'static str {
         PcbLayer::EdgeCuts => p.edge_cuts,
         PcbLayer::UserDrawings => p.user_dwg,
         PcbLayer::UserComments => p.user_cmt,
+        // Inner copper In1..In30 cycles through the inner palette.
+        l => {
+            let n = l.inner_index().expect("inner copper layer");
+            p.inner_cu[(n - 1) % p.inner_cu.len()]
+        }
     }
 }
 
@@ -368,12 +365,6 @@ fn parse_layer(name: &str) -> Option<PcbLayer> {
     let layer = match key.as_str() {
         "FCu" => PcbLayer::FCu,
         "BCu" => PcbLayer::BCu,
-        "In1Cu" => PcbLayer::In1Cu,
-        "In2Cu" => PcbLayer::In2Cu,
-        "In3Cu" => PcbLayer::In3Cu,
-        "In4Cu" => PcbLayer::In4Cu,
-        "In5Cu" => PcbLayer::In5Cu,
-        "In6Cu" => PcbLayer::In6Cu,
         "FSilkS" => PcbLayer::FSilkS,
         "BSilkS" => PcbLayer::BSilkS,
         "FMask" => PcbLayer::FMask,
@@ -387,9 +378,15 @@ fn parse_layer(name: &str) -> Option<PcbLayer> {
         "EdgeCuts" => PcbLayer::EdgeCuts,
         "UserDrawings" | "DwgsUser" => PcbLayer::UserDrawings,
         "UserComments" | "CmtsUser" => PcbLayer::UserComments,
-        _ => return None,
+        other => return parse_inner_cu(other),
     };
     Some(layer)
+}
+
+/// `In<n>Cu` for `n` in `1..=30` (separators already stripped).
+fn parse_inner_cu(key: &str) -> Option<PcbLayer> {
+    let n: usize = key.strip_prefix("In")?.strip_suffix("Cu")?.parse().ok()?;
+    PcbLayer::inner(n)
 }
 
 /// Push a non-empty SVG fragment onto the z-ordered draw list at `rank`,
@@ -1543,6 +1540,18 @@ fn parse_opts(opts_json: &str) -> Result<PcbRenderOpts, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parse_layer_covers_every_inner_copper_layer() {
+        for n in 1..=30 {
+            let want = PcbLayer::inner(n).unwrap();
+            assert_eq!(parse_layer(&format!("In{n}.Cu")), Some(want));
+            assert_eq!(parse_layer(&format!("In{n}_Cu")), Some(want));
+            assert_eq!(parse_layer(&format!("In{n}Cu")), Some(want));
+        }
+        assert_eq!(parse_layer("In31.Cu"), None);
+        assert_eq!(parse_layer("In0.Cu"), None);
+    }
+
     use super::*;
     use std::collections::HashMap;
     use vcad_ir::ecad::{

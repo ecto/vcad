@@ -87,19 +87,19 @@ fn q(s: &str) -> String {
 // Layer naming
 // ---------------------------------------------------------------------------
 
+/// KiCad names of the 30 inner copper layers, `In1.Cu..=In30.Cu`.
+const INNER_CU_NAMES: [&str; 30] = [
+    "In1.Cu", "In2.Cu", "In3.Cu", "In4.Cu", "In5.Cu", "In6.Cu", "In7.Cu", "In8.Cu", "In9.Cu",
+    "In10.Cu", "In11.Cu", "In12.Cu", "In13.Cu", "In14.Cu", "In15.Cu", "In16.Cu", "In17.Cu",
+    "In18.Cu", "In19.Cu", "In20.Cu", "In21.Cu", "In22.Cu", "In23.Cu", "In24.Cu", "In25.Cu",
+    "In26.Cu", "In27.Cu", "In28.Cu", "In29.Cu", "In30.Cu",
+];
+
 /// Canonical KiCad layer name for a [`PcbLayer`].
 fn layer_name(layer: PcbLayer) -> &'static str {
     match layer {
         PcbLayer::FCu => "F.Cu",
         PcbLayer::BCu => "B.Cu",
-        PcbLayer::In1Cu => "In1.Cu",
-        PcbLayer::In2Cu => "In2.Cu",
-        PcbLayer::In3Cu => "In3.Cu",
-        PcbLayer::In4Cu => "In4.Cu",
-        PcbLayer::In5Cu => "In5.Cu",
-        PcbLayer::In6Cu => "In6.Cu",
-        PcbLayer::In7Cu => "In7.Cu",
-        PcbLayer::In8Cu => "In8.Cu",
         PcbLayer::FSilkS => "F.SilkS",
         PcbLayer::BSilkS => "B.SilkS",
         PcbLayer::FMask => "F.Mask",
@@ -113,6 +113,8 @@ fn layer_name(layer: PcbLayer) -> &'static str {
         PcbLayer::EdgeCuts => "Edge.Cuts",
         PcbLayer::UserDrawings => "Dwgs.User",
         PcbLayer::UserComments => "Cmts.User",
+        // Every remaining variant is an inner copper layer.
+        l => INNER_CU_NAMES[l.inner_index().expect("inner copper layer") - 1],
     }
 }
 
@@ -122,15 +124,10 @@ fn copper_layer_id(layer: PcbLayer) -> u32 {
     match layer {
         PcbLayer::FCu => 0,
         PcbLayer::BCu => 2,
-        PcbLayer::In1Cu => 4,
-        PcbLayer::In2Cu => 6,
-        PcbLayer::In3Cu => 8,
-        PcbLayer::In4Cu => 10,
-        PcbLayer::In5Cu => 12,
-        PcbLayer::In6Cu => 14,
-        PcbLayer::In7Cu => 16,
-        PcbLayer::In8Cu => 18,
-        _ => 0,
+        l => match l.inner_index() {
+            Some(n) => 2 + 2 * n as u32,
+            None => panic!("copper_layer_id called with non-copper layer {l:?}"),
+        },
     }
 }
 
@@ -145,17 +142,7 @@ fn copper_layers(stackup: &LayerStackup) -> Vec<PcbLayer> {
     if copper.is_empty() {
         copper = vec![PcbLayer::FCu, PcbLayer::BCu];
     }
-    copper.sort_by_key(|l| match l {
-        PcbLayer::FCu => 0,
-        PcbLayer::In1Cu => 1,
-        PcbLayer::In2Cu => 2,
-        PcbLayer::In3Cu => 3,
-        PcbLayer::In4Cu => 4,
-        PcbLayer::In5Cu => 5,
-        PcbLayer::In6Cu => 6,
-        PcbLayer::BCu => 7,
-        _ => 8,
-    });
+    copper.sort_by_key(|l| l.copper_position());
     copper.dedup();
     copper
 }
@@ -304,7 +291,7 @@ fn write_kicad_pcb_impl(pcb: &Pcb, links: Option<&SchematicLinks>, with_project:
         write_arc(&mut e, a, &nets);
     }
     for v in &pcb.vias {
-        write_via(&mut e, v, &nets);
+        write_via(&mut e, v, &nets, &copper_layers(&pcb.stackup));
     }
     for z in &pcb.zones {
         write_zone(&mut e, z, &nets);
@@ -551,7 +538,7 @@ fn write_footprint(
         .properties
         .get("ref_layer")
         .map(String::as_str)
-        .unwrap_or("F.SilkS");
+        .unwrap_or(if fp.front { "F.SilkS" } else { "B.SilkS" });
     let ref_at = fp
         .properties
         .get("ref_at")
@@ -561,7 +548,13 @@ fn write_footprint(
         })
         .unwrap_or((0.0, 0.0));
     write_fp_property_at(e, "Reference", &fp.reference, ref_layer, art, ref_at);
-    write_fp_property(e, "Value", &fp.value, "F.Fab", art);
+    write_fp_property(
+        e,
+        "Value",
+        &fp.value,
+        if fp.front { "F.Fab" } else { "B.Fab" },
+        art,
+    );
 
     // Cross-probe linkage: point the footprint at its schematic symbol
     // instance (KiCad 9 root-sheet paths are "/<symbol-uuid>").
@@ -672,6 +665,17 @@ fn write_library_body(e: &mut Emitter, fp: &Footprint, src: &str, nets: &NetTabl
         .filter(|(_, kind)| kind == "smd")
         .map(|(n, _)| n)
         .collect();
+    // A back-side footprint keeps its library source but is written flipped,
+    // as KiCad stores one: front layers become back layers, local y mirrors
+    // and local angles negate (`kicad_board::flip_to_back` does the same to
+    // the IR the router sees).
+    let flipped: Vec<SExpr<'_>>;
+    let children: &[SExpr<'_>] = if fp.front {
+        children
+    } else {
+        flipped = children.iter().map(flip_sx).collect();
+        &flipped
+    };
     for child in children.iter().skip(2) {
         let tag = child.tag_name().unwrap_or("");
         let field = |c: &SExpr<'_>| {
@@ -775,6 +779,84 @@ fn write_library_body(e: &mut Emitter, fp: &Footprint, src: &str, nets: &NetTabl
     true
 }
 
+/// One library-footprint item as seen from the back (see `write_library_body`).
+fn flip_sx<'a>(x: &crate::sexpr::SExpr<'a>) -> crate::sexpr::SExpr<'a> {
+    use crate::sexpr::SExpr;
+    let leak = |s: String| SExpr::Atom(Box::leak(s.into_boxed_str()));
+    let side = |l: &str| -> String {
+        if let Some(r) = l.strip_prefix("F.") {
+            format!("B.{r}")
+        } else if let Some(r) = l.strip_prefix("B.") {
+            format!("F.{r}")
+        } else {
+            l.to_string()
+        }
+    };
+    match x {
+        SExpr::List(items) => {
+            let tag = x.tag_name().unwrap_or("");
+            let f = |i: usize| items.get(i).and_then(|v| v.as_f64());
+            match tag {
+                "at" | "start" | "end" | "center" | "mid" | "xy"
+                    if f(1).is_some() && f(2).is_some() =>
+                {
+                    // a list, not an atom: the pad writer reads (at x y a) back
+                    let mut v = vec![
+                        items[0].clone(),
+                        leak(num(f(1).unwrap())),
+                        leak(num(-f(2).unwrap())),
+                    ];
+                    if tag == "at" {
+                        if let Some(a) = f(3) {
+                            v.push(leak(num((-a).rem_euclid(360.0))));
+                        }
+                    }
+                    SExpr::List(v)
+                }
+                "layer" | "layers" => {
+                    let mut s = format!("({tag}");
+                    for it in items.iter().skip(1) {
+                        match it.as_str() {
+                            Some(l) => s.push_str(&format!(" {}", q(&side(l)))),
+                            None => {
+                                let mut t = String::new();
+                                sx_print(it, &mut t);
+                                s.push(' ');
+                                s.push_str(&t);
+                            }
+                        }
+                    }
+                    s.push(')');
+                    leak(s)
+                }
+                // text on the back reads mirrored
+                "effects" => {
+                    let mut v: Vec<SExpr<'a>> = Vec::new();
+                    let mut has = false;
+                    for it in items {
+                        if it.tag_name() == Some("justify") {
+                            has = true;
+                            let mut j: Vec<SExpr<'a>> = it.children().unwrap_or(&[]).to_vec();
+                            if !j.iter().any(|t| t.as_str() == Some("mirror")) {
+                                j.push(SExpr::Atom("mirror"));
+                            }
+                            v.push(SExpr::List(j));
+                        } else {
+                            v.push(flip_sx(it));
+                        }
+                    }
+                    if !has {
+                        v.push(SExpr::Atom("(justify mirror)"));
+                    }
+                    SExpr::List(v)
+                }
+                _ => SExpr::List(items.iter().map(flip_sx).collect()),
+            }
+        }
+        other => other.clone(),
+    }
+}
+
 fn write_fp_property(e: &mut Emitter, key: &str, value: &str, layer: &str, hidden: bool) {
     write_fp_property_at(e, key, value, layer, hidden, (0.0, 0.0));
 }
@@ -800,6 +882,9 @@ fn write_fp_property_at(
     e.line(5, "(size 1 1)");
     e.line(5, "(thickness 0.15)");
     e.line(4, ")");
+    if layer.starts_with("B.") {
+        e.line(4, "(justify mirror)"); // back-side text reads mirrored from the front
+    }
     e.line(3, ")");
     e.line(2, ")");
 }
@@ -1034,8 +1119,8 @@ fn write_pad_layers(e: &mut Emitter, pad: &Pad, fp: &Footprint) {
         e.line(3, &format!("(layers {})", names.join(" ")));
         return;
     }
-    // No explicit layers (e.g. a THT pad whose "*.Cu" set the parser dropped).
-    // Fall back to a sensible default for the pad type.
+    // No explicit layers (hand-built or legacy IR). Fall back to a sensible
+    // default for the pad type.
     let default = match pad.pad_type {
         PadType::SMD => {
             if fp.front {
@@ -1076,7 +1161,7 @@ fn write_arc(e: &mut Emitter, a: &TraceArc, nets: &NetTable) {
     e.line(1, ")");
 }
 
-fn write_via(e: &mut Emitter, v: &Via, nets: &NetTable) {
+fn write_via(e: &mut Emitter, v: &Via, nets: &NetTable, copper: &[PcbLayer]) {
     let uuid = e.uuid();
     // KiCad reads a via's span as (outer, inner) in stack order; handed the
     // pair reversed it falls back to a through-hole, which shorts every layer
@@ -1093,8 +1178,16 @@ fn write_via(e: &mut Emitter, v: &Via, nets: &NetTable) {
     // non-through tokens are `blind` (its BLIND_BURIED type, covering both
     // blind and buried) and `micro` — `buried` is not a token and makes the
     // board fail to load outright.
+    // A microvia is one dielectric deep from an outer layer (F.Cu-In1.Cu, or
+    // B.Cu and the inner layer above it): KiCad checks it against its own
+    // microvia size rules, not the via rules.
+    let idx = |l: PcbLayer| copper.iter().position(|&c| c == l);
+    let adjacent = matches!((idx(top), idx(bottom)), (Some(a), Some(b)) if b == a + 1);
+    let outer = top == PcbLayer::FCu || bottom == PcbLayer::BCu;
     if top == PcbLayer::FCu && bottom == PcbLayer::BCu {
         e.line(1, "(via");
+    } else if adjacent && outer {
+        e.line(1, "(via micro");
     } else {
         e.line(1, "(via blind");
     }

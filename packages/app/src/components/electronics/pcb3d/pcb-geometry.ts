@@ -12,37 +12,34 @@
 
 import { Matrix4, Vector3, Quaternion } from "three";
 import type { Vec2, PcbLayer, Trace, Via, PadShape } from "@vcad/ir";
+import { copperSortKey, innerCopperIndex, isCopperLayer } from "@vcad/core";
 import type { LayerConfig } from "@/stores/electronics-store";
+import { layerConfigFor } from "@/lib/pcb-layer-config";
 
 // ---------------------------------------------------------------------------
 // Layer Z offsets
 // ---------------------------------------------------------------------------
 
-/** Copper layer ordering for Z offset computation. */
-const COPPER_LAYER_ORDER: PcbLayer[] = [
-  "FCu",
-  "In1Cu",
-  "In2Cu",
-  "In3Cu",
-  "In4Cu",
-  "In5Cu",
-  "In6Cu",
-  "In7Cu",
-  "In8Cu",
-  "BCu",
-];
+/** Copper spans this Z band (FCu at +COPPER_Z_TOP, BCu at -COPPER_Z_TOP). */
+const COPPER_Z_TOP = 0.8;
+
+/**
+ * Copper count assumed when the caller doesn't know the board's: 9 keeps
+ * the historical 0.2 spacing (In1 0.6 … In6 -0.4, BCu -0.8); deeper layers
+ * widen it so In7/In8 never collapse onto BCu.
+ */
+function defaultCopperCount(layer: string): number {
+  return Math.max(9, innerCopperIndex(layer) + 2);
+}
+
+/** Z offset of a copper layer evenly spaced across `copperCount` layers. */
+function copperZOffset(layer: string, copperCount: number): number {
+  if (copperCount < 2) return COPPER_Z_TOP;
+  const rank = layer === "BCu" ? copperCount - 1 : layer === "FCu" ? 0 : innerCopperIndex(layer);
+  return COPPER_Z_TOP - (2 * COPPER_Z_TOP * rank) / (copperCount - 1);
+}
 
 const LAYER_Z: Record<string, number> = {
-  FCu: 0.8,
-  In1Cu: 0.6,
-  In2Cu: 0.4,
-  In3Cu: 0.2,
-  In4Cu: 0.0,
-  In5Cu: -0.2,
-  In6Cu: -0.4,
-  In7Cu: -0.53,
-  In8Cu: -0.66,
-  BCu: -0.8,
   FSilkS: 0.9,
   BSilkS: -0.9,
   FMask: 0.85,
@@ -55,15 +52,22 @@ const LAYER_Z: Record<string, number> = {
 };
 
 /** Z offset for a layer in kernel Z-up space. */
-export function layerZOffset(layer: PcbLayer, explosion = 0): number {
-  const base = LAYER_Z[layer] ?? 0;
+export function layerZOffset(layer: PcbLayer, explosion = 0, copperCount?: number): number {
+  const base = isCopperLayer(layer)
+    ? copperZOffset(layer, copperCount ?? defaultCopperCount(layer))
+    : (LAYER_Z[layer] ?? 0);
   // When explosion > 0, exaggerate the Z separation
   return base * (1 + explosion * 4);
 }
 
 /** Z position in kernel space (board surface + layer offset). */
-export function layerZ(layer: PcbLayer, boardThickness: number, explosion = 0): number {
-  return boardThickness / 2 + layerZOffset(layer, explosion);
+export function layerZ(
+  layer: PcbLayer,
+  boardThickness: number,
+  explosion = 0,
+  copperCount?: number,
+): number {
+  return boardThickness / 2 + layerZOffset(layer, explosion, copperCount);
 }
 
 // ---------------------------------------------------------------------------
@@ -182,17 +186,15 @@ export function worldToPcb(
 // ---------------------------------------------------------------------------
 
 export function getLayerColor(layers: LayerConfig[], layer: string): string {
-  const cfg = layers.find((l) => l.layer === layer);
-  return cfg?.color ?? "#888";
+  return layerConfigFor(layers, layer).color;
 }
 
+/** Copper layers without a stored config default to visible. */
 export function isLayerVisible(layers: LayerConfig[], layer: string): boolean {
-  const cfg = layers.find((l) => l.layer === layer);
-  return cfg?.visible ?? false;
+  return layerConfigFor(layers, layer).visible;
 }
 
-/** Copper layer index for consistent ordering. */
+/** Copper layer index for consistent ordering (FCu first, BCu last). */
 export function copperLayerIndex(layer: PcbLayer): number {
-  const idx = COPPER_LAYER_ORDER.indexOf(layer);
-  return idx >= 0 ? idx : 99;
+  return isCopperLayer(layer) ? copperSortKey(layer) : Number.MAX_SAFE_INTEGER;
 }

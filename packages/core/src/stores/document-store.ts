@@ -61,6 +61,7 @@ import {
 import { useUiStore } from "./ui-store.js";
 import { useParametersStore } from "./parameters-store.js";
 import { syncSchematicToPcbData } from "./ecad-sync.js";
+import { assertSupportedCopperCount, copperLayerNames } from "../utils/pcb-layers.js";
 
 // ---------------------------------------------------------------------------
 // CRDT bridge types
@@ -184,7 +185,7 @@ import type { VcadFile } from "../utils/save-load.js";
 export interface PcbCreateOptions {
   width?: number;        // mm, default 50
   height?: number;       // mm, default 30
-  layers?: 2 | 4 | 6;   // default 2
+  layers?: number;   // copper count: 1 or even 2..MAX_COPPER_LAYERS (default 2)
   thickness?: number;    // mm, default 1.6
   traceWidth?: number;   // mm, default 0.15
   clearance?: number;    // mm, default 0.15
@@ -2165,29 +2166,20 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const clearance = options?.clearance ?? 0.15;
     const boardName = options?.name ?? "PCB Board";
 
-    const stackupLayers: Pcb["stackup"]["layers"] = [];
-    stackupLayers.push({ layer: "FCu" as const, copperThickness: 0.035 });
-    if (layerCount >= 4) {
-      const innerCount = layerCount - 2;
-      const innerLayerNames = ["In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu"] as const;
-      const dielectricPerLayer = thickness / (layerCount - 1);
-      for (let i = 0; i < innerCount; i++) {
-        stackupLayers.push({
-          layer: innerLayerNames[i]!,
-          copperThickness: 0.035,
-          dielectricThickness: dielectricPerLayer,
-          dielectricEr: 4.5,
-          material: "FR4",
-        });
-      }
-    }
-    stackupLayers.push({
-      layer: "BCu" as const,
-      copperThickness: 0.035,
-      dielectricThickness: layerCount >= 4 ? thickness / (layerCount - 1) : thickness,
-      dielectricEr: 4.5,
-      material: "FR4",
-    });
+    assertSupportedCopperCount(layerCount);
+    const copperNames = copperLayerNames(layerCount);
+    const dielectricPerLayer = layerCount > 1 ? thickness / (layerCount - 1) : thickness;
+    const stackupLayers: Pcb["stackup"]["layers"] = copperNames.map((layer, i) =>
+      i === 0
+        ? { layer, copperThickness: 0.035 }
+        : {
+            layer,
+            copperThickness: 0.035,
+            dielectricThickness: dielectricPerLayer,
+            dielectricEr: 4.5,
+            material: "FR4",
+          },
+    );
 
     const pcbBoard: Pcb = {
       outline: {

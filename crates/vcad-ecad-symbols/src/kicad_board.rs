@@ -98,33 +98,30 @@ pub fn footprint_source(id: &str) -> Result<String, String> {
     Ok(t)
 }
 
-/// The copper layers of an `n`-layer board, top to bottom.
-pub fn copper_layers(n: usize) -> Vec<PcbLayer> {
-    let inner = [
-        PcbLayer::In1Cu,
-        PcbLayer::In2Cu,
-        PcbLayer::In3Cu,
-        PcbLayer::In4Cu,
-        PcbLayer::In5Cu,
-        PcbLayer::In6Cu,
-    ];
-    let mut v = vec![PcbLayer::FCu];
-    v.extend(inner.iter().take(n.saturating_sub(2)).copied());
-    if n >= 2 {
-        v.push(PcbLayer::BCu);
-    }
-    v
+/// The copper layers of an `n`-layer board, top to bottom. Errors above 32
+/// (KiCad's maximum) rather than silently building a thinner board.
+pub fn copper_layers(n: usize) -> Result<Vec<PcbLayer>, String> {
+    PcbLayer::copper_stack(n)
+        .ok_or_else(|| format!("{n}-layer board exceeds the 32 copper layers vcad supports"))
 }
 
-/// A KiCad layer name ("F.Cu", "*.Cu", "*.Mask") expanded to layers.
+/// A KiCad layer name ("F.Cu", "*.Cu", "F&B.Cu", "*.Mask") expanded to layers.
+/// A name with no vcad layer (e.g. "F.Adhes") expands to nothing, with a
+/// warning on stderr.
 fn expand_layer(name: &str, copper: &[PcbLayer]) -> Vec<PcbLayer> {
     match name {
         "*.Cu" => copper.to_vec(),
-        "*.Mask" => vec![PcbLayer::FMask, PcbLayer::BMask],
-        "*.Paste" => vec![PcbLayer::FPaste, PcbLayer::BPaste],
-        n => serde_json::from_str::<PcbLayer>(&format!("\"{n}\""))
-            .map(|l| vec![l])
-            .unwrap_or_default(),
+        "F&B.Cu" => vec![PcbLayer::FCu, PcbLayer::BCu],
+        "*.Mask" | "F&B.Mask" => vec![PcbLayer::FMask, PcbLayer::BMask],
+        "*.Paste" | "F&B.Paste" => vec![PcbLayer::FPaste, PcbLayer::BPaste],
+        "*.SilkS" | "F&B.SilkS" => vec![PcbLayer::FSilkS, PcbLayer::BSilkS],
+        n => match layer_of(n) {
+            Some(l) => vec![l],
+            None => {
+                eprintln!("kicad footprint: layer {n:?} has no vcad equivalent; dropped");
+                Vec::new()
+            }
+        },
     }
 }
 
@@ -309,6 +306,69 @@ pub struct Placement {
     pub position: Vec2,
     /// Rotation (degrees).
     pub rotation: f64,
+    /// On the back side (KiCad's flip: layers swap, local y mirrors).
+    pub back: bool,
+}
+
+/// Flip a placed footprint to the back side the way KiCad does: every front
+/// layer becomes its back twin, local coordinates mirror in y (`y -> -y`) and
+/// pad angles negate, while position and rotation stay. World geometry then
+/// matches KiCad's `FOOTPRINT::Flip(_, FLIP_LEFT_RIGHT)` at the same angle.
+pub fn flip_to_back(fp: &mut Footprint) {
+    let m = |p: Vec2| Vec2::new(p.x, -p.y);
+    for pad in &mut fp.pads {
+        pad.position = m(pad.position);
+        pad.rotation = -pad.rotation;
+        for l in &mut pad.layers {
+            *l = l.flipped();
+        }
+    }
+    for g in &mut fp.graphics {
+        match g {
+            FootprintGraphic::Line {
+                start, end, layer, ..
+            } => {
+                *start = m(*start);
+                *end = m(*end);
+                *layer = layer.flipped();
+            }
+            FootprintGraphic::Polygon {
+                vertices, layer, ..
+            } => {
+                for v in vertices.iter_mut() {
+                    *v = m(*v);
+                }
+                *layer = layer.flipped();
+            }
+            FootprintGraphic::Circle { center, layer, .. } => {
+                *center = m(*center);
+                *layer = layer.flipped();
+            }
+            FootprintGraphic::Text {
+                position,
+                rotation,
+                layer,
+                ..
+            } => {
+                *position = m(*position);
+                *rotation = -*rotation;
+                *layer = layer.flipped();
+            }
+            #[allow(unreachable_patterns)]
+            _ => {}
+        }
+    }
+    if let Some(at) = fp.properties.get("ref_at").cloned() {
+        let mut it = at.split_whitespace().filter_map(|v| v.parse::<f64>().ok());
+        if let (Some(x), Some(y)) = (it.next(), it.next()) {
+            fp.properties.insert("ref_at".into(), format!("{x} {}", -y));
+        }
+    }
+    if let Some(l) = fp.properties.get("ref_layer").cloned() {
+        fp.properties
+            .insert("ref_layer".into(), l.replacen("F.", "B.", 1));
+    }
+    fp.front = false;
 }
 
 /// Board shape and process.
@@ -363,7 +423,7 @@ pub fn board_from_sheet(
     places: &[Placement],
     spec: &BoardSpec,
 ) -> Result<Pcb, String> {
-    let copper = copper_layers(spec.layers);
+    let copper = copper_layers(spec.layers)?;
     // pin -> net
     let mut pin_net: HashMap<(String, String), String> = HashMap::new();
     let mut net_names: BTreeMap<String, ()> = BTreeMap::new();
@@ -402,6 +462,9 @@ pub fn board_from_sheet(
             pl.rotation,
             &copper,
         );
+        if pl.back {
+            flip_to_back(&mut fp);
+        }
         for pad in &mut fp.pads {
             pad.net = pin_net
                 .get(&(comp.reference.clone(), pad.number.clone()))
@@ -448,6 +511,8 @@ pub fn board_from_sheet(
         let mut fp = place_footprint(&def, id, reference, "", pl.position, pl.rotation, &copper);
         fp.properties.insert("art".into(), "1".into());
         if let Ok(src) = footprint_source(id) {
+            // art can carry keepouts too (a copper logo, a gold edge rim)
+            keepouts.extend(footprint_keepouts(&src, &fp, &copper));
             fp.properties.insert("kicad_mod".into(), src);
         }
         footprints.push(fp);
@@ -662,6 +727,19 @@ fn place_designators(fps: &mut [Footprint], outline: &[Vec2]) {
         {
             continue;
         }
+        // Small passives carry their designator on the fab layer (assembly
+        // drawing), not the silk: a 0402 field of R/C labels is noise, and it
+        // crowds out the labels that matter (ICs, connectors, power parts).
+        let prefix: String = f
+            .reference
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
+        if matches!(prefix.as_str(), "R" | "C" | "FB" | "TH" | "PF") {
+            fps[i].properties.insert("ref_layer".into(), "F.Fab".into());
+            fps[i].properties.remove("ref_at");
+            continue;
+        }
         let Some(own) = world_box(f, &[PcbLayer::FCrtYd]) else {
             continue;
         };
@@ -790,6 +868,7 @@ mod tests {
                 reference: "R1".into(),
                 position: Vec2::new(5.0, 5.0),
                 rotation: 0.0,
+                back: false,
             }],
             &spec,
         )
@@ -798,8 +877,32 @@ mod tests {
     }
 
     #[test]
+    fn back_side_mirrors_local_y_and_swaps_layers() {
+        if !kicad_available() {
+            return;
+        }
+        let def = load_footprint("Package_TO_SOT_SMD:SOT-23-5").unwrap();
+        let cu = copper_layers(4).unwrap();
+        let front = place_footprint(&def, "x", "U1", "", Vec2::new(0.0, 0.0), 90.0, &cu);
+        let mut back = front.clone();
+        flip_to_back(&mut back);
+        assert!(!back.front);
+        for (a, b) in front.pads.iter().zip(&back.pads) {
+            assert_eq!(a.position.x, b.position.x);
+            assert_eq!(a.position.y, -b.position.y);
+            assert!(b.layers.contains(&PcbLayer::BCu) && !b.layers.contains(&PcbLayer::FCu));
+        }
+    }
+
+    #[test]
     fn layers_expand_for_tht_and_smd() {
-        let cu = copper_layers(4);
+        let cu = copper_layers(4).unwrap();
+        assert_eq!(copper_layers(12).unwrap()[10], PcbLayer::In10Cu);
+        assert!(copper_layers(33).is_err());
+        assert_eq!(
+            expand_layer("F&B.Cu", &cu),
+            vec![PcbLayer::FCu, PcbLayer::BCu]
+        );
         assert_eq!(
             cu,
             vec![
@@ -854,6 +957,7 @@ mod tests {
                 reference: "R1".into(),
                 position: Vec2::new(5.0, 5.0),
                 rotation: 0.0,
+                back: false,
             }],
             &spec,
         )

@@ -6985,12 +6985,25 @@ pub fn tessellate(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                 );
                 mesh.merge(&face_mesh);
             }
-            _ => {
-                // Fallback for tessellate(): use winding-aware tessellation
-                let face_mesh = tessellate_planar_face_with_geom(
+            // Exhaustive on purpose: a `_ =>` arm here once routed these
+            // to the planar fan, flattening curved faces to their boundary
+            // polygon. A new SurfaceKind must fail to compile, not flatten.
+            SurfaceKind::Bilinear => {
+                let face_mesh = tessellate_bilinear_face(
                     &brep.topology,
                     &brep.geometry,
                     face_id,
+                    &params,
+                    reversed,
+                );
+                mesh.merge(&face_mesh);
+            }
+            SurfaceKind::BSpline => {
+                let face_mesh = tessellate_bspline_face(
+                    &brep.topology,
+                    &brep.geometry,
+                    face_id,
+                    &params,
                     reversed,
                 );
                 mesh.merge(&face_mesh);
@@ -7102,12 +7115,25 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
                 );
                 mesh.merge(&face_mesh);
             }
-            _ => {
-                // Fallback for tessellate_brep(): use winding-aware tessellation
-                let face_mesh = tessellate_planar_face_with_geom(
+            // Exhaustive on purpose: a `_ =>` arm here once routed these
+            // to the planar fan, flattening curved faces to their boundary
+            // polygon. A new SurfaceKind must fail to compile, not flatten.
+            SurfaceKind::Bilinear => {
+                let face_mesh = tessellate_bilinear_face(
                     &brep.topology,
                     &brep.geometry,
                     face_id,
+                    &params,
+                    reversed,
+                );
+                mesh.merge(&face_mesh);
+            }
+            SurfaceKind::BSpline => {
+                let face_mesh = tessellate_bspline_face(
+                    &brep.topology,
+                    &brep.geometry,
+                    face_id,
+                    &params,
                     reversed,
                 );
                 mesh.merge(&face_mesh);
@@ -7483,6 +7509,131 @@ pub fn repair_watertightness(mesh: &mut TriangleMesh) {
 mod tests {
     use super::*;
     use vcad_kernel_primitives::{make_cone, make_cube, make_cylinder, make_sphere};
+
+    /// A `Surface` that reports itself as `BSpline` but evaluates a bilinear
+    /// patch — lets this crate (which has no nurbs dep) drive the BSpline
+    /// dispatch arm with a surface whose true shape is known in closed form.
+    #[derive(Clone, Debug)]
+    struct FakeBSpline(BilinearSurface);
+    impl vcad_kernel_geom::Surface for FakeBSpline {
+        fn evaluate(&self, uv: Point2) -> Point3 {
+            self.0.evaluate(uv)
+        }
+        fn normal(&self, uv: Point2) -> vcad_kernel_math::Dir3 {
+            self.0.normal(uv)
+        }
+        fn d_du(&self, uv: Point2) -> vcad_kernel_math::Vec3 {
+            self.0.d_du(uv)
+        }
+        fn d_dv(&self, uv: Point2) -> vcad_kernel_math::Vec3 {
+            self.0.d_dv(uv)
+        }
+        fn domain(&self) -> ((f64, f64), (f64, f64)) {
+            self.0.domain()
+        }
+        fn surface_type(&self) -> SurfaceKind {
+            SurfaceKind::BSpline
+        }
+        fn clone_box(&self) -> Box<dyn vcad_kernel_geom::Surface> {
+            Box::new(self.clone())
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn transform(&self, t: &vcad_kernel_math::Transform) -> Box<dyn vcad_kernel_geom::Surface> {
+            Box::new(FakeBSpline(
+                self.0
+                    .transform(t)
+                    .as_any()
+                    .downcast_ref::<BilinearSurface>()
+                    .unwrap()
+                    .clone(),
+            ))
+        }
+    }
+
+    /// Replace the top face (z = 10) of a 10mm cube with a twisted patch
+    /// z = 10 + 5uv over the same footprint. Returns (solid, top-face ordinal).
+    fn cube_with_twisted_top(as_bspline: bool) -> (BRepSolid, u32) {
+        let mut brep = make_cube(10.0, 10.0, 10.0);
+        let shell = &brep.topology.shells[brep.topology.solids[brep.solid_id].outer_shell];
+        let (ordinal, top) = shell
+            .faces
+            .iter()
+            .enumerate()
+            .find(|(_, &f)| {
+                brep.topology
+                    .loop_half_edges(brep.topology.faces[f].outer_loop)
+                    .all(|he| {
+                        let p = brep.topology.vertices[brep.topology.half_edges[he].origin].point;
+                        (p.z - 10.0).abs() < 1e-9
+                    })
+            })
+            .map(|(i, &f)| (i as u32, f))
+            .expect("top face");
+        let patch = BilinearSurface::new(
+            Point3::new(0.0, 0.0, 10.0),
+            Point3::new(10.0, 0.0, 10.0),
+            Point3::new(0.0, 10.0, 10.0),
+            Point3::new(10.0, 10.0, 15.0),
+        );
+        let surf: Box<dyn vcad_kernel_geom::Surface> = if as_bspline {
+            Box::new(FakeBSpline(patch))
+        } else {
+            Box::new(patch)
+        };
+        let idx = brep.geometry.add_surface(surf);
+        brep.topology.faces[top].surface_index = idx;
+        (brep, ordinal)
+    }
+
+    /// Max |z - (10 + 5uv)| over the centroids of the triangles tagged with
+    /// `ordinal`, plus that face's triangle count.
+    fn twisted_face_deviation(mesh: &TriangleMesh, ordinal: u32) -> (f64, usize) {
+        let mut worst = 0.0f64;
+        let mut n = 0;
+        for (t, tri) in mesh.indices.chunks(3).enumerate() {
+            if mesh.face_ids.get(t) != Some(&ordinal) {
+                continue;
+            }
+            n += 1;
+            let c = tri.iter().fold([0.0f64; 3], |mut acc, &i| {
+                for (k, a) in acc.iter_mut().enumerate() {
+                    *a += mesh.vertices[i as usize * 3 + k] as f64 / 3.0;
+                }
+                acc
+            });
+            let (u, v) = (c[0] / 10.0, c[1] / 10.0);
+            worst = worst.max((c[2] - (10.0 + 5.0 * u * v)).abs());
+        }
+        (worst, n)
+    }
+
+    /// Both public entry points must tessellate Bilinear and BSpline faces
+    /// on the true surface. They used to fall through `_ =>` to the planar
+    /// fan of the boundary polygon: a twisted patch came back as 2 flat
+    /// triangles, 1.25 mm off the surface at its centre.
+    #[test]
+    fn entry_points_tessellate_curved_bilinear_and_bspline_faces() {
+        for as_bspline in [false, true] {
+            let (brep, ordinal) = cube_with_twisted_top(as_bspline);
+            for (name, mesh) in [
+                ("tessellate", tessellate(&brep, 16)),
+                ("tessellate_brep", tessellate_brep(&brep, 16)),
+            ] {
+                let (dev, n) = twisted_face_deviation(&mesh, ordinal);
+                let kind = if as_bspline { "BSpline" } else { "Bilinear" };
+                assert!(
+                    n > 8,
+                    "{name}/{kind}: only {n} triangles on the curved face"
+                );
+                assert!(
+                    dev < 0.05,
+                    "{name}/{kind}: face sits {dev:.3} mm off the true surface"
+                );
+            }
+        }
+    }
 
     fn assert_normals_consistent(mesh: &TriangleMesh, ctx: &str) {
         assert!(

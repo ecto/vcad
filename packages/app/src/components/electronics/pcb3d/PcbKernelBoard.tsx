@@ -32,6 +32,7 @@ import {
   type PcbPreviewMesh,
   type PcbPreviewEntity,
 } from "@vcad/engine";
+import { boardCopperLayers } from "@vcad/core";
 import { layerZOffset, isLayerVisible } from "./pcb-geometry";
 import type { LayerConfig, ElectronicsSelection } from "@/stores/electronics-store";
 
@@ -66,10 +67,10 @@ interface BuiltMesh {
 
 /** Stackup-explosion z-shift for a layer-tagged mesh (0 when unexploded —
  *  kernel meshes are already at their physical z). */
-function explodeShift(layer: string | undefined, explosion: number): number {
+function explodeShift(layer: string | undefined, explosion: number, copperCount: number): number {
   if (!layer || explosion <= 0) return 0;
   const l = layer as PcbLayer;
-  return layerZOffset(l, explosion) - layerZOffset(l, 0);
+  return layerZOffset(l, explosion, copperCount) - layerZOffset(l, 0, copperCount);
 }
 
 /** Does this entity match the current selection? */
@@ -111,6 +112,7 @@ export function PcbKernelBoard({
   const { invalidate } = useThree();
   const [meshes, setMeshes] = useState<PcbPreviewMesh[]>([]);
   const generation = useRef(0);
+  const copperCount = useMemo(() => boardCopperLayers(pcb).length, [pcb]);
 
   // Debounced kernel re-mesh whenever board data changes. Stale async results
   // (an older tessellation resolving after a newer edit) are dropped by the
@@ -250,9 +252,9 @@ export function PcbKernelBoard({
   // the source mesh key.
   const overlayShift = useMemo(() => {
     const map = new Map<string, number>();
-    for (const b of built) map.set(`hl-${b.key}`, explodeShift(b.layer, explosion));
+    for (const b of built) map.set(`hl-${b.key}`, explodeShift(b.layer, explosion, copperCount));
     return map;
-  }, [built, explosion]);
+  }, [built, explosion, copperCount]);
 
   return (
     <group>
@@ -264,7 +266,7 @@ export function PcbKernelBoard({
             key={b.key}
             geometry={b.geometry}
             material={b.material}
-            position={[0, 0, explodeShift(b.layer, explosion)]}
+            position={[0, 0, explodeShift(b.layer, explosion, copperCount)]}
             // The translucent mask must blend over its own board's copper
             // before other transparents; default sort order is fine, but
             // never let it write depth (set on the material above).

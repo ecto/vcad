@@ -34,7 +34,7 @@ use super::route_net_maze;
 use super::Stopwatch;
 
 /// A trace produced by the auto-router.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RoutedTrace {
     /// Segment start (mm).
     pub start: Vec2,
@@ -50,7 +50,7 @@ pub struct RoutedTrace {
 
 /// A via produced by the auto-router. Outer-layer span = through via;
 /// anything else is a blind/buried (micro)via chosen by the 3D search.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RoutedVia {
     /// Via center (mm).
     pub position: Vec2,
@@ -65,7 +65,7 @@ pub struct RoutedVia {
 /// Why a connection could not be routed, and where — so an agent or human can
 /// act on it (change a layer, free the region, add a via) instead of staring at
 /// a bare "unrouted" list.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct UnroutedDiagnostic {
     /// The net that could not be fully routed.
     pub net: String,
@@ -93,7 +93,7 @@ pub struct UnroutedDiagnostic {
 }
 
 /// Result of routing a whole board.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RouteAllResult {
     /// Routed trace segments (each carries its layer).
     pub traces: Vec<RoutedTrace>,
@@ -162,18 +162,34 @@ pub struct RouteOptions {
     pub pour_policy: PourPolicy,
     /// Only through vias (front to back); no blind or buried vias.
     pub through_vias_only: bool,
+    /// Microvia `(diameter, drill)` for outer-to-adjacent spans (see
+    /// [`super::maze::set_microvia`]); `None` sizes every via by the rules.
+    pub microvia: Option<(f64, f64)>,
+    /// One greedy pass and nothing else: no rip-up, no negotiation, no joint
+    /// repair. For fast iteration on placement and stackup - minutes, not hours.
+    pub fast: bool,
     /// Plane layers no trace may run on (vias still pass through them).
     pub no_route_layers: Vec<PcbLayer>,
+    /// Stitch plane pads to their planes *before* signal routing, so each
+    /// pad's via and stub are in place before fan-out claims the room round
+    /// fine-pitch parts. Pads this can't stitch are retried after routing.
+    pub prestitch_planes: bool,
 }
 
 impl RouteOptions {
     /// Negotiation rounds after effort scaling (always at least 1).
     fn effective_rounds(&self) -> usize {
+        if self.fast {
+            return 1;
+        }
         ((self.negotiation_rounds as f64 * self.effort).ceil() as usize).max(1)
     }
 
     /// Rip-up rounds per pass after effort scaling (always at least 1).
     fn effective_ripup_rounds(&self) -> usize {
+        if self.fast {
+            return 0;
+        }
         ((MAX_RIPUP_ROUNDS as f64 * self.effort).ceil() as usize).max(1)
     }
 
@@ -206,7 +222,10 @@ impl Default for RouteOptions {
             prune_dangling_copper: true,
             pour_policy: PourPolicy::default(),
             through_vias_only: false,
+            microvia: None,
+            fast: false,
             no_route_layers: Vec::new(),
+            prestitch_planes: true,
         }
     }
 }
@@ -224,6 +243,11 @@ const MAX_RIPUP_ROUNDS: usize = 8;
 /// discards wholesale. The budget parks the remainder as pending instead: the
 /// same outcome the round was heading for, minutes rather than an hour later.
 const RIPUP_ROUND_BUDGET_MS: f64 = 300_000.0;
+/// A target whose corridor crosses more placed routes than this is skipped by
+/// rip-up: ripping and restoring a dozen victims costs a dozen maze searches,
+/// and on a dense BGA field (the brain's RK3588) those targets almost never
+/// come through - they were most of a 300 s round for a handful of nets.
+const RIPUP_MAX_VICTIMS: usize = 8;
 
 /// Wall-clock budget for the deferred rescue [`arsenal_sweep`]. The arsenal is
 /// unbounded per connection (escape flow, coupled-pair phantom search, true
@@ -259,7 +283,12 @@ fn negotiate_first_regime(pcb: &Pcb) -> bool {
 
 /// Same-net landing points the plane-stitch maze rescue will try, nearest
 /// first, before reporting a pad unstitchable.
-const PLANE_RESCUE_TARGETS: usize = 8;
+const PLANE_RESCUE_TARGETS: usize = 4;
+/// Plane-rescue targets further than this from the pad are not tried: a
+/// plane pad that can't reach a landing point within a few mm is boxed in,
+/// and every failed full-budget maze search costs ~0.4 s (the brain's GND and
+/// rail pads were the router's biggest sink of failed searches).
+const PLANE_RESCUE_MAX_MM: f64 = 5.0;
 
 /// History cost (mm-equivalent) deposited on a contested corridor per
 /// negotiation round. A gentle, accumulating bias: enough that a flexible net
@@ -363,6 +392,7 @@ pub fn route_all(pcb: &Pcb, width: f64, nets_filter: &[String]) -> RouteAllResul
 /// relaxes clearance, so every intermediate pass — and the final result — stays
 /// DRC-clean. With `negotiation_rounds == 1` this reduces exactly to the
 /// historical greedy + rip-up router.
+#[tracing::instrument(level = "info", skip_all)]
 pub fn route_all_with_opts(
     pcb: &Pcb,
     width: f64,
@@ -376,6 +406,8 @@ pub fn route_all_with_opts(
     // Nets that already own a pour are left alone, so this complements existing
     // zones rather than duplicating them.
     super::maze::set_through_vias_only(opts.through_vias_only);
+    super::maze::set_microvia(opts.microvia);
+    FAST.store(opts.fast, std::sync::atomic::Ordering::Relaxed);
     super::maze::set_no_route_layers(&opts.no_route_layers);
     let synthesized = synthesize_pours(pcb, &opts.pour_policy, nets_filter);
     let poured_board;
@@ -409,6 +441,66 @@ pub fn route_all_with_opts(
     if !planes.is_empty() {
         rats.retain(|l| !planes.contains_key(&l.net));
     }
+
+    // Plane stitches first: each planed pad gets its via (and stub) on the
+    // empty board, and signal routing then treats them as fixed copper. Done
+    // after routing instead, a pin deep in a fine-pitch fan-out finds every
+    // spot near it taken. The copper rides along on a working copy of the board
+    // and joins the result with the post-route stitches below.
+    let pcb_in = pcb;
+    let prestitch = if opts.prestitch_planes && !planes.is_empty() {
+        let mut s0 = RouteSession::from_pcb(pcb);
+        let ps = stitch_planes(
+            &mut s0,
+            pcb,
+            &planes,
+            nets_filter,
+            &[],
+            width,
+            &board_holes(pcb),
+            true,
+            &[],
+        );
+        log::info!(
+            "plane prestitch: {} via(s), {} pad(s) left for after routing",
+            ps.vias.len(),
+            ps.failed_pads.len()
+        );
+        Some(ps)
+    } else {
+        None
+    };
+    let prestitched_board;
+    let pcb = match &prestitch {
+        Some(ps) if !ps.vias.is_empty() => {
+            let mut p = pcb.clone();
+            let copper = copper_layers(pcb);
+            for (a, b, net, l) in &ps.stubs {
+                p.traces.push(vcad_ir::ecad::Trace {
+                    start: *a,
+                    end: *b,
+                    width,
+                    layer: *l,
+                    net: net.clone(),
+                    source: Some(vcad_ir::ecad::CopperSource::Autoroute),
+                });
+            }
+            for (v, net) in &ps.vias {
+                p.vias.push(vcad_ir::ecad::Via {
+                    position: *v,
+                    diameter: pcb.rules.default_rules.via_diameter,
+                    drill: pcb.rules.default_rules.via_drill,
+                    start_layer: *copper.first().unwrap_or(&PcbLayer::FCu),
+                    end_layer: *copper.last().unwrap_or(&PcbLayer::BCu),
+                    net: net.clone(),
+                    source: Some(vcad_ir::ecad::CopperSource::Autoroute),
+                });
+            }
+            prestitched_board = p;
+            &prestitched_board
+        }
+        _ => pcb,
+    };
 
     // Route the longest connections first. They span the most board and have
     // the least routing freedom, so giving them the emptier board up front
@@ -612,7 +704,7 @@ pub fn route_all_with_opts(
     // Escalating-window joint repair: the last-resort untangler for local
     // knots that per-net rip-up and negotiation provably cannot solve (they
     // require deciding a clique of routes together).
-    if !still_unrouted.is_empty() {
+    if !still_unrouted.is_empty() && !opts.fast {
         still_unrouted = joint_window_repair(
             &mut session,
             pcb,
@@ -691,7 +783,7 @@ pub fn route_all_with_opts(
         }
         // Never route the pad to itself (a same-net pad coincident with it, or
         // a zero-length target) — that is not a path to the plane.
-        targets.retain(|t| dist(*t, pad_pt) > 1e-6);
+        targets.retain(|t| dist(*t, pad_pt) > 1e-6 && dist(*t, pad_pt) < PLANE_RESCUE_MAX_MM);
         targets.sort_by(|a, b| dist(*a, pad_pt).total_cmp(&dist(*b, pad_pt)));
         let mut rescued = false;
         // A plane offers many galvanically equivalent landing points; the three
@@ -708,7 +800,9 @@ pub fn route_all_with_opts(
                 &mut placed,
                 &cong,
                 opts.use_push_shove,
-                opts.effective_expansions(),
+                // a short hop to a plane point: a quarter budget finds it
+                // if it exists, and fails 4x cheaper when it doesn't
+                (opts.effective_expansions() / 4).max(1),
                 true,
             ) {
                 placed.push(p);
@@ -852,6 +946,35 @@ pub fn route_all_with_opts(
             });
         }
     }
+    // The prestitch copper leaves the working board and joins the result: from
+    // here on `pcb` is the board as given, so legalization and pruning see the
+    // stitches once, as this pass's own copper. A pad the post-route pass
+    // stitched again (it saw the prestitch as foreign board copper) keeps only
+    // its prestitch.
+    let pcb = pcb_in;
+    if let Some(ps) = prestitch {
+        let pre_pads: Vec<Vec2> = ps
+            .stubs
+            .iter()
+            .map(|(a, _, _, _)| *a)
+            .chain(ps.vias.iter().map(|(v, _)| *v))
+            .collect();
+        let near = |p: Vec2| pre_pads.iter().any(|q| dist(*q, p) < 1e-3);
+        let dup_vias: Vec<Vec2> = stitch
+            .stubs
+            .iter()
+            .filter(|(a, _, _, _)| near(*a))
+            .map(|(_, b, _, _)| *b)
+            .collect();
+        stitch.stubs.retain(|(a, _, _, _)| !near(*a));
+        stitch
+            .vias
+            .retain(|(v, _)| !near(*v) && !dup_vias.iter().any(|d| dist(*d, *v) < 1e-3));
+        stitch.failed_pads.retain(|(_, p)| !near(*p));
+        stitch.stubs.extend(ps.stubs);
+        stitch.vias.extend(ps.vias);
+        stitch.nets.extend(ps.nets);
+    }
     // Fold in the plane stitching: dog-bone stubs (each on its pad's layer) and
     // the stitching vias themselves.
     for (a, b, net, l) in &stitch.stubs {
@@ -896,6 +1019,7 @@ pub fn route_all_with_opts(
         &mut vias,
         &stitch_via_pts,
         opts.prune_dangling_copper,
+        opts.fast,
     );
     if legal.merged_vias > 0
         || legal.pruned_traces > 0
@@ -1271,6 +1395,7 @@ fn deposit_congestion(
 /// the fan-out rescue's input). A flat `cong` makes this identical to the
 /// historical greedy + rip-up router.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all)]
 fn route_pass(
     pcb: &Pcb,
     width: f64,
@@ -1638,7 +1763,11 @@ fn route_pass(
             (session, placed, pending) = snapshot;
             break;
         }
-        if placed.len() == placed_before {
+        // Diminishing returns: a round that placed under 2% of what it was
+        // given will not be beaten by the next one on the same congestion.
+        let gained = placed.len() - placed_before;
+        let given = pending.len() + gained;
+        if gained == 0 || gained * 50 < given {
             break;
         }
     }
@@ -1789,6 +1918,7 @@ fn audit_stitch(session: &RouteSession, pcb: &Pcb, stitch: &Stitch, width: f64) 
 /// to every connection the speculative search missed.
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(not(feature = "gpu"), allow(dead_code))]
+#[tracing::instrument(level = "info", skip_all)]
 fn arsenal_sweep(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -1853,6 +1983,7 @@ fn arsenal_sweep(
 /// victims after. Everything else on the board stays put, so a round costs a
 /// fraction of a whole-board re-route with the same negotiation semantics.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all)]
 fn incremental_round(
     base: &Pass,
     pcb: &Pcb,
@@ -1936,6 +2067,7 @@ fn incremental_round(
 /// Bounded retries keep a pathological cluster from ping-ponging. Returns
 /// the connections that could not be routed; successes land in `placed`.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all)]
 fn route_batch(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -2061,6 +2193,13 @@ fn route_batch(
             .collect();
         for (((net, from, to), attempts), cand) in batch.into_iter().zip(candidates) {
             match cand {
+                // --fast: the speculative search IS the attempt; the
+                // sequential re-run below is single-threaded and mostly
+                // repeats the same search, so skip it
+                None if FAST.load(std::sync::atomic::Ordering::Relaxed) => {
+                    fail_cache.insert(conn_key(&net, from, to), session.epoch());
+                    unrouted.push((net, from, to));
+                }
                 // Speculative search failed: give the connection the full
                 // sequential arsenal (including the escape stage, which only
                 // runs inside try_route) before declaring it unrouted.
@@ -2156,7 +2295,39 @@ fn route_batch(
 /// [`try_route_fanout`], a monotonic rescue that only runs on connections this
 /// leaves unrouted.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all, fields(net = %net, len_mm = format!("{:.1}", (to - from).length()), ok))]
 fn try_route(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    net: &str,
+    from: Vec2,
+    to: Vec2,
+    placed: &mut Vec<Placed>,
+    cong: &Congestion,
+    use_push_shove: bool,
+    max_expansions: usize,
+    rescue: bool,
+) -> Option<Placed> {
+    let r = try_route_inner(
+        session,
+        pcb,
+        width,
+        net,
+        from,
+        to,
+        placed,
+        cong,
+        use_push_shove,
+        max_expansions,
+        rescue,
+    );
+    tracing::Span::current().record("ok", r.is_some());
+    r
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_route_inner(
     session: &mut RouteSession,
     pcb: &Pcb,
     width: f64,
@@ -2246,6 +2417,28 @@ fn try_route(
     )
 }
 
+/// `RouteOptions::fast` for the batch router, which does not see the options.
+static FAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Pin fields depend only on footprints, which never change during a route:
+/// detect them once per board instead of once per connection.
+type PinFieldCache = Option<(usize, usize, std::sync::Arc<Vec<escape::PinField>>)>;
+
+fn cached_pin_fields(pcb: &Pcb) -> std::sync::Arc<Vec<escape::PinField>> {
+    use std::sync::{Arc, Mutex};
+    static CACHE: Mutex<PinFieldCache> = Mutex::new(None);
+    let key = (pcb.footprints.as_ptr() as usize, pcb.footprints.len());
+    let mut c = CACHE.lock().unwrap();
+    if let Some((p, n, f)) = c.as_ref() {
+        if (*p, *n) == key {
+            return f.clone();
+        }
+    }
+    let f = Arc::new(escape::detect_pin_fields(pcb));
+    *c = Some((key.0, key.1, f.clone()));
+    f
+}
+
 /// Escape-assisted retry for a connection the direct maze could not place
 /// (tier-2 BGA escape stage; see [`super::escape`]).
 ///
@@ -2269,7 +2462,12 @@ fn try_route_escape(
     use_push_shove: bool,
     max_expansions: usize,
 ) -> Option<Placed> {
-    let fields = escape::detect_pin_fields(pcb);
+    // A board that brings its own fanout (via-in-pad microvias, `microvia`
+    // set) needs no planned escapes: its balls already reach the inner layers.
+    if super::maze::microvia().is_some() {
+        return None;
+    }
+    let fields = cached_pin_fields(pcb);
     if fields.is_empty() {
         return None;
     }
@@ -3588,6 +3786,7 @@ struct Stitch {
 /// the result is clearance-legal by construction. A pad already sitting on one
 /// of its planes floods directly and needs no via.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all)]
 fn stitch_planes(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -3702,6 +3901,7 @@ fn stitch_planes(
 /// DRC-clean invariant always holds because every (re)route goes through
 /// [`try_route`]. Returns the connections still unrouted after the pass.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all)]
 fn ripup_pass(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -3761,7 +3961,7 @@ fn ripup_pass(
             })
             .map(|(i, _)| i)
             .collect();
-        if victim_set.is_empty() {
+        if victim_set.is_empty() || victim_set.len() > RIPUP_MAX_VICTIMS {
             still.push((net, from, to));
             continue;
         }
@@ -3918,6 +4118,7 @@ fn reroute_victims_with_restore(
 /// two components) where per-net rip-up thrashes: the routes must be decided
 /// TOGETHER, and the window guarantees every entangled neighbor is in play.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(level = "info", skip_all)]
 fn joint_window_repair(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -5050,6 +5251,62 @@ mod tests {
     }
 
     #[test]
+    fn prestitch_reaches_a_plane_pin_hemmed_in_by_fanout() {
+        // A GND pin in the middle of a row of signal pins whose traces leave
+        // in both directions: routed first, the fan-out claims the room beside
+        // it. With plane prestitch the GND via goes down before any trace, so
+        // the pin still reaches its plane.
+        let row = |x: f64| -> Vec<Pad> {
+            ["S1", "S2", "GND", "S3", "S4"]
+                .iter()
+                .enumerate()
+                .map(|(k, n)| pad(&(k + 1).to_string(), x, 4.0 + 1.6 * k as f64, n))
+                .collect()
+        };
+        let pcb0 = board4(
+            vec![
+                fp("U1", 20.0, 6.0, row(0.0)),
+                fp(
+                    "J1",
+                    6.0,
+                    6.0,
+                    vec![pad("1", 0.0, 4.0, "S1"), pad("2", 0.0, 5.6, "S2")],
+                ),
+                fp(
+                    "J2",
+                    34.0,
+                    6.0,
+                    vec![pad("1", 0.0, 8.8, "S3"), pad("2", 0.0, 10.4, "S4")],
+                ),
+                fp("C1", 40.0, 26.0, vec![pad("1", 0.0, 0.0, "GND")]),
+            ],
+            vec![plane("GND", PcbLayer::In1Cu)],
+        );
+        let r = route_all(&pcb0, 0.25, &[]);
+        assert!(
+            r.unrouted_nets.is_empty(),
+            "unrouted: {:?}",
+            r.unrouted_nets
+        );
+        assert!(
+            r.vias.iter().filter(|v| v.net == "GND").count() >= 2,
+            "both GND pads stitched to the plane"
+        );
+        let mut pcb = pcb0.clone();
+        apply(&mut pcb, &r);
+        let bad = check_drc(&pcb)
+            .iter()
+            .filter(|v| {
+                matches!(
+                    v.rule,
+                    crate::drc::DrcRuleType::Short | crate::drc::DrcRuleType::Clearance
+                )
+            })
+            .count();
+        assert_eq!(bad, 0, "prestitched board must be short/clearance clean");
+    }
+
+    #[test]
     fn stitches_power_pads_to_inner_planes() {
         // GND plane on In1Cu, V3V3 plane on In2Cu; SMD power pads on FCu. Without
         // stitching the planes are dead copper and every power pad is its own
@@ -6024,6 +6281,7 @@ mod tests {
 /// CPU rescue arsenal is the caller's choice — see the routerbench
 /// finding at the call sites.
 #[cfg(feature = "gpu")]
+#[tracing::instrument(level = "info", skip_all)]
 fn gpu_negotiate_rounds(
     session: &mut RouteSession,
     pcb: &Pcb,

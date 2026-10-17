@@ -30,6 +30,8 @@ import { ChartLine } from "@phosphor-icons/react/dist/ssr/ChartLine";
 import { ToolbarButton } from "@/components/ui/toolbar";
 import { ELECTRONICS_TAB_COLORS } from "@/components/ui/toolbar-constants";
 import { useElectronicsStore } from "@/stores/electronics-store";
+import { usePcbLayerConfigs } from "@/hooks/usePcbLayerConfigs";
+import { isCopperLayer } from "@vcad/core";
 import { useDocumentStore, useCoreElectronicsStore } from "@vcad/core";
 import type { PcbLayer } from "@vcad/ir";
 import { useSymbolLibrary } from "./symbol-library";
@@ -52,7 +54,7 @@ export function CircuitTabTools() {
   const pcbSnapToGrid = useElectronicsStore((s) => s.pcbSnapToGrid);
   const showComponentBodies = useElectronicsStore((s) => s.showComponentBodies);
   const toggleComponentBodies = useElectronicsStore((s) => s.toggleComponentBodies);
-  const pcbLayers = useElectronicsStore((s) => s.pcbLayers);
+  const pcbLayers = usePcbLayerConfigs();
   const unplacedComponents = useElectronicsStore((s) => s.unplacedComponents);
   const simulating = useElectronicsStore((s) => s.simulating);
   const analysisOpen = useElectronicsStore((s) => s.analysis.showPanel);
@@ -202,7 +204,7 @@ export function CircuitTabTools() {
   }
 
   // --- Board tools -----------------------------------------------------------
-  const copperLayers = pcbLayers.filter((l) => l.layer.endsWith("Cu"));
+  const copperLayers = pcbLayers.filter((l) => isCopperLayer(l.layer));
   return (
     <>
       <ToolbarButton

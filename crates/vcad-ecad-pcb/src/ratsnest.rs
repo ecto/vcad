@@ -71,12 +71,6 @@ pub fn compute_ratsnest(pcb: &Pcb, netlist: &Netlist) -> Vec<RatsnestLine> {
             continue;
         }
 
-        // Skip nets that already have traces
-        let has_trace = pcb.traces.iter().any(|t| t.net == net.name);
-        if has_trace {
-            continue;
-        }
-
         // Gather the connection points whose pad position is known, preserving
         // netlist order so MST tie-breaking is deterministic.
         let nodes: Vec<(Vec2, &NetConnection)> = net
@@ -91,7 +85,12 @@ pub fn compute_ratsnest(pcb: &Pcb, netlist: &Netlist) -> Vec<RatsnestLine> {
             continue;
         }
 
-        for (from_idx, to_idx) in mst_edges(&nodes) {
+        // Pads already joined by the net's existing copper (a resumed route, a
+        // BGA escape, hand-laid links) are one node group: no air-wire between
+        // them. Skipping every net that had ANY trace dropped an escaped net -
+        // whose copper only reaches the edge of its pin field - from routing.
+        let comp = copper_groups(pcb, &net.name, &nodes);
+        for (from_idx, to_idx) in mst_edges(&nodes, &comp) {
             let (from_pos, from_conn) = nodes[from_idx];
             let (to_pos, _) = nodes[to_idx];
             lines.push(RatsnestLine {
@@ -112,12 +111,87 @@ pub fn compute_ratsnest(pcb: &Pcb, netlist: &Netlist) -> Vec<RatsnestLine> {
 /// Returns `n-1` `(parent, child)` index pairs. Uses squared distance (monotonic
 /// in true distance, so the MST is identical) and starts from node 0 with strict
 /// `<` tie-breaking, making the result deterministic for a given node order.
-fn mst_edges(nodes: &[(Vec2, &NetConnection)]) -> Vec<(usize, usize)> {
+/// Group id per node: nodes whose pads the net's existing traces / vias join
+/// share one. Contact is endpoint-to-endpoint on a layer, or a trace end or
+/// pad on a via; conservative (an unproven contact keeps nodes apart, which
+/// only costs the router a zero-length "already satisfied" connection).
+fn copper_groups(pcb: &Pcb, net: &str, nodes: &[(Vec2, &NetConnection)]) -> Vec<usize> {
+    let traces: Vec<_> = pcb.traces.iter().filter(|t| t.net == net).collect();
+    let vias: Vec<_> = pcb.vias.iter().filter(|v| v.net == net).collect();
+    let (nt, nv) = (traces.len(), vias.len());
+    let total = nt + nv + nodes.len();
+    let mut parent: Vec<usize> = (0..total).collect();
+    fn find(p: &mut [usize], mut i: usize) -> usize {
+        while p[i] != i {
+            p[i] = p[p[i]];
+            i = p[i];
+        }
+        i
+    }
+    let union = |p: &mut Vec<usize>, a: usize, b: usize| {
+        let (ra, rb) = (find(p, a), find(p, b));
+        if ra != rb {
+            p[ra] = rb;
+        }
+    };
+    let near = |a: Vec2, b: Vec2, r: f64| (a.x - b.x).powi(2) + (a.y - b.y).powi(2) <= r * r;
+    // trace ends meeting on a layer
+    let mut ends: std::collections::HashMap<(i64, i64, String), usize> = Default::default();
+    for (i, t) in traces.iter().enumerate() {
+        for p in [t.start, t.end] {
+            let k = (
+                (p.x * 1e3).round() as i64,
+                (p.y * 1e3).round() as i64,
+                format!("{:?}", t.layer),
+            );
+            match ends.get(&k) {
+                Some(&j) => union(&mut parent, i, j),
+                None => {
+                    ends.insert(k, i);
+                }
+            }
+        }
+    }
+    for (vi, v) in vias.iter().enumerate() {
+        let r = v.diameter / 2.0;
+        for (i, t) in traces.iter().enumerate() {
+            if near(t.start, v.position, r) || near(t.end, v.position, r) {
+                union(&mut parent, i, nt + vi);
+            }
+        }
+        for (vj, w) in vias.iter().enumerate().skip(vi + 1) {
+            if near(w.position, v.position, 1e-3) {
+                union(&mut parent, nt + vi, nt + vj);
+            }
+        }
+    }
+    for (ni, (pos, _)) in nodes.iter().enumerate() {
+        let me = nt + nv + ni;
+        for (i, t) in traces.iter().enumerate() {
+            if near(t.start, *pos, 0.05) || near(t.end, *pos, 0.05) {
+                union(&mut parent, i, me);
+            }
+        }
+        for (vi, v) in vias.iter().enumerate() {
+            if near(v.position, *pos, v.diameter / 2.0) {
+                union(&mut parent, nt + vi, me);
+            }
+        }
+    }
+    (0..nodes.len())
+        .map(|ni| find(&mut parent, nt + nv + ni))
+        .collect()
+}
+
+fn mst_edges(nodes: &[(Vec2, &NetConnection)], comp: &[usize]) -> Vec<(usize, usize)> {
     let n = nodes.len();
     if n < 2 {
         return Vec::new();
     }
     let dist2 = |i: usize, j: usize| -> f64 {
+        if comp[i] == comp[j] {
+            return 0.0;
+        }
         let a = nodes[i].0;
         let b = nodes[j].0;
         let dx = a.x - b.x;
@@ -148,7 +222,9 @@ fn mst_edges(nodes: &[(Vec2, &NetConnection)]) -> Vec<(usize, usize)> {
             break;
         }
         in_tree[u] = true;
-        edges.push((best_parent[u], u));
+        if comp[best_parent[u]] != comp[u] {
+            edges.push((best_parent[u], u));
+        }
         for j in 0..n {
             if !in_tree[j] {
                 let d = dist2(u, j);

@@ -14,7 +14,7 @@
 
 import { getKernelWasm, resetKernelWasm, computeRatsnest } from "@vcad/engine";
 import type { NetlistResult } from "@vcad/engine";
-import { getNodePcb, getPcbNodeIds } from "@vcad/core";
+import { boardCopperLayers, getNodePcb, getPcbNodeIds } from "@vcad/core";
 import type { Document, Pcb } from "@vcad/ir";
 import {
   getSession,
@@ -1164,18 +1164,6 @@ export async function renderRatsnest(
 // render_stackup — one image per copper layer (read inner planes legibly)
 // ───────────────────────────────────────────────────────────────────────────
 
-const COPPER_LAYERS = [
-  "FCu",
-  "In1Cu",
-  "In2Cu",
-  "In3Cu",
-  "In4Cu",
-  "In5Cu",
-  "In6Cu",
-  "In7Cu",
-  "In8Cu",
-  "BCu",
-] as const;
 
 export const renderStackupSchema = {
   type: "object" as const,
@@ -1245,11 +1233,9 @@ export async function renderStackup(
     };
   }
 
-  // Copper layers actually present: from the stackup, falling back to the two
+  // Copper layers actually present: stackup plus any layer copper sits on,
   // outer layers when the stackup is unspecified.
-  const declared = new Set(pcb.stackup.layers.map((l) => String(l.layer)));
-  const present = COPPER_LAYERS.filter((l) => declared.has(l));
-  const copper: string[] = present.length > 0 ? [...present] : ["FCu", "BCu"];
+  const copper: string[] = boardCopperLayers(pcb);
 
   const pcbJson = JSON.stringify(pcb);
   const content: ContentBlock[] = [];

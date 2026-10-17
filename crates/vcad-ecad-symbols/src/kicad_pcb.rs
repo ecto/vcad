@@ -3,12 +3,13 @@
 //! Converts a `.kicad_pcb` S-expression file into a [`vcad_ir::ecad::Pcb`]
 //! struct.  Reuses the `sexpr` S-expression parser.
 
-use std::collections::HashMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 
 use vcad_ir::ecad::{
     BoardOutline, DesignRules, DrillSpec, Footprint, FootprintGraphic, LayerStackup, Net,
     NetClassRules, Pad, PadShape, PadType, Pcb, PcbLayer, StackupLayer, ThermalReliefStyle, Trace,
-    Via, Zone, ZoneFillType,
+    TraceArc, Via, Zone, ZoneFillType,
 };
 use vcad_ir::Vec2;
 
@@ -16,7 +17,23 @@ use crate::sexpr::{parse_sexpr, SExpr};
 use crate::ParseError;
 
 /// Parse a `.kicad_pcb` file content into a [`Pcb`].
+///
+/// Anything the importer could not represent faithfully (a layer with no IR
+/// equivalent, an unknown pad type/shape, a via without parseable layers) is
+/// reported on stderr. Use [`parse_kicad_pcb_with_warnings`] to get those
+/// warnings as data instead.
 pub fn parse_kicad_pcb(input: &str) -> Result<Pcb, ParseError> {
+    let (pcb, warnings) = parse_kicad_pcb_with_warnings(input)?;
+    for w in &warnings {
+        eprintln!("kicad_pcb import warning: {w}");
+    }
+    Ok(pcb)
+}
+
+/// Parse a `.kicad_pcb` file, returning the board plus every import warning
+/// (dropped/approximated items). Never silently drops copper: each item that
+/// did not make it into the IR unchanged is accounted for here.
+pub fn parse_kicad_pcb_with_warnings(input: &str) -> Result<(Pcb, Vec<String>), ParseError> {
     let (rest, root) = parse_sexpr(input)?;
     if !rest.trim().is_empty() {
         return Err(ParseError::TrailingInput);
@@ -25,6 +42,103 @@ pub fn parse_kicad_pcb(input: &str) -> Result<Pcb, ParseError> {
         return Err(ParseError::Nom("expected (kicad_pcb ...)".into()));
     }
     convert_pcb(&root)
+}
+
+/// Import context: the board's real copper stack (for wildcard expansion) and
+/// the warning sink.
+struct Ctx<'a> {
+    net_map: &'a HashMap<u32, String>,
+    /// The board's copper layers, top → bottom, from its layer table.
+    copper: Vec<PcbLayer>,
+    /// Layer token → number of items dropped because it has no IR layer.
+    dropped: RefCell<BTreeMap<String, usize>>,
+    warnings: RefCell<Vec<String>>,
+}
+
+impl Ctx<'_> {
+    fn warn(&self, msg: String) {
+        self.warnings.borrow_mut().push(msg);
+    }
+
+    /// Resolve one layer token, expanding KiCad wildcards against the board's
+    /// stack: `*.Cu` → every copper layer the board has, `F&B.Cu` → outer
+    /// copper, `*.Mask`/`F&B.Mask` (and Paste/SilkS/…) → front + back.
+    /// Unknown tokens resolve to nothing and are counted for a warning.
+    fn resolve(&self, tok: &str) -> Vec<PcbLayer> {
+        if let Some(l) = parse_layer(tok) {
+            return vec![l];
+        }
+        let wild = tok
+            .strip_prefix("*.")
+            .map(|s| (s, true))
+            .or_else(|| tok.strip_prefix("F&B.").map(|s| (s, false)));
+        if let Some((suffix, all)) = wild {
+            if suffix == "Cu" {
+                return if all {
+                    self.copper.clone()
+                } else {
+                    vec![PcbLayer::FCu, PcbLayer::BCu]
+                };
+            }
+            let pair: Vec<PcbLayer> = [format!("F.{suffix}"), format!("B.{suffix}")]
+                .iter()
+                .filter_map(|n| parse_layer(n))
+                .collect();
+            if !pair.is_empty() {
+                return pair;
+            }
+        }
+        *self
+            .dropped
+            .borrow_mut()
+            .entry(tok.to_string())
+            .or_default() += 1;
+        Vec::new()
+    }
+
+    /// Read a `(layer "F.Cu")` child. A missing child is `None` silently (not
+    /// every node has one); a present but unrepresentable one is counted.
+    fn layer(&self, node: &SExpr<'_>) -> Option<PcbLayer> {
+        let tok = node
+            .find("layer")
+            .and_then(|n| n.children())
+            .and_then(|c| c.get(1))
+            .and_then(|v| v.as_str())?;
+        let layers = self.resolve(tok);
+        if layers.len() > 1 {
+            self.warn(format!(
+                "single-layer item on wildcard layer {tok:?}; kept on {:?} only",
+                layers[0]
+            ));
+        }
+        layers.first().copied()
+    }
+
+    /// Read a `(layers ...)` child with wildcards expanded, de-duplicated,
+    /// in file order.
+    fn layers(&self, node: &SExpr<'_>) -> Vec<PcbLayer> {
+        let mut out: Vec<PcbLayer> = Vec::new();
+        if let Some(c) = node.find("layers").and_then(|n| n.children()) {
+            for tok in c.iter().skip(1).filter_map(|v| v.as_str()) {
+                for l in self.resolve(tok) {
+                    if !out.contains(&l) {
+                        out.push(l);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn finish(self) -> Vec<String> {
+        let mut w = self.warnings.into_inner();
+        for (tok, n) in self.dropped.into_inner() {
+            w.push(format!(
+                "layer {tok:?} has no vcad equivalent: {n} item(s) dropped from it"
+            ));
+        }
+        w
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -74,17 +188,12 @@ fn read_end(node: &SExpr<'_>) -> Vec2 {
 
 /// Parse a KiCad layer name string into a [`PcbLayer`].
 fn parse_layer(s: &str) -> Option<PcbLayer> {
+    if let Some(n) = s.strip_prefix("In").and_then(|r| r.strip_suffix(".Cu")) {
+        return n.parse::<usize>().ok().and_then(PcbLayer::inner);
+    }
     match s {
         "F.Cu" => Some(PcbLayer::FCu),
         "B.Cu" => Some(PcbLayer::BCu),
-        "In1.Cu" => Some(PcbLayer::In1Cu),
-        "In2.Cu" => Some(PcbLayer::In2Cu),
-        "In3.Cu" => Some(PcbLayer::In3Cu),
-        "In4.Cu" => Some(PcbLayer::In4Cu),
-        "In5.Cu" => Some(PcbLayer::In5Cu),
-        "In6.Cu" => Some(PcbLayer::In6Cu),
-        "In7.Cu" => Some(PcbLayer::In7Cu),
-        "In8.Cu" => Some(PcbLayer::In8Cu),
         "F.SilkS" => Some(PcbLayer::FSilkS),
         "B.SilkS" => Some(PcbLayer::BSilkS),
         "F.Mask" => Some(PcbLayer::FMask),
@@ -96,28 +205,9 @@ fn parse_layer(s: &str) -> Option<PcbLayer> {
         "F.Fab" => Some(PcbLayer::FFab),
         "B.Fab" => Some(PcbLayer::BFab),
         "Edge.Cuts" => Some(PcbLayer::EdgeCuts),
+        "Dwgs.User" => Some(PcbLayer::UserDrawings),
+        "Cmts.User" => Some(PcbLayer::UserComments),
         _ => None,
-    }
-}
-
-/// Read `(layer "F.Cu")` child.
-fn read_layer(node: &SExpr<'_>) -> Option<PcbLayer> {
-    node.find("layer")
-        .and_then(|n| n.children())
-        .and_then(|c| c.get(1))
-        .and_then(|v| v.as_str())
-        .and_then(parse_layer)
-}
-
-/// Read `(layers ...)` child — list of layer names.
-fn read_layers(node: &SExpr<'_>) -> Vec<PcbLayer> {
-    match node.find("layers").and_then(|n| n.children()) {
-        Some(c) => c
-            .iter()
-            .skip(1) // skip tag
-            .filter_map(|v| v.as_str().and_then(parse_layer))
-            .collect(),
-        None => vec![],
     }
 }
 
@@ -142,7 +232,7 @@ fn read_net_str(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> String {
 // Main converter
 // ---------------------------------------------------------------------------
 
-fn convert_pcb(root: &SExpr<'_>) -> Result<Pcb, ParseError> {
+fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
     // 1. Parse nets
     let mut net_map: HashMap<u32, String> = HashMap::new();
     let mut nets = Vec::new();
@@ -175,7 +265,14 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<Pcb, ParseError> {
     let outline = parse_board_outline(root, thickness);
 
     // 4. Parse layers for stackup
-    let stackup = parse_stackup(root);
+    let mut early_warnings = Vec::new();
+    let stackup = parse_stackup(root, &mut early_warnings);
+    let ctx = Ctx {
+        net_map: &net_map,
+        copper: stackup.layers.iter().map(|l| l.layer).collect(),
+        dropped: RefCell::new(BTreeMap::new()),
+        warnings: RefCell::new(early_warnings),
+    };
 
     // 5. Parse design rules
     let rules = parse_design_rules(root);
@@ -186,28 +283,35 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<Pcb, ParseError> {
         .find_all("footprint")
         .iter()
         .chain(root.find_all("module").iter())
-        .filter_map(|n| parse_footprint(n, &net_map))
+        .filter_map(|n| parse_footprint(n, &ctx))
         .collect();
 
     // 7. Parse traces (segment)
     let traces: Vec<Trace> = root
         .find_all("segment")
         .iter()
-        .filter_map(|n| parse_trace(n, &net_map))
+        .filter_map(|n| parse_trace(n, &ctx))
+        .collect();
+
+    // 7b. Parse arc tracks (KiCad 6+ `(arc (start) (mid) (end) ...)`)
+    let trace_arcs: Vec<TraceArc> = root
+        .find_all("arc")
+        .iter()
+        .filter_map(|n| parse_trace_arc(n, &ctx))
         .collect();
 
     // 8. Parse vias
     let vias: Vec<Via> = root
         .find_all("via")
         .iter()
-        .filter_map(|n| parse_via(n, &net_map))
+        .filter_map(|n| parse_via(n, &ctx))
         .collect();
 
     // 9. Parse zones
     let zones: Vec<Zone> = root
         .find_all("zone")
         .iter()
-        .filter_map(|n| parse_zone(n, &net_map))
+        .flat_map(|n| parse_zone(n, &ctx))
         .collect();
 
     // The .kicad_pcb setup block rarely carries usable rules (net classes
@@ -218,19 +322,20 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<Pcb, ParseError> {
     // the default rules against it.
     let rules = calibrate_rules_from_copper(rules, &traces, &vias);
 
-    Ok(Pcb {
+    let pcb = Pcb {
         outline,
         stackup,
         nets,
         rules,
         footprints,
         traces,
-        trace_arcs: vec![],
+        trace_arcs,
         vias,
         zones,
         keepouts: vec![],
         net_ties: vec![],
-    })
+    };
+    Ok((pcb, ctx.finish()))
 }
 
 /// Calibrate imported design rules against the board's existing copper.
@@ -405,7 +510,7 @@ fn order_outline_points(points: Vec<Vec2>) -> Vec<Vec2> {
 // Stackup
 // ---------------------------------------------------------------------------
 
-fn parse_stackup(root: &SExpr<'_>) -> LayerStackup {
+fn parse_stackup(root: &SExpr<'_>, warnings: &mut Vec<String>) -> LayerStackup {
     // Try to read from the layers section which copper layers are defined
     let mut copper_layers: Vec<PcbLayer> = Vec::new();
     if let Some(layers_node) = root.find("layers") {
@@ -426,8 +531,13 @@ fn parse_stackup(root: &SExpr<'_>) -> LayerStackup {
     }
 
     if copper_layers.is_empty() {
+        warnings.push(
+            "board has no copper layers in its (layers ...) table; assuming 2-layer F.Cu/B.Cu"
+                .into(),
+        );
         copper_layers = vec![PcbLayer::FCu, PcbLayer::BCu];
     }
+    copper_layers.dedup();
 
     // Sort: FCu first, then inner, then BCu
     copper_layers.sort_by_key(|l| l.copper_position().unwrap_or(u8::MAX));
@@ -657,7 +767,7 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
 // Footprint
 // ---------------------------------------------------------------------------
 
-fn parse_footprint(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Footprint> {
+fn parse_footprint(node: &SExpr<'_>, ctx: &Ctx<'_>) -> Option<Footprint> {
     let children = node.children()?;
 
     // Footprint name is second element
@@ -728,7 +838,7 @@ fn parse_footprint(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<F
     let pads: Vec<Pad> = node
         .find_all("pad")
         .iter()
-        .filter_map(|p| parse_pad(p, net_map))
+        .filter_map(|p| parse_pad(p, ctx, &footprint_name))
         .map(|mut pad| {
             // KiCad pad angles are absolute and counter-clockwise; vcad's are
             // relative to the footprint and clockwise: -(abs - fp).
@@ -740,7 +850,7 @@ fn parse_footprint(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<F
     // Parse graphics (fp_line, fp_circle, fp_rect, fp_arc)
     let mut graphics = Vec::new();
     for line in node.find_all("fp_line") {
-        if let Some(layer) = read_layer(line) {
+        if let Some(layer) = ctx.layer(line) {
             graphics.push(FootprintGraphic::Line {
                 start: read_start(line),
                 end: read_end(line),
@@ -750,7 +860,7 @@ fn parse_footprint(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<F
         }
     }
     for circ in node.find_all("fp_circle") {
-        if let Some(layer) = read_layer(circ) {
+        if let Some(layer) = ctx.layer(circ) {
             let center = read_xy(circ, "center");
             let end = read_end(circ);
             let dx = end.x - center.x;
@@ -765,7 +875,7 @@ fn parse_footprint(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<F
         }
     }
     for rect in node.find_all("fp_rect") {
-        if let Some(layer) = read_layer(rect) {
+        if let Some(layer) = ctx.layer(rect) {
             graphics.push(FootprintGraphic::Rect {
                 start: read_start(rect),
                 end: read_end(rect),
@@ -803,7 +913,8 @@ fn normalize_deg(a: f64) -> f64 {
     }
 }
 
-fn parse_pad(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Pad> {
+fn parse_pad(node: &SExpr<'_>, ctx: &Ctx<'_>, fp_name: &str) -> Option<Pad> {
+    let net_map = ctx.net_map;
     let children = node.children()?;
     // (pad "1" smd rect (at X Y) (size W H) (layers ...) (net N "name"))
     let number = children
@@ -818,7 +929,14 @@ fn parse_pad(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Pad> {
         "smd" => PadType::SMD,
         "thru_hole" => PadType::THT,
         "np_thru_hole" => PadType::NPTH,
-        _ => PadType::SMD,
+        // Edge-connector style copper with no paste: surface copper.
+        "connect" => PadType::SMD,
+        other => {
+            ctx.warn(format!(
+                "{fp_name} pad {number:?}: unknown pad type {other:?}, imported as SMD"
+            ));
+            PadType::SMD
+        }
     };
 
     let (position, rotation) = read_at(node);
@@ -843,13 +961,29 @@ fn parse_pad(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Pad> {
                 corner_ratio: ratio,
             }
         }
-        _ => PadShape::Rect {
+        "rect" => PadShape::Rect {
             width: sw,
             height: sh,
-        }, // rect, trapezoid, custom
+        },
+        other => {
+            // trapezoid / custom (and anything newer) have no exact IR form
+            // here; keep the anchor rectangle but say so.
+            ctx.warn(format!(
+                "{fp_name} pad {number:?}: pad shape {other:?} approximated as a {sw}x{sh} rect"
+            ));
+            PadShape::Rect {
+                width: sw,
+                height: sh,
+            }
+        }
     };
 
-    let layers = read_layers(node);
+    let layers = ctx.layers(node);
+    if layers.is_empty() {
+        ctx.warn(format!(
+            "{fp_name} pad {number:?}: no representable layers; pad has no copper"
+        ));
+    }
 
     // Drill
     let drill = node.find("drill").and_then(|d| {
@@ -894,12 +1028,12 @@ fn parse_pad(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Pad> {
 // Trace (segment)
 // ---------------------------------------------------------------------------
 
-fn parse_trace(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Trace> {
+fn parse_trace(node: &SExpr<'_>, ctx: &Ctx<'_>) -> Option<Trace> {
     let start = read_start(node);
     let end = read_end(node);
     let width = read_width(node);
-    let layer = read_layer(node)?;
-    let net = read_net_str(node, net_map);
+    let layer = ctx.layer(node)?;
+    let net = read_net_str(node, ctx.net_map);
 
     Some(Trace {
         start,
@@ -911,19 +1045,86 @@ fn parse_trace(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Trace
     })
 }
 
+/// `(arc (start) (mid) (end) (width) (layer) (net))` → [`TraceArc`]. The IR
+/// sweeps linearly from `start_angle` to `end_angle` (either sign), so the end
+/// angle is unwrapped to pass through the file's mid point.
+fn parse_trace_arc(node: &SExpr<'_>, ctx: &Ctx<'_>) -> Option<TraceArc> {
+    let (a, m, b) = (read_start(node), read_xy(node, "mid"), read_end(node));
+    let layer = ctx.layer(node)?;
+    let Some((center, radius)) = circle_through(a, m, b) else {
+        ctx.warn(format!(
+            "arc track at ({}, {}) is degenerate (collinear points); dropped",
+            a.x, a.y
+        ));
+        return None;
+    };
+    let ang = |p: Vec2| (p.y - center.y).atan2(p.x - center.x).to_degrees();
+    let (sa, ma, ea) = (ang(a), ang(m), ang(b));
+    let ccw = (ea - sa).rem_euclid(360.0);
+    let mid_off = (ma - sa).rem_euclid(360.0);
+    let end_angle = if mid_off < ccw {
+        sa + ccw
+    } else {
+        sa - (360.0 - ccw)
+    };
+    Some(TraceArc {
+        center,
+        radius,
+        start_angle: sa,
+        end_angle,
+        width: read_width(node),
+        layer,
+        net: read_net_str(node, ctx.net_map),
+    })
+}
+
+/// Circumscribed circle of three points, or `None` if collinear.
+fn circle_through(a: Vec2, b: Vec2, c: Vec2) -> Option<(Vec2, f64)> {
+    let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
+    if d.abs() < 1e-12 {
+        return None;
+    }
+    let (a2, b2, c2) = (
+        a.x * a.x + a.y * a.y,
+        b.x * b.x + b.y * b.y,
+        c.x * c.x + c.y * c.y,
+    );
+    let ux = (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d;
+    let uy = (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d;
+    let center = Vec2::new(ux, uy);
+    let r = ((a.x - ux).powi(2) + (a.y - uy).powi(2)).sqrt();
+    Some((center, r))
+}
+
 // ---------------------------------------------------------------------------
 // Via
 // ---------------------------------------------------------------------------
 
-fn parse_via(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Via> {
+fn parse_via(node: &SExpr<'_>, ctx: &Ctx<'_>) -> Option<Via> {
     let (position, _) = read_at(node);
     let diameter = child_f64(node, "size").unwrap_or(0.8);
     let drill = child_f64(node, "drill").unwrap_or(0.4);
-    let net = read_net_str(node, net_map);
+    let net = read_net_str(node, ctx.net_map);
 
-    let layers = read_layers(node);
-    let start_layer = layers.first().copied().unwrap_or(PcbLayer::FCu);
-    let end_layer = layers.last().copied().unwrap_or(PcbLayer::BCu);
+    // Span = the outermost copper layers listed, in stack order (file order
+    // is not guaranteed top-first).
+    let copper: Vec<PcbLayer> = ctx
+        .layers(node)
+        .into_iter()
+        .filter(|l| l.is_copper())
+        .collect();
+    let pos = |l: &&PcbLayer| l.copper_position();
+    let (start_layer, end_layer) =
+        match (copper.iter().min_by_key(pos), copper.iter().max_by_key(pos)) {
+            (Some(&a), Some(&b)) => (a, b),
+            _ => {
+                ctx.warn(format!(
+                    "via at ({}, {}) has no parseable copper layers; imported as a through via",
+                    position.x, position.y
+                ));
+                (PcbLayer::FCu, PcbLayer::BCu)
+            }
+        };
 
     Some(Via {
         position,
@@ -940,9 +1141,37 @@ fn parse_via(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Via> {
 // Zone
 // ---------------------------------------------------------------------------
 
-fn parse_zone(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Zone> {
-    let net = read_net_str(node, net_map);
-    let layer = read_layer(node)?;
+/// One IR zone per copper layer: KiCad 7+ writes a multi-layer zone as
+/// `(layers "F.Cu" "B.Cu")` (or `"*.Cu"`), older files as `(layer "F.Cu")`.
+fn parse_zone(node: &SExpr<'_>, ctx: &Ctx<'_>) -> Vec<Zone> {
+    if node.find("keepout").is_some() {
+        // A rule area, not copper. vcad has no keepout import yet; never let
+        // one masquerade as a pour (a `*.Cu` keepout would flood every layer).
+        ctx.warn("keepout rule area not imported".into());
+        return Vec::new();
+    }
+    let mut layers = ctx.layers(node);
+    if let Some(l) = ctx.layer(node) {
+        if !layers.contains(&l) {
+            layers.push(l);
+        }
+    }
+    let zones: Vec<Zone> = match parse_zone_on(node, ctx) {
+        Some(z) => layers
+            .into_iter()
+            .map(|layer| Zone { layer, ..z.clone() })
+            .collect(),
+        None => Vec::new(),
+    };
+    if zones.is_empty() && node.find("polygon").is_some() {
+        ctx.warn("zone with an outline but no representable layer; dropped".into());
+    }
+    zones
+}
+
+fn parse_zone_on(node: &SExpr<'_>, ctx: &Ctx<'_>) -> Option<Zone> {
+    let net = read_net_str(node, ctx.net_map);
+    let layer = PcbLayer::FCu; // placeholder; parse_zone stamps each real layer
     let clearance_val = child_f64(node, "min_thickness").unwrap_or(0.2);
 
     // Parse polygon outline
@@ -984,6 +1213,162 @@ fn parse_zone(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Zone> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A 4-layer board whose copper stack is F.Cu/In1.Cu/In2.Cu/B.Cu.
+    const FOUR_LAYER_THT: &str = r#"(kicad_pcb (version 20240108) (generator test)
+  (general (thickness 1.6))
+  (layers
+    (0 "F.Cu" signal)
+    (1 "In1.Cu" signal)
+    (2 "In2.Cu" signal)
+    (31 "B.Cu" signal)
+    (38 "B.Mask" user)
+    (39 "F.Mask" user)
+    (44 "Edge.Cuts" user)
+  )
+  (net 0 "")
+  (net 1 "SIG")
+  (net 2 "GND")
+  (gr_line (start 0 0) (end 40 0) (layer "Edge.Cuts") (width 0.05))
+  (gr_line (start 40 0) (end 40 20) (layer "Edge.Cuts") (width 0.05))
+  (gr_line (start 40 20) (end 0 20) (layer "Edge.Cuts") (width 0.05))
+  (gr_line (start 0 20) (end 0 0) (layer "Edge.Cuts") (width 0.05))
+  (footprint "Conn_1x01" (layer "F.Cu") (at 10 10)
+    (property "Reference" "J1")
+    (pad "1" thru_hole circle (at 0 0) (size 1.7 1.7) (drill 1) (layers "*.Cu" "*.Mask") (net 1 "SIG"))
+  )
+  (footprint "Conn_1x01" (layer "F.Cu") (at 30 10)
+    (property "Reference" "J2")
+    (pad "1" thru_hole circle (at 0 0) (size 1.7 1.7) (drill 1) (layers "*.Cu" "*.Mask") (net 1 "SIG"))
+  )
+  (segment (start 10 10) (end 30 10) (width 0.25) (layer "In2.Cu") (net 1))
+)"#;
+
+    #[test]
+    fn tht_wildcard_pad_lands_on_every_board_copper_layer() {
+        let (pcb, warnings) = parse_kicad_pcb_with_warnings(FOUR_LAYER_THT).unwrap();
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let pad = &pcb.footprints[0].pads[0];
+        assert_eq!(
+            pad.layers,
+            vec![
+                PcbLayer::FCu,
+                PcbLayer::In1Cu,
+                PcbLayer::In2Cu,
+                PcbLayer::BCu,
+                PcbLayer::FMask,
+                PcbLayer::BMask
+            ]
+        );
+    }
+
+    #[test]
+    fn f_and_b_cu_pad_and_two_layer_wildcard() {
+        let input = FOUR_LAYER_THT.replace(
+            r#"(layers "*.Cu" "*.Mask") (net 1 "SIG"))
+  )
+  (footprint "Conn_1x01" (layer "F.Cu") (at 30 10)"#,
+            r#"(layers "F&B.Cu" "*.Mask") (net 1 "SIG"))
+  )
+  (footprint "Conn_1x01" (layer "F.Cu") (at 30 10)"#,
+        );
+        let pcb = parse_kicad_pcb(&input).unwrap();
+        assert_eq!(
+            pcb.footprints[0].pads[0].layers,
+            vec![
+                PcbLayer::FCu,
+                PcbLayer::BCu,
+                PcbLayer::FMask,
+                PcbLayer::BMask
+            ]
+        );
+    }
+
+    #[test]
+    fn inner_layers_past_in8_import_and_unknown_layers_warn() {
+        // 32-layer board: F.Cu, In1..In30, B.Cu.
+        let mut table = String::from("(0 \"F.Cu\" signal)\n");
+        for n in 1..=30 {
+            table += &format!("({n} \"In{n}.Cu\" signal)\n");
+        }
+        table += "(31 \"B.Cu\" signal)\n";
+        let input = format!(
+            r#"(kicad_pcb (version 20240108) (generator test)
+  (layers {table})
+  (net 0 "") (net 1 "A")
+  (segment (start 0 0) (end 5 0) (width 0.2) (layer "In22.Cu") (net 1))
+  (arc (start 0 0) (mid 1 1) (end 2 0) (width 0.2) (layer "In30.Cu") (net 1))
+  (via blind (at 5 0) (size 0.4) (drill 0.2) (layers "In20.Cu" "In9.Cu") (net 1))
+  (segment (start 0 0) (end 5 0) (width 0.2) (layer "User.1") (net 1))
+  (zone (net 1) (net_name "A") (layers "*.Cu")
+    (polygon (pts (xy 0 0) (xy 5 0) (xy 5 5) (xy 0 5))))
+)"#
+        );
+        let (pcb, warnings) = parse_kicad_pcb_with_warnings(&input).unwrap();
+        assert_eq!(pcb.stackup.layers.len(), 32);
+        assert_eq!(pcb.traces.len(), 1);
+        assert_eq!(pcb.traces[0].layer, PcbLayer::In22Cu);
+        assert_eq!(pcb.vias[0].start_layer, PcbLayer::In9Cu);
+        assert_eq!(pcb.vias[0].end_layer, PcbLayer::In20Cu);
+        assert_eq!(pcb.trace_arcs.len(), 1);
+        let arc = &pcb.trace_arcs[0];
+        assert_eq!(arc.layer, PcbLayer::In30Cu);
+        assert!((arc.radius - 1.0).abs() < 1e-9);
+        assert!((arc.center.x - 1.0).abs() < 1e-9 && arc.center.y.abs() < 1e-9);
+        // start (0,0) is 180°, passes through 90° (the mid), ends at 0°.
+        assert!((arc.start_angle.abs() - 180.0).abs() < 1e-9);
+        let mid = (arc.start_angle + arc.end_angle) / 2.0;
+        assert!(((mid.rem_euclid(360.0)) - 90.0).abs() < 1e-9, "{arc:?}");
+        // *.Cu zone → one zone per copper layer of THIS board.
+        assert_eq!(pcb.zones.len(), 32);
+        assert!(
+            warnings.iter().any(|w| w.contains("User.1")),
+            "unknown layer must warn: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn multi_layer_zone_imports_one_zone_per_layer() {
+        let input = FOUR_LAYER_THT.replace(
+            "  (segment (start 10 10)",
+            r#"  (zone (net 2) (net_name "GND") (layers "F.Cu" "B.Cu")
+    (polygon (pts (xy 0 0) (xy 40 0) (xy 40 20) (xy 0 20))))
+  (zone (net 2) (net_name "GND") (layer "In1.Cu")
+    (polygon (pts (xy 0 0) (xy 40 0) (xy 40 20) (xy 0 20))))
+  (zone (net 0) (net_name "") (layers "*.Cu") (keepout (tracks not_allowed))
+    (polygon (pts (xy 1 1) (xy 2 1) (xy 2 2))))
+  (segment (start 10 10)"#,
+        );
+        let (pcb, warnings) = parse_kicad_pcb_with_warnings(&input).unwrap();
+        let layers: Vec<_> = pcb.zones.iter().map(|z| z.layer).collect();
+        assert_eq!(layers, vec![PcbLayer::FCu, PcbLayer::BCu, PcbLayer::In1Cu]);
+        assert!(pcb.zones.iter().all(|z| z.net == "GND"));
+        assert!(warnings.iter().any(|w| w.contains("keepout")));
+    }
+
+    #[test]
+    fn unknown_pad_type_and_shape_warn() {
+        let input = FOUR_LAYER_THT.replacen("thru_hole circle", "thru_hole trapezoid", 1);
+        let (_, warnings) = parse_kicad_pcb_with_warnings(&input).unwrap();
+        assert!(
+            warnings.iter().any(|w| w.contains("trapezoid")),
+            "{warnings:?}"
+        );
+        let input = FOUR_LAYER_THT.replacen("thru_hole circle", "weird circle", 1);
+        let (_, warnings) = parse_kicad_pcb_with_warnings(&input).unwrap();
+        assert!(warnings.iter().any(|w| w.contains("weird")), "{warnings:?}");
+    }
+
+    #[test]
+    fn via_without_layers_warns() {
+        let input = FOUR_LAYER_THT.replace(
+            "  (segment (start 10 10)",
+            "  (via (at 5 5) (size 0.6) (drill 0.3) (net 1))\n  (segment (start 10 10)",
+        );
+        let (pcb, warnings) = parse_kicad_pcb_with_warnings(&input).unwrap();
+        assert_eq!(pcb.vias.len(), 1);
+        assert!(warnings.iter().any(|w| w.contains("via")), "{warnings:?}");
+    }
 
     #[test]
     fn parse_minimal_kicad_pcb() {

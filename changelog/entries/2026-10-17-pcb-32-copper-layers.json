@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-17-pcb-32-copper-layers",
+  "version": "0.10.0",
+  "date": "2026-10-17",
+  "category": "fix",
+  "title": "PCB: all 32 KiCad copper layers (In1..In30)",
+  "summary": "The PCB IR now carries In1Cu..In30Cu; DRC/DFM layer masks widened to 32 bits so copper on layers past In8 is no longer an unconnected island.",
+  "features": ["pcb", "ecad", "drc", "ir"]
+}

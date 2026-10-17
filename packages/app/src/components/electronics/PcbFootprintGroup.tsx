@@ -2,9 +2,10 @@
  * Renders one PCB footprint: transform group, pads, silk graphics, ref text.
  */
 
-import type { Footprint, PcbLayer } from "@vcad/ir";
+import type { Footprint } from "@vcad/ir";
 import type { LayerConfig } from "@/stores/electronics-store";
 import { PcbPadShape } from "./PcbPadShape";
+import { getLayerColor, isLayerVisible } from "./pcb3d/pcb-geometry";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/core";
 
@@ -13,16 +14,6 @@ interface PcbFootprintGroupProps {
   layers: LayerConfig[];
   highlight: boolean;
   accentColor: string;
-}
-
-function getLayerColor(layers: LayerConfig[], layer: PcbLayer): string {
-  const cfg = layers.find((l) => l.layer === layer);
-  return cfg?.color ?? "#888";
-}
-
-function isLayerVisible(layers: LayerConfig[], layer: PcbLayer): boolean {
-  const cfg = layers.find((l) => l.layer === layer);
-  return cfg?.visible ?? false;
 }
 
 export function PcbFootprintGroup({

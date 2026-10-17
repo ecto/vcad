@@ -830,6 +830,8 @@
 [type EcadTrace [EcadTrace f64 f64 f64 f64 f64 Str Str]]
 ; PCB via: [EcadVia x y diameter drill net]
 [type EcadVia [EcadVia f64 f64 f64 f64 Str]]
+; Blind / buried / micro via: [EcadViaSpan x y diameter drill net from-layer to-layer]
+[type EcadViaSpan [EcadViaSpan f64 f64 f64 f64 Str Str Str]]
 ; PCB footprint: [EcadFootprint ref value footprint-name x y rotation front]
 [type EcadFootprint [EcadFootprint Str Str Str f64 f64 f64 Bool]]
 ; Library component: [EcadSymbol ref lib-id value footprint-id x y rotation]
@@ -841,10 +843,14 @@
 [type EcadBoard [EcadBoard f64 f64 f64 f64 f64 f64 f64]]
 ; Placement of a schematic part's footprint: [EcadPlace ref x y rotation]
 [type EcadPlace [EcadPlace Str f64 f64 f64]]
+; Back-side placement: [EcadPlaceBack ref x y rotation], flipped as KiCad flips a footprint
+[type EcadPlaceBack [EcadPlaceBack Str f64 f64 f64]]
 ; Copper plane over the board: [EcadPour net layer], layer "F.Cu" / "In1.Cu" / ...
 [type EcadPour [EcadPour Str Str]]
 ; Art (not on the schematic): [EcadArt ref footprint-id x y rotation] - logos, labels
 [type EcadArt [EcadArt Str Str f64 f64 f64]]
+; Board outline point: [EcadOutlinePt x y], in order; three or more replace EcadBoard's rectangle
+[type EcadOutlinePt [EcadOutlinePt f64 f64]]
 ; Pour over a rectangle: [EcadPourRect net layer x0 y0 x1 y1 priority]
 [type EcadPourRect [EcadPourRect Str Str f64 f64 f64 f64 f64]]
 ; Net class: [EcadClass name trace-width clearance via-dia via-drill]; [EcadInClass net class]

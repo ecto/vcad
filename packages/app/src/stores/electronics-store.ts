@@ -14,6 +14,7 @@ import type {
 } from "@vcad/engine";
 import { useCoreElectronicsStore, getPcbNodeIds, useDocumentStore, isPcbBoardPart } from "@vcad/core";
 import type { PcbBoardPartInfo, ReceiptEntry } from "@vcad/core";
+import { defaultLayerConfig } from "@/lib/pcb-layer-config";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -512,15 +513,15 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
 
   setLayerVisible: (layer, visible) =>
     set((s) => ({
-      pcbLayers: s.pcbLayers.map((l) =>
-        l.layer === layer ? { ...l, visible } : l,
-      ),
+      pcbLayers: s.pcbLayers.some((l) => l.layer === layer)
+        ? s.pcbLayers.map((l) => (l.layer === layer ? { ...l, visible } : l))
+        : [...s.pcbLayers, { ...defaultLayerConfig(layer), visible }],
     })),
   setLayerOpacity: (layer, opacity) =>
     set((s) => ({
-      pcbLayers: s.pcbLayers.map((l) =>
-        l.layer === layer ? { ...l, opacity } : l,
-      ),
+      pcbLayers: s.pcbLayers.some((l) => l.layer === layer)
+        ? s.pcbLayers.map((l) => (l.layer === layer ? { ...l, opacity } : l))
+        : [...s.pcbLayers, { ...defaultLayerConfig(layer), opacity }],
     })),
 
   setDrcViolations: (drcViolations) => set({ drcViolations }),

@@ -5,10 +5,11 @@
 
 import { useState } from "react";
 import { useElectronicsStore } from "@/stores/electronics-store";
+import { usePcbLayerConfigs } from "@/hooks/usePcbLayerConfigs";
 
 export function LayerPanel() {
   const [open, setOpen] = useState(false);
-  const pcbLayers = useElectronicsStore((s) => s.pcbLayers);
+  const pcbLayers = usePcbLayerConfigs();
   const pcbActiveLayer = useElectronicsStore((s) => s.pcbActiveLayer);
   const setPcbActiveLayer = useElectronicsStore((s) => s.setPcbActiveLayer);
   const setLayerVisible = useElectronicsStore((s) => s.setLayerVisible);

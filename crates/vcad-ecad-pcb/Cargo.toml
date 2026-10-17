@@ -29,6 +29,7 @@ log = "0.4"
 # calc_impedance / size_impedance tools. Per-layer controlled-impedance
 # geometry inverts it; it is not re-derived here.
 vcad-ecad-sim = { path = "../vcad-ecad-sim", version = "0.10.0" }
+tracing = "0.1"
 
 [dev-dependencies]
 vcad-ecad-export = { path = "../vcad-ecad-export" }

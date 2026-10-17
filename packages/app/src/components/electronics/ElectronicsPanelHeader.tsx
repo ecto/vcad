@@ -20,6 +20,7 @@ import {
 } from "@vcad/core";
 import type { Pcb } from "@vcad/ir";
 import { useElectronicsStore } from "@/stores/electronics-store";
+import { usePcbLayerConfigs } from "@/hooks/usePcbLayerConfigs";
 import { useNotificationStore } from "@/stores/notification-store";
 import { aabbOfPositions, mergeAabbs, type Aabb } from "@/lib/pcb-interference";
 
@@ -208,7 +209,7 @@ export function ElectronicsPanelHeader() {
   const schTool = useElectronicsStore((s) => s.schTool);
   const pcbTool = useElectronicsStore((s) => s.pcbTool);
   const pcbActiveLayer = useElectronicsStore((s) => s.pcbActiveLayer);
-  const pcbLayers = useElectronicsStore((s) => s.pcbLayers);
+  const pcbLayers = usePcbLayerConfigs();
   const drcViolations = useElectronicsStore((s) => s.drcViolations);
   const pcbSolveStatus = useElectronicsStore((s) => s.pcbSolveStatus);
   const constraintCount = useDocumentStore((s) => s.document.constraints?.length ?? 0);

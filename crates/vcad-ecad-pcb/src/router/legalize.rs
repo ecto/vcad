@@ -90,6 +90,7 @@ pub(super) fn legalize(
     vias: &mut Vec<RoutedVia>,
     stitch_vias: &[Vec2],
     prune_dead: bool,
+    fast: bool,
 ) -> LegalizeReport {
     let mut report = LegalizeReport::default();
     if traces.is_empty() && vias.is_empty() {
@@ -97,6 +98,14 @@ pub(super) fn legalize(
     }
 
     report.merged_vias = merge_same_net_vias(pcb, traces, vias);
+    // fast iteration: skip the DRC-driven rounds (a region DRC per round and
+    // two connectivity builds per bypass); the full route still runs them
+    if fast {
+        if prune_dead {
+            prune_dangling(pcb, traces, vias);
+        }
+        return report;
+    }
 
     // DRC-driven cleanup: judge the candidate board (existing copper + the
     // router's output) with the real checker and act only on violations the
@@ -894,7 +903,7 @@ mod tests {
         let pcb = board();
         let mut traces = vec![rtrace((5.0, 5.0), (10.0, 10.0), "A", PcbLayer::FCu)];
         let mut vias = vec![rvia(10.0, 10.0, "A"), rvia(10.0, 10.0, "A")];
-        let report = legalize(&pcb, &mut traces, &mut vias, &[], false);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[], false, false);
         assert_eq!(report.merged_vias, 1);
         assert_eq!(vias.len(), 1);
         assert!(report.demoted.is_empty());
@@ -911,7 +920,7 @@ mod tests {
             rtrace((10.3, 10.0), (20.0, 10.0), "A", PcbLayer::BCu),
         ];
         let mut vias = vec![rvia(10.0, 10.0, "A"), rvia(10.3, 10.0, "A")];
-        let report = legalize(&pcb, &mut traces, &mut vias, &[], false);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[], false, false);
         assert_eq!(report.merged_vias, 1);
         assert_eq!(vias.len(), 1);
         // The BCu trace's end at the dropped via must still reach the survivor:
@@ -959,7 +968,7 @@ mod tests {
             rtrace((10.3, 10.0), (20.0, 10.0), "A", PcbLayer::BCu),
         ];
         let mut vias = vec![rvia(10.0, 10.0, "A"), rvia(10.3, 10.0, "A")];
-        let report = legalize(&pcb, &mut traces, &mut vias, &[], false);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[], false, false);
         assert_eq!(report.merged_vias, 0, "the merge must be refused");
         assert!(
             !traces.iter().any(|t| t.net == "A"
@@ -1003,7 +1012,7 @@ mod tests {
         });
         let mut traces = vec![rtrace((10.3, 10.0), (20.0, 10.0), "A", PcbLayer::FCu)];
         let mut vias = vec![rvia(10.3, 10.0, "A")];
-        let report = legalize(&pcb, &mut traces, &mut vias, &[], false);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[], false, false);
         assert_eq!(report.demoted.len(), 1);
         assert_eq!(report.demoted[0].0, "A");
         assert!(vias.is_empty() && traces.is_empty());
@@ -1121,7 +1130,7 @@ mod tests {
         ];
         let mut traces = vec![rtrace((9.0, 10.0), (bad.x, bad.y), "GND", PcbLayer::FCu)];
         let stitches = vec![bad, Vec2::new(30.0, 10.0), Vec2::new(30.0, 20.0)];
-        let report = legalize(&pcb, &mut traces, &mut vias, &stitches, false);
+        let report = legalize(&pcb, &mut traces, &mut vias, &stitches, false, false);
 
         assert!(
             report.demoted.is_empty(),
@@ -1202,7 +1211,7 @@ mod tests {
         );
 
         let t0 = std::time::Instant::now();
-        let report = legalize(&base, &mut traces, &mut vias, &[], true);
+        let report = legalize(&base, &mut traces, &mut vias, &[], true, false);
         let (dt, dv) = prune_dangling(&base, &mut traces, &mut vias);
         let after = candidate_pcb(&base, &traces, &vias);
         eprintln!(
@@ -1428,7 +1437,7 @@ mod tests {
              could ever clear, got {before}"
         );
 
-        let report = legalize(&pcb, &mut traces, &mut vias, &[], false);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[], false, false);
         assert!(report.pruned_traces >= NETS, "{report:?}");
         let bypass: Vec<_> = crate::drc::check_drc(&candidate_pcb(&pcb, &traces, &vias))
             .into_iter()
@@ -1518,7 +1527,7 @@ mod tests {
             rtrace((8.0, 10.0), (5.0, 10.0), "A", PcbLayer::FCu),
         ];
         let mut vias = vec![];
-        let report = legalize(&pcb, &mut traces, &mut vias, &[], false);
+        let report = legalize(&pcb, &mut traces, &mut vias, &[], false, false);
         assert!(report.pruned_traces >= 1, "the noodle must be pruned");
         // The result must be bypass-free.
         let candidate = candidate_pcb(&pcb, &traces, &vias);

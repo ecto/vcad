@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-17-tessellate-bspline-bilinear-dispatch",
+  "version": "0.10.0",
+  "date": "2026-10-17",
+  "category": "fix",
+  "title": "B-spline and bilinear faces no longer tessellate flat",
+  "summary": "Both solid tessellation entry points sent B-spline and bilinear faces to the planar fan, flattening curved faces to their boundary polygon; they now use the true-surface tessellators.",
+  "features": ["tessellation", "nurbs", "kernel"]
+}
