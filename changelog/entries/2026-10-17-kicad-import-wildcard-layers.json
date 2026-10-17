@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-17-kicad-import-wildcard-layers",
+  "version": "0.10.0",
+  "date": "2026-10-17",
+  "category": "fix",
+  "title": "KiCad import: THT pads, multi-layer zones, arcs",
+  "summary": "KiCad import expands *.Cu / F&B.Cu / *.Mask against the board's stack (THT pads were importing with no copper), splits multi-layer zones, imports arc tracks and In9-In30, and warns instead of dropping.",
+  "features": ["pcb", "ecad", "kicad", "import", "drc"],
+  "mcpTools": ["import_kicad"]
+}

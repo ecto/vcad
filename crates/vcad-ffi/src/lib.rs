@@ -1653,7 +1653,7 @@ fn build_gripper_slice2_board(connector_x: f64) -> Pcb {
 }
 
 /// One straight copper segment from the auto-router, board-LOCAL mm.
-/// `layer`: 0 = FCu, 1 = BCu, 2+ = inner. `net_id`: 0 = SIG, 1 = GND.
+/// `layer`: 0 = FCu, 1 = BCu, n+1 = In<n>Cu. `net_id`: 0 = SIG, 1 = GND.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct VcadTraceLine {
@@ -1671,13 +1671,14 @@ pub struct VcadRouteResult {
     unrouted: usize,
 }
 
+/// `VcadTraceLine::layer` code: 0 = FCu, 1 = BCu, `n + 1` = In<n>Cu. Every
+/// inner layer gets its own code (In3+ used to read as FCu); a non-copper
+/// layer is a router bug and maps to `u32::MAX` rather than to FCu.
 fn layer_code(l: PcbLayer) -> u32 {
     match l {
         PcbLayer::FCu => 0,
         PcbLayer::BCu => 1,
-        PcbLayer::In1Cu => 2,
-        PcbLayer::In2Cu => 3,
-        _ => 0,
+        l => l.inner_index().map_or(u32::MAX, |n| n as u32 + 1),
     }
 }
 
@@ -2278,6 +2279,21 @@ pub extern "C" fn vcad_solid_raycast(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn layer_code_is_distinct_per_copper_layer() {
+        let codes: Vec<u32> = PcbLayer::COPPER_STACK
+            .iter()
+            .map(|&l| layer_code(l))
+            .collect();
+        let mut sorted = codes.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 32, "{codes:?}");
+        assert_eq!(layer_code(PcbLayer::In1Cu), 2);
+        assert_eq!(layer_code(PcbLayer::In30Cu), 31);
+        assert_eq!(layer_code(PcbLayer::FSilkS), u32::MAX);
+    }
+
     use super::*;
 
     #[test]

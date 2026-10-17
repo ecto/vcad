@@ -366,11 +366,12 @@ impl LayerMap {
         for (k, l) in extra.into_iter().enumerate() {
             used.insert(at + k, l);
         }
-        if used.len() > 10 {
+        if used.len() > PcbLayer::COPPER_STACK.len() {
             return Err(format!(
-                "board declares {} copper layers; the IR supports at most 10 \
-                 (FCu + In1..In8 + BCu)",
-                used.len()
+                "board declares {} copper layers; the IR supports at most {} \
+                 (FCu + In1..In30 + BCu)",
+                used.len(),
+                PcbLayer::COPPER_STACK.len()
             ));
         }
         Ok(LayerMap { used })
@@ -391,11 +392,12 @@ impl LayerMap {
         }
         // Fail closed rather than merging layers: collapsing two copper layers
         // into one fabricates connectivity that DRC would then bless.
-        if used.len() > 10 {
+        if used.len() > PcbLayer::COPPER_STACK.len() {
             return Err(format!(
-                "board uses {} copper layers; the IR supports at most 10 \
-                 (FCu + In1..In8 + BCu)",
-                used.len()
+                "board uses {} copper layers; the IR supports at most {} \
+                 (FCu + In1..In30 + BCu)",
+                used.len(),
+                PcbLayer::COPPER_STACK.len()
             ));
         }
         Ok(LayerMap { used })
@@ -415,16 +417,9 @@ impl LayerMap {
         if i + 1 >= n {
             return PcbLayer::BCu;
         }
-        match i {
-            1 => PcbLayer::In1Cu,
-            2 => PcbLayer::In2Cu,
-            3 => PcbLayer::In3Cu,
-            4 => PcbLayer::In4Cu,
-            5 => PcbLayer::In5Cu,
-            6 => PcbLayer::In6Cu,
-            7 => PcbLayer::In7Cu,
-            _ => PcbLayer::In8Cu,
-        }
+        // `build*` bound `used` by COPPER_STACK, so every inner slot exists.
+        // (This used to fold every slot past 7 onto In8Cu, merging layers.)
+        PcbLayer::inner(i).expect("inner slot within COPPER_STACK")
     }
 
     /// Map one Altium layer to the IR, copper or documentation.
@@ -1193,8 +1188,12 @@ mod tests {
     }
 
     #[test]
-    fn too_many_copper_layers_fails_closed() {
-        let mids = (1..=12).map(AltiumLayer::Mid);
-        assert!(LayerMap::build(mids).is_err());
+    fn every_altium_mid_layer_maps_to_a_distinct_inner_layer() {
+        // All 30 mid layers + Top/Bottom = 32 copper layers, each its own IR
+        // layer (slots past 7 used to collapse onto In8Cu).
+        let map = LayerMap::build((1..=30).map(AltiumLayer::Mid)).unwrap();
+        assert_eq!(map.copper_layers(), PcbLayer::COPPER_STACK.to_vec());
+        assert_eq!(map.map(AltiumLayer::Mid(12)), Some(PcbLayer::In12Cu));
+        assert_eq!(map.map(AltiumLayer::Mid(30)), Some(PcbLayer::In30Cu));
     }
 }

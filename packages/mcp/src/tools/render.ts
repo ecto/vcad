@@ -31,6 +31,7 @@ import {
   withRenderAssets,
 } from "./render-assets.js";
 import { asBool } from "./arg-coerce.js";
+import { COPPER_STACK } from "./pcb-layers.js";
 import { applyJointState, jointStateSchemaProp, type PoseInfo } from "./pose.js";
 
 export const renderViewSchema = {
@@ -1164,16 +1165,7 @@ export async function renderRatsnest(
 // render_stackup — one image per copper layer (read inner planes legibly)
 // ───────────────────────────────────────────────────────────────────────────
 
-const COPPER_LAYERS = [
-  "FCu",
-  "In1Cu",
-  "In2Cu",
-  "In3Cu",
-  "In4Cu",
-  "In5Cu",
-  "In6Cu",
-  "BCu",
-] as const;
+const COPPER_LAYERS = COPPER_STACK;
 
 export const renderStackupSchema = {
   type: "object" as const,

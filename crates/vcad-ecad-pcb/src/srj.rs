@@ -83,7 +83,7 @@ pub struct SrjBounds {
 /// A Simple Route JSON problem.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimpleRouteJson {
-    /// Number of copper layers (1–10).
+    /// Number of copper layers (1–32).
     #[serde(rename = "layerCount", default = "default_layer_count")]
     pub layer_count: usize,
     /// Minimum trace width (mm).
@@ -110,46 +110,41 @@ fn default_trace_width() -> f64 {
 /// connection may use it, so obstacle copper blocks every route.
 pub const OBSTACLE_NET: &str = "__srj_obstacle__";
 
-/// The copper stack for an SRJ `layer_count`, front → back.
-pub fn srj_layers(layer_count: usize) -> Vec<PcbLayer> {
-    const INNER: [PcbLayer; 8] = [
-        PcbLayer::In1Cu,
-        PcbLayer::In2Cu,
-        PcbLayer::In3Cu,
-        PcbLayer::In4Cu,
-        PcbLayer::In5Cu,
-        PcbLayer::In6Cu,
-        PcbLayer::In7Cu,
-        PcbLayer::In8Cu,
-    ];
-    let n = layer_count.clamp(1, 10);
-    let mut layers = vec![PcbLayer::FCu];
-    layers.extend_from_slice(&INNER[..n.saturating_sub(2).min(8)]);
-    if n > 1 {
-        layers.push(PcbLayer::BCu);
+/// The copper stack for an SRJ `layer_count`, front → back. A count outside
+/// `1..=32` is an error, not a clamp (a clamped stack silently re-homes
+/// every layer past the cap).
+pub fn srj_layers(layer_count: usize) -> Result<Vec<PcbLayer>, String> {
+    if layer_count == 0 {
+        return Err("SRJ layerCount must be at least 1".into());
     }
-    layers
+    PcbLayer::copper_stack(layer_count).ok_or_else(|| {
+        format!("SRJ layerCount {layer_count} exceeds the 32 copper layers vcad supports")
+    })
 }
 
 /// Map an SRJ layer name to a [`PcbLayer`] within a `layer_count` stack.
-/// "top" is FCu, "bottom" is BCu (or FCu on a 1-layer board), "innerN" counts
-/// from the top. Unknown names land on FCu.
-pub fn srj_layer(name: Option<&str>, layer_count: usize) -> PcbLayer {
-    let stack = srj_layers(layer_count);
+/// "top" (or no name) is FCu, "bottom" is BCu (or FCu on a 1-layer board),
+/// "innerN" is the N-th inner layer. Anything else — an unknown name, or an
+/// inner layer the stack doesn't have — is an error.
+pub fn srj_layer(name: Option<&str>, layer_count: usize) -> Result<PcbLayer, String> {
+    let stack = srj_layers(layer_count)?;
     match name.unwrap_or("top") {
-        "top" => PcbLayer::FCu,
-        "bottom" => *stack.last().unwrap_or(&PcbLayer::FCu),
+        "top" => Ok(PcbLayer::FCu),
+        "bottom" => Ok(*stack.last().unwrap_or(&PcbLayer::FCu)),
         other => other
             .strip_prefix("inner")
             .and_then(|d| d.parse::<usize>().ok())
-            .and_then(|i| stack.get(i).copied())
-            .unwrap_or(PcbLayer::FCu),
+            .filter(|&i| i >= 1 && i + 1 < stack.len())
+            .map(|i| stack[i])
+            .ok_or_else(|| {
+                format!("SRJ layer {other:?} is not a layer of a {layer_count}-layer board")
+            }),
     }
 }
 
 /// Build a routable [`Pcb`] from an SRJ problem.
-pub fn srj_to_pcb(srj: &SimpleRouteJson) -> Pcb {
-    let stack = srj_layers(srj.layer_count);
+pub fn srj_to_pcb(srj: &SimpleRouteJson) -> Result<Pcb, String> {
+    let stack = srj_layers(srj.layer_count)?;
     let b = &srj.bounds;
     let w = srj.min_trace_width;
 
@@ -172,7 +167,7 @@ pub fn srj_to_pcb(srj: &SimpleRouteJson) -> Pcb {
             name: conn.name.clone(),
         });
         for (i, p) in conn.points_to_connect.iter().enumerate() {
-            let layer = srj_layer(p.layer.as_deref(), srj.layer_count);
+            let layer = srj_layer(p.layer.as_deref(), srj.layer_count)?;
             footprints.push(point_footprint(
                 format!("{}__{}", conn.name, i),
                 Vec2::new(p.x, p.y),
@@ -196,7 +191,7 @@ pub fn srj_to_pcb(srj: &SimpleRouteJson) -> Pcb {
             ob.layers
                 .iter()
                 .map(|l| srj_layer(Some(l), srj.layer_count))
-                .collect()
+                .collect::<Result<_, _>>()?
         };
         footprints.push(Footprint {
             reference: format!("OBS{i}"),
@@ -226,7 +221,7 @@ pub fn srj_to_pcb(srj: &SimpleRouteJson) -> Pcb {
         });
     }
 
-    Pcb {
+    Ok(Pcb {
         outline: BoardOutline {
             vertices: vec![
                 Vec2::new(b.min_x, b.min_y),
@@ -269,7 +264,7 @@ pub fn srj_to_pcb(srj: &SimpleRouteJson) -> Pcb {
         zones: vec![],
         keepouts: vec![],
         net_ties: vec![],
-    }
+    })
 }
 
 /// The net names an SRJ problem asks to route (its connection names).
@@ -333,7 +328,7 @@ mod tests {
             ],
             "bounds": {"minX": -2, "maxX": 12, "minY": -6, "maxY": 6}
         }"#);
-        let pcb = srj_to_pcb(&s);
+        let pcb = srj_to_pcb(&s).unwrap();
         assert_eq!(pcb.stackup.layers.len(), 2);
         assert_eq!(pcb.footprints.len(), 3); // 2 points + 1 obstacle
 
@@ -348,14 +343,26 @@ mod tests {
 
     #[test]
     fn ten_layer_stack_maps_top_bottom_and_inners() {
-        let stack = srj_layers(10);
+        let stack = srj_layers(10).unwrap();
         assert_eq!(stack.len(), 10);
         assert_eq!(stack[0], PcbLayer::FCu);
         assert_eq!(*stack.last().unwrap(), PcbLayer::BCu);
-        assert_eq!(srj_layer(Some("inner1"), 10), PcbLayer::In1Cu);
-        assert_eq!(srj_layer(Some("inner8"), 10), PcbLayer::In8Cu);
-        assert_eq!(srj_layer(Some("bottom"), 10), PcbLayer::BCu);
+        assert_eq!(srj_layer(Some("inner1"), 10), Ok(PcbLayer::In1Cu));
+        assert_eq!(srj_layer(Some("inner8"), 10), Ok(PcbLayer::In8Cu));
+        assert_eq!(srj_layer(Some("bottom"), 10), Ok(PcbLayer::BCu));
         // On a 1-layer board "bottom" folds onto the only copper there is.
-        assert_eq!(srj_layer(Some("bottom"), 1), PcbLayer::FCu);
+        assert_eq!(srj_layer(Some("bottom"), 1), Ok(PcbLayer::FCu));
+    }
+
+    #[test]
+    fn unknown_or_out_of_stack_layers_are_errors() {
+        // inner9 on a 10-layer board used to resolve to stack[9] = BCu.
+        assert!(srj_layer(Some("inner9"), 10).is_err());
+        assert!(srj_layer(Some("inner0"), 10).is_err());
+        assert!(srj_layer(Some("middle"), 4).is_err());
+        assert_eq!(srj_layer(Some("inner20"), 32), Ok(PcbLayer::In20Cu));
+        assert_eq!(srj_layers(32).unwrap().len(), 32);
+        assert!(srj_layers(33).is_err());
+        assert!(srj_layers(0).is_err());
     }
 }

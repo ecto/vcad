@@ -5213,6 +5213,14 @@ describe("get_copper", () => {
       "zone",
     ]);
 
+    // Inner layers: the through via's barrel crosses In1Cu and In8Cu too
+    // (the span used to be indexed in FCu,BCu,In1… order, so a through via
+    // "spanned" nothing between its ends).
+    for (const layer of ["In1Cu", "In8Cu"]) {
+      const inner = out(await getCopper({ document_id: id, kind: "via", layer }));
+      expect(inner.total).toBe(1);
+    }
+
     // Spatial: only the MID trace's neighborhood, kind-scoped so the
     // board-spanning pour doesn't match.
     const near = out(

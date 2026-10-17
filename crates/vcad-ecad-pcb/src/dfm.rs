@@ -392,23 +392,14 @@ pub fn run_pack(pcb: &Pcb, profile: PcbFabProfile, pack: &PcbRulePack) -> PcbDfm
 // ============================================================================
 
 /// All copper layers, ordered top → bottom (mirrors the DRC stack).
-const COPPER_STACK: [PcbLayer; 8] = [
-    PcbLayer::FCu,
-    PcbLayer::In1Cu,
-    PcbLayer::In2Cu,
-    PcbLayer::In3Cu,
-    PcbLayer::In4Cu,
-    PcbLayer::In5Cu,
-    PcbLayer::In6Cu,
-    PcbLayer::BCu,
-];
+const COPPER_STACK: [PcbLayer; 32] = PcbLayer::COPPER_STACK;
 
 /// Single-copper-layer bit (0 for non-copper).
-fn copper_bit(layer: PcbLayer) -> u16 {
+fn copper_bit(layer: PcbLayer) -> u32 {
     COPPER_STACK
         .iter()
         .position(|&c| c == layer)
-        .map(|i| 1u16 << i)
+        .map(|i| 1u32 << i)
         .unwrap_or(0)
 }
 
@@ -441,7 +432,7 @@ fn detect_layer_count(pcb: &Pcb) -> usize {
     if from_stackup > 0 {
         return from_stackup;
     }
-    let mut mask = 0u16;
+    let mut mask = 0u32;
     for t in &pcb.traces {
         mask |= copper_bit(t.layer);
     }
@@ -1307,8 +1298,8 @@ fn check_acid_trap(pcb: &Pcb, rule: &Rule) -> PcbDfmRuleResult {
 
     // 1. Trace junctions: outgoing directions sharing a (vertex, net, layer).
     let q = |v: f64| (v * 1000.0).round() as i64;
-    let mut junctions: HashMap<(i64, i64, u16, String), Vec<Vec2>> = HashMap::new();
-    let mut junction_pt: HashMap<(i64, i64, u16, String), Vec2> = HashMap::new();
+    let mut junctions: HashMap<(i64, i64, u32, String), Vec<Vec2>> = HashMap::new();
+    let mut junction_pt: HashMap<(i64, i64, u32, String), Vec2> = HashMap::new();
     for t in &pcb.traces {
         let bit = copper_bit(t.layer);
         for (v, other) in [(t.start, t.end), (t.end, t.start)] {

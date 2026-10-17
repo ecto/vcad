@@ -2169,7 +2169,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     stackupLayers.push({ layer: "FCu" as const, copperThickness: 0.035 });
     if (layerCount >= 4) {
       const innerCount = layerCount - 2;
-      const innerLayerNames = ["In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu"] as const;
+      if (innerCount > 30) throw new Error(`layers ${layerCount} exceeds 32 copper layers`);
+      const innerLayerNames = Array.from(
+        { length: 30 },
+        (_, i) => `In${i + 1}Cu` as Pcb["stackup"]["layers"][number]["layer"],
+      );
       const dielectricPerLayer = thickness / (layerCount - 1);
       for (let i = 0; i < innerCount; i++) {
         stackupLayers.push({
