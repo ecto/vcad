@@ -3,7 +3,7 @@
 //! plus the connectivity counts (UnconnectedNet + NetIslands) on both.
 //!
 //! ```bash
-//! cargo run --release -p vcad-ecad-fabprep --example drc_delta -- routed.pcb.json [offenders.txt]
+//! cargo run --release -p vcad-ecad-fabprep --example drc_delta -- routed.pcb.json [offenders.txt] [Rule,Rule]
 //! ```
 
 use std::collections::BTreeSet;
@@ -16,8 +16,14 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let path = args
         .next()
-        .expect("usage: drc_delta <board.pcb.json> [offenders.txt]");
+        .expect("usage: drc_delta <board.pcb.json> [offenders.txt] [Rule,Rule]");
     let offenders_out = args.next();
+    // Optional: comma-separated rule names whose FINAL violations are all
+    // printed (e.g. UnconnectedNet,NetIslands — not set-differenced).
+    let dump: Vec<String> = args
+        .next()
+        .map(|s| s.split(',').map(str::to_string).collect())
+        .unwrap_or_default();
     let pcb: Pcb =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("parse");
     let mut stripped = pcb.clone();
@@ -51,6 +57,15 @@ fn main() {
         conn(&base, DrcRuleType::NetIslands),
         conn(&fin, DrcRuleType::NetIslands),
     );
+    for v in &fin {
+        let name = vcad_ecad_fabprep::delta::rule_name(&v.rule);
+        if dump.contains(&name) {
+            println!(
+                "{name} @({:.3},{:.3}) {}",
+                v.position.x, v.position.y, v.message
+            );
+        }
+    }
     if let Some(p) = offenders_out {
         let s: String = d
             .offenders
