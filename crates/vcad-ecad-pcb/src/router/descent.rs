@@ -1163,8 +1163,14 @@ fn descend_board_inner(
         // guarantee.) Both legs move together, so the twin must be present
         // at its NEW position: checking P-new against N-old rejects every
         // descent, because the pair as a whole has shifted.
+        // Strict pair coupling: the descent commits fail-closed, so the
+        // oracle must score the pair gap exactly as `check_drc` does —
+        // including a leg against its twin's via annuli and pads (which
+        // `drc::pair_aware_clearance_w` treats as coupled copper). The lax
+        // default passed HDMI0.TX2_P at 0.165 mm from its twin's via while
+        // the DRC demanded 0.245 (clearance count 4 -> 6 on CM5 mode B).
         let with_new = |moved: &[Vec2], moved_net: &str, layer: PcbLayer, w: f64| {
-            RouteSession::from_pcb(&oracle_board(
+            oracle_session(&oracle_board(
                 pcb,
                 [(pn.as_str(), pl, &p_raw), (nn.as_str(), nlayer, &n_raw)],
                 moved,
@@ -1180,10 +1186,19 @@ fn descend_board_inner(
         // the moving run is static copper, mined as an ordinary obstacle at
         // the pair-gap requirement.
         let twin_static = |twin: &str, layer: PcbLayer, run: &[Vec2]| -> Vec<(Vec2, Vec2, f64)> {
+            // Twin vias spanning this layer are static twin copper too (a
+            // zero-length segment of the annulus radius), so a strict-mode
+            // twin-via hit mines a claim instead of stalling the round.
             pcb.traces
                 .iter()
                 .filter(|t| t.net == twin && t.layer == layer && !on_run(t, twin, layer, run))
                 .map(|t| (t.start, t.end, t.width / 2.0))
+                .chain(
+                    pcb.vias
+                        .iter()
+                        .filter(|v| v.net == twin && layer.spanned_by(v.start_layer, v.end_layer))
+                        .map(|v| (v.position, v.position, v.diameter / 2.0)),
+                )
                 .collect()
         };
         let p_twin_static = twin_static(nn, pl, &n_raw);
@@ -1504,6 +1519,15 @@ fn oracle_board(
     b
 }
 
+/// The exact-oracle session over `board`: strict pair coupling, so the
+/// intra-pair gap is scored exactly as `check_drc` scores it (twin vias and
+/// pads count as coupled copper).
+fn oracle_session(board: &Pcb) -> crate::session::RouteSession {
+    let mut s = crate::session::RouteSession::from_pcb(board);
+    s.set_strict_pair_coupling(true);
+    s
+}
+
 /// Interior attachment points of `run` (a chain on `net`/`layer`): every
 /// same-net touch between a run segment and copper OFF the run, by DRC's
 /// own connectivity ([`crate::drc::net_graph`]). Returns the run with each
@@ -1658,6 +1682,61 @@ fn pt_seg_dist_f64(p: Vec2, a: Vec2, b: Vec2) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Oracle == DRC on a leg passing its twin's via: the DRC scores a via
+    /// annulus as coupled copper (pair gap 0.245), so the descent oracle must
+    /// too. The lax session passed this geometry (HDMI0.TX2 on CM5 mode B).
+    #[test]
+    fn oracle_scores_leg_to_twin_via_like_drc() {
+        let mut pcb: Pcb = serde_json::from_str(
+            r#"{"outline":{"vertices":[],"cutouts":[],"thickness":1.6},
+                "stackup":{"layers":[]},
+                "rules":{"defaultRules":{"name":"Default","traceWidth":0.1,"clearance":0.08,
+                         "viaDiameter":0.21,"viaDrill":0.12},
+                         "classRules":[{"name":"diff-pair","traceWidth":0.2,"clearance":0.08,
+                           "viaDiameter":0.21,"viaDrill":0.12,"diffPairGap":0.25,"diffPairWidth":0.2}],
+                         "netClassAssignments":{"diff-pair":["SIG_P","SIG_N"]},
+                         "edgeClearance":0.3,"holeToHole":0.0,"minAnnularRing":0.0,"minDrill":0.0}}"#,
+        )
+        .expect("board");
+        pcb.traces.push(Trace {
+            start: Vec2::new(0.0, 0.0),
+            end: Vec2::new(10.0, 0.0),
+            width: 0.2,
+            layer: PcbLayer::FCu,
+            net: "SIG_P".into(),
+            source: None,
+        });
+        pcb.vias.push(vcad_ir::ecad::Via {
+            position: Vec2::new(5.0, 0.37),
+            diameter: 0.21,
+            drill: 0.12,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::In1Cu,
+            net: "SIG_N".into(),
+            source: None,
+        });
+        let drc_flags = crate::drc::check_drc(&pcb)
+            .iter()
+            .any(|v| v.rule == crate::drc::DrcRuleType::Clearance && v.message.contains("SIG_N"));
+        assert!(drc_flags, "DRC scores the twin via at the pair gap");
+        let leg = crate::spatial::CopperGeom::Segment {
+            a: Vec2::new(0.0, 0.0),
+            b: Vec2::new(10.0, 0.0),
+            half_w: 0.1,
+        };
+        let mut board = pcb.clone();
+        board.traces.clear();
+        let probe = oracle_session(&board).probe(&leg, PcbLayer::FCu, "SIG_P", 0.08);
+        assert!(!probe.legal, "oracle must agree with DRC");
+        let lax = crate::session::RouteSession::from_pcb(&board).probe(
+            &leg,
+            PcbLayer::FCu,
+            "SIG_P",
+            0.08,
+        );
+        assert!(lax.legal, "the lax session is the disagreement this pins");
+    }
 
     /// M11: collinear runs collapse, bends survive, nothing moves > tol.
     #[test]
