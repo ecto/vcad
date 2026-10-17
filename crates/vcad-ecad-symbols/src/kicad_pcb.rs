@@ -724,6 +724,8 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
             .unwrap_or("")
             .to_string();
         let rules = NetClassRules {
+            neck_width: None,
+            neck_length: None,
             name: name.clone(),
             trace_width: child_f64(block, "trace_width").unwrap_or(trace_width),
             clearance: child_f64(block, "clearance").unwrap_or(clearance_val),
@@ -751,6 +753,8 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
     }
 
     let default_rules = default_from_class.unwrap_or(NetClassRules {
+        neck_width: None,
+        neck_length: None,
         name: "Default".to_string(),
         trace_width,
         clearance: clearance_val,

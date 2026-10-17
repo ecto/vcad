@@ -2834,7 +2834,20 @@ targetImpedance?: number,
  * Same contract as [`Self::target_impedance`], solving the pair leg width
  * at the class's declared [`Self::diff_pair_gap`].
  */
-targetDiffImpedance?: number, };
+targetDiffImpedance?: number, 
+/**
+ * Neck-down minimum width (mm): within the neck region of a same-net pad
+ * (see [`Self::neck_length`]) a trace may narrow to this width instead of
+ * [`Self::trace_width`] — the pad-entry neck of a BGA / fine-pitch land.
+ * `None`: no neck allowance, the class width applies everywhere.
+ */
+neckWidth?: number, 
+/**
+ * Neck region length (mm), measured from the pad's copper edge: a neck
+ * segment must lie entirely within this distance of a same-net pad.
+ * `None` with a `neck_width` set: [`DEFAULT_NECK_LENGTH`].
+ */
+neckLength?: number, };
 
 /**
  * An intentional connection between two or more otherwise-distinct nets

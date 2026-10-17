@@ -240,6 +240,8 @@ pub fn srj_to_pcb(srj: &SimpleRouteJson) -> Result<Pcb, String> {
             min_microvia_drill: 0.1,
             min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
+                neck_width: None,
+                neck_length: None,
                 name: "Default".into(),
                 trace_width: w,
                 // SRJ carries no clearance; tscircuit's checks use the trace

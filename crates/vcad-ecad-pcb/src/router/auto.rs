@@ -2794,6 +2794,26 @@ pub(super) fn validate_and_commit(
     let copper = copper_layers(pcb);
     let (segments, route_vias) = (cand.segments, cand.vias);
 
+    // Width rule, exactly as DRC's MinTraceWidth judges it: copper below the
+    // net's class width is legal only as a neck (class neck_width, within the
+    // neck region of a same-net pad — `drc::neck_allows_segment`).
+    let class_w = crate::drc::build_net_trace_width_map(pcb)
+        .get(net)
+        .copied()
+        .unwrap_or(pcb.rules.default_rules.trace_width);
+    let width_ok = |a: Vec2, b: Vec2, sw: f64| {
+        sw >= class_w - 1e-6 || crate::drc::neck_allows_segment(pcb, net, a, b, sw)
+    };
+    if !segments.iter().all(|(a, b, _)| width_ok(*a, *b, w))
+        || !cand
+            .thin_segments
+            .iter()
+            .all(|(a, b, _)| width_ok(*a, *b, cand.thin_width))
+    {
+        log::debug!("validate: {net} narrow copper outside the neck region");
+        return None;
+    }
+
     // Every segment must still be legal on its own layer.
     for (a, b, l) in &segments {
         let seg = CopperGeom::Segment {
@@ -4558,6 +4578,8 @@ mod tests {
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".into(),
                     trace_width: 0.25,
                     clearance: 0.2,
@@ -5003,6 +5025,8 @@ mod tests {
         ]);
         // Put PWR in a wide net class.
         pcb.rules.class_rules.push(NetClassRules {
+            neck_width: None,
+            neck_length: None,
             name: "Power".into(),
             trace_width: 0.6,
             clearance: 0.2,
@@ -6217,6 +6241,10 @@ mod tests {
     /// Assign `net` to a class routing at `width` mm.
     fn with_class(pcb: &mut Pcb, net: &str, width: f64) {
         pcb.rules.class_rules.push(NetClassRules {
+            // The class declares its pad-entry neck; without one, copper
+            // below the class width is a MinTraceWidth violation anywhere.
+            neck_width: Some(0.2),
+            neck_length: None,
             name: "power".into(),
             trace_width: width,
             clearance: 0.2,

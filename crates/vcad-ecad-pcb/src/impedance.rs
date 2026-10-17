@@ -467,6 +467,8 @@ mod tests {
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "default".into(),
                     trace_width: 0.1,
                     clearance: 0.1,
@@ -496,6 +498,8 @@ mod tests {
 
     fn class_90r() -> NetClassRules {
         NetClassRules {
+            neck_width: None,
+            neck_length: None,
             name: "DIFF".to_string(),
             trace_width: 0.15,
             clearance: 0.1,

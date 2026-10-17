@@ -698,6 +698,23 @@ pub struct NetClassRules {
     )]
     #[cfg_attr(feature = "ts-rs", ts(rename = "targetDiffImpedance", optional))]
     pub target_diff_impedance: Option<f64>,
+    /// Neck-down minimum width (mm): within the neck region of a same-net pad
+    /// (see [`Self::neck_length`]) a trace may narrow to this width instead of
+    /// [`Self::trace_width`] — the pad-entry neck of a BGA / fine-pitch land.
+    /// `None`: no neck allowance, the class width applies everywhere.
+    #[serde(rename = "neckWidth", default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "neckWidth", optional))]
+    pub neck_width: Option<f64>,
+    /// Neck region length (mm), measured from the pad's copper edge: a neck
+    /// segment must lie entirely within this distance of a same-net pad.
+    /// `None` with a `neck_width` set: [`DEFAULT_NECK_LENGTH`].
+    #[serde(
+        rename = "neckLength",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "neckLength", optional))]
+    pub neck_length: Option<f64>,
 }
 
 /// Board-level design rules.
@@ -746,6 +763,10 @@ pub struct DesignRules {
     #[cfg_attr(feature = "ts-rs", ts(rename = "minMicroviaDiameter"))]
     pub min_microvia_diameter: f64,
 }
+
+/// Default neck region length from a pad's copper edge (mm) — the same
+/// 1.5 mm pad-breakout region the diff-pair gap rule exempts.
+pub const DEFAULT_NECK_LENGTH: f64 = 1.5;
 
 /// KiCad's default minimum microvia drill (board setup `uvia_min_drill`).
 pub const DEFAULT_MIN_MICROVIA_DRILL: f64 = 0.1;
@@ -1326,6 +1347,8 @@ mod tests {
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".to_string(),
                     trace_width: 0.25,
                     clearance: 0.2,

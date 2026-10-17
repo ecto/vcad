@@ -842,6 +842,8 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
                 .map(|k| ctx.f64_val(&fields[k]))
                 .collect::<Result<_, _>>()?;
             ctx.classes.push(ecad::NetClassRules {
+                neck_width: None,
+                neck_length: None,
                 name,
                 trace_width: f[0],
                 clearance: f[1],

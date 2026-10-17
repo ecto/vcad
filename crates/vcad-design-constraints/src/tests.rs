@@ -56,6 +56,8 @@ fn board_doc(footprints: Vec<Footprint>) -> Document {
             min_microvia_drill: 0.1,
             min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
+                neck_width: None,
+                neck_length: None,
                 name: "default".to_string(),
                 trace_width: 0.25,
                 clearance: 0.2,

@@ -817,7 +817,7 @@ fn check_min_trace_width(
         }
         let min_width = net_width.get(&trace.net).copied().unwrap_or(default_width);
 
-        if trace.width < min_width - 1e-6 {
+        if trace.width < min_width - 1e-6 && !neck_allows(pcb, trace) {
             violations.push(DrcViolation {
                 rule: DrcRuleType::MinTraceWidth,
                 severity: DrcSeverity::Error,
@@ -3294,6 +3294,56 @@ pub(crate) fn build_net_clearance_map(pcb: &Pcb) -> HashMap<String, f64> {
     map
 }
 
+/// The net class `net` belongs to (its first class assignment), if any.
+pub(crate) fn net_class<'a>(pcb: &'a Pcb, net: &str) -> Option<&'a vcad_ir::ecad::NetClassRules> {
+    pcb.rules.class_rules.iter().find(|c| {
+        pcb.rules
+            .net_class_assignments
+            .get(&c.name)
+            .is_some_and(|v| v.iter().any(|n| n == net))
+    })
+}
+
+/// Whether a narrow segment is a legal NECK: its class declares a
+/// `neck_width`, the segment is at least that wide, and BOTH endpoints lie
+/// within the class `neck_length` (default [`vcad_ir::ecad::DEFAULT_NECK_LENGTH`])
+/// of a same-net pad's copper edge (planar distance, any layer). Elsewhere the class
+/// width applies. (The pad-entry neck of KiCad custom rules / Altium's
+/// neck-down: a bounded length from the land, not a blanket width waiver.)
+pub(crate) fn neck_allows_segment(pcb: &Pcb, net: &str, a: Vec2, b: Vec2, width: f64) -> bool {
+    let Some(class) = net_class(pcb, net) else {
+        return false;
+    };
+    let Some(neck_w) = class.neck_width else {
+        return false;
+    };
+    if width < neck_w - 1e-6 {
+        return false;
+    }
+    let len = class
+        .neck_length
+        .unwrap_or(vcad_ir::ecad::DEFAULT_NECK_LENGTH);
+    let near_pad = |p: Vec2| {
+        let pt = CopperGeom::Disc { center: p, r: 0.0 };
+        pcb.footprints.iter().any(|fp| {
+            fp.pads.iter().any(|pad| {
+                // Planar distance from the land's copper edge, any layer: a
+                // BGA dog-bone escape necks on the layer below the ball too.
+                pad.net.as_deref() == Some(net) && {
+                    let c = crate::geometry::pad_world_position(fp, pad);
+                    let rot = (fp.rotation + pad.rotation).to_radians();
+                    pt.distance_to(&crate::spatial::pad_geom(pad, c, rot)) <= len + 1e-9
+                }
+            })
+        })
+    };
+    near_pad(a) && near_pad(b)
+}
+
+fn neck_allows(pcb: &Pcb, t: &vcad_ir::ecad::Trace) -> bool {
+    neck_allows_segment(pcb, &t.net, t.start, t.end, t.width)
+}
+
 /// Build a map of net ID to minimum trace width from design rules.
 pub(crate) fn build_net_trace_width_map(pcb: &Pcb) -> HashMap<String, f64> {
     let mut map = HashMap::new();
@@ -3555,6 +3605,8 @@ mod tests {
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".to_string(),
                     trace_width: 0.25,
                     clearance: 0.2,
@@ -4191,6 +4243,8 @@ mod tests {
         pcb.vias.clear();
         // A diff-pair class (0.1mm gap, 0.2mm legs) with USB_P / USB_N.
         pcb.rules.class_rules.push(NetClassRules {
+            neck_width: None,
+            neck_length: None,
             name: "DP".into(),
             trace_width: 0.2,
             clearance: 0.2,
@@ -5064,6 +5118,56 @@ mod tests {
             model_3d: None,
             properties,
         }
+    }
+
+    /// Neck-down: copper below the class width passes only at >= the class
+    /// neck width AND inside the neck region of a same-net pad.
+    #[test]
+    fn neck_width_allowed_only_near_pads() {
+        let judge = |w: f64, a: (f64, f64), b: (f64, f64)| {
+            let mut pcb = clean_pcb();
+            let net = "NK".to_string();
+            pcb.footprints.push(footprint(
+                "U1",
+                (50.0, 40.0),
+                0.0,
+                vec![smd_pad("1", (0.0, 0.0), "NK")],
+            ));
+            let c = Vec2::new(50.0, 40.0);
+            pcb.rules.class_rules.push(vcad_ir::ecad::NetClassRules {
+                name: "SI".into(),
+                trace_width: 0.2,
+                clearance: 0.1,
+                via_diameter: 0.4,
+                via_drill: 0.2,
+                diff_pair_gap: None,
+                diff_pair_width: None,
+                target_impedance: None,
+                target_diff_impedance: None,
+                neck_width: Some(0.08),
+                neck_length: Some(1.0),
+            });
+            pcb.rules
+                .net_class_assignments
+                .insert("SI".into(), vec![net.clone()]);
+            pcb.traces.push(vcad_ir::ecad::Trace {
+                start: Vec2::new(c.x + a.0, c.y + a.1),
+                end: Vec2::new(c.x + b.0, c.y + b.1),
+                width: w,
+                layer: PcbLayer::FCu,
+                net,
+                source: None,
+            });
+            check_drc(&pcb)
+                .iter()
+                .any(|v| v.rule == DrcRuleType::MinTraceWidth)
+        };
+        // 0.08 neck leaving the pad: passes.
+        assert!(!judge(0.08, (0.0, 0.0), (0.0, 0.8)));
+        // Same width far from any pad: fails.
+        assert!(judge(0.08, (0.0, 20.0), (0.0, 21.0)));
+        // Below the neck minimum even at the pad: fails.
+        assert!(judge(0.06, (0.0, 0.0), (0.0, 0.8)));
     }
 
     /// Microvias are judged by the microvia minimums (KiCad uvia_min_drill /

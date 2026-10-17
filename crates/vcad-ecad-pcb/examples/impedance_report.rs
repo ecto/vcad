@@ -82,6 +82,8 @@ fn main() {
     println!("target differential impedance: {target:.0}Ω\n");
 
     let class = NetClassRules {
+        neck_width: None,
+        neck_length: None,
         name: "REPORT".into(),
         trace_width: pcb.rules.default_rules.trace_width,
         clearance: pcb.rules.default_rules.clearance,

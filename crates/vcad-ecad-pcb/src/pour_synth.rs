@@ -922,6 +922,8 @@ mod tests {
             min_microvia_drill: 0.1,
             min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
+                neck_width: None,
+                neck_length: None,
                 name: "Default".into(),
                 trace_width: 0.25,
                 clearance: 0.2,
@@ -1102,6 +1104,8 @@ mod tests {
         let mut pcb = board(40.0, 30.0);
         pad_row(&mut pcb, "BUS", 8, 5.0, 10.0, PcbLayer::FCu);
         pcb.rules.class_rules.push(NetClassRules {
+            neck_width: None,
+            neck_length: None,
             name: "power".into(),
             trace_width: 1.5,
             clearance: 0.3,

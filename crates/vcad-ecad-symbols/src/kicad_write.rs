@@ -3009,6 +3009,8 @@ mod tests {
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".into(),
                     trace_width: 0.25,
                     clearance: 0.2,
@@ -3274,6 +3276,8 @@ mod tests {
         r.hole_to_hole = 0.2;
         r.edge_clearance = 0.2;
         r.class_rules = vec![NetClassRules {
+            neck_width: None,
+            neck_length: None,
             name: "Power".into(),
             trace_width: 0.4,
             clearance: 0.15,
