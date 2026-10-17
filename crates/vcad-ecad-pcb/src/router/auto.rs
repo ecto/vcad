@@ -485,6 +485,40 @@ pub fn route_all_with_opts(
     // spot near it taken. The copper rides along on a working copy of the board
     // and joins the result with the post-route stitches below.
     let pcb_in = pcb;
+    // Planned plane fan-out for dense pin fields: a microvia IN the pad from
+    // each outer-layer plane pin straight down to its plane on the adjacent
+    // layer (the HDI fan-out the CM5's own layout uses: 956 F.Cu-In1.Cu
+    // microvias). It occupies no routing room on the pad layer and lands
+    // inside the net's own plane, so pairs and signals route around nothing
+    // they could have used. Committed as fixed board copper before every
+    // other pass; the stitch passes skip the pads it served.
+    let micro_fan = if !planes.is_empty() && planned_microvia_fanout() {
+        plan_microvia_fanout(pcb, &planes, nets_filter)
+    } else {
+        Vec::new()
+    };
+    let micro_pads: Vec<Vec2> = micro_fan.iter().map(|m| m.0).collect();
+    let micro_board;
+    let pcb = if micro_fan.is_empty() {
+        pcb
+    } else {
+        log::info!("planned microvia fan-out: {} plane pin(s)", micro_fan.len());
+        let mut p = pcb.clone();
+        for (pt, net, a, b) in &micro_fan {
+            p.vias.push(vcad_ir::ecad::Via {
+                via_type: Some(vcad_ir::ecad::ViaType::Micro),
+                position: *pt,
+                diameter: pcb.rules.default_rules.via_diameter,
+                drill: pcb.rules.default_rules.via_drill,
+                start_layer: *a,
+                end_layer: *b,
+                net: net.clone(),
+                source: Some(vcad_ir::ecad::CopperSource::Autoroute),
+            });
+        }
+        micro_board = p;
+        &micro_board
+    };
     let prestitch = if opts.prestitch_planes && !planes.is_empty() {
         let mut s0 = RouteSession::from_pcb(pcb);
         let ps = stitch_planes(
@@ -496,7 +530,7 @@ pub fn route_all_with_opts(
             width,
             &board_holes(pcb),
             true,
-            &[],
+            &micro_pads,
         );
         log::info!(
             "plane prestitch: {} via(s), {} pad(s) left for after routing",
@@ -766,7 +800,7 @@ pub fn route_all_with_opts(
         width,
         &holes,
         true,
-        &fanout_pads(&placed),
+        &[fanout_pads(&placed), micro_pads.clone()].concat(),
     );
     {
         let mut per_net: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
@@ -991,6 +1025,16 @@ pub fn route_all_with_opts(
     // stitched again (it saw the prestitch as foreign board copper) keeps only
     // its prestitch.
     let pcb = pcb_in;
+    for (pt, net, a, b) in &micro_fan {
+        vias.push(RoutedVia {
+            position: *pt,
+            net: net.clone(),
+            start_layer: *a,
+            end_layer: *b,
+            via_type: Some(vcad_ir::ecad::ViaType::Micro),
+        });
+        stitch.nets.insert(net.clone());
+    }
     if let Some(ps) = prestitch {
         let pre_pads: Vec<Vec2> = ps
             .stubs
@@ -3742,6 +3786,94 @@ fn plane_fanout_first() -> bool {
     *ON.get_or_init(|| std::env::var("VCAD_PLANE_FANOUT_FIRST").as_deref() == Ok("1"))
 }
 
+/// Whether the planned microvia fan-out runs. Opt-in
+/// (`VCAD_MICROVIA_FANOUT=1`): on the full CM5 it fanned out 670 plane pins
+/// and cut GND from 75 to 42 pad groups and the route-attributable DRC count
+/// 2054 -> 1733, but the in-pad microvias occupy In1/In8 under the BGAs,
+/// where signals also route, and DRC-split nets rose 32 -> 39.
+fn planned_microvia_fanout() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_MICROVIA_FANOUT").as_deref() == Ok("1"))
+}
+
+/// Plan via-in-pad microvias for plane pins: an SMD pad on an outer layer
+/// whose net has a plane on the ADJACENT layer, where the board's default
+/// via is a legal microvia for that hop ([`router_via_type`]), fits inside
+/// the pad, and probes clearance- and hole-legal on both layers. Returns
+/// `(pad center, net, pad layer, plane layer)`.
+fn plan_microvia_fanout(
+    pcb: &Pcb,
+    planes: &BTreeMap<String, Vec<PcbLayer>>,
+    nets_filter: &[String],
+) -> Vec<(Vec2, String, PcbLayer, PcbLayer)> {
+    let copper = copper_layers(pcb);
+    if copper.len() < 3 {
+        return Vec::new();
+    }
+    let mut session = RouteSession::from_pcb(pcb);
+    let via_d = pcb.rules.default_rules.via_diameter;
+    let via_r = via_d / 2.0;
+    let mut out = Vec::new();
+    for fp in &pcb.footprints {
+        for pad in &fp.pads {
+            let Some(net) = pad.net.as_ref().filter(|n| !n.is_empty()) else {
+                continue;
+            };
+            let Some(layers) = planes.get(net) else {
+                continue;
+            };
+            if !nets_filter.is_empty() && !nets_filter.iter().any(|n| n == net) {
+                continue;
+            }
+            if pad.drill.is_some() {
+                continue;
+            }
+            let Some(pad_layer) = pad.layers.iter().copied().find(|l| l.is_copper()) else {
+                continue;
+            };
+            let adj = if pad_layer == copper[0] {
+                copper[1]
+            } else if Some(&pad_layer) == copper.last() {
+                copper[copper.len() - 2]
+            } else {
+                continue;
+            };
+            if !layers.contains(&adj)
+                || router_via_type(pcb, pad_layer, adj) != vcad_ir::ecad::ViaType::Micro
+            {
+                continue;
+            }
+            // Via-in-pad: the annulus must sit inside the land.
+            let min_dim = match &pad.shape {
+                PadShape::Circle { diameter } => *diameter,
+                PadShape::Rect { width, height } | PadShape::RoundRect { width, height, .. } => {
+                    width.min(*height)
+                }
+                _ => continue,
+            };
+            if via_d > min_dim + 1e-9 {
+                continue;
+            }
+            let pt = crate::geometry::pad_world_position(fp, pad);
+            let clearance = session.clearance_for(net);
+            let disc = CopperGeom::Disc {
+                center: pt,
+                r: via_r,
+            };
+            if !session.probe(&disc, adj, net, clearance).legal
+                || !session.probe(&disc, pad_layer, net, clearance).legal
+                || !session.probe_drill(pt, session.via_drill_for(net)).legal
+            {
+                continue;
+            }
+            let mut spans = Vec::new();
+            commit_via(&mut session, net, pt, via_r, &[pad_layer, adj], &mut spans);
+            out.push((pt, net.clone(), pad_layer, adj));
+        }
+    }
+    out
+}
+
 /// Pads a plane fan-out already stitched: each fan-out stub's pad end and
 /// each at-pad fan-out via.
 fn fanout_pads(placed: &[Placed]) -> Vec<Vec2> {
@@ -4737,7 +4869,7 @@ mod tests {
         }
         for v in &r.vias {
             pcb.vias.push(Via {
-                via_type: None,
+                via_type: v.via_type,
                 position: v.position,
                 diameter: 0.8,
                 drill: 0.4,
@@ -5496,6 +5628,46 @@ mod tests {
             r.vias.iter().filter(|v| v.net == "GND").count() >= 2,
             "U2 and U3 need stitches"
         );
+    }
+
+    /// Planned fan-out: an outer-layer plane pin over its plane on the
+    /// adjacent layer gets a via-in-pad microvia down to it, and DRC sees the
+    /// net connected.
+    #[test]
+    fn plane_pins_fan_out_with_microvia_in_pad() {
+        use vcad_ir::ecad::ViaType;
+        let mut pcb0 = board4(
+            vec![
+                fp("U1", 8.0, 8.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U2", 25.0, 8.0, vec![pad("1", 0.0, 0.0, "GND")]),
+            ],
+            vec![plane("GND", PcbLayer::In1Cu)],
+        );
+        pcb0.rules.default_rules.via_diameter = 0.21;
+        pcb0.rules.default_rules.via_drill = 0.12;
+        let fan = plan_microvia_fanout(&pcb0, &plane_layers(&pcb0), &[]);
+        assert_eq!(fan.len(), 2, "{fan:?}");
+        assert!(fan
+            .iter()
+            .all(|(_, n, a, b)| n == "GND" && *a == PcbLayer::FCu && *b == PcbLayer::In1Cu));
+        let mut pcb = pcb0.clone();
+        for (pt, net, a, b) in &fan {
+            pcb.vias.push(Via {
+                via_type: Some(ViaType::Micro),
+                position: *pt,
+                diameter: 0.21,
+                drill: 0.12,
+                start_layer: *a,
+                end_layer: *b,
+                net: net.clone(),
+                source: None,
+            });
+        }
+        assert_eq!(crate::drc::pad_islands(&pcb)["GND"].len(), 1);
+        assert!(!crate::drc::check_drc(&pcb).iter().any(|v| matches!(
+            v.rule,
+            crate::drc::DrcRuleType::MinDrill | crate::drc::DrcRuleType::AnnularRing
+        )));
     }
 
     /// Router vias carry their intended type: an adjacent-pair span at a via
