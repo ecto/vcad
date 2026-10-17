@@ -53,6 +53,22 @@ fn through_only() -> bool {
     THROUGH_VIAS_ONLY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Octilinear routing: maze output keeps only 0/45/90-degree segments (the
+/// 8-connected grid path is octilinear already; the any-angle taut pull is
+/// restricted to octilinear shortcuts). Off-grid pad/via endpoints keep their
+/// short connector. `VCAD_OCTILINEAR=1`.
+pub fn octilinear() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_OCTILINEAR").as_deref() == Ok("1"))
+}
+
+/// Whether `a -> b` runs at a multiple of 45 degrees (within 0.5 degree).
+pub fn is_octilinear(a: Vec2, b: Vec2) -> bool {
+    let (dx, dy) = ((b.x - a.x).abs(), (b.y - a.y).abs());
+    let tol = (dx + dy) * 0.009;
+    dx <= tol || dy <= tol || (dx - dy).abs() <= tol
+}
+
 /// Microvia size `(diameter, drill)` for a via one dielectric deep from an
 /// outer layer (F.Cu-In1.Cu, or B.Cu and the inner layer above it) - the HDI
 /// via that fits inside a 0.4 mm BGA's pad. `None`: every via is the board's
@@ -691,7 +707,9 @@ pub fn route_net_maze3d(
             // Furthest j with a clear legal segment i→j.
             let mut j = i + 1;
             for k in ((i + 2)..pts.len()).rev() {
-                if legal_step(pts[i], pts[k], layer) {
+                if (!octilinear() || is_octilinear(pts[i], pts[k]))
+                    && legal_step(pts[i], pts[k], layer)
+                {
                     j = k;
                     break;
                 }
@@ -1392,6 +1410,17 @@ fn dist(a: Vec2, b: Vec2) -> f64 {
 mod tests {
     use super::*;
     use crate::session::RouteSession;
+
+    #[test]
+    fn octilinear_predicate() {
+        let o = Vec2::new(0.0, 0.0);
+        assert!(is_octilinear(o, Vec2::new(3.0, 0.0)));
+        assert!(is_octilinear(o, Vec2::new(0.0, -2.0)));
+        assert!(is_octilinear(o, Vec2::new(1.5, 1.5)));
+        assert!(is_octilinear(o, Vec2::new(-2.0, 2.0)));
+        assert!(!is_octilinear(o, Vec2::new(2.0, 1.0)));
+        assert!(!is_octilinear(o, Vec2::new(1.0, 3.0)));
+    }
     use vcad_ir::ecad::*;
 
     fn board(traces: Vec<Trace>) -> Pcb {

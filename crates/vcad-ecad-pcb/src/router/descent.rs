@@ -1440,6 +1440,21 @@ fn descend_board_inner(
             cp.len() - 1,
             cn.len() - 1
         );
+        // Octilinear mode: the descent moves vertices freely, so a commit is
+        // accepted only if every rewritten segment is still 0/45/90 degrees.
+        // (An angle-preserving parametrization — each segment offset along
+        // its own normal, vertices at neighbour-line intersections — is the
+        // way to tune skew inside the constraint; not implemented yet.)
+        if super::maze::octilinear()
+            && !cp
+                .windows(2)
+                .chain(cn.windows(2))
+                .all(|w| super::maze::is_octilinear(w[0], w[1]))
+        {
+            report.rejected += 1;
+            log::debug!(target: "descent_stats", "pair={pn} reject=octilinear");
+            continue;
+        }
         replace_run(&mut work2, pn, pl, &p_raw, &cp, p_w);
         replace_run(&mut work2, nn, nlayer, &n_raw, &cn, n_w);
         // M12 connectivity gate (fail-closed): the oracle judges clearance
