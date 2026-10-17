@@ -13,6 +13,7 @@
 import { Matrix4, Vector3, Quaternion } from "three";
 import type { Vec2, PcbLayer, Trace, Via, PadShape } from "@vcad/ir";
 import type { LayerConfig } from "@/stores/electronics-store";
+import { layerConfigFor } from "@/lib/pcb-layer-config";
 
 // ---------------------------------------------------------------------------
 // Layer Z offsets
@@ -179,13 +180,12 @@ export function worldToPcb(
 // ---------------------------------------------------------------------------
 
 export function getLayerColor(layers: LayerConfig[], layer: string): string {
-  const cfg = layers.find((l) => l.layer === layer);
-  return cfg?.color ?? "#888";
+  return layerConfigFor(layers, layer).color;
 }
 
+/** Copper layers without a stored config default to visible. */
 export function isLayerVisible(layers: LayerConfig[], layer: string): boolean {
-  const cfg = layers.find((l) => l.layer === layer);
-  return cfg?.visible ?? false;
+  return layerConfigFor(layers, layer).visible;
 }
 
 /** Copper layer index for consistent ordering. */

@@ -12,6 +12,7 @@ import * as THREE from "three";
 import { useDocumentStore, useCoreElectronicsStore, getNodePcb } from "@vcad/core";
 import type { Vec2 } from "@vcad/ir";
 import { useElectronicsStore } from "@/stores/electronics-store";
+import { usePcbLayerConfigs } from "@/hooks/usePcbLayerConfigs";
 import { worldToPcb, layerZ } from "./pcb-geometry";
 
 import { PcbKernelBoard } from "./PcbKernelBoard";
@@ -34,7 +35,7 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
   const selection = useElectronicsStore((s) => s.selection);
   const hoveredNet = useElectronicsStore((s) => s.hoveredNet);
   const netlist = useElectronicsStore((s) => s.netlist);
-  const pcbLayers = useElectronicsStore((s) => s.pcbLayers);
+  const pcbLayers = usePcbLayerConfigs();
   const pcbGridSize = useElectronicsStore((s) => s.pcbGridSize);
   const pcbSnapToGrid = useElectronicsStore((s) => s.pcbSnapToGrid);
   const pcbActiveLayer = useElectronicsStore((s) => s.pcbActiveLayer);
