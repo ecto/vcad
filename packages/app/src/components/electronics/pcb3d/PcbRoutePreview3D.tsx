@@ -3,6 +3,7 @@
  */
 
 import type { Pcb, PcbLayer, Vec2 } from "@vcad/ir";
+import { boardCopperLayers } from "@vcad/core";
 import { layerZ } from "./pcb-geometry";
 
 interface Props {
@@ -29,7 +30,7 @@ export function PcbRoutePreview3D({ pcb, routeStartPad, routePreview, boardThick
     y: fp.position.y + pad.position.y,
   };
   const endPos = routePreview[routePreview.length - 1]!;
-  const z = layerZ(activeLayer, boardThickness, explosion) + 0.02;
+  const z = layerZ(activeLayer, boardThickness, explosion, boardCopperLayers(pcb).length) + 0.02;
   const traceWidth = pcb.rules.defaultRules.traceWidth;
   const clearance = pcb.rules.defaultRules.clearance;
 
