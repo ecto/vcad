@@ -1382,8 +1382,8 @@ impl Pcb {
     /// [`LayerRole::Plane`] for that net; if instead several pour nets (each at
     /// least 5%) together cover that much, a [`LayerRole::SplitPlane`]; anything
     /// else is signal. Coverage is the zone OUTLINE area (minus holes), capped
-    /// at the board area. Returns one log line per inferred layer; marks each
-    /// `role_inferred`.
+    /// at the board area. Returns one log line per layer inferred a plane; marks
+    /// each inferred layer `role_inferred`.
     pub fn infer_layer_roles(&mut self) -> Vec<String> {
         let board = polygon_area(&self.outline.vertices);
         let total: f64 = self.traces.iter().map(|t| (t.end - t.start).length()).sum();
@@ -1435,7 +1435,10 @@ impl Pcb {
             } else {
                 LayerRole::Signal
             };
-            log.push(format!(
+            // Log the plane calls (the ones that change routing); a layer
+            // left signal is the default and stays quiet.
+            if role.is_plane() {
+                log.push(format!(
                 "INFERRED layer role {:?}: {:?} (signal {:.0} mm = {:.1}% of all trace length; \
                  dominant pour {} {:.0}% of board; split-pour cover {:.0}%)",
                 sl.layer,
@@ -1446,6 +1449,7 @@ impl Pcb {
                 100.0 * best.as_ref().map(|b| b.1).unwrap_or(0.0),
                 100.0 * split_cover
             ));
+            }
             sl.role = Some(role);
             sl.role_inferred = true;
         }
@@ -1807,7 +1811,7 @@ mod tests {
         // An authored role wins over inference.
         pcb.stackup.layers[3].role = Some(LayerRole::Signal);
         let log = pcb.infer_layer_roles();
-        assert_eq!(log.len(), 3);
+        assert_eq!(log.len(), 2, "only the plane calls are logged");
         let r = |i: usize| pcb.stackup.layers[i].role.clone().unwrap();
         assert_eq!(r(0), LayerRole::Signal, "FCu has a pour but carries signal");
         assert_eq!(r(1), LayerRole::Plane { net: "GND".into() });
