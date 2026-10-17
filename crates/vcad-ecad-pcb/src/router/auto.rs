@@ -335,6 +335,11 @@ pub(super) struct Placed {
     /// pairs, 24-30 ended below 0.5 coupled after rip-up/repair re-routed
     /// one leg, and re-routed pairs left the old leg behind — 35.8 mm skew).
     pub(super) coupled: bool,
+    /// Plane fan-out stitching laid before signal routing (see
+    /// [`plane_fanout_first`]): `stubs`/`via_pts` carry the stitches of one
+    /// net, never ripped (also `coupled`), and the later stitch pass skips
+    /// the pads they serve (`fanout_pads`).
+    pub(super) fanout: bool,
 }
 
 /// Route every unrouted net on `pcb` (optionally restricted to `nets_filter`).
@@ -630,6 +635,8 @@ pub fn route_all_with_opts(
         &placed,
         width,
         &holes,
+        true,
+        &fanout_pads(&placed),
     );
     {
         let mut per_net: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
@@ -1459,6 +1466,67 @@ fn route_pass(
         conns = deferred;
         if coupled > 0 {
             log::info!("pair-first: {coupled} pairs routed coupled");
+        }
+    }
+
+    // Plane fan-out, after the coupled pairs and before every single: drop
+    // the stitching via of each plane pad that needs one while the board is
+    // still nearly empty — the order a human BGA layout uses. Stitching only
+    // after routing left 536 stranded plane islands on the full CM5, 192 of
+    // them unreachable by then; fanning out BEFORE the pairs cost 13 coupled
+    // pairs (46 -> 33) because the vias took the pair corridors.
+    if plane_fanout_first() {
+        let planes = plane_layers(pcb);
+        if !planes.is_empty() {
+            let mut holes = board_holes(pcb);
+            let drill_r = pcb.rules.default_rules.via_drill / 2.0;
+            for p in &placed {
+                holes.extend(p.via_pts.iter().map(|(v, _, _)| (*v, drill_r)));
+            }
+            let st = stitch_planes(
+                &mut session,
+                pcb,
+                &planes,
+                nets_filter,
+                &placed,
+                width,
+                &holes,
+                false,
+                &[],
+            );
+            let copper = copper_layers(pcb);
+            let (top, bot) = (
+                *copper.first().unwrap_or(&PcbLayer::FCu),
+                *copper.last().unwrap_or(&PcbLayer::BCu),
+            );
+            let mut by_net: BTreeMap<String, Placed> = BTreeMap::new();
+            for (pt, net) in &st.vias {
+                let e = by_net.entry(net.clone()).or_insert_with(|| Placed {
+                    net: net.clone(),
+                    from: *pt,
+                    to: *pt,
+                    width: session.width_for(net, width),
+                    segments: Vec::new(),
+                    stubs: Vec::new(),
+                    stub_width: session.width_for(net, width),
+                    via_pts: Vec::new(),
+                    spans: Vec::new(),
+                    coupled: true,
+                    fanout: true,
+                });
+                e.via_pts.push((*pt, top, bot));
+            }
+            for (a, b, net, l) in &st.stubs {
+                if let Some(e) = by_net.get_mut(net) {
+                    e.stubs.push((*a, *b, *l));
+                }
+            }
+            log::info!(
+                "plane fan-out: {} via(s) over {} net(s) before singles",
+                st.vias.len(),
+                by_net.len()
+            );
+            placed.extend(by_net.into_values());
         }
     }
 
@@ -2649,6 +2717,7 @@ pub(super) fn validate_and_commit(
         via_pts: new_vias,
         spans,
         coupled: false,
+        fanout: false,
     })
 }
 
@@ -3071,6 +3140,7 @@ fn try_route_fanout(
         via_pts: via_pts.into_iter().map(|v| (v, front, back)).collect(),
         spans,
         coupled: false,
+        fanout: false,
     })
 }
 
@@ -3400,6 +3470,31 @@ fn plane_layers(pcb: &Pcb) -> BTreeMap<String, Vec<PcbLayer>> {
     m
 }
 
+/// Whether plane fan-out runs before the single-ended routing. Opt-in
+/// (`VCAD_PLANE_FANOUT_FIRST=1`): on the full CM5 it cut stranded plane
+/// islands (GND 82 -> 2 groups) but split MORE nets overall (30 -> 38) and
+/// ran 3427 s vs 1152 s, so stitch-after-routing + island stitching stays
+/// the default.
+fn plane_fanout_first() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_PLANE_FANOUT_FIRST").as_deref() == Ok("1"))
+}
+
+/// Pads a plane fan-out already stitched: each fan-out stub's pad end and
+/// each at-pad fan-out via.
+fn fanout_pads(placed: &[Placed]) -> Vec<Vec2> {
+    placed
+        .iter()
+        .filter(|p| p.fanout)
+        .flat_map(|p| {
+            p.stubs
+                .iter()
+                .map(|(a, _, _)| *a)
+                .chain(p.via_pts.iter().map(|(v, _, _)| *v))
+        })
+        .collect()
+}
+
 /// Whether the router's wall-clock budgets are live. They make a route
 /// load-dependent: the same full-CM5 route deferred 2 connections at load ~8
 /// and 10 at load ~20 (routability 0.998 vs 0.985), so A/B measurements
@@ -3492,6 +3587,7 @@ struct Stitch {
 /// copper pour voids around it on every other-net plane it passes through, so
 /// the result is clearance-legal by construction. A pad already sitting on one
 /// of its planes floods directly and needs no via.
+#[allow(clippy::too_many_arguments)]
 fn stitch_planes(
     session: &mut RouteSession,
     pcb: &Pcb,
@@ -3500,6 +3596,8 @@ fn stitch_planes(
     placed: &[Placed],
     width: f64,
     holes: &[Hole],
+    trust_same_layer: bool,
+    skip_pads: &[Vec2],
 ) -> Stitch {
     let mut out = Stitch {
         stubs: Vec::new(),
@@ -3531,8 +3629,13 @@ fn stitch_planes(
             if !nets_filter.is_empty() && !nets_filter.iter().any(|n| n == net) {
                 continue;
             }
-            // A pad already on one of its planes floods straight into it.
-            if pad.layers.iter().any(|l| layers.contains(l)) {
+            // A pad already on one of its planes floods straight into it —
+            // when trusted. The fan-out-first pass does not trust a same-layer
+            // pour while the net has a plane elsewhere (a dense outer pour
+            // fragments around the routing that comes later).
+            let on_own = pad.layers.iter().any(|l| layers.contains(l));
+            let elsewhere = layers.iter().any(|l| !pad.layers.contains(l));
+            if on_own && (trust_same_layer || !elsewhere) {
                 out.nets.insert(net.clone());
                 continue;
             }
@@ -3540,6 +3643,10 @@ fn stitch_planes(
                 continue;
             };
             let pad_pt = crate::geometry::pad_world_position(fp, pad);
+            if skip_pads.iter().any(|q| dist(*q, pad_pt) < 1e-6) {
+                out.nets.insert(net.clone());
+                continue;
+            }
             // A fine-pitch pad can't take an at-pad drill — force the dog-bone.
             // Pitch is the nearest neighbour's spacing in the footprint's own
             // frame (rotation/translation preserve relative distances).
@@ -5615,6 +5722,7 @@ mod tests {
             via_pts: Vec::new(),
             spans,
             coupled: false,
+            fanout: false,
         }];
         (
             pcb,

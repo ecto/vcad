@@ -381,6 +381,7 @@ mod tests {
             via_pts: Vec::new(),
             spans: Vec::new(),
             coupled: false,
+            fanout: false,
         }
     }
 
