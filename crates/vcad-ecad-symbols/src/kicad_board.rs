@@ -98,35 +98,30 @@ pub fn footprint_source(id: &str) -> Result<String, String> {
     Ok(t)
 }
 
-/// The copper layers of an `n`-layer board, top to bottom.
-pub fn copper_layers(n: usize) -> Vec<PcbLayer> {
-    let inner = [
-        PcbLayer::In1Cu,
-        PcbLayer::In2Cu,
-        PcbLayer::In3Cu,
-        PcbLayer::In4Cu,
-        PcbLayer::In5Cu,
-        PcbLayer::In6Cu,
-        PcbLayer::In7Cu,
-        PcbLayer::In8Cu,
-    ];
-    let mut v = vec![PcbLayer::FCu];
-    v.extend(inner.iter().take(n.saturating_sub(2)).copied());
-    if n >= 2 {
-        v.push(PcbLayer::BCu);
-    }
-    v
+/// The copper layers of an `n`-layer board, top to bottom. Errors above 32
+/// (KiCad's maximum) rather than silently building a thinner board.
+pub fn copper_layers(n: usize) -> Result<Vec<PcbLayer>, String> {
+    PcbLayer::copper_stack(n)
+        .ok_or_else(|| format!("{n}-layer board exceeds the 32 copper layers vcad supports"))
 }
 
-/// A KiCad layer name ("F.Cu", "*.Cu", "*.Mask") expanded to layers.
+/// A KiCad layer name ("F.Cu", "*.Cu", "F&B.Cu", "*.Mask") expanded to layers.
+/// A name with no vcad layer (e.g. "F.Adhes") expands to nothing, with a
+/// warning on stderr.
 fn expand_layer(name: &str, copper: &[PcbLayer]) -> Vec<PcbLayer> {
     match name {
         "*.Cu" => copper.to_vec(),
-        "*.Mask" => vec![PcbLayer::FMask, PcbLayer::BMask],
-        "*.Paste" => vec![PcbLayer::FPaste, PcbLayer::BPaste],
-        n => serde_json::from_str::<PcbLayer>(&format!("\"{n}\""))
-            .map(|l| vec![l])
-            .unwrap_or_default(),
+        "F&B.Cu" => vec![PcbLayer::FCu, PcbLayer::BCu],
+        "*.Mask" | "F&B.Mask" => vec![PcbLayer::FMask, PcbLayer::BMask],
+        "*.Paste" | "F&B.Paste" => vec![PcbLayer::FPaste, PcbLayer::BPaste],
+        "*.SilkS" | "F&B.SilkS" => vec![PcbLayer::FSilkS, PcbLayer::BSilkS],
+        n => match layer_of(n) {
+            Some(l) => vec![l],
+            None => {
+                eprintln!("kicad footprint: layer {n:?} has no vcad equivalent; dropped");
+                Vec::new()
+            }
+        },
     }
 }
 
@@ -428,7 +423,7 @@ pub fn board_from_sheet(
     places: &[Placement],
     spec: &BoardSpec,
 ) -> Result<Pcb, String> {
-    let copper = copper_layers(spec.layers);
+    let copper = copper_layers(spec.layers)?;
     // pin -> net
     let mut pin_net: HashMap<(String, String), String> = HashMap::new();
     let mut net_names: BTreeMap<String, ()> = BTreeMap::new();
@@ -887,7 +882,7 @@ mod tests {
             return;
         }
         let def = load_footprint("Package_TO_SOT_SMD:SOT-23-5").unwrap();
-        let cu = copper_layers(4);
+        let cu = copper_layers(4).unwrap();
         let front = place_footprint(&def, "x", "U1", "", Vec2::new(0.0, 0.0), 90.0, &cu);
         let mut back = front.clone();
         flip_to_back(&mut back);
@@ -901,7 +896,13 @@ mod tests {
 
     #[test]
     fn layers_expand_for_tht_and_smd() {
-        let cu = copper_layers(4);
+        let cu = copper_layers(4).unwrap();
+        assert_eq!(copper_layers(12).unwrap()[10], PcbLayer::In10Cu);
+        assert!(copper_layers(33).is_err());
+        assert_eq!(
+            expand_layer("F&B.Cu", &cu),
+            vec![PcbLayer::FCu, PcbLayer::BCu]
+        );
         assert_eq!(
             cu,
             vec![
