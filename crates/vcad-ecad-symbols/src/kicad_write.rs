@@ -87,19 +87,19 @@ fn q(s: &str) -> String {
 // Layer naming
 // ---------------------------------------------------------------------------
 
+/// KiCad names of the 30 inner copper layers, `In1.Cu..=In30.Cu`.
+const INNER_CU_NAMES: [&str; 30] = [
+    "In1.Cu", "In2.Cu", "In3.Cu", "In4.Cu", "In5.Cu", "In6.Cu", "In7.Cu", "In8.Cu", "In9.Cu",
+    "In10.Cu", "In11.Cu", "In12.Cu", "In13.Cu", "In14.Cu", "In15.Cu", "In16.Cu", "In17.Cu",
+    "In18.Cu", "In19.Cu", "In20.Cu", "In21.Cu", "In22.Cu", "In23.Cu", "In24.Cu", "In25.Cu",
+    "In26.Cu", "In27.Cu", "In28.Cu", "In29.Cu", "In30.Cu",
+];
+
 /// Canonical KiCad layer name for a [`PcbLayer`].
 fn layer_name(layer: PcbLayer) -> &'static str {
     match layer {
         PcbLayer::FCu => "F.Cu",
         PcbLayer::BCu => "B.Cu",
-        PcbLayer::In1Cu => "In1.Cu",
-        PcbLayer::In2Cu => "In2.Cu",
-        PcbLayer::In3Cu => "In3.Cu",
-        PcbLayer::In4Cu => "In4.Cu",
-        PcbLayer::In5Cu => "In5.Cu",
-        PcbLayer::In6Cu => "In6.Cu",
-        PcbLayer::In7Cu => "In7.Cu",
-        PcbLayer::In8Cu => "In8.Cu",
         PcbLayer::FSilkS => "F.SilkS",
         PcbLayer::BSilkS => "B.SilkS",
         PcbLayer::FMask => "F.Mask",
@@ -113,6 +113,8 @@ fn layer_name(layer: PcbLayer) -> &'static str {
         PcbLayer::EdgeCuts => "Edge.Cuts",
         PcbLayer::UserDrawings => "Dwgs.User",
         PcbLayer::UserComments => "Cmts.User",
+        // Every remaining variant is an inner copper layer.
+        l => INNER_CU_NAMES[l.inner_index().expect("inner copper layer") - 1],
     }
 }
 
@@ -122,15 +124,10 @@ fn copper_layer_id(layer: PcbLayer) -> u32 {
     match layer {
         PcbLayer::FCu => 0,
         PcbLayer::BCu => 2,
-        PcbLayer::In1Cu => 4,
-        PcbLayer::In2Cu => 6,
-        PcbLayer::In3Cu => 8,
-        PcbLayer::In4Cu => 10,
-        PcbLayer::In5Cu => 12,
-        PcbLayer::In6Cu => 14,
-        PcbLayer::In7Cu => 16,
-        PcbLayer::In8Cu => 18,
-        _ => 0,
+        l => match l.inner_index() {
+            Some(n) => 2 + 2 * n as u32,
+            None => panic!("copper_layer_id called with non-copper layer {l:?}"),
+        },
     }
 }
 
@@ -145,17 +142,7 @@ fn copper_layers(stackup: &LayerStackup) -> Vec<PcbLayer> {
     if copper.is_empty() {
         copper = vec![PcbLayer::FCu, PcbLayer::BCu];
     }
-    copper.sort_by_key(|l| match l {
-        PcbLayer::FCu => 0,
-        PcbLayer::In1Cu => 1,
-        PcbLayer::In2Cu => 2,
-        PcbLayer::In3Cu => 3,
-        PcbLayer::In4Cu => 4,
-        PcbLayer::In5Cu => 5,
-        PcbLayer::In6Cu => 6,
-        PcbLayer::BCu => 7,
-        _ => 8,
-    });
+    copper.sort_by_key(|l| l.copper_position());
     copper.dedup();
     copper
 }
@@ -1132,8 +1119,8 @@ fn write_pad_layers(e: &mut Emitter, pad: &Pad, fp: &Footprint) {
         e.line(3, &format!("(layers {})", names.join(" ")));
         return;
     }
-    // No explicit layers (e.g. a THT pad whose "*.Cu" set the parser dropped).
-    // Fall back to a sensible default for the pad type.
+    // No explicit layers (hand-built or legacy IR). Fall back to a sensible
+    // default for the pad type.
     let default = match pad.pad_type {
         PadType::SMD => {
             if fp.front {

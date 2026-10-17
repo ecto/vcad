@@ -3214,7 +3214,7 @@ netTies?: Array<NetTie>, };
  * `validateLayer` in `packages/mcp/src/tools/ecad.ts`); the aliases are only a
  * safety net for data already on disk.
  */
-export type PcbLayer = "FCu" | "BCu" | "In1Cu" | "In2Cu" | "In3Cu" | "In4Cu" | "In5Cu" | "In6Cu" | "In7Cu" | "In8Cu" | "FSilkS" | "BSilkS" | "FMask" | "BMask" | "FPaste" | "BPaste" | "FFab" | "BFab" | "FCrtYd" | "BCrtYd" | "EdgeCuts" | "UserDrawings" | "UserComments";
+export type PcbLayer = "FCu" | "BCu" | "In1Cu" | "In2Cu" | "In3Cu" | "In4Cu" | "In5Cu" | "In6Cu" | "In7Cu" | "In8Cu" | "In9Cu" | "In10Cu" | "In11Cu" | "In12Cu" | "In13Cu" | "In14Cu" | "In15Cu" | "In16Cu" | "In17Cu" | "In18Cu" | "In19Cu" | "In20Cu" | "In21Cu" | "In22Cu" | "In23Cu" | "In24Cu" | "In25Cu" | "In26Cu" | "In27Cu" | "In28Cu" | "In29Cu" | "In30Cu" | "FSilkS" | "BSilkS" | "FMask" | "BMask" | "FPaste" | "BPaste" | "FFab" | "BFab" | "FCrtYd" | "BCrtYd" | "EdgeCuts" | "UserDrawings" | "UserComments";
 
 /**
  * A single pin's identity within a package.

@@ -47,19 +47,14 @@ fn span_filename(span: DrillSpan) -> String {
     format!("drill-{}-{}.drl", layer_token(span.0), layer_token(span.1))
 }
 
-fn layer_token(layer: PcbLayer) -> &'static str {
+fn layer_token(layer: PcbLayer) -> String {
     match layer {
-        PcbLayer::FCu => "F_Cu",
-        PcbLayer::BCu => "B_Cu",
-        PcbLayer::In1Cu => "In1_Cu",
-        PcbLayer::In2Cu => "In2_Cu",
-        PcbLayer::In3Cu => "In3_Cu",
-        PcbLayer::In4Cu => "In4_Cu",
-        PcbLayer::In5Cu => "In5_Cu",
-        PcbLayer::In6Cu => "In6_Cu",
-        PcbLayer::In7Cu => "In7_Cu",
-        PcbLayer::In8Cu => "In8_Cu",
-        _ => "Unknown",
+        PcbLayer::FCu => "F_Cu".into(),
+        PcbLayer::BCu => "B_Cu".into(),
+        l => match l.inner_index() {
+            Some(n) => format!("In{n}_Cu"),
+            None => panic!("drill span endpoint on non-copper layer {l:?}"),
+        },
     }
 }
 
@@ -85,18 +80,15 @@ fn spans(pcb: &Pcb) -> Vec<DrillSpan> {
         .collect()
 }
 
+/// Inverse of [`PcbLayer::copper_position`]. `u8::MAX` is `BCu`; any other
+/// position must be a real inner layer — an out-of-range position is a bug,
+/// not something to fold silently onto the back copper.
 fn layer_at(position: u8) -> PcbLayer {
     match position {
         0 => PcbLayer::FCu,
-        1 => PcbLayer::In1Cu,
-        2 => PcbLayer::In2Cu,
-        3 => PcbLayer::In3Cu,
-        4 => PcbLayer::In4Cu,
-        5 => PcbLayer::In5Cu,
-        6 => PcbLayer::In6Cu,
-        7 => PcbLayer::In7Cu,
-        8 => PcbLayer::In8Cu,
-        _ => PcbLayer::BCu,
+        u8::MAX => PcbLayer::BCu,
+        n => PcbLayer::inner(n as usize)
+            .unwrap_or_else(|| panic!("copper position {n} is not a layer")),
     }
 }
 

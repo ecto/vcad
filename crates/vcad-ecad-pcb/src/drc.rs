@@ -1278,16 +1278,16 @@ fn pad_min_dimension(pad: &Pad) -> f64 {
 /// In7/In8 segment was a separate `NetIslands` fragment (1575 phantom
 /// islands), and a descent that rewrote an In7 run into more segments
 /// "added" exactly that many disjoint fragments.
-const COPPER_STACK: [PcbLayer; 10] = PcbLayer::COPPER_STACK;
+const COPPER_STACK: [PcbLayer; 32] = PcbLayer::COPPER_STACK;
 
 /// Bitmask of copper layers between `start` and `end` (inclusive) in the
 /// physical stack. Used so a via bridges every layer it spans.
-fn copper_layer_span(start: PcbLayer, end: PcbLayer) -> u16 {
+fn copper_layer_span(start: PcbLayer, end: PcbLayer) -> u32 {
     let idx = |l: PcbLayer| COPPER_STACK.iter().position(|&c| c == l);
     match (idx(start), idx(end)) {
         (Some(a), Some(b)) => {
             let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
-            let mut mask = 0u16;
+            let mut mask = 0u32;
             for bit in lo..=hi {
                 mask |= 1 << bit;
             }
@@ -1299,11 +1299,11 @@ fn copper_layer_span(start: PcbLayer, end: PcbLayer) -> u16 {
 }
 
 /// Bitmask for a single copper layer (0 for non-copper).
-fn single_layer_mask(layer: PcbLayer) -> u16 {
+fn single_layer_mask(layer: PcbLayer) -> u32 {
     COPPER_STACK
         .iter()
         .position(|&c| c == layer)
-        .map(|i| 1u16 << i)
+        .map(|i| 1u32 << i)
         .unwrap_or(0)
 }
 
@@ -1390,7 +1390,7 @@ fn node_bounds(geom: &NodeGeom) -> ([f64; 2], [f64; 2]) {
 struct ConnNode {
     geom: NodeGeom,
     /// Copper layers this node occupies (bitmask over [`COPPER_STACK`]).
-    layers: u16,
+    layers: u32,
     /// Declared net label (empty string ⇒ no declared net).
     net: String,
     /// Whether this node is a pad (used for the unrouted netlist).
@@ -1668,7 +1668,7 @@ fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
         for pad in &fp.pads {
             let center = crate::geometry::pad_world_position(fp, pad);
             let rot = (fp.rotation + pad.rotation).to_radians();
-            let mut layers = 0u16;
+            let mut layers = 0u32;
             for &l in &pad.layers {
                 layers |= single_layer_mask(l);
             }
@@ -2148,7 +2148,7 @@ fn detect_unstitched_pads(
     violations: &mut Vec<DrcViolation>,
 ) {
     // Plane layers each net owns (a declared zone with a real outline).
-    let mut plane_layers: HashMap<String, u16> = HashMap::new();
+    let mut plane_layers: HashMap<String, u32> = HashMap::new();
     for zone in &pcb.zones {
         if zone.net.is_empty() || zone.outline.len() < 3 {
             continue;
@@ -2198,7 +2198,7 @@ fn detect_unstitched_pads(
             let pad_mask = pad
                 .layers
                 .iter()
-                .fold(0u16, |m, &l| m | single_layer_mask(l));
+                .fold(0u32, |m, &l| m | single_layer_mask(l));
             if pad_mask & pl_mask != 0 {
                 continue;
             }
@@ -3329,6 +3329,26 @@ fn point_to_segment_distance(p: &Vec2, a: &Vec2, b: &Vec2) -> f64 {
 mod tests {
     use super::*;
     use vcad_ir::ecad::*;
+
+    #[test]
+    fn layer_masks_cover_all_32_copper_layers() {
+        // Every copper layer gets its own distinct bit — none collapse to 0.
+        let mut all = 0u32;
+        for l in PcbLayer::COPPER_STACK {
+            let m = single_layer_mask(l);
+            assert_eq!(m.count_ones(), 1, "{l:?} has mask {m:#x}");
+            assert_eq!(all & m, 0, "{l:?} shares a bit");
+            all |= m;
+        }
+        assert_eq!(all, u32::MAX);
+        // A through via reaches In30.
+        let through = copper_layer_span(PcbLayer::FCu, PcbLayer::BCu);
+        assert_ne!(through & single_layer_mask(PcbLayer::In30Cu), 0);
+        // A buried In10..In20 via reaches In15 but not In21.
+        let buried = copper_layer_span(PcbLayer::In20Cu, PcbLayer::In10Cu);
+        assert_ne!(buried & single_layer_mask(PcbLayer::In15Cu), 0);
+        assert_eq!(buried & single_layer_mask(PcbLayer::In21Cu), 0);
+    }
 
     /// Create a minimal clean PCB (no violations expected).
     fn clean_pcb() -> Pcb {

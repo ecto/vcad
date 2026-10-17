@@ -21,14 +21,7 @@ import type { LayerConfig } from "@/stores/electronics-store";
 /** Copper layer ordering for Z offset computation. */
 const COPPER_LAYER_ORDER: PcbLayer[] = [
   "FCu",
-  "In1Cu",
-  "In2Cu",
-  "In3Cu",
-  "In4Cu",
-  "In5Cu",
-  "In6Cu",
-  "In7Cu",
-  "In8Cu",
+  ...Array.from({ length: 30 }, (_, i) => `In${i + 1}Cu` as PcbLayer),
   "BCu",
 ];
 
@@ -42,6 +35,10 @@ const LAYER_Z: Record<string, number> = {
   In6Cu: -0.4,
   In7Cu: -0.53,
   In8Cu: -0.66,
+  // In9..In30 spread evenly between In8 and BCu (mirrors geometry.rs).
+  ...Object.fromEntries(
+    Array.from({ length: 22 }, (_, i) => [`In${i + 9}Cu`, -0.66 - (0.14 * (i + 1)) / 23]),
+  ),
   BCu: -0.8,
   FSilkS: 0.9,
   BSilkS: -0.9,

@@ -323,18 +323,10 @@ impl ApertureTable {
 // ---------------------------------------------------------------------------
 
 /// Return the conventional Gerber filename suffix for a layer.
-fn layer_filename(layer: PcbLayer) -> &'static str {
-    match layer {
+fn layer_filename(layer: PcbLayer) -> String {
+    let name = match layer {
         PcbLayer::FCu => "F_Cu",
         PcbLayer::BCu => "B_Cu",
-        PcbLayer::In1Cu => "In1_Cu",
-        PcbLayer::In2Cu => "In2_Cu",
-        PcbLayer::In3Cu => "In3_Cu",
-        PcbLayer::In4Cu => "In4_Cu",
-        PcbLayer::In5Cu => "In5_Cu",
-        PcbLayer::In6Cu => "In6_Cu",
-        PcbLayer::In7Cu => "In7_Cu",
-        PcbLayer::In8Cu => "In8_Cu",
         PcbLayer::FSilkS => "F_SilkS",
         PcbLayer::BSilkS => "B_SilkS",
         PcbLayer::FMask => "F_Mask",
@@ -348,22 +340,19 @@ fn layer_filename(layer: PcbLayer) -> &'static str {
         PcbLayer::EdgeCuts => "Edge_Cuts",
         PcbLayer::UserDrawings => "User_Drawings",
         PcbLayer::UserComments => "User_Comments",
-    }
+        l => {
+            let n = l.inner_index().expect("inner copper layer");
+            return format!("In{n}_Cu");
+        }
+    };
+    name.to_string()
 }
 
 /// Return the Gerber file attribute string for a layer (`.FileFunction`).
-fn layer_file_function(layer: PcbLayer) -> &'static str {
-    match layer {
+fn layer_file_function(layer: PcbLayer) -> String {
+    let f = match layer {
         PcbLayer::FCu => "Copper,L1,Top",
         PcbLayer::BCu => "Copper,L2,Bot",
-        PcbLayer::In1Cu => "Copper,L2,Inr",
-        PcbLayer::In2Cu => "Copper,L3,Inr",
-        PcbLayer::In3Cu => "Copper,L4,Inr",
-        PcbLayer::In4Cu => "Copper,L5,Inr",
-        PcbLayer::In5Cu => "Copper,L6,Inr",
-        PcbLayer::In6Cu => "Copper,L7,Inr",
-        PcbLayer::In7Cu => "Copper,L8,Inr",
-        PcbLayer::In8Cu => "Copper,L9,Inr",
         PcbLayer::FSilkS => "Legend,Top",
         PcbLayer::BSilkS => "Legend,Bot",
         PcbLayer::FMask => "Soldermask,Top",
@@ -377,7 +366,12 @@ fn layer_file_function(layer: PcbLayer) -> &'static str {
         PcbLayer::EdgeCuts => "Profile,NP",
         PcbLayer::UserDrawings => "Other,User",
         PcbLayer::UserComments => "Other,User",
-    }
+        l => {
+            let n = l.inner_index().expect("inner copper layer");
+            return format!("Copper,L{},Inr", n + 1);
+        }
+    };
+    f.to_string()
 }
 
 // ---------------------------------------------------------------------------
