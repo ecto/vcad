@@ -252,7 +252,10 @@ pub(super) fn try_route_shove(
     let victims: Vec<usize> = placed
         .iter()
         .enumerate()
-        .filter(|(_, p)| p.net != net && p.spans.iter().any(|s| blocker_spans.contains(s)))
+        // A coupled pair leg is never shoved alone (see `Placed::coupled`).
+        .filter(|(_, p)| {
+            p.net != net && !p.coupled && p.spans.iter().any(|s| blocker_spans.contains(s))
+        })
         .map(|(i, _)| i)
         .take(MAX_SHOVE_VICTIMS)
         .collect();
@@ -377,6 +380,7 @@ mod tests {
             stub_width: 0.25,
             via_pts: Vec::new(),
             spans: Vec::new(),
+            coupled: false,
         }
     }
 

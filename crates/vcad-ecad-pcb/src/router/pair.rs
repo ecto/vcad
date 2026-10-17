@@ -366,7 +366,7 @@ pub(super) fn try_route_pair_reason(
     let mut ripped: Vec<Placed> = Vec::new();
     let mut kept: Vec<Placed> = Vec::new();
     for p in std::mem::take(placed) {
-        if p.net == partner && p.stubs.is_empty() && overlaps_span(&p) {
+        if p.net == partner && !p.coupled && p.stubs.is_empty() && overlaps_span(&p) {
             for &s in &p.spans {
                 session.remove(s);
             }
@@ -985,7 +985,7 @@ pub(super) fn try_route_pair_reason(
         }
         last_bail = PairBail::Connector;
     }
-    let Some((placed_mine, placed_theirs, center_len)) = outcome else {
+    let Some((mut placed_mine, mut placed_theirs, center_len)) = outcome else {
         restore(session, placed, ripped);
         return Err(last_bail);
     };
@@ -995,6 +995,8 @@ pub(super) fn try_route_pair_reason(
         center_len,
         placed_mine.via_pts.len(),
     );
+    placed_mine.coupled = true;
+    placed_theirs.coupled = true;
     Ok((placed_mine, placed_theirs))
 }
 
@@ -2135,6 +2137,8 @@ mod tests {
             200_000,
         );
         let (p, n) = result.expect("open-board pair must route coupled");
+        // Both legs carry the coupled mark rip-up / repair / shove honour.
+        assert!(p.coupled && n.coupled);
         assert_eq!(p.net, "/ETH.2_P");
         assert_eq!(n.net, "/ETH.2_N");
         assert!(!p.segments.is_empty() && !n.segments.is_empty());

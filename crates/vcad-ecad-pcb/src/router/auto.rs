@@ -329,6 +329,12 @@ pub(super) struct Placed {
     pub(super) stub_width: f64,
     pub(super) via_pts: Vec<(Vec2, PcbLayer, PcbLayer)>,
     pub(super) spans: Vec<SpanId>,
+    /// One leg of a differential pair the pair router laid COUPLED with its
+    /// twin. Never ripped or shoved on its own: re-routing one leg as a
+    /// single destroys the coupling (full CM5: pair-first logged 46 coupled
+    /// pairs, 24-30 ended below 0.5 coupled after rip-up/repair re-routed
+    /// one leg, and re-routed pairs left the old leg behind — 35.8 mm skew).
+    pub(super) coupled: bool,
 }
 
 /// Route every unrouted net on `pcb` (optionally restricted to `nets_filter`).
@@ -2642,6 +2648,7 @@ pub(super) fn validate_and_commit(
         stub_width: cand.thin_width,
         via_pts: new_vias,
         spans,
+        coupled: false,
     })
 }
 
@@ -3063,6 +3070,7 @@ fn try_route_fanout(
         stub_width: w,
         via_pts: via_pts.into_iter().map(|v| (v, front, back)).collect(),
         spans,
+        coupled: false,
     })
 }
 
@@ -3641,7 +3649,9 @@ fn ripup_pass(
         let victim_set: HashSet<usize> = placed
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.net != net && p.spans.iter().any(|s| blocker_spans.contains(s)))
+            .filter(|(_, p)| {
+                p.net != net && !p.coupled && p.spans.iter().any(|s| blocker_spans.contains(s))
+            })
             .map(|(i, _)| i)
             .collect();
         if victim_set.is_empty() {
@@ -3885,7 +3895,7 @@ fn joint_window_repair(
             let mut victims = Vec::new();
             let mut kept = Vec::new();
             for p in std::mem::take(placed) {
-                if in_window(&p) {
+                if in_window(&p) && !p.coupled {
                     for &s in &p.spans {
                         session.remove(s);
                     }
@@ -5604,6 +5614,7 @@ mod tests {
             stub_width: 0.25,
             via_pts: Vec::new(),
             spans,
+            coupled: false,
         }];
         (
             pcb,
