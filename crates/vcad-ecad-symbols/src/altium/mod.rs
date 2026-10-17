@@ -1064,6 +1064,7 @@ fn default_rules(records: &[Record]) -> DesignRules {
             .and_then(|r| r.len_mm(key))
     };
     DesignRules {
+        microvia_size: None,
         inferred_floors: Vec::new(),
         min_microvia_drill: 0.1,
         min_microvia_diameter: 0.2,

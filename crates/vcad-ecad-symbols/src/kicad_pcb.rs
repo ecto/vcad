@@ -336,6 +336,7 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
     // the default rules against it.
     let mut rules = calibrate_rules_from_copper(rules, &traces, &vias);
     infer_via_floors(root, &mut rules, &vias, &ctx);
+    split_via_sizes(&mut rules, &vias, &ctx);
 
     let pcb = Pcb {
         outline,
@@ -357,6 +358,40 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
         ctx.warn(line);
     }
     Ok((pcb, ctx.finish()))
+}
+
+/// A board using microvias AND through/blind vias gets one size per kind:
+/// the default (through/blind) via becomes the modal non-micro via and
+/// `microvia_size` the modal microvia. (The calibration above takes the modal
+/// via over ALL vias — the 0.21/0.12 microvia on the CM5 — which is illegal
+/// as a through via under the board's own floors.) Logged.
+fn split_via_sizes(rules: &mut DesignRules, vias: &[Via], ctx: &Ctx<'_>) {
+    let modal = |it: &mut dyn Iterator<Item = &Via>| -> Option<((f64, f64), usize, usize)> {
+        let mut counts: HashMap<(u64, u64), usize> = HashMap::new();
+        let mut n = 0;
+        for v in it {
+            n += 1;
+            *counts
+                .entry((v.diameter.to_bits(), v.drill.to_bits()))
+                .or_default() += 1;
+        }
+        counts
+            .into_iter()
+            .max_by_key(|(k, c)| (*c, std::cmp::Reverse(*k)))
+            .map(|((d, dr), c)| ((f64::from_bits(d), f64::from_bits(dr)), c, n))
+    };
+    let micro = modal(&mut vias.iter().filter(|v| v.is_micro()));
+    let normal = modal(&mut vias.iter().filter(|v| !v.is_micro()));
+    if let (Some((m, mc, mn)), Some((t, tc, tn))) = (micro, normal) {
+        ctx.warn(format!(
+            "via sizes derived from the board: through/blind {}/{} (modal of {tn} non-micro, {tc} at that size), \
+             microvia {}/{} (modal of {mn} microvias, {mc} at that size)",
+            t.0, t.1, m.0, m.1
+        ));
+        rules.default_rules.via_diameter = t.0;
+        rules.default_rules.via_drill = t.1;
+        rules.microvia_size = Some(m);
+    }
 }
 
 /// Via floors when the file authors none: the board's own non-micro vias are
@@ -821,6 +856,7 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
     let setup = root.find("setup");
     let uvia = |key: &str, dflt: f64| setup.and_then(|s| child_f64(s, key)).unwrap_or(dflt);
     DesignRules {
+        microvia_size: None,
         inferred_floors: Vec::new(),
         // KiCad's own defaults when the board omits them (they normally live
         // in the .kicad_pro); `parse_kicad_pcb` logs which were defaulted.

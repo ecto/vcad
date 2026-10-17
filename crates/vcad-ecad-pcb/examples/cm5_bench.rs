@@ -256,8 +256,8 @@ fn main() {
     for v in &r.vias {
         pcb.vias.push(Via {
             position: v.position,
-            diameter: pcb.rules.default_rules.via_diameter,
-            drill: pcb.rules.default_rules.via_drill,
+            diameter: v.size.map_or(pcb.rules.default_rules.via_diameter, |s| s.0),
+            drill: v.size.map_or(pcb.rules.default_rules.via_drill, |s| s.1),
             start_layer: v.start_layer,
             end_layer: v.end_layer,
             net: v.net.clone(),

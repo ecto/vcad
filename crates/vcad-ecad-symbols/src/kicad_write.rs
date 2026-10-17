@@ -3017,6 +3017,7 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                microvia_size: None,
                 inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
@@ -3375,6 +3376,11 @@ mod tests {
         );
         assert_eq!(pcb.rules.min_microvia_diameter, 0.18);
         assert_eq!(pcb.rules.min_microvia_drill, 0.09);
+        // One size per kind: through/blind default = modal non-micro via,
+        // microvia size = modal microvia.
+        assert_eq!(pcb.rules.default_rules.via_diameter, 0.4);
+        assert_eq!(pcb.rules.default_rules.via_drill, 0.2);
+        assert_eq!(pcb.rules.microvia_size, Some((0.21, 0.12)));
         let back = parse_kicad_pcb(&write_kicad_pcb(&pcb)).unwrap();
         assert_eq!(
             back.vias.iter().map(|v| v.via_type).collect::<Vec<_>>(),

@@ -239,6 +239,7 @@ pub fn srj_to_pcb(srj: &SimpleRouteJson) -> Result<Pcb, String> {
         },
         nets,
         rules: DesignRules {
+            microvia_size: None,
             inferred_floors: Vec::new(),
             min_microvia_drill: 0.1,
             min_microvia_diameter: 0.2,

@@ -65,6 +65,10 @@ pub struct RoutedVia {
     /// size meets its microvia minimums. Consumers copy it onto `Via`.
     #[serde(default)]
     pub via_type: Option<vcad_ir::ecad::ViaType>,
+    /// Pad diameter / drill when it differs from the board default (a
+    /// microvia at the board's microvia size); `None`: the default via.
+    #[serde(default)]
+    pub size: Option<(f64, f64)>,
 }
 
 /// The via type the router emits for a span on `pcb` at the board's default
@@ -74,10 +78,14 @@ pub struct RoutedVia {
 pub fn router_via_type(pcb: &Pcb, start: PcbLayer, end: PcbLayer) -> vcad_ir::ecad::ViaType {
     use vcad_ir::ecad::ViaType;
     let d = &pcb.rules.default_rules;
+    let (md, mdr) = pcb
+        .rules
+        .microvia_size
+        .unwrap_or((d.via_diameter, d.via_drill));
     let probe = vcad_ir::ecad::Via {
         position: Vec2::new(0.0, 0.0),
-        diameter: d.via_diameter,
-        drill: d.via_drill,
+        diameter: md,
+        drill: mdr,
         start_layer: start,
         end_layer: end,
         net: String::new(),
@@ -85,8 +93,8 @@ pub fn router_via_type(pcb: &Pcb, start: PcbLayer, end: PcbLayer) -> vcad_ir::ec
         via_type: Some(ViaType::Micro),
     };
     if crate::drc::is_legal_microvia(pcb, &probe)
-        && d.via_drill >= pcb.rules.min_microvia_drill - 1e-9
-        && d.via_diameter >= pcb.rules.min_microvia_diameter - 1e-9
+        && mdr >= pcb.rules.min_microvia_drill - 1e-9
+        && md >= pcb.rules.min_microvia_diameter - 1e-9
     {
         return ViaType::Micro;
     }
@@ -443,7 +451,9 @@ pub fn route_all_with_opts(
     // Nets that already own a pour are left alone, so this complements existing
     // zones rather than duplicating them.
     super::maze::set_through_vias_only(opts.through_vias_only);
-    super::maze::set_microvia(opts.microvia);
+    // The board's own microvia size (derived on import) unless the caller
+    // overrides it.
+    super::maze::set_microvia(opts.microvia.or(pcb.rules.microvia_size));
     FAST.store(opts.fast, std::sync::atomic::Ordering::Relaxed);
     // Plane / split-plane layers (stackup roles, authored or inferred) carry
     // no signal: a trace there cuts the plane. Union with the caller's list.
@@ -1027,6 +1037,7 @@ pub fn route_all_with_opts(
         }
         for &(pt, la, lb) in &p.via_pts {
             vias.push(RoutedVia {
+                size: None,
                 via_type: None,
                 position: pt,
                 net: p.net.clone(),
@@ -1043,6 +1054,7 @@ pub fn route_all_with_opts(
     let pcb = pcb_in;
     for (pt, net, a, b) in &micro_fan {
         vias.push(RoutedVia {
+            size: None,
             position: *pt,
             net: net.clone(),
             start_layer: *a,
@@ -1092,6 +1104,7 @@ pub fn route_all_with_opts(
     );
     for (pt, net) in &stitch.vias {
         vias.push(RoutedVia {
+            size: None,
             via_type: None,
             position: *pt,
             net: net.clone(),
@@ -1239,7 +1252,11 @@ pub fn route_all_with_opts(
         });
     }
     for v in &mut vias {
-        v.via_type = Some(router_via_type(pcb, v.start_layer, v.end_layer));
+        let t = router_via_type(pcb, v.start_layer, v.end_layer);
+        v.via_type = Some(t);
+        if t == vcad_ir::ecad::ViaType::Micro {
+            v.size = super::maze::microvia();
+        }
     }
     // Fail-closed completion: a net is routed only if DRC's own connectivity
     // over the returned copper agrees its pads form ONE island. The router's
@@ -4727,6 +4744,7 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                microvia_size: None,
                 inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
