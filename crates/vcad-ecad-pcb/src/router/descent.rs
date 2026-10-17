@@ -1414,7 +1414,29 @@ fn descend_board_inner(
         // only, so it would accept a rewrite that slid copper off a stub, via
         // or pad of its own net. Judge each leg's same-net component count
         // with DRC's own connectivity and reject any increase.
-        let split = [pn, nn].into_iter().filter(|_| guards.gate).find(|net| {
+        // Pours count too: a plane on a run layer near the moved copper is
+        // carved by it, and the new geometry can strand a sliver of it.
+        let (mut lo2, mut hi2) = (lo, hi);
+        for q in cp.iter().chain(&cn) {
+            lo2 = Vec2::new(lo2.x.min(q.x - 1.0), lo2.y.min(q.y - 1.0));
+            hi2 = Vec2::new(hi2.x.max(q.x + 1.0), hi2.y.max(q.y + 1.0));
+        }
+        let mut gate_nets: Vec<&str> = vec![pn.as_str(), nn.as_str()];
+        for z in &pcb.zones {
+            if (z.layer != pl && z.layer != nlayer) || gate_nets.contains(&z.net.as_str()) {
+                continue;
+            }
+            let (mut a, mut b) = (Vec2::new(f64::MAX, f64::MAX), Vec2::new(f64::MIN, f64::MIN));
+            for v in &z.outline {
+                a = Vec2::new(a.x.min(v.x), a.y.min(v.y));
+                b = Vec2::new(b.x.max(v.x), b.y.max(v.y));
+            }
+            let hit = a.x <= hi2.x && b.x >= lo2.x && a.y <= hi2.y && b.y >= lo2.y;
+            if hit {
+                gate_nets.push(z.net.as_str());
+            }
+        }
+        let split = gate_nets.into_iter().filter(|_| guards.gate).find(|net| {
             crate::drc::net_graph(&work2, net).components
                 > crate::drc::net_graph(pcb, net).components
         });

@@ -2961,11 +2961,12 @@ fn continuity_of(pcb: &Pcb, nodes: &[ConnNode], dsu: &mut Dsu, net: &str) -> Net
 /// Same-net connectivity of ONE net, for edits that must not split it.
 ///
 /// Built from the exact node/touch/same-net-DSU machinery DRC's
-/// `NetIslands`/`UnconnectedNet` checks use, on a board reduced to the net's
-/// own traces, vias, pads and zones (the same-net graph never unions foreign
-/// copper, so dropping it changes nothing but cost — except that a reduced
-/// zone fill sees no foreign voids; callers compare two reductions built the
-/// same way, so that bias cancels).
+/// `NetIslands`/`UnconnectedNet` checks use. A net without zones is judged
+/// on a board reduced to its own traces, vias and pads (the same-net graph
+/// never unions foreign copper, so dropping it changes nothing but cost). A
+/// net WITH zones keeps every other net's copper, because its pour fill is
+/// carved by that copper — foreign copper moving can fracture the plane —
+/// and drops only the other nets' zones.
 pub(crate) struct NetGraph {
     /// Galvanic components among the net's copper nodes.
     pub components: usize,
@@ -2979,16 +2980,19 @@ pub(crate) struct NetGraph {
 /// [`NetGraph`] for `net` on `pcb`.
 pub(crate) fn net_graph(pcb: &Pcb, net: &str) -> NetGraph {
     let mut b = pcb.clone();
+    let poured = pcb.zones.iter().any(|z| z.net == net);
     let trace_ids: Vec<usize> = (0..pcb.traces.len())
-        .filter(|&i| pcb.traces[i].net == net)
+        .filter(|&i| poured || pcb.traces[i].net == net)
         .collect();
-    b.traces.retain(|t| t.net == net);
-    b.vias.retain(|v| v.net == net);
     b.zones.retain(|z| z.net == net);
-    for fp in &mut b.footprints {
-        fp.pads.retain(|p| p.net.as_deref() == Some(net));
+    if !poured {
+        b.traces.retain(|t| t.net == net);
+        b.vias.retain(|v| v.net == net);
+        for fp in &mut b.footprints {
+            fp.pads.retain(|p| p.net.as_deref() == Some(net));
+        }
+        b.footprints.retain(|f| !f.pads.is_empty());
     }
-    b.footprints.retain(|f| !f.pads.is_empty());
     let net_ties = NetTieGroups::from_pcb(pcb);
     let (nodes, _global, contacts) = build_connectivity_with_contacts(&b);
     let mut dsu = build_same_net_dsu(&nodes, &contacts, &net_ties);
