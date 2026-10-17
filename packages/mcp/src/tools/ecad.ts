@@ -148,6 +148,7 @@ function defaultDesignRules(): DesignRules {
     // KiCad's microvia defaults (uvia_min_drill / uvia_min_size).
     minMicroviaDrill: 0.1,
     minMicroviaDiameter: 0.2,
+    inferredFloors: [],
   };
 }
 
@@ -8423,6 +8424,7 @@ export async function describePcb(args: Record<string, unknown>) {
     minDrill: dr.minDrill,
     minMicroviaDrill: dr.minMicroviaDrill,
     minMicroviaDiameter: dr.minMicroviaDiameter,
+    inferredFloors: dr.inferredFloors,
   };
 
   // --- Zones: { net, layer, bbox, fill } -----------------------------------

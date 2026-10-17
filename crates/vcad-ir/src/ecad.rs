@@ -770,7 +770,7 @@ pub struct DesignRules {
         default,
         skip_serializing_if = "Vec::is_empty"
     )]
-    #[cfg_attr(feature = "ts-rs", ts(rename = "inferredFloors", optional))]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "inferredFloors"))]
     pub inferred_floors: Vec<String>,
 }
 

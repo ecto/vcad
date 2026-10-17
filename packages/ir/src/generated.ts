@@ -1535,7 +1535,13 @@ minMicroviaDrill: number,
 /**
  * Minimum microvia pad diameter (mm) — KiCad's `uvia_min_size`.
  */
-minMicroviaDiameter: number, };
+minMicroviaDiameter: number, 
+/**
+ * Provenance: names of the floors above (`minDrill`, `minAnnularRing`)
+ * that were INFERRED from the board's own copper because the source
+ * file authored none. DRC findings against an inferred floor say so.
+ */
+inferredFloors: Array<string>, };
 
 /**
  * A vcad document — the `.vcad` file format.
