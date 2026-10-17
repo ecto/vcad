@@ -144,6 +144,19 @@ fn main() {
         }
         v.into_iter().collect()
     };
+    // VCAD_VIA=<diameter>,<drill> overrides the board's default via (A/B
+    // knob for via sizing experiments; logged).
+    if let Ok(v) = std::env::var("VCAD_VIA") {
+        let mut it = v.split(',').filter_map(|x| x.parse::<f64>().ok());
+        if let (Some(d), Some(dr)) = (it.next(), it.next()) {
+            println!(
+                "via override: {d}/{dr} (was {}/{})",
+                pcb.rules.default_rules.via_diameter, pcb.rules.default_rules.via_drill
+            );
+            pcb.rules.default_rules.via_diameter = d;
+            pcb.rules.default_rules.via_drill = dr;
+        }
+    }
     let classifier = classify_nets(&all_nets);
     apply_classes(&mut pcb, &classifier);
     println!(
