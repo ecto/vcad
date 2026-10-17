@@ -1,0 +1,14 @@
+{
+  "id": "2026-10-13-cone-frustum-radii",
+  "version": "0.10.0",
+  "date": "2026-10-13",
+  "category": "fix",
+  "title": "Cone frustum keeps its radii when the top is wider",
+  "summary": "A cone/frustum whose top radius exceeds its base no longer swaps the two radii: the apex is now placed from the base radius, so the solid matches the requested geometry.",
+  "details": "ConeSurface::from_frustum placed the apex from radius_top in the radius_bottom < radius_top branch, so the lateral surface came out with the radii swapped even though the B-rep circles were correct: Solid::cone(2, 10, 10) produced radius 10 at z=0 and 18 at z=10 instead of 2 and 10, with a volume about 3x the analytic value. Volume and bounding box are symmetric in the two radii, so neither caught it; it only showed in an asymmetric operation or a per-z-band radius sample. This affected any cone with radius_top > radius_bottom, including cylinder(r1 < r2) imported from OpenSCAD and zero-radius cones such as cylinder(h=10, r1=0, r2=5), which additionally tessellated non-watertight.",
+  "features": [
+    "kernel",
+    "geometry",
+    "primitives"
+  ]
+}
