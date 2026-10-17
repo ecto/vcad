@@ -235,6 +235,7 @@ pub fn descend_pair_mined(
             improved: !v.clean && fin.len() < base.len() && fin.is_subset(&base),
         }
     };
+    let mut restarted = false;
     for round in 1..=max_rounds.max(1) {
         let t0 = std::time::Instant::now();
         let (th, it) = prob.solve(&theta, solver, iters);
@@ -296,6 +297,18 @@ pub fn descend_pair_mined(
                 verdict.twin_cuts.len(),
                 verdict.cuts.len()
             );
+        }
+        if added == 0 && !restarted && round < max_rounds.max(1) {
+            // Nothing new to claim, yet the oracle is dirty: the claims
+            // exist but the solve ended violating them — typically legs
+            // that crossed before their twin claim existed, a basin the
+            // signed distance can't climb out of locally. Re-solve ONCE
+            // from the original (uncrossed) geometry with every claim
+            // mined so far.
+            restarted = true;
+            theta = prob.theta0.clone();
+            log::debug!(target: "descent_stats", "restart=cold round={round}");
+            continue;
         }
         if added == 0 || round == max_rounds.max(1) {
             return Some(finish(r, round, cuts, &verdict));
@@ -1134,7 +1147,7 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
             solver,
             iters,
             4,
-            oracle,
+            &oracle,
         ) else {
             log::debug!(target: "descent_stats", "pair={pn} reject=build-failed");
             continue;
@@ -1188,11 +1201,6 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
                            new: &[Vec2],
                            width: f64| {
             work2.traces.retain(|t| !on_run(t, net, layer, old));
-            // M11: the descent runs on a 0.4 mm densified chain; committing
-            // it verbatim multiplies the segment count (and every per-
-            // segment DRC finding). Merge collinear runs back first — 1 um
-            // deviation, far inside any rule margin the oracle judged.
-            let new = merge_collinear(new, 1e-3);
             work2.traces.extend(new.windows(2).map(|w| Trace {
                 start: w[0],
                 end: w[1],
@@ -1202,8 +1210,33 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
                 source: None,
             }));
         };
-        replace_run(&mut work2, pn, pl, &p_raw, &r.p_pts, p_w);
-        replace_run(&mut work2, nn, nlayer, &n_raw, &r.n_pts, n_w);
+        // M11: the descent runs on a 0.4 mm densified chain; committing it
+        // verbatim multiplies the segment count (and every per-segment DRC
+        // finding). Merge near-collinear stretches back first. A merged
+        // chord shifts copper by up to the tolerance, so each candidate is
+        // re-judged by the same oracle: 10 um, then 1 um, else the
+        // unmerged (already oracle-clean) chain.
+        let (cp, cn, merge_tol) = [1e-2, 1e-3]
+            .into_iter()
+            .map(|tol| {
+                (
+                    merge_collinear(&r.p_pts, tol),
+                    merge_collinear(&r.n_pts, tol),
+                    tol,
+                )
+            })
+            .find(|(cp, cn, _)| oracle(cp, cn).clean)
+            .unwrap_or_else(|| (r.p_pts.clone(), r.n_pts.clone(), 0.0));
+        log::debug!(
+            target: "descent_stats",
+            "pair={pn} merge tol={merge_tol} segs={}/{} -> {}/{}",
+            r.p_pts.len() - 1,
+            r.n_pts.len() - 1,
+            cp.len() - 1,
+            cn.len() - 1
+        );
+        replace_run(&mut work2, pn, pl, &p_raw, &cp, p_w);
+        replace_run(&mut work2, nn, nlayer, &n_raw, &cn, n_w);
         *pcb = work2;
         report.tuned += 1;
         log::info!("descent: {pn} whole-net skew {before:.3} -> {after:.3} mm");
