@@ -60,6 +60,43 @@ pub struct RoutedVia {
     pub start_layer: PcbLayer,
     /// Bottom of the via's copper span.
     pub end_layer: PcbLayer,
+    /// Construction type the router intends (see [`router_via_type`]):
+    /// a microvia where the span is one adjacent pair and the board's via
+    /// size meets its microvia minimums. Consumers copy it onto `Via`.
+    #[serde(default)]
+    pub via_type: Option<vcad_ir::ecad::ViaType>,
+}
+
+/// The via type the router emits for a span on `pcb` at the board's default
+/// via size: [`ViaType::Micro`](vcad_ir::ecad::ViaType::Micro) when the span
+/// is one adjacent layer pair and the default via meets the microvia
+/// minimums, else through (outer to outer) or blind.
+pub fn router_via_type(pcb: &Pcb, start: PcbLayer, end: PcbLayer) -> vcad_ir::ecad::ViaType {
+    use vcad_ir::ecad::ViaType;
+    let d = &pcb.rules.default_rules;
+    let probe = vcad_ir::ecad::Via {
+        position: Vec2::new(0.0, 0.0),
+        diameter: d.via_diameter,
+        drill: d.via_drill,
+        start_layer: start,
+        end_layer: end,
+        net: String::new(),
+        source: None,
+        via_type: Some(ViaType::Micro),
+    };
+    if crate::drc::is_legal_microvia(pcb, &probe)
+        && d.via_drill >= pcb.rules.min_microvia_drill - 1e-9
+        && d.via_diameter >= pcb.rules.min_microvia_diameter - 1e-9
+    {
+        return ViaType::Micro;
+    }
+    let copper = copper_layers(pcb);
+    let outer = |l: PcbLayer| copper.first() == Some(&l) || copper.last() == Some(&l);
+    if outer(start) && outer(end) {
+        ViaType::Through
+    } else {
+        ViaType::Blind
+    }
 }
 
 /// Why a connection could not be routed, and where — so an agent or human can
@@ -940,6 +977,7 @@ pub fn route_all_with_opts(
         }
         for &(pt, la, lb) in &p.via_pts {
             vias.push(RoutedVia {
+                via_type: None,
                 position: pt,
                 net: p.net.clone(),
                 start_layer: la,
@@ -994,6 +1032,7 @@ pub fn route_all_with_opts(
     );
     for (pt, net) in &stitch.vias {
         vias.push(RoutedVia {
+            via_type: None,
             position: *pt,
             net: net.clone(),
             start_layer: through_top,
@@ -1138,6 +1177,9 @@ pub fn route_all_with_opts(
                 at.x, at.y
             ),
         });
+    }
+    for v in &mut vias {
+        v.via_type = Some(router_via_type(pcb, v.start_layer, v.end_layer));
     }
     // Fail-closed completion: a net is routed only if DRC's own connectivity
     // over the returned copper agrees its pads form ONE island. The router's
@@ -5429,6 +5471,27 @@ mod tests {
         assert!(
             r.vias.iter().filter(|v| v.net == "GND").count() >= 2,
             "U2 and U3 need stitches"
+        );
+    }
+
+    /// Router vias carry their intended type: an adjacent-pair span at a via
+    /// size meeting the microvia minimums is a microvia; DRC then judges it
+    /// by those minimums.
+    #[test]
+    fn router_marks_adjacent_hops_as_microvias() {
+        use vcad_ir::ecad::ViaType;
+        let mut pcb = board4(vec![], vec![]);
+        pcb.rules.default_rules.via_diameter = 0.21;
+        pcb.rules.default_rules.via_drill = 0.12;
+        let t = |a, b| router_via_type(&pcb, a, b);
+        assert_eq!(t(PcbLayer::FCu, PcbLayer::In1Cu), ViaType::Micro);
+        assert_eq!(t(PcbLayer::FCu, PcbLayer::BCu), ViaType::Through);
+        assert_eq!(t(PcbLayer::FCu, PcbLayer::In2Cu), ViaType::Blind);
+        // Below the microvia minimums the hop is not a microvia.
+        pcb.rules.min_microvia_drill = 0.15;
+        assert_eq!(
+            router_via_type(&pcb, PcbLayer::FCu, PcbLayer::In1Cu),
+            ViaType::Blind
         );
     }
 

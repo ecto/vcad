@@ -883,6 +883,7 @@ mod tests {
 
     fn rvia(x: f64, y: f64, net: &str) -> RoutedVia {
         RoutedVia {
+            via_type: None,
             position: Vec2::new(x, y),
             net: net.into(),
             start_layer: PcbLayer::FCu,
@@ -1194,6 +1195,7 @@ mod tests {
             .vias
             .iter()
             .map(|v| RoutedVia {
+                via_type: None,
                 position: v.position,
                 net: v.net.clone(),
                 start_layer: v.start_layer,

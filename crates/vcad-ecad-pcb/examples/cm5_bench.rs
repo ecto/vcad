@@ -242,7 +242,6 @@ fn main() {
     }
     for v in &r.vias {
         pcb.vias.push(Via {
-            via_type: None,
             position: v.position,
             diameter: pcb.rules.default_rules.via_diameter,
             drill: pcb.rules.default_rules.via_drill,
@@ -250,6 +249,7 @@ fn main() {
             end_layer: v.end_layer,
             net: v.net.clone(),
             source: None,
+            via_type: v.via_type,
         });
     }
     // Stage bisection: dump the board as route_all left it, before si_finish

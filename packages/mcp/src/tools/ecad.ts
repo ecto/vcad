@@ -3439,6 +3439,7 @@ export async function routeNets(args: Record<string, unknown>, toolCtx?: ToolCon
         endLayer: v.end_layer ?? "BCu",
         net: v.net,
         source: "autoroute",
+        ...(v.via_type ? { viaType: v.via_type } : {}),
       });
       viasAdded++;
     }
