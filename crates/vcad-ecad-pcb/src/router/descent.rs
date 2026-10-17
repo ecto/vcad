@@ -265,6 +265,38 @@ pub fn descend_pair_mined(
                 .sum::<usize>();
         }
         cuts += added;
+        if added == 0 {
+            // Why nothing new: classify the twin hits the oracle reported
+            // (all already claimed by construction). `crossing` = the legs
+            // properly intersect; `pinned` = a breakout segment touching a
+            // pinned endpoint; `claim_holds` = the claim's own predicate
+            // passes although the oracle fails (vocabulary gap).
+            let (mut crossing, mut pinned, mut holds) = (0usize, 0usize, 0usize);
+            let (pl, nl) = (r.p_pts.len() - 1, r.n_pts.len() - 1);
+            for &(i, j) in &verdict.twin_cuts {
+                if i + 1 > pl || j + 1 > nl {
+                    continue;
+                }
+                let (a0, a1, b0, b1) = (r.p_pts[i], r.p_pts[i + 1], r.n_pts[j], r.n_pts[j + 1]);
+                if seg_cross_f64(a0, a1, b0, b1) {
+                    crossing += 1;
+                }
+                if i == 0 || i + 1 == pl || j == 0 || j + 1 == nl {
+                    pinned += 1;
+                }
+                if let Some(req) = twin_required {
+                    if seg_seg_dist_f64(a0, a1, b0, b1) >= req - 0.01 {
+                        holds += 1;
+                    }
+                }
+            }
+            log::debug!(
+                target: "descent_stats",
+                "no_new_cuts twin_hits={} crossing={crossing} pinned={pinned} claim_holds={holds} third_cuts={}",
+                verdict.twin_cuts.len(),
+                verdict.cuts.len()
+            );
+        }
         if added == 0 || round == max_rounds.max(1) {
             return Some(finish(r, round, cuts, &verdict));
         }
@@ -1196,6 +1228,12 @@ fn oracle_board(
         source: None,
     }));
     b
+}
+
+/// The segments properly cross (endpoints strictly on opposite sides).
+fn seg_cross_f64(a0: Vec2, a1: Vec2, b0: Vec2, b1: Vec2) -> bool {
+    let cross = |o: Vec2, p: Vec2, q: Vec2| (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
+    cross(a0, a1, b0) * cross(a0, a1, b1) < 0.0 && cross(b0, b1, a0) * cross(b0, b1, a1) < 0.0
 }
 
 /// Segment-segment distance (0 when they cross).

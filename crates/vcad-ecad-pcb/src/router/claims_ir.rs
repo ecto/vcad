@@ -322,9 +322,15 @@ pub fn min(g: &mut ExprGraph, a: ExprId, b: ExprId) -> ExprId {
     g.select(d, b, a)
 }
 
-/// Segment-to-segment distance as the minimum of the four endpoint-to-
-/// segment distances. Exact for non-crossing segments; a CROSSING pair reads
-/// its endpoint distance instead of 0 — the exact oracle still catches it.
+/// Signed segment-to-segment distance. Non-crossing: the minimum of the
+/// four endpoint-to-segment distances (exact). CROSSING (each segment's
+/// endpoints strictly on opposite sides of the other's line): minus the
+/// penetration depth — the smallest endpoint-to-other-line distance, i.e.
+/// how far the cheapest endpoint must travel to uncross. The two branches
+/// meet at 0 when an endpoint reaches the other line, so the residual stays
+/// continuous, and its gradient inside a crossing points the way out (the
+/// unsigned endpoint min there would read a positive distance and pull the
+/// legs further through each other).
 pub fn seg_seg_dist(
     g: &mut ExprGraph,
     a0: PointExpr,
@@ -338,7 +344,45 @@ pub fn seg_seg_dist(
     let d3 = pt_seg_dist(g, b1, a0, a1);
     let m01 = min(g, d0, d1);
     let m23 = min(g, d2, d3);
-    min(g, m01, m23)
+    let unsigned = min(g, m01, m23);
+    // Orientations: o(p | q0→q1) = cross(q1 − q0, p − q0).
+    let orient = |g: &mut ExprGraph, p: PointExpr, q0: PointExpr, q1: PointExpr| {
+        let nqx = g.neg(q0.0);
+        let nqy = g.neg(q0.1);
+        let ux = g.add(q1.0, nqx);
+        let uy = g.add(q1.1, nqy);
+        let vx = g.add(p.0, nqx);
+        let vy = g.add(p.1, nqy);
+        let l = g.mul(ux, vy);
+        let r = g.mul(uy, vx);
+        let nr = g.neg(r);
+        (g.add(l, nr), dist(g, q0, q1))
+    };
+    let (oa0, lb) = orient(g, a0, b0, b1);
+    let (oa1, _) = orient(g, a1, b0, b1);
+    let (ob0, la) = orient(g, b0, a0, a1);
+    let (ob1, _) = orient(g, b1, a0, a1);
+    // Crossing iff both products are negative, i.e. max(...) < 0.
+    let pa = g.mul(oa0, oa1);
+    let pb = g.mul(ob0, ob1);
+    let c = max(g, pa, pb);
+    // Endpoint-to-line distances |o| / |other|.
+    let ilb = g.recip(lb);
+    let ila = g.recip(la);
+    let mut pen = None;
+    for (o, il) in [(oa0, ilb), (oa1, ilb), (ob0, ila), (ob1, ila)] {
+        let ao = abs(g, o);
+        let d = g.mul(ao, il);
+        pen = Some(match pen {
+            None => d,
+            Some(m) => min(g, m, d),
+        });
+    }
+    let signed = g.neg(pen.expect("four endpoints"));
+    // select(c, x, y) = x when c > 0: non-crossing (c ≥ 0) keeps unsigned.
+    // c == 0 exactly (an endpoint on the other line): unsigned, already 0.
+    let nc = g.neg(c);
+    g.select(nc, signed, unsigned)
 }
 
 /// Segment clearance (hard): `required − seg_seg_dist(seg, obstacle)` —
@@ -868,6 +912,39 @@ mod tests {
         // A's endpoint near b's interior (b far off to the side otherwise).
         let v = ClaimSet::verdict(&g, &c, &[10.3, -5.0, 10.3, 5.0]);
         assert!(!v.holds && (v.margin + 0.1).abs() < 1e-6, "{v:?}");
+    }
+
+    /// M10: crossing segments read a NEGATIVE distance (minus the
+    /// penetration depth), not an endpoint distance — and the gradient
+    /// pushes the cheapest endpoint back across the line.
+    #[test]
+    fn seg_seg_dist_crossing_is_signed() {
+        let mut g = ExprGraph::new();
+        let a0 = (g.lit(0.0), g.lit(0.0));
+        let a1 = (g.lit(10.0), g.lit(0.0));
+        let b0 = (g.var(0), g.var(1));
+        let b1 = (g.var(2), g.var(3));
+        let d = seg_seg_dist(&mut g, a0, a1, b0, b1);
+        // X crossing: b from (5,-0.3) to (5,2). Endpoint distances: 0.3
+        // (b0 to A) — the old formula said +0.3. Penetration = 0.3.
+        let th = [5.0, -0.3, 5.0, 2.0];
+        let v: f64 = g.eval(d, &th);
+        assert!((v + 0.3).abs() < 1e-6, "crossing dist {v}");
+        // Gradient wrt b0.y: raising b0 toward the line reduces the
+        // penetration, so d increases: ∂d/∂b0y > 0.
+        let mut dd = SparseDiff::new();
+        let gy = dd.diff(&mut g, d, 1);
+        let gv: f64 = g.eval(gy, &th);
+        assert!(gv > 0.5, "grad {gv}");
+        // Just uncrossed: continuous through 0.
+        let v: f64 = g.eval(d, &[5.0, 0.01, 5.0, 2.0]);
+        assert!((v - 0.01).abs() < 1e-6, "{v}");
+        let v: f64 = g.eval(d, &[5.0, -0.01, 5.0, 2.0]);
+        assert!((v + 0.01).abs() < 1e-6, "{v}");
+        // Twin claim on crossing legs fails with the right overshoot.
+        let c = twin_gap(&mut g, (a0, a1), (b0, b1), 0.4, 1.0);
+        let vd = ClaimSet::verdict(&g, &c, &th);
+        assert!(!vd.holds && (vd.margin + 0.7).abs() < 1e-6, "{vd:?}");
     }
 
     /// The folded differentiator agrees with tang's `diff` numerically and
