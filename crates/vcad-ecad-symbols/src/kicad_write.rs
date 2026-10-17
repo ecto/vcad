@@ -386,8 +386,15 @@ fn write_setup(e: &mut Emitter, pcb: &Pcb, with_project: bool) {
     e.line(2, &format!("(via_size {})", num(d.via_diameter)));
     e.line(2, &format!("(via_drill {})", num(d.via_drill)));
     e.line(2, &format!("(via_min_size {})", num(min_via_diameter(pcb))));
-    e.line(2, &format!("(via_min_drill {})", num(r.min_drill)));
-    e.line(2, &format!("(via_min_annulus {})", num(r.min_annular_ring)));
+    // An inferred floor is not authored: leave it out so the provenance
+    // survives a round trip (re-import infers it again from the same vias).
+    let inferred = |f: &str| r.inferred_floors.iter().any(|x| x == f);
+    if !inferred("minDrill") {
+        e.line(2, &format!("(via_min_drill {})", num(r.min_drill)));
+    }
+    if !inferred("minAnnularRing") {
+        e.line(2, &format!("(via_min_annulus {})", num(r.min_annular_ring)));
+    }
     e.line(
         2,
         &format!("(uvia_min_size {})", num(r.min_microvia_diameter)),
@@ -3006,6 +3013,7 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
@@ -3305,6 +3313,40 @@ mod tests {
     /// netclass clearance) — and any calibration applied during fab-prep was
     /// invisible in the file. Re-importing shows the same, since our reader and
     /// KiCad's read the same tokens.
+    #[test]
+    fn via_floors_inferred_only_when_unauthored() {
+        let body = |setup: &str| {
+            format!(
+                r#"(kicad_pcb (version 20221018)
+  (general (thickness 1.0))
+  (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (31 "B.Cu" signal))
+  {setup}
+  (net 1 "SIG")
+  (via micro (at 1 1) (size 0.21) (drill 0.12) (layers "F.Cu" "In1.Cu") (net 1))
+  (via (at 3 1) (size 0.4) (drill 0.15) (layers "F.Cu" "B.Cu") (net 1))
+  (via (at 5 1) (size 0.45) (drill 0.2) (layers "F.Cu" "B.Cu") (net 1))
+)"#
+            )
+        };
+        // No floors: smallest non-micro drill / ring, provenance recorded.
+        let pcb = parse_kicad_pcb(&body("")).unwrap();
+        assert_eq!(pcb.rules.min_drill, 0.15);
+        assert!((pcb.rules.min_annular_ring - 0.125).abs() < 1e-9);
+        assert_eq!(
+            pcb.rules.inferred_floors,
+            vec!["minDrill", "minAnnularRing"]
+        );
+        // Provenance survives a round trip.
+        let back = parse_kicad_pcb(&write_kicad_pcb(&pcb)).unwrap();
+        assert_eq!(back.rules.inferred_floors, pcb.rules.inferred_floors);
+        // Authored floors are used as-is.
+        let pcb =
+            parse_kicad_pcb(&body("(setup (via_min_drill 0.3) (via_min_annulus 0.1))")).unwrap();
+        assert_eq!(pcb.rules.min_drill, 0.3);
+        assert_eq!(pcb.rules.min_annular_ring, 0.1);
+        assert!(pcb.rules.inferred_floors.is_empty());
+    }
+
     #[test]
     fn microvia_type_and_rules_round_trip() {
         let text = r#"(kicad_pcb (version 20221018)

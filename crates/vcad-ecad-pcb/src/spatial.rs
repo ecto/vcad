@@ -749,6 +749,7 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
@@ -890,6 +891,7 @@ mod tests {
                 name: "VCC".to_string(),
             }],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
@@ -1000,6 +1002,7 @@ mod tests {
             stackup: LayerStackup { layers: vec![] },
             nets: vec![],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {

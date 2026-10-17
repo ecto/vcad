@@ -762,6 +762,16 @@ pub struct DesignRules {
     )]
     #[cfg_attr(feature = "ts-rs", ts(rename = "minMicroviaDiameter"))]
     pub min_microvia_diameter: f64,
+    /// Provenance: names of the floors above (`minDrill`, `minAnnularRing`)
+    /// that were INFERRED from the board's own copper because the source
+    /// file authored none. DRC findings against an inferred floor say so.
+    #[serde(
+        rename = "inferredFloors",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "inferredFloors", optional))]
+    pub inferred_floors: Vec<String>,
 }
 
 /// Default neck region length from a pad's copper edge (mm) — the same
@@ -1344,6 +1354,7 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {

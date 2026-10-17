@@ -334,7 +334,8 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
     // whose own copper is 0.1 mm tracks and 0.2 mm vias. The board's existing
     // copper is the best available evidence of its fab capability: calibrate
     // the default rules against it.
-    let rules = calibrate_rules_from_copper(rules, &traces, &vias);
+    let mut rules = calibrate_rules_from_copper(rules, &traces, &vias);
+    infer_via_floors(root, &mut rules, &vias, &ctx);
 
     let pcb = Pcb {
         outline,
@@ -350,6 +351,45 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
         net_ties: vec![],
     };
     Ok((pcb, ctx.finish()))
+}
+
+/// Via floors when the file authors none: the board's own non-micro vias are
+/// the only evidence of its fab capability, so the floor is the smallest drill
+/// / annular ring among them (through and blind alike — KiCad keeps one via
+/// floor for both). Logged loudly and recorded in `rules.inferred_floors` so
+/// every DRC finding against it says the floor was inferred, not authored.
+fn infer_via_floors(root: &SExpr<'_>, rules: &mut DesignRules, vias: &[Via], ctx: &Ctx<'_>) {
+    let setup = root.find("setup");
+    let authored = |k: &str| setup.and_then(|s| child_f64(s, k)).is_some();
+    let normal: Vec<&Via> = vias.iter().filter(|v| !v.is_micro()).collect();
+    if normal.is_empty() {
+        return;
+    }
+    if !authored("via_min_drill") {
+        let min = normal.iter().map(|v| v.drill).fold(f64::INFINITY, f64::min);
+        ctx.warn(format!(
+            "INFERRED via floor: board authors no (via_min_drill); using the smallest drill \
+             of its own {} non-micro vias, {min} mm (fallback was {} mm)",
+            normal.len(),
+            rules.min_drill
+        ));
+        rules.min_drill = min;
+        rules.inferred_floors.push("minDrill".into());
+    }
+    if !authored("via_min_annulus") {
+        let min = normal
+            .iter()
+            .map(|v| (v.diameter - v.drill) / 2.0)
+            .fold(f64::INFINITY, f64::min);
+        ctx.warn(format!(
+            "INFERRED via floor: board authors no (via_min_annulus); using the smallest annular \
+             ring of its own {} non-micro vias, {min} mm (fallback was {} mm)",
+            normal.len(),
+            rules.min_annular_ring
+        ));
+        rules.min_annular_ring = min;
+        rules.inferred_floors.push("minAnnularRing".into());
+    }
 }
 
 /// Calibrate imported design rules against the board's existing copper.
@@ -769,6 +809,7 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
     let setup = root.find("setup");
     let uvia = |key: &str, dflt: f64| setup.and_then(|s| child_f64(s, key)).unwrap_or(dflt);
     DesignRules {
+        inferred_floors: Vec::new(),
         // KiCad's own defaults when the board omits them (they normally live
         // in the .kicad_pro); `parse_kicad_pcb` logs which were defaulted.
         min_microvia_drill: uvia("uvia_min_drill", vcad_ir::ecad::DEFAULT_MIN_MICROVIA_DRILL),

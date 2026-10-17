@@ -863,6 +863,15 @@ pub fn is_legal_microvia(pcb: &Pcb, via: &vcad_ir::ecad::Via) -> bool {
     hi == lo + 1
 }
 
+/// Provenance suffix for a finding against a floor the importer inferred.
+fn inferred_note(pcb: &Pcb, floor: &str, applies: bool) -> &'static str {
+    if applies && pcb.rules.inferred_floors.iter().any(|f| f == floor) {
+        " (floor INFERRED from the board's own vias, not authored)"
+    } else {
+        ""
+    }
+}
+
 fn check_min_drill(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     let min_drill = pcb.rules.min_drill;
 
@@ -884,8 +893,10 @@ fn check_min_drill(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<D
                 severity: DrcSeverity::Error,
                 position: via.position,
                 message: format!(
-                    "{kind} drill {:.3}mm below minimum {:.3}mm",
-                    via.drill, min_drill
+                    "{kind} drill {:.3}mm below minimum {:.3}mm{}",
+                    via.drill,
+                    min_drill,
+                    inferred_note(pcb, "minDrill", kind == "Via")
                 ),
                 actual: via.drill,
                 required: min_drill,
@@ -1115,7 +1126,12 @@ fn check_annular_ring(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Ve
                 rule: DrcRuleType::AnnularRing,
                 severity: DrcSeverity::Error,
                 position: via.position,
-                message: format!("Via annular ring {:.3}mm < {:.3}mm", ring, min_ring),
+                message: format!(
+                    "Via annular ring {:.3}mm < {:.3}mm{}",
+                    ring,
+                    min_ring,
+                    inferred_note(pcb, "minAnnularRing", true)
+                ),
                 actual: ring,
                 required: min_ring,
                 provenance: DrcProvenance::Routing,
@@ -3602,6 +3618,7 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
@@ -5229,6 +5246,12 @@ mod tests {
         let v = check_drc(&pcb);
         let d = v.iter().find(|v| v.rule == DrcRuleType::MinDrill).unwrap();
         assert_eq!(d.provenance, DrcProvenance::Routing);
+        assert!(!d.message.contains("INFERRED"));
+        // A finding against an inferred floor says so.
+        pcb.rules.inferred_floors = vec!["minDrill".into()];
+        let v = check_drc(&pcb);
+        let d = v.iter().find(|v| v.rule == DrcRuleType::MinDrill).unwrap();
+        assert!(d.message.contains("INFERRED"), "{}", d.message);
         assert!(
             !d.generated,
             "a via is never a generated footprint artifact"
