@@ -1188,6 +1188,11 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
                            new: &[Vec2],
                            width: f64| {
             work2.traces.retain(|t| !on_run(t, net, layer, old));
+            // M11: the descent runs on a 0.4 mm densified chain; committing
+            // it verbatim multiplies the segment count (and every per-
+            // segment DRC finding). Merge collinear runs back first — 1 um
+            // deviation, far inside any rule margin the oracle judged.
+            let new = merge_collinear(new, 1e-3);
             work2.traces.extend(new.windows(2).map(|w| Trace {
                 start: w[0],
                 end: w[1],
@@ -1251,6 +1256,30 @@ fn oracle_board(
     b
 }
 
+/// Drop interior points of `pts` that lie within `tol` of the chord
+/// between the last kept point and the next candidate, so collinear
+/// stretches (the densified samples a descent left straight) collapse to
+/// one segment. Greedy: the chord is extended while every skipped point
+/// stays within `tol`; endpoints always survive.
+fn merge_collinear(pts: &[Vec2], tol: f64) -> Vec<Vec2> {
+    if pts.len() < 3 {
+        return pts.to_vec();
+    }
+    let mut out = vec![pts[0]];
+    let mut anchor = 0usize;
+    let mut k = 2usize;
+    while k < pts.len() {
+        let fits = (anchor + 1..k).all(|m| pt_seg_dist_f64(pts[m], pts[anchor], pts[k]) <= tol);
+        if !fits {
+            anchor = k - 1;
+            out.push(pts[anchor]);
+        }
+        k += 1;
+    }
+    out.push(pts[pts.len() - 1]);
+    out
+}
+
 /// The segments properly cross (endpoints strictly on opposite sides).
 fn seg_cross_f64(a0: Vec2, a1: Vec2, b0: Vec2, b1: Vec2) -> bool {
     let cross = |o: Vec2, p: Vec2, q: Vec2| (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
@@ -1284,6 +1313,27 @@ fn pt_seg_dist_f64(p: Vec2, a: Vec2, b: Vec2) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// M11: collinear runs collapse, bends survive, nothing moves > tol.
+    #[test]
+    fn merge_collinear_keeps_bends_and_tolerance() {
+        let mut pts: Vec<Vec2> = (0..=10).map(|i| Vec2::new(0.4 * i as f64, 0.0)).collect();
+        pts.extend((1..=5).map(|i| Vec2::new(4.0 + 0.4 * i as f64, 0.4 * i as f64)));
+        // A 0.5 um wiggle on the first leg merges; a 5 um one would not.
+        pts[3].y = 0.0005;
+        let m = merge_collinear(&pts, 1e-3);
+        assert_eq!(m.len(), 3, "{m:?}");
+        assert!((m[1] - Vec2::new(4.0, 0.0)).length() < 1e-12);
+        for p in &pts {
+            let d = m
+                .windows(2)
+                .map(|w| pt_seg_dist_f64(*p, w[0], w[1]))
+                .fold(f64::INFINITY, f64::min);
+            assert!(d <= 1e-3 + 1e-12);
+        }
+        pts[3].y = 0.005;
+        assert!(merge_collinear(&pts, 1e-3).len() > 3);
+    }
 
     /// The M5 contract in miniature: a pair with deliberate skew (N zigzags)
     /// and an obstacle near P. Descent must (1) drive intra-pair skew to
