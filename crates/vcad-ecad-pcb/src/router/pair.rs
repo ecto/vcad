@@ -2181,6 +2181,42 @@ mod tests {
         }
     }
 
+    /// A pair routed coupled in the pair-first stage lays BOTH legs; the
+    /// twin's own ratsnest connection must not be routed again as a single
+    /// (full CM5: duplicated legs doubled one net's length and their
+    /// congestion got coupled pairs ripped).
+    #[test]
+    fn pair_first_does_not_reroute_the_twin() {
+        let mut pcb = pair_board();
+        // Far pads on the back, like CM5's PCIe.TX (FCu test pad -> BCu
+        // ball): the coupled route then changes layers, and the twin's
+        // ratsnest connection is not short-circuited by same-layer contact.
+        for pad in &mut pcb.footprints[1].pads {
+            pad.layers = vec![PcbLayer::BCu];
+        }
+        // Pair-first keys on the declared diff-pair class name.
+        let members = pcb.rules.net_class_assignments.remove("DIFF").unwrap();
+        pcb.rules.class_rules[0].name = crate::router::classes::DIFF_PAIR_CLASS.into();
+        pcb.rules
+            .net_class_assignments
+            .insert(crate::router::classes::DIFF_PAIR_CLASS.into(), members);
+        let r = crate::router::route_all(&pcb, 0.25, &[]);
+        assert!(r.unrouted_nets.is_empty(), "{:?}", r.unrouted_nets);
+        let len = |net: &str| -> f64 {
+            r.traces
+                .iter()
+                .filter(|t| t.net == net)
+                .map(|t| (t.end - t.start).length())
+                .sum()
+        };
+        let (lp, ln) = (len("/ETH.2_P"), len("/ETH.2_N"));
+        // Pads 40 mm apart: one route per leg is ~40-45 mm.
+        for (net, l) in [("/ETH.2_P", lp), ("/ETH.2_N", ln)] {
+            assert!(l > 35.0 && l < 55.0, "{net} carries {l:.1} mm of copper");
+        }
+        assert!((lp - ln).abs() < 2.0, "skew {:.2} mm", (lp - ln).abs());
+    }
+
     /// Every via a pair route REPORTS must be a via the session KNOWS about.
     ///
     /// The four pad connectors are maze routes, and when the pads sit on a

@@ -1260,7 +1260,22 @@ fn route_pass(
         let mut routed_pairs: std::collections::BTreeSet<String> = Default::default();
         let mut deferred = Vec::with_capacity(conns.len());
         let mut coupled = 0usize;
+        // The partner connections a coupled pair already realized. A pair
+        // routed from one leg's connection also lays the twin's copper; the
+        // twin's own ratsnest connection must not then be routed AGAIN as a
+        // single (CM5: PCIe.TX_P carried its coupled In2 leg plus a ~20 mm
+        // single-ended duplicate; a 4-net PCIe.TX/ETH.3 subset routed 157 mm
+        // of copper before this, 118 mm after).
+        let mut covered: Vec<(String, Vec2, Vec2)> = Vec::new();
+        let same_conn = |c: &(String, Vec2, Vec2), net: &str, a: Vec2, b: Vec2| {
+            c.0 == net
+                && ((dist(c.1, a) < 1e-3 && dist(c.2, b) < 1e-3)
+                    || (dist(c.1, b) < 1e-3 && dist(c.2, a) < 1e-3))
+        };
         for (net, from, to) in std::mem::take(&mut conns) {
+            if covered.iter().any(|c| same_conn(c, &net, from, to)) {
+                continue;
+            }
             let base = super::pair::pair_partner(&net).map(|p| {
                 if p < net {
                     format!("{p}|{net}")
@@ -1281,6 +1296,7 @@ fn route_pass(
                     cong,
                     max_expansions,
                 ) {
+                    covered.push((theirs.net.clone(), theirs.from, theirs.to));
                     placed.push(mine);
                     placed.push(theirs);
                     coupled += 1;
