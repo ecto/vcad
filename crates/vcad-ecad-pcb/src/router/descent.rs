@@ -323,6 +323,10 @@ pub(crate) struct PairProblem {
     twin_claimed: std::collections::BTreeSet<(usize, usize)>,
 }
 
+/// Twin-gap seeding broadphase: P/N segment pairs closer than
+/// `required + TWIN_SEED_BAND` at the start get a claim up front.
+const TWIN_SEED_BAND: f64 = 0.5;
+
 /// A clearance site: a moving point, or the whole segment starting at that
 /// index (leg 0 = P, 1 = N).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -413,8 +417,11 @@ impl PairProblem {
             claimed: Default::default(),
             twin_claimed: Default::default(),
         };
+        // Seed claims are WHOLE-segment (M9), like mined cuts: the oracle
+        // judges segments, and a solver riding the boundary exactly puts the
+        // unsampled interior between two point claims through the obstacle.
         for ob in obstacles {
-            prob.add_point_clearance(ob, None);
+            prob.add_seed_clearance(ob);
         }
         Some(prob)
     }
@@ -446,12 +453,21 @@ impl PairProblem {
     /// obstacles far from a point can't be reached within a few descent
     /// steps, so skipping them keeps the graph small (radius required + 2mm).
     /// Returns the number of claims added.
+    #[allow(dead_code)]
     pub(crate) fn add_point_clearance(
         &mut self,
         ob: &DescentObstacle,
         at: Option<&[f64]>,
     ) -> usize {
-        self.add_clearance(ob, at, false)
+        self.add_clearance(ob, at, false, ob.required + 2.0)
+    }
+
+    /// Seed claims: whole-segment clearance at the starting geometry, with
+    /// a tighter broadphase (`required + 1 mm`) — a segment that far away
+    /// needs several trust-region steps to reach the obstacle, and the
+    /// oracle mines it if it ever does.
+    pub(crate) fn add_seed_clearance(&mut self, ob: &DescentObstacle) -> usize {
+        self.add_clearance(ob, None, true, ob.required + 1.0)
     }
 
     /// A mined cut: WHOLE-segment clearance claims ([`cir::seg_clearance`])
@@ -459,10 +475,16 @@ impl PairProblem {
     /// segments, and a segment can cross an obstacle between two legal
     /// points.
     pub(crate) fn add_cut(&mut self, ob: &DescentObstacle, at: &[f64]) -> usize {
-        self.add_clearance(ob, Some(at), true)
+        self.add_clearance(ob, Some(at), true, ob.required + 2.0)
     }
 
-    fn add_clearance(&mut self, ob: &DescentObstacle, at: Option<&[f64]>, mids: bool) -> usize {
+    fn add_clearance(
+        &mut self,
+        ob: &DescentObstacle,
+        at: Option<&[f64]>,
+        mids: bool,
+        reach: f64,
+    ) -> usize {
         let oi =
             match self.known.iter().position(|k| {
                 k.a == ob.a && k.b == ob.b && (k.required - ob.required).abs() < 1e-12
@@ -477,7 +499,6 @@ impl PairProblem {
             Some(th) => self.points(th),
             None => (self.p_pts.clone(), self.n_pts.clone()),
         };
-        let reach = ob.required + 2.0;
         let mut added = 0;
         for (li, leg, pts) in [(0u8, self.pe.clone(), pp), (1u8, self.ne.clone(), nn)] {
             let last = pts.len() - 1;
@@ -559,7 +580,7 @@ impl PairProblem {
     }
 
     /// Seed twin-gap claims for every P/N segment pair that starts within
-    /// `required + 0.25` of each other but still holds — the ones a descent
+    /// `required + TWIN_SEED_BAND` of each other but still holds — the ones a descent
     /// step can push through the gap. Pairs already closer than `required`
     /// at the start (breakouts converging on their pads, where the oracle
     /// relaxes the rule) are left to mining: forcing them apart against
@@ -574,7 +595,7 @@ impl PairProblem {
                     self.n_pts[j],
                     self.n_pts[j + 1],
                 );
-                if d >= required && d < required + 0.25 {
+                if d >= required && d < required + TWIN_SEED_BAND {
                     pairs.push((i, j));
                 }
             }
@@ -1348,16 +1369,23 @@ mod tests {
             let d = ((b - a).length().powi(2) + 1e-9).sqrt();
             want += w.gap * (d - 0.45).powi(2);
         }
-        for leg in [&pp, &nn] {
-            for (i, &pt) in leg.iter().enumerate() {
-                if i == 0 || i + 1 == leg.len() {
+        // Seed clearance is whole-segment (M9): every segment whose START
+        // geometry is within required + 1 of the obstacle, pinned ends
+        // relaxed to what they already have.
+        for (leg, start) in [(&pp, &p), (&nn, &n)] {
+            let last = leg.len() - 1;
+            for i in 0..last {
+                let (s0, s1) = (start[i], start[i + 1]);
+                if seg_seg_dist_f64(s0, s1, obs[0].a, obs[0].b) > obs[0].required + 1.0 {
                     continue;
                 }
-                let start = if std::ptr::eq(leg, &pp) { p[i] } else { n[i] };
-                if pt_seg_dist_f64(start, obs[0].a, obs[0].b) > obs[0].required + 2.0 {
-                    continue;
+                let mut req = obs[0].required;
+                for k in [i, i + 1] {
+                    if k == 0 || k == last {
+                        req = req.min(pt_seg_dist_f64(start[k], obs[0].a, obs[0].b) - 1e-6);
+                    }
                 }
-                let short = obs[0].required - pt_seg_dist_f64(pt, obs[0].a, obs[0].b);
+                let short = req - seg_seg_dist_f64(leg[i], leg[i + 1], obs[0].a, obs[0].b);
                 if short > 0.0 {
                     want += w.clearance * short * short;
                 }
