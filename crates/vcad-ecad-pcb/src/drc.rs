@@ -1271,7 +1271,14 @@ fn pad_min_dimension(pad: &Pad) -> f64 {
 // ============================================================================
 
 /// All copper layers, ordered top → bottom, for via span enumeration.
-const COPPER_STACK: [PcbLayer; 8] = [
+///
+/// Must list EVERY copper layer the IR has: a layer missing here gets an
+/// empty mask, so its copper touches nothing and every segment on it reads
+/// as its own island. In7Cu/In8Cu were missing — on the 10-layer CM5 every
+/// In7/In8 segment was a separate `NetIslands` fragment (1575 phantom
+/// islands), and a descent that rewrote an In7 run into more segments
+/// "added" exactly that many disjoint fragments.
+const COPPER_STACK: [PcbLayer; 10] = [
     PcbLayer::FCu,
     PcbLayer::In1Cu,
     PcbLayer::In2Cu,
@@ -1279,6 +1286,8 @@ const COPPER_STACK: [PcbLayer; 8] = [
     PcbLayer::In4Cu,
     PcbLayer::In5Cu,
     PcbLayer::In6Cu,
+    PcbLayer::In7Cu,
+    PcbLayer::In8Cu,
     PcbLayer::BCu,
 ];
 
@@ -2946,6 +2955,67 @@ fn continuity_of(pcb: &Pcb, nodes: &[ConnNode], dsu: &mut Dsu, net: &str) -> Net
         realized: islands >= 1,
         continuous: islands == 1,
         worst_island,
+    }
+}
+
+/// Same-net connectivity of ONE net, for edits that must not split it.
+///
+/// Built from the exact node/touch/same-net-DSU machinery DRC's
+/// `NetIslands`/`UnconnectedNet` checks use, on a board reduced to the net's
+/// own traces, vias, pads and zones (the same-net graph never unions foreign
+/// copper, so dropping it changes nothing but cost — except that a reduced
+/// zone fill sees no foreign voids; callers compare two reductions built the
+/// same way, so that bias cancels).
+pub(crate) struct NetGraph {
+    /// Galvanic components among the net's copper nodes.
+    pub components: usize,
+    /// Every same-net touch involving a trace: `(trace, other, at)` where
+    /// `trace` indexes `pcb.traces`, `other` is `Some(trace index)` when the
+    /// other node is also a trace (else a via/pad/pour), and `at` is the
+    /// approximate contact point.
+    pub trace_contacts: Vec<(usize, Option<usize>, Vec2)>,
+}
+
+/// [`NetGraph`] for `net` on `pcb`.
+pub(crate) fn net_graph(pcb: &Pcb, net: &str) -> NetGraph {
+    let mut b = pcb.clone();
+    let trace_ids: Vec<usize> = (0..pcb.traces.len())
+        .filter(|&i| pcb.traces[i].net == net)
+        .collect();
+    b.traces.retain(|t| t.net == net);
+    b.vias.retain(|v| v.net == net);
+    b.zones.retain(|z| z.net == net);
+    for fp in &mut b.footprints {
+        fp.pads.retain(|p| p.net.as_deref() == Some(net));
+    }
+    b.footprints.retain(|f| !f.pads.is_empty());
+    let net_ties = NetTieGroups::from_pcb(pcb);
+    let (nodes, _global, contacts) = build_connectivity_with_contacts(&b);
+    let mut dsu = build_same_net_dsu(&nodes, &contacts, &net_ties);
+    let mut roots: std::collections::BTreeSet<usize> = Default::default();
+    for (i, n) in nodes.iter().enumerate() {
+        if n.net == net {
+            roots.insert(dsu.find(i));
+        }
+    }
+    // Node order in build_conn_nodes: traces first.
+    let nt = trace_ids.len();
+    let mut trace_contacts = Vec::new();
+    for c in &contacts {
+        if nodes[c.i].net != net || nodes[c.j].net != net {
+            continue;
+        }
+        let tr = |k: usize| (k < nt).then(|| trace_ids[k]);
+        if let Some(a) = tr(c.i) {
+            trace_contacts.push((a, tr(c.j), c.at));
+        }
+        if let Some(b) = tr(c.j) {
+            trace_contacts.push((b, tr(c.i), c.at));
+        }
+    }
+    NetGraph {
+        components: roots.len(),
+        trace_contacts,
     }
 }
 
@@ -5183,6 +5253,38 @@ mod tests {
             islands[0].actual, 3.0,
             "three disjoint stubs = three islands"
         );
+    }
+
+    /// In7Cu/In8Cu copper must take part in connectivity: they were missing
+    /// from the stack, so every segment on them was its own island and a
+    /// chain of N touching In7 segments read as N fragments.
+    #[test]
+    fn inner_layers_7_and_8_connect() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        for layer in [PcbLayer::In7Cu, PcbLayer::In8Cu] {
+            let mut a = trace((10.0, 10.0), (15.0, 10.0), "SIG");
+            let mut b = trace((15.0, 10.0), (20.0, 12.0), "SIG");
+            let mut c = trace((20.0, 12.0), (25.0, 12.0), "SIG");
+            for t in [&mut a, &mut b, &mut c] {
+                t.layer = layer;
+            }
+            pcb.traces = vec![a, b, c];
+            assert_eq!(net_graph(&pcb, "SIG").components, 1, "{layer:?}");
+        }
+        // A through via joins In7 to In8.
+        pcb.traces[0].layer = PcbLayer::In7Cu;
+        pcb.vias.push(Via {
+            position: Vec2::new(15.0, 10.0),
+            diameter: 0.4,
+            drill: 0.2,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::BCu,
+            net: "SIG".into(),
+            source: None,
+        });
+        assert_eq!(net_graph(&pcb, "SIG").components, 1);
     }
 
     /// A correctly routed net (every piece of its copper galvanically joined)

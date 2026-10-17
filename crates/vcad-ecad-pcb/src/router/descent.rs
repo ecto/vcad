@@ -201,10 +201,50 @@ pub fn descend_pair_mined(
     solver: DescentSolver,
     iters: usize,
     max_rounds: usize,
+    oracle: impl FnMut(&[Vec2], &[Vec2]) -> OracleVerdict,
+) -> Option<MinedOutcome> {
+    descend_pair_mined_pinned(
+        p_pts,
+        n_pts,
+        None,
+        extra_p,
+        extra_n,
+        springs,
+        gap_centre,
+        twin_required,
+        seed,
+        weights,
+        solver,
+        iters,
+        max_rounds,
+        oracle,
+    )
+}
+
+/// [`descend_pair_mined`] with explicit pins (M12): `pins = Some((p, n))`
+/// marks, per point, which samples are FIXED literals — the run endpoints
+/// plus every attachment point where other same-net copper (a stub, a via,
+/// a pad) meets the run, so the descent cannot move copper off it.
+/// Endpoints are always pinned regardless of the masks.
+#[allow(clippy::too_many_arguments)]
+pub fn descend_pair_mined_pinned(
+    p_pts: &[Vec2],
+    n_pts: &[Vec2],
+    pins: Option<(&[bool], &[bool])>,
+    extra_p: f64,
+    extra_n: f64,
+    springs: bool,
+    gap_centre: f64,
+    twin_required: Option<f64>,
+    seed: &[DescentObstacle],
+    weights: &DescentWeights,
+    solver: DescentSolver,
+    iters: usize,
+    max_rounds: usize,
     mut oracle: impl FnMut(&[Vec2], &[Vec2]) -> OracleVerdict,
 ) -> Option<MinedOutcome> {
-    let mut prob = PairProblem::build(
-        p_pts, n_pts, extra_p, extra_n, springs, gap_centre, seed, weights,
+    let mut prob = PairProblem::build_pinned(
+        p_pts, n_pts, pins, extra_p, extra_n, springs, gap_centre, seed, weights,
     )?;
     if let Some(req) = twin_required {
         prob.seed_twin(req);
@@ -283,7 +323,7 @@ pub fn descend_pair_mined(
                 if seg_cross_f64(a0, a1, b0, b1) {
                     crossing += 1;
                 }
-                if i == 0 || i + 1 == pl || j == 0 || j + 1 == nl {
+                if prob.p_fix[i] || prob.p_fix[i + 1] || prob.n_fix[j] || prob.n_fix[j + 1] {
                     pinned += 1;
                 }
                 if let Some(req) = twin_required {
@@ -327,6 +367,9 @@ pub(crate) struct PairProblem {
     ne: Vec<PointExpr>,
     p_pts: Vec<Vec2>,
     n_pts: Vec<Vec2>,
+    /// Per point: a fixed literal (endpoint or attachment pin), not a var.
+    p_fix: Vec<bool>,
+    n_fix: Vec<bool>,
     pub(crate) claims: ClaimSet,
     clearance_weight: f64,
     /// Obstacles the claim set knows, and which (sample, obstacle) pairs
@@ -364,9 +407,34 @@ impl PairProblem {
         obstacles: &[DescentObstacle],
         weights: &DescentWeights,
     ) -> Option<Self> {
+        Self::build_pinned(
+            p_pts, n_pts, None, extra_p, extra_n, springs, gap_centre, obstacles, weights,
+        )
+    }
+
+    /// [`Self::build`] with per-point pins (endpoints always pinned).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn build_pinned(
+        p_pts: &[Vec2],
+        n_pts: &[Vec2],
+        pins: Option<(&[bool], &[bool])>,
+        extra_p: f64,
+        extra_n: f64,
+        springs: bool,
+        gap_centre: f64,
+        obstacles: &[DescentObstacle],
+        weights: &DescentWeights,
+    ) -> Option<Self> {
         if p_pts.len() < 3 || n_pts.len() < 3 {
             return None;
         }
+        let fix_of = |pts: &[Vec2], m: Option<&[bool]>| -> Vec<bool> {
+            (0..pts.len())
+                .map(|i| i == 0 || i + 1 == pts.len() || m.is_some_and(|m| m.get(i) == Some(&true)))
+                .collect()
+        };
+        let p_fix = fix_of(p_pts, pins.map(|p| p.0));
+        let n_fix = fix_of(n_pts, pins.map(|p| p.1));
         // Var ids are u16: bail before building rather than overflow.
         if 2 * (p_pts.len() + n_pts.len()) > u16::MAX as usize {
             return None;
@@ -374,11 +442,11 @@ impl PairProblem {
         let mut g = ExprGraph::new();
         // Variables: interior points of both legs. Var index = position in θ.
         let mut theta0: Vec<f64> = Vec::new();
-        let mut build_leg = |g: &mut ExprGraph, pts: &[Vec2]| -> Vec<PointExpr> {
+        let mut build_leg = |g: &mut ExprGraph, pts: &[Vec2], fix: &[bool]| -> Vec<PointExpr> {
             pts.iter()
                 .enumerate()
                 .map(|(i, p)| {
-                    if i == 0 || i + 1 == pts.len() {
+                    if fix[i] {
                         (g.lit(p.x), g.lit(p.y))
                     } else {
                         let x = g.var(theta0.len() as u16);
@@ -390,8 +458,8 @@ impl PairProblem {
                 })
                 .collect()
         };
-        let pe = build_leg(&mut g, p_pts);
-        let ne = build_leg(&mut g, n_pts);
+        let pe = build_leg(&mut g, p_pts, &p_fix);
+        let ne = build_leg(&mut g, n_pts, &n_fix);
         if theta0.is_empty() {
             return None;
         }
@@ -425,6 +493,8 @@ impl PairProblem {
             ne,
             p_pts: p_pts.to_vec(),
             n_pts: n_pts.to_vec(),
+            p_fix,
+            n_fix,
             claims,
             clearance_weight: weights.clearance,
             known: Vec::new(),
@@ -443,11 +513,11 @@ impl PairProblem {
     /// Point positions at `theta` (pinned endpoints included).
     fn points(&self, theta: &[f64]) -> (Vec<Vec2>, Vec<Vec2>) {
         let mut idx = 0usize;
-        let rebuild = |pts: &[Vec2], idx: &mut usize| -> Vec<Vec2> {
+        let rebuild = |pts: &[Vec2], fix: &[bool], idx: &mut usize| -> Vec<Vec2> {
             pts.iter()
                 .enumerate()
                 .map(|(i, p)| {
-                    if i == 0 || i + 1 == pts.len() {
+                    if fix[i] {
                         *p
                     } else {
                         let out = Vec2::new(theta[*idx], theta[*idx + 1]);
@@ -457,8 +527,8 @@ impl PairProblem {
                 })
                 .collect()
         };
-        let p = rebuild(&self.p_pts, &mut idx);
-        let n = rebuild(&self.n_pts, &mut idx);
+        let p = rebuild(&self.p_pts, &self.p_fix, &mut idx);
+        let n = rebuild(&self.n_pts, &self.n_fix, &mut idx);
         (p, n)
     }
 
@@ -514,7 +584,10 @@ impl PairProblem {
             None => (self.p_pts.clone(), self.n_pts.clone()),
         };
         let mut added = 0;
-        for (li, leg, pts) in [(0u8, self.pe.clone(), pp), (1u8, self.ne.clone(), nn)] {
+        for (li, leg, pts, fix) in [
+            (0u8, self.pe.clone(), pp, self.p_fix.clone()),
+            (1u8, self.ne.clone(), nn, self.n_fix.clone()),
+        ] {
             let last = pts.len() - 1;
             if mids {
                 // Mined cut: claim WHOLE segments. Point/midpoint samples
@@ -533,7 +606,7 @@ impl PairProblem {
                     // it already has (the oracle, not the cushion, rules).
                     let mut req = ob.required;
                     for (k, p) in [(i, a), (i + 1, b)] {
-                        if k == 0 || k == last {
+                        if fix[k] {
                             req = req.min(pt_seg_dist_f64(p, ob.a, ob.b) - 1e-6);
                         }
                     }
@@ -551,7 +624,7 @@ impl PairProblem {
                 continue;
             }
             for i in 0..=last {
-                let moving = i != 0 && i != last;
+                let moving = !fix[i];
                 let mut sites: Vec<(Sample, PointExpr, Vec2)> = Vec::new();
                 if moving {
                     sites.push((Sample::Point(li, i), leg[i], pts[i]));
@@ -737,6 +810,11 @@ pub struct DescentReport {
     /// Rejected pairs whose result was strictly less dirty than the original
     /// against the same oracle, adding no violation (not committed).
     pub improved_but_dirty: usize,
+    /// Oracle-clean results rejected because they would have split one of
+    /// the pair's nets (same-net component count rose; M12 gate).
+    pub rejected_connectivity: usize,
+    /// Attachment pins placed on run interiors (M12).
+    pub pins: usize,
 }
 
 /// Run the differentiable pair polish over every classified pair on a routed
@@ -760,13 +838,46 @@ pub fn descend_board_with(pcb: &mut Pcb, iters: usize, solver: DescentSolver) ->
     // edit: leaving it on the board changes DRC for pairs the descent never
     // touched (an imported board whose USB legs are narrower than the 0.2 mm
     // class default gained MinTraceWidth violations from a no-op run).
+    descend_board_guarded(pcb, iters, solver, Guards::default())
+}
+
+/// M12 connectivity guards; both on outside tests, which switch them off
+/// one at a time to prove each is load-bearing.
+#[derive(Debug, Clone, Copy)]
+struct Guards {
+    /// Pin attachment points of other same-net copper on the run.
+    pin: bool,
+    /// Reject a result that raises a net's same-net component count.
+    gate: bool,
+}
+
+impl Default for Guards {
+    fn default() -> Self {
+        Self {
+            pin: true,
+            gate: true,
+        }
+    }
+}
+
+fn descend_board_guarded(
+    pcb: &mut Pcb,
+    iters: usize,
+    solver: DescentSolver,
+    guards: Guards,
+) -> DescentReport {
     let rules = pcb.rules.clone();
-    let report = descend_board_inner(pcb, iters, solver);
+    let report = descend_board_inner(pcb, iters, solver, guards);
     pcb.rules = rules;
     report
 }
 
-fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> DescentReport {
+fn descend_board_inner(
+    pcb: &mut Pcb,
+    iters: usize,
+    solver: DescentSolver,
+    guards: Guards,
+) -> DescentReport {
     use super::classes::{apply_classes, classify_nets};
     use super::length_match::longest_chain;
     use crate::session::RouteSession;
@@ -866,23 +977,42 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
                 n_raw.reverse();
             }
         }
+        // M12: pin every point where other same-net copper attaches to the
+        // run (a stub's endpoint, a via, a pad, a T into a segment's
+        // interior), judged by DRC's own same-net connectivity. The run is
+        // split at each attachment and the split point becomes a fixed
+        // literal, so the descent can't slide copper off it.
+        let (p_aug, p_pin) = if guards.pin {
+            pin_attachments(pcb, pn, pl, &p_raw)
+        } else {
+            (p_raw.clone(), vec![false; p_raw.len()])
+        };
+        let (n_aug, n_pin) = if guards.pin {
+            pin_attachments(pcb, nn, nlayer, &n_raw)
+        } else {
+            (n_raw.clone(), vec![false; n_raw.len()])
+        };
+        let n_pins = p_pin.iter().chain(&n_pin).filter(|&&b| b).count();
         // Point hinges only constrain POINTS — a long segment between two
         // legal points sweeps across the board unconstrained. Resampling at
-        // ~0.4mm makes point coverage approximate segment coverage.
-        let densify = |pts: &[Vec2]| -> Vec<Vec2> {
+        // ~0.4mm makes point coverage approximate segment coverage. Pins ride
+        // along on the original vertices.
+        let densify = |pts: &[Vec2], pin: &[bool]| -> (Vec<Vec2>, Vec<bool>) {
             let mut out = vec![pts[0]];
-            for w in pts.windows(2) {
+            let mut fix = vec![true];
+            for (k, w) in pts.windows(2).enumerate() {
                 let len = (w[1] - w[0]).length();
                 let n = (len / 0.4).ceil().max(1.0) as usize;
                 for i in 1..=n {
                     let t = i as f64 / n as f64;
                     out.push(w[0] + (w[1] - w[0]).scale(t));
+                    fix.push(i == n && pin[k + 1]);
                 }
             }
-            out
+            (out, fix)
         };
-        let p_pts = densify(&p_raw);
-        let n_pts = densify(&n_raw);
+        let (p_pts, p_fix) = densify(&p_aug, &p_pin);
+        let (n_pts, n_fix) = densify(&n_aug, &n_pin);
         let run_w = p_w.max(n_w);
         let plen: f64 = p_pts
             .windows(2)
@@ -906,10 +1036,11 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
             continue; // already matched, or no interior freedom
         }
         report.attempted += 1;
+        report.pins += n_pins;
         let pair_t0 = std::time::Instant::now();
         log::debug!(
             target: "descent_stats",
-            "pair={pn} attempt skew={:.3} pts={}/{} same_layer={} extra={:.2}/{:.2}",
+            "pair={pn} attempt skew={:.3} pts={}/{} pins={n_pins} same_layer={} extra={:.2}/{:.2}",
             (plen - nlen).abs(),
             p_pts.len(),
             n_pts.len(),
@@ -1135,9 +1266,10 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
         // are hard, so the cushion only has to clear the predicate).
         let twin_required = (pl == nlayer).then_some(twin_edge + (p_w + n_w) / 2.0 + 0.01);
 
-        let Some(mined) = descend_pair_mined(
+        let Some(mined) = descend_pair_mined_pinned(
             &p_pts,
             &n_pts,
+            Some((&p_fix, &n_fix)),
             extra_p,
             extra_n,
             pl == nlayer,
@@ -1221,8 +1353,8 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
             .into_iter()
             .map(|tol| {
                 (
-                    merge_collinear(&r.p_pts, tol),
-                    merge_collinear(&r.n_pts, tol),
+                    merge_collinear_pinned(&r.p_pts, &p_fix, tol),
+                    merge_collinear_pinned(&r.n_pts, &n_fix, tol),
                     tol,
                 )
             })
@@ -1238,6 +1370,26 @@ fn descend_board_inner(pcb: &mut Pcb, iters: usize, solver: DescentSolver) -> De
         );
         replace_run(&mut work2, pn, pl, &p_raw, &cp, p_w);
         replace_run(&mut work2, nn, nlayer, &n_raw, &cn, n_w);
+        // M12 connectivity gate (fail-closed): the oracle judges clearance
+        // only, so it would accept a rewrite that slid copper off a stub, via
+        // or pad of its own net. Judge each leg's same-net component count
+        // with DRC's own connectivity and reject any increase.
+        let split = [pn, nn].into_iter().filter(|_| guards.gate).find(|net| {
+            crate::drc::net_graph(&work2, net).components
+                > crate::drc::net_graph(pcb, net).components
+        });
+        if let Some(net) = split {
+            report.rejected += 1;
+            report.rejected_connectivity += 1;
+            log::debug!(
+                target: "descent_stats",
+                "pair={pn} reject=connectivity net={net} rounds={} cuts={} ms={:.0}",
+                mined.rounds,
+                mined.cuts,
+                pair_t0.elapsed().as_secs_f64() * 1e3
+            );
+            continue;
+        }
         *pcb = work2;
         report.tuned += 1;
         log::info!("descent: {pn} whole-net skew {before:.3} -> {after:.3} mm");
@@ -1288,6 +1440,83 @@ fn oracle_board(
         source: None,
     }));
     b
+}
+
+/// Interior attachment points of `run` (a chain on `net`/`layer`): every
+/// same-net touch between a run segment and copper OFF the run, by DRC's
+/// own connectivity ([`crate::drc::net_graph`]). Returns the run with each
+/// attachment inserted as a vertex (projected onto its segment; snapped to
+/// an existing vertex within 1 um) and the per-vertex pin mask.
+fn pin_attachments(pcb: &Pcb, net: &str, layer: PcbLayer, run: &[Vec2]) -> (Vec<Vec2>, Vec<bool>) {
+    let g = crate::drc::net_graph(pcb, net);
+    let seg_of = |t: &Trace| {
+        run.windows(2).position(|w| {
+            (t.start - w[0]).length() < 1e-6 && (t.end - w[1]).length() < 1e-6
+                || (t.start - w[1]).length() < 1e-6 && (t.end - w[0]).length() < 1e-6
+        })
+    };
+    let on = |i: usize| {
+        let t = &pcb.traces[i];
+        if t.net == net && t.layer == layer {
+            seg_of(t)
+        } else {
+            None
+        }
+    };
+    let mut pin = vec![false; run.len()];
+    // Per segment: interior split parameters.
+    let mut cuts: Vec<Vec<f64>> = vec![Vec::new(); run.len().saturating_sub(1)];
+    for &(t, other, at) in &g.trace_contacts {
+        let Some(k) = on(t) else { continue };
+        if other.and_then(on).is_some() {
+            continue; // the chain touching itself
+        }
+        let (a, b) = (run[k], run[k + 1]);
+        let ab = b - a;
+        let l2 = ab.x * ab.x + ab.y * ab.y;
+        let u = if l2 > 0.0 {
+            (((at.x - a.x) * ab.x + (at.y - a.y) * ab.y) / l2).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let len = l2.sqrt();
+        if u * len < 1e-3 {
+            pin[k] = true;
+        } else if (1.0 - u) * len < 1e-3 {
+            pin[k + 1] = true;
+        } else {
+            cuts[k].push(u);
+        }
+    }
+    let mut out = vec![run[0]];
+    let mut fix = vec![pin[0]];
+    for k in 0..run.len() - 1 {
+        let mut us = std::mem::take(&mut cuts[k]);
+        us.sort_by(|x, y| x.total_cmp(y));
+        us.dedup_by(|x, y| (*x - *y).abs() < 1e-6);
+        for u in us {
+            out.push(run[k] + (run[k + 1] - run[k]).scale(u));
+            fix.push(true);
+        }
+        out.push(run[k + 1]);
+        fix.push(pin[k + 1]);
+    }
+    (out, fix)
+}
+
+/// [`merge_collinear`] that never drops a pinned point: each stretch
+/// between consecutive pins is merged on its own.
+fn merge_collinear_pinned(pts: &[Vec2], fix: &[bool], tol: f64) -> Vec<Vec2> {
+    let mut out: Vec<Vec2> = Vec::new();
+    let mut start = 0usize;
+    for k in 1..pts.len() {
+        if fix[k] || k + 1 == pts.len() {
+            let m = merge_collinear(&pts[start..=k], tol);
+            out.extend(m.into_iter().skip(usize::from(!out.is_empty())));
+            start = k;
+        }
+    }
+    out
 }
 
 /// Drop interior points of `pts` that lie within `tol` of the chord
@@ -1835,6 +2064,128 @@ mod tests {
             let (r, t) = run();
             assert_eq!(r, r0);
             assert!(t == t0, "descent output differs between identical runs");
+        }
+    }
+
+    /// M12: other same-net copper attached mid-run (a via + back-layer
+    /// stub at an interior DM vertex, a T stub into the interior of a DP
+    /// segment) must stay attached. With both guards off the descent slides
+    /// the run off them (proving the fixture bites); the gate alone rejects
+    /// that result; pins alone keep it connected; the default does both.
+    #[test]
+    fn descent_never_detaches_mid_run_attachments() {
+        use vcad_ir::ecad::*;
+        let pad = |num: &str, x: f64, y: f64, net: &str, layer: PcbLayer| Pad {
+            number: num.into(),
+            pad_type: PadType::SMD,
+            shape: PadShape::Rect {
+                width: 0.2,
+                height: 0.2,
+            },
+            position: Vec2::new(x, y),
+            rotation: 0.0,
+            drill: None,
+            net: Some(net.into()),
+            layers: vec![layer],
+        };
+        let tr = |net: &str, a: (f64, f64), b: (f64, f64), layer: PcbLayer| Trace {
+            start: Vec2::new(a.0, a.1),
+            end: Vec2::new(b.0, b.1),
+            width: 0.1,
+            layer,
+            net: net.into(),
+            source: None,
+        };
+        let mut pcb: Pcb = serde_json::from_str(
+            r#"{"outline":{"vertices":[{"x":0,"y":0},{"x":30,"y":0},{"x":30,"y":30},{"x":0,"y":30}],"cutouts":[],"thickness":1.6},
+                "stackup":{"layers":[]},
+                "rules":{"defaultRules":{"name":"Default","traceWidth":0.1,"clearance":0.1,
+                         "viaDiameter":0.4,"viaDrill":0.2},
+                         "edgeClearance":0.3,"holeToHole":0.25,"minAnnularRing":0.1,"minDrill":0.2}}"#,
+        )
+        .expect("minimal board");
+        let f = PcbLayer::FCu;
+        let b = PcbLayer::BCu;
+        pcb.footprints = vec![Footprint {
+            reference: "J1".into(),
+            value: "usb".into(),
+            footprint_name: "test".into(),
+            position: Vec2::new(0.0, 0.0),
+            rotation: 0.0,
+            front: true,
+            pads: vec![
+                pad("1", 2.0, 10.0, "USB_DP", f),
+                pad("2", 2.0, 10.6, "USB_DM", f),
+                pad("3", 22.0, 10.0, "USB_DP", f),
+                pad("4", 22.0, 10.6, "USB_DM", f),
+                pad("5", 7.0, 20.0, "USB_DM", b),
+                pad("6", 8.0, 7.0, "USB_DP", f),
+            ],
+            graphics: vec![],
+            model_3d: None,
+            properties: Default::default(),
+        }];
+        pcb.traces = vec![
+            tr("USB_DP", (2.0, 10.0), (12.0, 10.0), f),
+            tr("USB_DP", (12.0, 10.0), (22.0, 10.0), f),
+            tr("USB_DM", (2.0, 10.6), (7.0, 11.6), f),
+            tr("USB_DM", (7.0, 11.6), (12.0, 10.6), f),
+            tr("USB_DM", (12.0, 10.6), (17.0, 11.6), f),
+            tr("USB_DM", (17.0, 11.6), (22.0, 10.6), f),
+            // T into the interior of DP's first segment.
+            tr("USB_DP", (8.0, 10.0), (8.0, 7.0), f),
+            // Via at an interior DM vertex, stub on the back.
+            tr("USB_DM", (7.0, 11.6), (7.0, 20.0), b),
+            tr("OTHER", (2.0, 13.0), (22.0, 13.0), f),
+        ];
+        pcb.vias = vec![Via {
+            position: Vec2::new(7.0, 11.6),
+            diameter: 0.3,
+            drill: 0.15,
+            start_layer: f,
+            end_layer: b,
+            net: "USB_DM".into(),
+            source: None,
+        }];
+        let comps = |p: &Pcb| {
+            (
+                crate::drc::net_graph(p, "USB_DP").components,
+                crate::drc::net_graph(p, "USB_DM").components,
+            )
+        };
+        assert_eq!(comps(&pcb), (1, 1), "fixture starts connected");
+        let run = |guards: Guards| {
+            let mut out = pcb.clone();
+            let r = descend_board_guarded(&mut out, 400, DescentSolver::default(), guards);
+            (r, comps(&out))
+        };
+        let (r, c) = run(Guards {
+            pin: false,
+            gate: false,
+        });
+        assert_eq!(r.tuned, 1, "unguarded descent must commit: {r:?}");
+        assert_ne!(
+            c,
+            (1, 1),
+            "fixture is vacuous: unguarded descent kept both nets whole"
+        );
+        let (r, c) = run(Guards {
+            pin: false,
+            gate: true,
+        });
+        assert_eq!(c, (1, 1), "gate let a split through: {r:?}");
+        assert_eq!((r.tuned, r.rejected_connectivity), (0, 1), "{r:?}");
+        for guards in [
+            Guards {
+                pin: true,
+                gate: false,
+            },
+            Guards::default(),
+        ] {
+            let (r, c) = run(guards);
+            assert_eq!(c, (1, 1), "{guards:?} split a net: {r:?}");
+            assert!(r.pins >= 2, "{r:?}");
+            assert_eq!(r.rejected_connectivity, 0, "{r:?}");
         }
     }
 
