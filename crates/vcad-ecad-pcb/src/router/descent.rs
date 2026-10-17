@@ -1286,13 +1286,18 @@ fn descend_board_inner(
                         }
                         if !found {
                             for &(a, b, hw) in statics.iter() {
+                                // KiCad parity: a twin via (zero-length
+                                // static) is uncoupled copper and is mined
+                                // at the normal clearance, not the pair gap.
+                                let edge = if a == b { clearance } else { twin_edge };
+                                let need_here = edge - 0.005 + (w + other_w) / 2.0;
                                 if seg_seg_dist_f64(seg[0], seg[1], a, b)
-                                    < need - other_w / 2.0 + hw
+                                    < need_here - other_w / 2.0 + hw
                                 {
                                     bad.push(DescentObstacle {
                                         a,
                                         b,
-                                        required: twin_edge + run_w / 2.0 + hw + 0.05,
+                                        required: edge + run_w / 2.0 + hw + 0.05,
                                     });
                                 }
                             }
@@ -1709,8 +1714,11 @@ mod tests {
     /// too. The lax session passed this geometry (HDMI0.TX2 on CM5 mode B).
     #[test]
     fn oracle_scores_leg_to_twin_via_like_drc() {
-        let mut pcb: Pcb = serde_json::from_str(
-            r#"{"outline":{"vertices":[],"cutouts":[],"thickness":1.6},
+        // KiCad parity: a twin via gets normal clearance (0.08), not the pair
+        // gap; coupled segments still need the gap. DRC and oracle agree on all.
+        let board = |via_y: f64, twin_seg_y: Option<f64>| -> Pcb {
+            let mut pcb: Pcb = serde_json::from_str(
+                r#"{"outline":{"vertices":[],"cutouts":[],"thickness":1.6},
                 "stackup":{"layers":[]},
                 "rules":{"defaultRules":{"name":"Default","traceWidth":0.1,"clearance":0.08,
                          "viaDiameter":0.21,"viaDrill":0.12},
@@ -1718,45 +1726,61 @@ mod tests {
                            "viaDiameter":0.21,"viaDrill":0.12,"diffPairGap":0.25,"diffPairWidth":0.2}],
                          "netClassAssignments":{"diff-pair":["SIG_P","SIG_N"]},
                          "edgeClearance":0.3,"holeToHole":0.0,"minAnnularRing":0.0,"minDrill":0.0}}"#,
-        )
-        .expect("board");
-        pcb.traces.push(Trace {
-            start: Vec2::new(0.0, 0.0),
-            end: Vec2::new(10.0, 0.0),
-            width: 0.2,
-            layer: PcbLayer::FCu,
-            net: "SIG_P".into(),
-            source: None,
-        });
-        pcb.vias.push(vcad_ir::ecad::Via {
-            position: Vec2::new(5.0, 0.37),
-            diameter: 0.21,
-            drill: 0.12,
-            start_layer: PcbLayer::FCu,
-            end_layer: PcbLayer::In1Cu,
-            net: "SIG_N".into(),
-            source: None,
-        });
-        let drc_flags = crate::drc::check_drc(&pcb)
-            .iter()
-            .any(|v| v.rule == crate::drc::DrcRuleType::Clearance && v.message.contains("SIG_N"));
-        assert!(drc_flags, "DRC scores the twin via at the pair gap");
+            )
+            .expect("board");
+            pcb.vias.push(vcad_ir::ecad::Via {
+                position: Vec2::new(5.0, via_y),
+                diameter: 0.21,
+                drill: 0.12,
+                start_layer: PcbLayer::FCu,
+                end_layer: PcbLayer::In1Cu,
+                net: "SIG_N".into(),
+                source: None,
+            });
+            if let Some(y) = twin_seg_y {
+                pcb.traces.push(Trace {
+                    start: Vec2::new(0.0, y),
+                    end: Vec2::new(10.0, y),
+                    width: 0.2,
+                    layer: PcbLayer::FCu,
+                    net: "SIG_N".into(),
+                    source: None,
+                });
+            }
+            pcb
+        };
         let leg = crate::spatial::CopperGeom::Segment {
             a: Vec2::new(0.0, 0.0),
             b: Vec2::new(10.0, 0.0),
             half_w: 0.1,
         };
-        let mut board = pcb.clone();
-        board.traces.clear();
-        let probe = oracle_session(&board).probe(&leg, PcbLayer::FCu, "SIG_P", 0.08);
-        assert!(!probe.legal, "oracle must agree with DRC");
-        let lax = crate::session::RouteSession::from_pcb(&board).probe(
-            &leg,
-            PcbLayer::FCu,
-            "SIG_P",
-            0.08,
-        );
-        assert!(lax.legal, "the lax session is the disagreement this pins");
+        let judge = |b: &Pcb| {
+            let mut with = b.clone();
+            with.traces.push(Trace {
+                start: Vec2::new(0.0, 0.0),
+                end: Vec2::new(10.0, 0.0),
+                width: 0.2,
+                layer: PcbLayer::FCu,
+                net: "SIG_P".into(),
+                source: None,
+            });
+            let drc = crate::drc::check_drc(&with).iter().any(|v| {
+                v.rule == crate::drc::DrcRuleType::Clearance && v.message.contains("SIG_N")
+            });
+            let oracle = !oracle_session(b)
+                .probe(&leg, PcbLayer::FCu, "SIG_P", 0.08)
+                .legal;
+            assert_eq!(drc, oracle, "oracle must agree with DRC");
+            drc
+        };
+        // Via edge 0.165 mm from the leg: above normal clearance -> passes.
+        assert!(!judge(&board(0.37, None)));
+        // Via edge 0.045 mm: below normal clearance -> still fails.
+        assert!(judge(&board(0.25, None)));
+        // Coupled twin segment at 0.15 mm edge gap (< 0.245): still fails.
+        assert!(judge(&board(5.0, Some(0.35))));
+        // ...and at the declared gap it passes.
+        assert!(!judge(&board(5.0, Some(0.45))));
     }
 
     /// M11: collinear runs collapse, bends survive, nothing moves > tol.

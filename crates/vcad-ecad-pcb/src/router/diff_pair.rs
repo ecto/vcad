@@ -371,7 +371,10 @@ mod tests {
                 class_rules: vec![NetClassRules {
                     name: "USB".into(),
                     trace_width: 0.2,
-                    clearance: 0.2,
+                    // <= the gap: under KiCad parity a twin pad is uncoupled
+                    // copper at normal clearance, so a class clearance above
+                    // the gap makes the pad entry itself illegal.
+                    clearance: 0.15,
                     via_diameter: 0.8,
                     via_drill: 0.4,
                     diff_pair_gap: Some(0.15),

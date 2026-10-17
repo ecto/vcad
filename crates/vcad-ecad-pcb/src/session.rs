@@ -895,7 +895,12 @@ impl RouteSession {
                     let strict = self.strict_pair_coupling;
                     let leg = |g: &CopperGeom| match g {
                         CopperGeom::Segment { half_w, .. } => 2.0 * half_w >= leg_w - 0.01,
-                        _ => strict,
+                        // KiCad parity: non-segment twin copper is never
+                        // coupled (matches drc::pair_aware_clearance_w).
+                        _ => {
+                            let _ = strict;
+                            false
+                        }
                     };
                     if leg(geom) && leg(&e.geom) && !self.in_pair_breakout(geom, &e.geom, net, twin)
                     {

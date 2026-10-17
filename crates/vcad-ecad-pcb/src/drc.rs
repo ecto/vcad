@@ -3366,7 +3366,12 @@ fn pair_aware_clearance_w(
     let Some(&(gap, leg_w)) = dp_map.get(&key) else {
         return fallback;
     };
-    let is_leg = |w: Option<f64>| w.map(|w| w >= leg_w - 0.01).unwrap_or(true);
+    // KiCad parity (deliberate, user-approved 2026-10-17, revisitable): the
+    // diff-pair gap constrains COUPLED SEGMENTS only. Copper with no width of
+    // its own — a twin's via annulus, a pad — is not leg copper and gets the
+    // normal same-class clearance. (Previously a via counted as a leg, which
+    // made every pair layer-transition via pair DRC-illegal.)
+    let is_leg = |w: Option<f64>| w.is_some_and(|w| w >= leg_w - 0.01);
     if !is_leg(w_a) || !is_leg(w_b) {
         return fallback;
     }
