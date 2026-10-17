@@ -19,3 +19,10 @@ export const PCB_LAYERS: readonly PcbLayer[] = [
   "FFab", "BFab", "FCrtYd", "BCrtYd",
   "EdgeCuts", "UserDrawings", "UserComments",
 ];
+
+/** Every copper layer, in PHYSICAL stack order top → bottom (mirrors Rust
+ *  `PcbLayer::COPPER_STACK`). Use this for via-span ordering — PCB_LAYERS
+ *  lists BCu second, so indexing it treats BCu as adjacent to FCu. */
+export const COPPER_STACK: readonly PcbLayer[] = [
+  "FCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu", "In7Cu", "In8Cu", "BCu",
+];

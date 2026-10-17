@@ -19,6 +19,8 @@ fn layer_z_base(layer: PcbLayer) -> f64 {
         PcbLayer::In4Cu => 0.0,
         PcbLayer::In5Cu => -0.2,
         PcbLayer::In6Cu => -0.4,
+        PcbLayer::In7Cu => -0.53,
+        PcbLayer::In8Cu => -0.66,
         PcbLayer::BCu => -0.8,
         PcbLayer::FSilkS => 0.9,
         PcbLayer::BSilkS => -0.9,
@@ -107,16 +109,7 @@ pub fn world_to_pcb(x: f64, y: f64, grid_size: f64, snap: bool) -> Vec2 {
 // ============================================================================
 
 /// Copper layer ordering for Z offset computation.
-const COPPER_LAYER_ORDER: [PcbLayer; 8] = [
-    PcbLayer::FCu,
-    PcbLayer::In1Cu,
-    PcbLayer::In2Cu,
-    PcbLayer::In3Cu,
-    PcbLayer::In4Cu,
-    PcbLayer::In5Cu,
-    PcbLayer::In6Cu,
-    PcbLayer::BCu,
-];
+const COPPER_LAYER_ORDER: [PcbLayer; 10] = PcbLayer::COPPER_STACK;
 
 /// Copper layer index for consistent ordering.
 pub fn copper_layer_index(layer: PcbLayer) -> usize {
@@ -273,7 +266,8 @@ mod tests {
     #[test]
     fn copper_layer_ordering() {
         assert_eq!(copper_layer_index(PcbLayer::FCu), 0);
-        assert_eq!(copper_layer_index(PcbLayer::BCu), 7);
+        assert_eq!(copper_layer_index(PcbLayer::In8Cu), 8);
+        assert_eq!(copper_layer_index(PcbLayer::BCu), 9);
         assert_eq!(copper_layer_index(PcbLayer::FSilkS), 99);
     }
 }

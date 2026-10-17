@@ -1278,18 +1278,7 @@ fn pad_min_dimension(pad: &Pad) -> f64 {
 /// In7/In8 segment was a separate `NetIslands` fragment (1575 phantom
 /// islands), and a descent that rewrote an In7 run into more segments
 /// "added" exactly that many disjoint fragments.
-const COPPER_STACK: [PcbLayer; 10] = [
-    PcbLayer::FCu,
-    PcbLayer::In1Cu,
-    PcbLayer::In2Cu,
-    PcbLayer::In3Cu,
-    PcbLayer::In4Cu,
-    PcbLayer::In5Cu,
-    PcbLayer::In6Cu,
-    PcbLayer::In7Cu,
-    PcbLayer::In8Cu,
-    PcbLayer::BCu,
-];
+const COPPER_STACK: [PcbLayer; 10] = PcbLayer::COPPER_STACK;
 
 /// Bitmask of copper layers between `start` and `end` (inclusive) in the
 /// physical stack. Used so a via bridges every layer it spans.

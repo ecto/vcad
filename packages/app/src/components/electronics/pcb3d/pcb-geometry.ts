@@ -27,6 +27,8 @@ const COPPER_LAYER_ORDER: PcbLayer[] = [
   "In4Cu",
   "In5Cu",
   "In6Cu",
+  "In7Cu",
+  "In8Cu",
   "BCu",
 ];
 
@@ -38,6 +40,8 @@ const LAYER_Z: Record<string, number> = {
   In4Cu: 0.0,
   In5Cu: -0.2,
   In6Cu: -0.4,
+  In7Cu: -0.53,
+  In8Cu: -0.66,
   BCu: -0.8,
   FSilkS: 0.9,
   BSilkS: -0.9,

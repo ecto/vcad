@@ -1172,6 +1172,8 @@ const COPPER_LAYERS = [
   "In4Cu",
   "In5Cu",
   "In6Cu",
+  "In7Cu",
+  "In8Cu",
   "BCu",
 ] as const;
 

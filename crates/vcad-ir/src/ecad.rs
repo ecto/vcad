@@ -364,6 +364,25 @@ pub enum PcbLayer {
 }
 
 impl PcbLayer {
+    /// Every copper layer the IR can represent, ordered top → bottom.
+    ///
+    /// The single source of truth for copper-stack enumeration: DRC, DFM and
+    /// geometry all derive their layer masks / Z order from this. Hand-copied
+    /// lists drifted (In7Cu/In8Cu went missing in three places, so a 10-layer
+    /// board's In7/In8 copper touched nothing).
+    pub const COPPER_STACK: [PcbLayer; 10] = [
+        PcbLayer::FCu,
+        PcbLayer::In1Cu,
+        PcbLayer::In2Cu,
+        PcbLayer::In3Cu,
+        PcbLayer::In4Cu,
+        PcbLayer::In5Cu,
+        PcbLayer::In6Cu,
+        PcbLayer::In7Cu,
+        PcbLayer::In8Cu,
+        PcbLayer::BCu,
+    ];
+
     /// Returns true if this is a copper layer.
     pub fn is_copper(&self) -> bool {
         matches!(
@@ -1290,6 +1309,59 @@ mod tests {
         assert!(!PcbLayer::FCu.spanned_by(PcbLayer::In1Cu, PcbLayer::In3Cu));
         // Non-copper is never spanned.
         assert!(!PcbLayer::FMask.spanned_by(PcbLayer::FCu, PcbLayer::BCu));
+    }
+
+    #[test]
+    fn copper_stack_lists_every_copper_layer_in_order() {
+        use PcbLayer::*;
+        // Exhaustive match: adding a PcbLayer variant breaks this compile,
+        // forcing a decision about COPPER_STACK.
+        fn all(l: PcbLayer) -> PcbLayer {
+            match l {
+                FCu | BCu | In1Cu | In2Cu | In3Cu | In4Cu | In5Cu | In6Cu | In7Cu | In8Cu
+                | FSilkS | BSilkS | FMask | BMask | FPaste | BPaste | FFab | BFab | FCrtYd
+                | BCrtYd | EdgeCuts | UserDrawings | UserComments => l,
+            }
+        }
+        let every = [
+            FCu,
+            BCu,
+            In1Cu,
+            In2Cu,
+            In3Cu,
+            In4Cu,
+            In5Cu,
+            In6Cu,
+            In7Cu,
+            In8Cu,
+            FSilkS,
+            BSilkS,
+            FMask,
+            BMask,
+            FPaste,
+            BPaste,
+            FFab,
+            BFab,
+            FCrtYd,
+            BCrtYd,
+            EdgeCuts,
+            UserDrawings,
+            UserComments,
+        ]
+        .map(all);
+        let copper: Vec<_> = every.iter().filter(|l| l.is_copper()).collect();
+        assert_eq!(copper.len(), PcbLayer::COPPER_STACK.len());
+        for l in copper {
+            assert!(PcbLayer::COPPER_STACK.contains(l), "{l:?} missing");
+        }
+        let pos: Vec<_> = PcbLayer::COPPER_STACK
+            .iter()
+            .map(|l| l.copper_position().unwrap())
+            .collect();
+        assert!(
+            pos.windows(2).all(|w| w[0] < w[1]),
+            "not top→bottom: {pos:?}"
+        );
     }
 
     #[test]

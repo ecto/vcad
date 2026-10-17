@@ -105,7 +105,7 @@ import { emClaim } from "./em-claims.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
-import { PCB_LAYERS } from "./pcb-layers.js";
+import { COPPER_STACK, PCB_LAYERS } from "./pcb-layers.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 import { bundleBytes, storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
@@ -312,9 +312,7 @@ function ecadUnverifiable(
 const PCB_LAYER_SET: ReadonlySet<string> = new Set(PCB_LAYERS);
 
 /** Copper layers, in board order — the subset traces/vias/zones/coils sit on. */
-const COPPER_LAYERS: readonly PcbLayer[] = [
-  "FCu", "BCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu",
-];
+const COPPER_LAYERS: readonly PcbLayer[] = COPPER_STACK;
 
 /** Fast membership test for copper layers. */
 const COPPER_LAYER_SET: ReadonlySet<string> = new Set(COPPER_LAYERS);
