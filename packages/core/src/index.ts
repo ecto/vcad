@@ -369,3 +369,4 @@ export type {
   ChangelogCategory,
 } from "./changelog/index.js";
 export { sketchConstraintToDesign, mergeSketchConstraints, referencesSketchNode } from "./sketch-constraint-persist.js";
+export * from "./utils/pcb-layers.js";
