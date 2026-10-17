@@ -394,7 +394,6 @@ pub struct BoardSpec {
 /// JLC-class 4-layer defaults: 0.15 mm trace / clearance, 0.45 / 0.25 mm vias.
 pub fn default_rules() -> DesignRules {
     DesignRules {
-        microvia_size: None,
         inferred_floors: Vec::new(),
         min_microvia_drill: 0.1,
         min_microvia_diameter: 0.2,

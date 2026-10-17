@@ -818,16 +818,6 @@ pub struct DesignRules {
     )]
     #[cfg_attr(feature = "ts-rs", ts(rename = "inferredFloors"))]
     pub inferred_floors: Vec<String>,
-    /// Microvia geometry `(diameter, drill)` the router uses for single
-    /// adjacent-layer hops; `default_rules` via geometry is then the
-    /// through/blind via. `None`: one via size for everything.
-    #[serde(
-        rename = "microviaSize",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    #[cfg_attr(feature = "ts-rs", ts(rename = "microviaSize", optional))]
-    pub microvia_size: Option<(f64, f64)>,
 }
 
 /// Default neck region length from a pad's copper edge (mm) — the same
@@ -1527,7 +1517,6 @@ mod tests {
                 },
             ],
             rules: DesignRules {
-                microvia_size: None,
                 inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,

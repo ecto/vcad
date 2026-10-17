@@ -1541,13 +1541,7 @@ minMicroviaDiameter: number,
  * that were INFERRED from the board's own copper because the source
  * file authored none. DRC findings against an inferred floor say so.
  */
-inferredFloors: Array<string>, 
-/**
- * Microvia geometry `(diameter, drill)` the router uses for single
- * adjacent-layer hops; `default_rules` via geometry is then the
- * through/blind via. `None`: one via size for everything.
- */
-microviaSize?: [number, number], };
+inferredFloors: Array<string>, };
 
 /**
  * A vcad document — the `.vcad` file format.

@@ -305,7 +305,6 @@ fn sample_board() -> Pcb {
         stackup: LayerStackup { layers: vec![] },
         nets,
         rules: DesignRules {
-            microvia_size: None,
             inferred_floors: Vec::new(),
             min_microvia_drill: 0.1,
             min_microvia_diameter: 0.2,
@@ -343,7 +342,6 @@ fn sample_board() -> Pcb {
 
 fn base_rules() -> DesignRules {
     DesignRules {
-        microvia_size: None,
         inferred_floors: Vec::new(),
         min_microvia_drill: 0.1,
         min_microvia_diameter: 0.2,

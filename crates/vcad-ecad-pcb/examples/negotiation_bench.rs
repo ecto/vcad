@@ -98,7 +98,6 @@ fn board(w: f64, h: f64, footprints: Vec<Footprint>, keepouts: Vec<Keepout>) -> 
         },
         nets: vec![],
         rules: DesignRules {
-            microvia_size: None,
             inferred_floors: Vec::new(),
             min_microvia_drill: 0.1,
             min_microvia_diameter: 0.2,

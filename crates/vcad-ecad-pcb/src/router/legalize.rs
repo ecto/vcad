@@ -855,7 +855,6 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
-                microvia_size: None,
                 inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
@@ -891,7 +890,6 @@ mod tests {
 
     fn rvia(x: f64, y: f64, net: &str) -> RoutedVia {
         RoutedVia {
-            size: None,
             via_type: None,
             position: Vec2::new(x, y),
             net: net.into(),
@@ -1204,7 +1202,6 @@ mod tests {
             .vias
             .iter()
             .map(|v| RoutedVia {
-                size: None,
                 via_type: None,
                 position: v.position,
                 net: v.net.clone(),

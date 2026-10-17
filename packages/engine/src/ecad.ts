@@ -869,8 +869,6 @@ export interface RoutedVia {
    *  when the board's via meets the microvia minimums); absent on older
    *  kernels. */
   via_type?: "through" | "blind" | "micro" | null;
-  /** [diameter, drill] when not the board default (a microvia). */
-  size?: [number, number] | null;
 }
 
 /** Why a connection could not be routed, and where — so an agent or human can
