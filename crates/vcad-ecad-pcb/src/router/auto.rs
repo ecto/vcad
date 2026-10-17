@@ -448,7 +448,12 @@ pub fn route_all_with_opts(
     // Plane / split-plane layers (stackup roles, authored or inferred) carry
     // no signal: a trace there cuts the plane. Union with the caller's list.
     let mut no_route = opts.no_route_layers.clone();
-    for l in pcb.plane_layers() {
+    // Opt-in (`VCAD_ENFORCE_PLANES=1`): on the full CM5 enforcing the
+    // inferred roles (4 signal layers, as the human routes it) took split nets
+    // 34 -> 64 with today's router, so the default only REPORTS plane-layer
+    // signal (DRC PlaneLayerSignal) and still routes there.
+    let enforce = std::env::var("VCAD_ENFORCE_PLANES").as_deref() == Ok("1");
+    for l in pcb.plane_layers().into_iter().filter(|_| enforce) {
         if !no_route.contains(&l) {
             no_route.push(l);
         }
@@ -5682,7 +5687,15 @@ mod tests {
                 l.role = Some(vcad_ir::ecad::LayerRole::Plane { net: "GND".into() });
             }
         }
-        let r = route_all(&pcb0, 0.25, &[]);
+        let r = route_all_with_opts(
+            &pcb0,
+            0.25,
+            &[],
+            &RouteOptions {
+                no_route_layers: pcb0.plane_layers(),
+                ..Default::default()
+            },
+        );
         assert!(r.unrouted_nets.is_empty(), "{:?}", r.unrouted_nets);
         assert!(r.traces.iter().all(|t| t.layer != PcbLayer::In1Cu));
         super::super::maze::set_no_route_layers(&[]);
