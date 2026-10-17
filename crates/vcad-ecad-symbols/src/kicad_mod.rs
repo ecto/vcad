@@ -548,6 +548,35 @@ pub fn parse_footprint_file(path: &str) -> Result<FootprintLib, ParseError> {
     parse_footprint_lib(&contents)
 }
 
+/// Convex hull (Andrew's monotone chain), counter-clockwise.
+fn convex_hull(mut p: Vec<vcad_ir::Vec2>) -> Vec<vcad_ir::Vec2> {
+    p.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    p.dedup_by(|a, b| (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9);
+    if p.len() < 3 {
+        return p;
+    }
+    let cross = |o: vcad_ir::Vec2, a: vcad_ir::Vec2, b: vcad_ir::Vec2| {
+        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    };
+    let mut h: Vec<vcad_ir::Vec2> = Vec::new();
+    for pass in 0..2 {
+        let start = h.len();
+        let it: Box<dyn Iterator<Item = &vcad_ir::Vec2>> = if pass == 0 {
+            Box::new(p.iter())
+        } else {
+            Box::new(p.iter().rev())
+        };
+        for &q in it {
+            while h.len() >= start + 2 && cross(h[h.len() - 2], h[h.len() - 1], q) <= 0.0 {
+                h.pop();
+            }
+            h.push(q);
+        }
+        h.pop();
+    }
+    h
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -763,33 +792,4 @@ mod tests {
         let restored: FootprintLib = serde_json::from_str(&json).unwrap();
         assert_eq!(lib, restored);
     }
-}
-
-/// Convex hull (Andrew's monotone chain), counter-clockwise.
-fn convex_hull(mut p: Vec<vcad_ir::Vec2>) -> Vec<vcad_ir::Vec2> {
-    p.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
-    p.dedup_by(|a, b| (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9);
-    if p.len() < 3 {
-        return p;
-    }
-    let cross = |o: vcad_ir::Vec2, a: vcad_ir::Vec2, b: vcad_ir::Vec2| {
-        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
-    };
-    let mut h: Vec<vcad_ir::Vec2> = Vec::new();
-    for pass in 0..2 {
-        let start = h.len();
-        let it: Box<dyn Iterator<Item = &vcad_ir::Vec2>> = if pass == 0 {
-            Box::new(p.iter())
-        } else {
-            Box::new(p.iter().rev())
-        };
-        for &q in it {
-            while h.len() >= start + 2 && cross(h[h.len() - 2], h[h.len() - 1], q) <= 0.0 {
-                h.pop();
-            }
-            h.push(q);
-        }
-        h.pop();
-    }
-    h
 }
