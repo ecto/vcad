@@ -2964,6 +2964,9 @@ pub(crate) struct NetGraph {
     /// other node is also a trace (else a via/pad/pour), and `at` is the
     /// approximate contact point.
     pub trace_contacts: Vec<(usize, Option<usize>, Vec2)>,
+    /// `SameNetBypass` findings on this net, exactly as `check_drc` reports
+    /// them (same detector, same contacts).
+    pub bypasses: usize,
 }
 
 /// [`NetGraph`] for `net` on `pcb`.
@@ -3006,9 +3009,13 @@ pub(crate) fn net_graph(pcb: &Pcb, net: &str) -> NetGraph {
             trace_contacts.push((b, tr(c.i), c.at));
         }
     }
+    let mut bypass = Vec::new();
+    detect_same_net_bypass(&nodes, &net_ties, &contacts, &mut bypass);
+    let tag = format!("net '{net}'");
     NetGraph {
         components: roots.len(),
         trace_contacts,
+        bypasses: bypass.iter().filter(|v| v.message.contains(&tag)).count(),
     }
 }
 
@@ -5535,6 +5542,10 @@ mod tests {
             "the inner-via contact must be flagged, positions: {:?}",
             bypass.iter().map(|x| x.position).collect::<Vec<_>>()
         );
+        // The per-net graph (the descent's commit gate) counts the same
+        // findings the board DRC reports.
+        assert_eq!(net_graph(&pcb, "COIL").bypasses, bypass.len());
+        assert_eq!(net_graph(&pcb, "OTHER").bypasses, 0);
     }
 
     /// The sanctioned lead-out: the same spiral + inner via, but the lead

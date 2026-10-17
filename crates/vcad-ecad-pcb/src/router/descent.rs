@@ -1004,7 +1004,14 @@ fn descend_board_inner(
     // board, per net. Rebuilding full-board connectivity for every pour net
     // of every pair dominated the gate; the board only changes when a pair
     // is committed, so the cache is cleared exactly then.
-    let mut components_before: std::collections::HashMap<String, usize> = Default::default();
+    let mut components_before: std::collections::HashMap<String, (usize, usize)> =
+        Default::default();
+    let max_rounds: usize = std::env::var("VCAD_DESCENT_ROUNDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        // 8: on CM5 mode B, 4 rounds left 9 pairs at the budget; 8 tunes 25
+        // (vs 23) and 16 adds nothing (every reject is then no-new-cuts).
+        .unwrap_or(8);
     for (pn, nn) in &c.pairs {
         let (Some((pl, p_raw, extra_p, p_w)), Some((nlayer, mut n_raw, extra_n, n_w))) =
             (net_run(pcb, pn), net_run(pcb, nn))
@@ -1339,7 +1346,7 @@ fn descend_board_inner(
             &DescentWeights::default(),
             solver,
             iters,
-            4,
+            max_rounds,
             &oracle,
         ) else {
             log::debug!(target: "descent_stats", "pair={pn} reject=build-failed");
@@ -1360,7 +1367,7 @@ fn descend_board_inner(
                 mined.rounds,
                 mined.cuts,
                 pair_t0.elapsed().as_secs_f64() * 1e3,
-                if mined.rounds >= 4 { "round-budget" } else { "no-new-cuts" },
+                if mined.rounds >= max_rounds { "round-budget" } else { "no-new-cuts" },
                 mined.baseline_dirty > 0,
                 mined.baseline_dirty,
                 mined.final_dirty,
@@ -1456,11 +1463,17 @@ fn descend_board_inner(
                 gate_nets.push(z.net.as_str());
             }
         }
+        // Same pass also gates SameNetBypass: a leg folding back onto its
+        // own copper (a reversal the clearance oracle cannot see — same net)
+        // short-circuits the conductor between the contacts. Mode B at 8
+        // rounds added 3 (HDMI1.TX0_P, USB3-1.DM x2) before this gate.
         let split = gate_nets.into_iter().filter(|_| guards.gate).find(|net| {
-            let before = *components_before
-                .entry(net.to_string())
-                .or_insert_with(|| crate::drc::net_graph(pcb, net).components);
-            crate::drc::net_graph(&work2, net).components > before
+            let before = *components_before.entry(net.to_string()).or_insert_with(|| {
+                let g = crate::drc::net_graph(pcb, net);
+                (g.components, g.bypasses)
+            });
+            let g = crate::drc::net_graph(&work2, net);
+            g.components > before.0 || g.bypasses > before.1
         });
         if let Some(net) = split {
             report.rejected += 1;
