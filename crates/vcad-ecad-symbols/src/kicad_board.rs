@@ -107,6 +107,8 @@ pub fn copper_layers(n: usize) -> Vec<PcbLayer> {
         PcbLayer::In4Cu,
         PcbLayer::In5Cu,
         PcbLayer::In6Cu,
+        PcbLayer::In7Cu,
+        PcbLayer::In8Cu,
     ];
     let mut v = vec![PcbLayer::FCu];
     v.extend(inner.iter().take(n.saturating_sub(2)).copied());

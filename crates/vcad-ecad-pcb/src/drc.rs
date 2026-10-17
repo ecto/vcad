@@ -1271,7 +1271,7 @@ fn pad_min_dimension(pad: &Pad) -> f64 {
 // ============================================================================
 
 /// All copper layers, ordered top → bottom, for via span enumeration.
-const COPPER_STACK: [PcbLayer; 8] = [
+const COPPER_STACK: [PcbLayer; 10] = [
     PcbLayer::FCu,
     PcbLayer::In1Cu,
     PcbLayer::In2Cu,
@@ -1279,6 +1279,8 @@ const COPPER_STACK: [PcbLayer; 8] = [
     PcbLayer::In4Cu,
     PcbLayer::In5Cu,
     PcbLayer::In6Cu,
+    PcbLayer::In7Cu,
+    PcbLayer::In8Cu,
     PcbLayer::BCu,
 ];
 

@@ -724,8 +724,10 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
                 .map(|k| ctx.f64_val(&fields[k]))
                 .collect::<Result<_, _>>()?;
             let layers = ctx.f64_val(&fields[6])? as usize;
-            if ![2, 4, 6, 8].contains(&layers) {
-                return Err(format!("EcadBoard: {layers} copper layers (2, 4, 6 or 8)"));
+            if ![2, 4, 6, 8, 10].contains(&layers) {
+                return Err(format!(
+                    "EcadBoard: {layers} copper layers (2, 4, 6, 8 or 10)"
+                ));
             }
             ctx.board = Some(vcad_ecad_symbols::kicad_board::BoardSpec {
                 outline: vcad_ecad_symbols::kicad_board::rounded_rect(f[0], f[1], f[2], f[3], f[4]),
