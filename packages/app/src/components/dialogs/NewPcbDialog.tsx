@@ -33,7 +33,7 @@ export function NewPcbDialog({ open, onOpenChange, initialWidth, initialHeight }
   const [preset, setPreset] = useState<PresetId>("custom");
   const [width, setWidth] = useState(initialWidth ?? 50);
   const [height, setHeight] = useState(initialHeight ?? 30);
-  const [layers, setLayers] = useState<2 | 4 | 6>(2);
+  const [layers, setLayers] = useState<number>(2);
   const [thickness, setThickness] = useState(1.6);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [traceWidth, setTraceWidth] = useState(0.15);
@@ -163,8 +163,8 @@ export function NewPcbDialog({ open, onOpenChange, initialWidth, initialHeight }
           <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-col gap-1.5">
               <label className="text-xs text-text-muted">Layers</label>
-              <div className="grid grid-cols-3 gap-1">
-                {([2, 4, 6] as const).map((n) => (
+              <div className="grid grid-cols-5 gap-1">
+                {[2, 4, 6, 8, 10].map((n) => (
                   <button
                     key={n}
                     type="button"

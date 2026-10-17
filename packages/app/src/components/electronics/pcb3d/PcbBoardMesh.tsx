@@ -8,19 +8,13 @@
 import { useMemo } from "react";
 import * as THREE from "three";
 import type { Pcb } from "@vcad/ir";
+import { boardCopperLayers } from "@vcad/core";
 import { layerZOffset } from "./pcb-geometry";
 
 interface Props {
   pcb: Pcb;
   explosion: number;
 }
-
-/** Dielectric layer definitions between copper layers. */
-const DIELECTRIC_LAYERS = [
-  { name: "Core 1", top: "FCu", bottom: "In1Cu" },
-  { name: "Core 2", top: "In1Cu", bottom: "In2Cu" },
-  { name: "Core 3", top: "In2Cu", bottom: "BCu" },
-] as const;
 
 export function PcbBoardMesh({ pcb, explosion }: Props) {
   const boardShape = useMemo(() => {
@@ -52,6 +46,13 @@ export function PcbBoardMesh({ pcb, explosion }: Props) {
   }, [pcb.outline]);
 
   const thickness = pcb.outline.thickness;
+
+  // One dielectric slab between each adjacent pair of copper layers.
+  const copper = useMemo(() => boardCopperLayers(pcb), [pcb]);
+  const dielectrics = useMemo(
+    () => copper.slice(1).map((bottom, i) => ({ name: `Dielectric ${i + 1}`, top: copper[i]!, bottom })),
+    [copper],
+  );
 
   const mainGeometry = useMemo(() => {
     if (!boardShape) return null;
@@ -87,9 +88,9 @@ export function PcbBoardMesh({ pcb, explosion }: Props) {
       </mesh>
 
       {/* Dielectric slabs between copper layers (visible when exploded) */}
-      {explosion > 0 && slabGeometry && DIELECTRIC_LAYERS.map((dl) => {
-        const topZ = layerZOffset(dl.top, explosion);
-        const bottomZ = layerZOffset(dl.bottom, explosion);
+      {explosion > 0 && slabGeometry && dielectrics.map((dl) => {
+        const topZ = layerZOffset(dl.top, explosion, copper.length);
+        const bottomZ = layerZOffset(dl.bottom, explosion, copper.length);
         const midZ = (topZ + bottomZ) / 2;
         return (
           <mesh

@@ -5244,6 +5244,17 @@ describe("get_copper", () => {
     expect(out(await getCopper({ document_id: id, kind: "trace" })).total).toBe(1);
   });
 
+  it("a through via spans every inner layer, including In7Cu/In8Cu", async () => {
+    const id = await boardWithTwoResistors();
+    out(await addVia({ document_id: id, net: "MID", position: { x: 20, y: 10 } }));
+    for (const layer of ["In1Cu", "In4Cu", "In7Cu", "In8Cu"]) {
+      const res = out(await getCopper({ document_id: id, layer }));
+      expect(res.success).toBe(true);
+      expect(res.total).toBe(1);
+      expect(res.elements[0].kind).toBe("via");
+    }
+  });
+
   it("paginates with offset and reports the uncapped total", async () => {
     const id = await boardWithTwoResistors();
     for (let i = 0; i < 5; i++) {
