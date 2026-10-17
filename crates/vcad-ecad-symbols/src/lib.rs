@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 pub use altium::{parse_altium_ascii_pcb, parse_altium_pcbdoc, parse_altium_pcblib};
 pub use eagle_brd::parse_eagle_brd;
 pub use kicad_mod::{parse_footprint_lib, FootprintDef, FootprintLib, GraphicDef, PadDef};
-pub use kicad_pcb::parse_kicad_pcb;
+pub use kicad_pcb::{parse_kicad_pcb, parse_kicad_pcb_with_warnings};
 pub use kicad_sch::parse_kicad_sch;
 pub use kicad_sym::{parse_symbol_lib, Symbol, SymbolGraphic, SymbolLib, SymbolPin};
 pub use kicad_write::{
