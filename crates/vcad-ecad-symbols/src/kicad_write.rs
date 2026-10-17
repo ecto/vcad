@@ -304,7 +304,7 @@ fn write_kicad_pcb_impl(pcb: &Pcb, links: Option<&SchematicLinks>, with_project:
         write_arc(&mut e, a, &nets);
     }
     for v in &pcb.vias {
-        write_via(&mut e, v, &nets);
+        write_via(&mut e, v, &nets, &copper_layers(&pcb.stackup));
     }
     for z in &pcb.zones {
         write_zone(&mut e, z, &nets);
@@ -551,7 +551,7 @@ fn write_footprint(
         .properties
         .get("ref_layer")
         .map(String::as_str)
-        .unwrap_or("F.SilkS");
+        .unwrap_or(if fp.front { "F.SilkS" } else { "B.SilkS" });
     let ref_at = fp
         .properties
         .get("ref_at")
@@ -561,7 +561,13 @@ fn write_footprint(
         })
         .unwrap_or((0.0, 0.0));
     write_fp_property_at(e, "Reference", &fp.reference, ref_layer, art, ref_at);
-    write_fp_property(e, "Value", &fp.value, "F.Fab", art);
+    write_fp_property(
+        e,
+        "Value",
+        &fp.value,
+        if fp.front { "F.Fab" } else { "B.Fab" },
+        art,
+    );
 
     // Cross-probe linkage: point the footprint at its schematic symbol
     // instance (KiCad 9 root-sheet paths are "/<symbol-uuid>").
@@ -672,6 +678,17 @@ fn write_library_body(e: &mut Emitter, fp: &Footprint, src: &str, nets: &NetTabl
         .filter(|(_, kind)| kind == "smd")
         .map(|(n, _)| n)
         .collect();
+    // A back-side footprint keeps its library source but is written flipped,
+    // as KiCad stores one: front layers become back layers, local y mirrors
+    // and local angles negate (`kicad_board::flip_to_back` does the same to
+    // the IR the router sees).
+    let flipped: Vec<SExpr<'_>>;
+    let children: &[SExpr<'_>] = if fp.front {
+        children
+    } else {
+        flipped = children.iter().map(flip_sx).collect();
+        &flipped
+    };
     for child in children.iter().skip(2) {
         let tag = child.tag_name().unwrap_or("");
         let field = |c: &SExpr<'_>| {
@@ -775,6 +792,84 @@ fn write_library_body(e: &mut Emitter, fp: &Footprint, src: &str, nets: &NetTabl
     true
 }
 
+/// One library-footprint item as seen from the back (see `write_library_body`).
+fn flip_sx<'a>(x: &crate::sexpr::SExpr<'a>) -> crate::sexpr::SExpr<'a> {
+    use crate::sexpr::SExpr;
+    let leak = |s: String| SExpr::Atom(Box::leak(s.into_boxed_str()));
+    let side = |l: &str| -> String {
+        if let Some(r) = l.strip_prefix("F.") {
+            format!("B.{r}")
+        } else if let Some(r) = l.strip_prefix("B.") {
+            format!("F.{r}")
+        } else {
+            l.to_string()
+        }
+    };
+    match x {
+        SExpr::List(items) => {
+            let tag = x.tag_name().unwrap_or("");
+            let f = |i: usize| items.get(i).and_then(|v| v.as_f64());
+            match tag {
+                "at" | "start" | "end" | "center" | "mid" | "xy"
+                    if f(1).is_some() && f(2).is_some() =>
+                {
+                    // a list, not an atom: the pad writer reads (at x y a) back
+                    let mut v = vec![
+                        items[0].clone(),
+                        leak(num(f(1).unwrap())),
+                        leak(num(-f(2).unwrap())),
+                    ];
+                    if tag == "at" {
+                        if let Some(a) = f(3) {
+                            v.push(leak(num((-a).rem_euclid(360.0))));
+                        }
+                    }
+                    SExpr::List(v)
+                }
+                "layer" | "layers" => {
+                    let mut s = format!("({tag}");
+                    for it in items.iter().skip(1) {
+                        match it.as_str() {
+                            Some(l) => s.push_str(&format!(" {}", q(&side(l)))),
+                            None => {
+                                let mut t = String::new();
+                                sx_print(it, &mut t);
+                                s.push(' ');
+                                s.push_str(&t);
+                            }
+                        }
+                    }
+                    s.push(')');
+                    leak(s)
+                }
+                // text on the back reads mirrored
+                "effects" => {
+                    let mut v: Vec<SExpr<'a>> = Vec::new();
+                    let mut has = false;
+                    for it in items {
+                        if it.tag_name() == Some("justify") {
+                            has = true;
+                            let mut j: Vec<SExpr<'a>> = it.children().unwrap_or(&[]).to_vec();
+                            if !j.iter().any(|t| t.as_str() == Some("mirror")) {
+                                j.push(SExpr::Atom("mirror"));
+                            }
+                            v.push(SExpr::List(j));
+                        } else {
+                            v.push(flip_sx(it));
+                        }
+                    }
+                    if !has {
+                        v.push(SExpr::Atom("(justify mirror)"));
+                    }
+                    SExpr::List(v)
+                }
+                _ => SExpr::List(items.iter().map(flip_sx).collect()),
+            }
+        }
+        other => other.clone(),
+    }
+}
+
 fn write_fp_property(e: &mut Emitter, key: &str, value: &str, layer: &str, hidden: bool) {
     write_fp_property_at(e, key, value, layer, hidden, (0.0, 0.0));
 }
@@ -800,6 +895,9 @@ fn write_fp_property_at(
     e.line(5, "(size 1 1)");
     e.line(5, "(thickness 0.15)");
     e.line(4, ")");
+    if layer.starts_with("B.") {
+        e.line(4, "(justify mirror)"); // back-side text reads mirrored from the front
+    }
     e.line(3, ")");
     e.line(2, ")");
 }
@@ -1076,7 +1174,7 @@ fn write_arc(e: &mut Emitter, a: &TraceArc, nets: &NetTable) {
     e.line(1, ")");
 }
 
-fn write_via(e: &mut Emitter, v: &Via, nets: &NetTable) {
+fn write_via(e: &mut Emitter, v: &Via, nets: &NetTable, copper: &[PcbLayer]) {
     let uuid = e.uuid();
     // KiCad reads a via's span as (outer, inner) in stack order; handed the
     // pair reversed it falls back to a through-hole, which shorts every layer
@@ -1093,8 +1191,16 @@ fn write_via(e: &mut Emitter, v: &Via, nets: &NetTable) {
     // non-through tokens are `blind` (its BLIND_BURIED type, covering both
     // blind and buried) and `micro` — `buried` is not a token and makes the
     // board fail to load outright.
+    // A microvia is one dielectric deep from an outer layer (F.Cu-In1.Cu, or
+    // B.Cu and the inner layer above it): KiCad checks it against its own
+    // microvia size rules, not the via rules.
+    let idx = |l: PcbLayer| copper.iter().position(|&c| c == l);
+    let adjacent = matches!((idx(top), idx(bottom)), (Some(a), Some(b)) if b == a + 1);
+    let outer = top == PcbLayer::FCu || bottom == PcbLayer::BCu;
     if top == PcbLayer::FCu && bottom == PcbLayer::BCu {
         e.line(1, "(via");
+    } else if adjacent && outer {
+        e.line(1, "(via micro");
     } else {
         e.line(1, "(via blind");
     }

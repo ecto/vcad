@@ -53,6 +53,29 @@ fn through_only() -> bool {
     THROUGH_VIAS_ONLY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Microvia size `(diameter, drill)` for a via one dielectric deep from an
+/// outer layer (F.Cu-In1.Cu, or B.Cu and the inner layer above it) - the HDI
+/// via that fits inside a 0.4 mm BGA's pad. `None`: every via is the board's
+/// default size.
+static MICROVIA: std::sync::RwLock<Option<(f64, f64)>> = std::sync::RwLock::new(None);
+
+/// Size the router's microvias (see [`MICROVIA`]).
+pub fn set_microvia(size: Option<(f64, f64)>) {
+    *MICROVIA.write().unwrap() = size;
+}
+
+/// The microvia size, if one is set.
+pub fn microvia() -> Option<(f64, f64)> {
+    *MICROVIA.read().unwrap()
+}
+
+/// Whether a via between copper-stack indices `a` and `b` of `layers` (front
+/// to back) is a microvia: adjacent layers, one of them outer.
+pub fn is_microvia_span(layers: &[PcbLayer], a: usize, b: usize) -> bool {
+    let (lo, hi) = (a.min(b), a.max(b));
+    hi == lo + 1 && (lo == 0 || hi + 1 == layers.len())
+}
+
 /// Plane layers: no trace runs on them (a signal there cuts the plane into
 /// islands); vias still pass through. Empty by default.
 static NO_ROUTE_LAYERS: std::sync::RwLock<Vec<PcbLayer>> = std::sync::RwLock::new(Vec::new());
@@ -303,11 +326,13 @@ pub fn route_net_maze3d(
     // A via at `p` spanning layer indices `a..=b` must clear other-net
     // copper on every spanned layer (and only those — a microvia between
     // adjacent layers doesn't care about copper elsewhere in the stack).
+    let micro = microvia();
     let via_ok = |p: Vec2, a: usize, b: usize| -> bool {
-        let disc = CopperGeom::Disc {
-            center: p,
-            r: via_r,
+        let r = match micro {
+            Some((d, _)) if is_microvia_span(layers, a, b) => d / 2.0,
+            _ => via_r,
         };
+        let disc = CopperGeom::Disc { center: p, r };
         // The drill barrel is layer-independent: a blind/buried via must keep
         // the hole-to-hole rule against every other-net hole on the board, not
         // just the ones sharing its copper layers.
@@ -385,7 +410,9 @@ pub fn route_net_maze3d(
         if via_ok(center, lo, hi) {
             return Some(center);
         }
-        if !offgrid_vias {
+        // HDI boards bring their own fanout (vias in the BGA pads): no hunting
+        // for off-grid sites between balls, which costs 16 probes per span.
+        if !offgrid_vias || micro.is_some() {
             return None;
         }
         let r1 = grid.pitch / 3.0;
@@ -554,6 +581,12 @@ pub fn route_net_maze3d(
                 if lj == li {
                     continue;
                 }
+                // HDI: one dielectric per hop (microvia, or one buried step);
+                // a deep descent is a stack of hops at the same cell. 2 layer
+                // changes per node instead of nl-1, each probing one span.
+                if micro.is_some() && li.abs_diff(lj) != 1 {
+                    continue;
+                }
                 let nb = lj * plane + cell;
                 if closed[nb] || raster.state(cell, lj) == CELL_BLOCKED {
                     continue;
@@ -564,6 +597,11 @@ pub fn route_net_maze3d(
                     (li.min(lj), li.max(lj))
                 };
                 let key = cell * nl * nl + lo * nl + hi;
+                // the raster already knows a trace can't sit here on a spanned
+                // layer; a via (wider than a trace) can't either - no probe needed
+                if via_cache[key] < 0 && (lo..=hi).any(|l| raster.state(cell, l) == CELL_BLOCKED) {
+                    via_cache[key] = 0;
+                }
                 if via_cache[key] < 0 {
                     match find_via_site(grid.world(ix, iy), lo, hi) {
                         Some(p) => {
@@ -696,12 +734,19 @@ pub fn route_net_maze3d(
                 run.push(at);
             }
             flush_run(&mut run, layers[run_layer], &mut segments);
-            if vias
-                .last()
-                .map(|&(v, _, _)| dist(v, at) > 1e-9)
-                .unwrap_or(true)
-            {
-                vias.push((at, layers[lo], layers[hi]));
+            // consecutive hops at one point (HDI: F-In1 then In1-In3) are one
+            // stack: widen the via's span - skipping the second hop left an
+            // F-In1 via under a route that carries on on In3
+            match vias.last_mut() {
+                Some((v, a, b)) if dist(*v, at) <= 1e-9 => {
+                    let (ia, ib) = (
+                        layers.iter().position(|x| x == a).unwrap_or(lo),
+                        layers.iter().position(|x| x == b).unwrap_or(hi),
+                    );
+                    *a = layers[ia.min(lo)];
+                    *b = layers[ib.max(hi)];
+                }
+                _ => vias.push((at, layers[lo], layers[hi])),
             }
             run.push(at);
             run_layer = li;

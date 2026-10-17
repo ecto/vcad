@@ -55,6 +55,11 @@ pub struct PinField {
 }
 
 impl PinField {
+    /// Field bounding box (pad centers): min and max corners.
+    pub fn bbox(&self) -> (Vec2, Vec2) {
+        (self.min, self.max)
+    }
+
     /// Whether `p` lies inside the field (bbox inflated by one pitch) — the
     /// gate for "this endpoint needs an escape".
     pub fn contains(&self, p: Vec2) -> bool {
@@ -350,13 +355,27 @@ fn channel_at_point(field: &PinField, p: Vec2) -> f64 {
 }
 
 /// Free channel width across segment `ab` (the constriction a track routed
-/// along the segment must pass).
+/// along the segment must pass): nearest copper edge on each side of the
+/// segment, summed. A gap with a via on one side only (a multi-layer escape's
+/// inner layers, where most balls carry no via) is as wide as it really is,
+/// not twice the near side.
 fn channel_along_seg(field: &PinField, a: Vec2, b: Vec2) -> f64 {
-    let mut d = f64::INFINITY;
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let len = (dx * dx + dy * dy).sqrt().max(1e-9);
+    let (mut left, mut right) = (field.pitch, field.pitch);
     for pad in &field.pads {
-        d = d.min(dist_point_seg(pad.pos, a, b) - pad.r);
+        let d = dist_point_seg(pad.pos, a, b) - pad.r;
+        if d < -1e-9 {
+            return 0.0;
+        }
+        let side = (dx * (pad.pos.y - a.y) - dy * (pad.pos.x - a.x)) / len;
+        if side >= 0.0 {
+            left = left.min(d);
+        } else {
+            right = right.min(d);
+        }
     }
-    (2.0 * d).max(0.0)
+    (left + right).max(0.0)
 }
 
 /// Plan escapes for a batch of connection endpoints inside `field`.
@@ -372,6 +391,19 @@ pub fn plan_field_escapes(
     field: &PinField,
     endpoints: &[(String, Vec2)],
     width: f64,
+) -> Vec<Option<EscapePlan>> {
+    plan_field_escapes_toward(session, pcb, field, endpoints, width, None)
+}
+
+/// [`plan_field_escapes`] with the egress limited to the side of the field
+/// facing `toward` (a unit-ish direction): escapes leave where their nets go.
+pub fn plan_field_escapes_toward(
+    session: &RouteSession,
+    pcb: &Pcb,
+    field: &PinField,
+    endpoints: &[(String, Vec2)],
+    width: f64,
+    toward: Option<Vec2>,
 ) -> Vec<Option<EscapePlan>> {
     let mut out: Vec<Option<EscapePlan>> = vec![None; endpoints.len()];
     if endpoints.is_empty() {
@@ -408,6 +440,16 @@ pub fn plan_field_escapes(
         p.x >= field.min.x && p.x <= field.max.x && p.y >= field.min.y && p.y <= field.max.y
     };
 
+    // Egress side: with a direction, only ring nodes on the side it points
+    // to (by the field centre) are exits.
+    let centre = Vec2::new(
+        (field.min.x + field.max.x) / 2.0,
+        (field.min.y + field.max.y) / 2.0,
+    );
+    let faces = |p: Vec2| match toward {
+        None => true,
+        Some(d) => (p.x - centre.x) * d.x + (p.y - centre.y) * d.y > 0.0,
+    };
     // Grid nodes: capacity from the local channel; the egress ring (nodes
     // outside the pad bbox) feeds the super-sink.
     let mut node_cap = vec![0i64; n_grid];
@@ -426,7 +468,7 @@ pub fn plan_field_escapes(
             // Node-split arc capped at 1: plans in a batch are then
             // vertex-disjoint on the grid, so they can never cross.
             net.add_edge(id, n_grid + id, 1, 0);
-            if !inside_bbox(p) {
+            if !inside_bbox(p) && faces(p) {
                 // Egress ring: each ring node accepts one escape so egress
                 // points stay distinct.
                 net.add_edge(n_grid + id, t, 1, 0);
@@ -600,6 +642,119 @@ pub fn plan_field_escapes(
             egress,
             layer: field.layer,
         });
+    }
+    out
+}
+
+/// Multi-layer escape (the layout engineer's ring staggering, solved): escape
+/// as many endpoints as fit on the first layer, drop the rest by via to the
+/// next, and so on. On each layer the obstacles are the copper that is really
+/// there: on the pad layer every pad; below it the fixed vias whose span
+/// crosses the layer (`fixed`: a plane net's ball vias stop at their plane)
+/// plus a via under every endpoint still going down. Returns, per endpoint,
+/// the index into `layers` it escapes on and its escape.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_multilayer_escapes(
+    session: &RouteSession,
+    pcb: &Pcb,
+    field: &PinField,
+    endpoints: &[(String, Vec2, Vec2)],
+    layers: &[PcbLayer],
+    fixed: &[(Vec2, f64, Vec<PcbLayer>)],
+    via_r: f64,
+    width: f64,
+) -> Vec<Option<(usize, EscapePlan)>> {
+    let mut out: Vec<Option<(usize, EscapePlan)>> = vec![None; endpoints.len()];
+    let mut left: Vec<usize> = (0..endpoints.len()).collect();
+    let near = |p: Vec2| {
+        p.x >= field.min.x - 2.0 * field.pitch
+            && p.x <= field.max.x + 2.0 * field.pitch
+            && p.y >= field.min.y - 2.0 * field.pitch
+            && p.y <= field.max.y + 2.0 * field.pitch
+    };
+    let centre = Vec2::new(
+        (field.min.x + field.max.x) / 2.0,
+        (field.min.y + field.max.y) / 2.0,
+    );
+    // side an endpoint's net leaves toward: the dominant axis of its target
+    let side = |k: usize| {
+        let t = endpoints[k].2;
+        let (dx, dy) = (t.x - centre.x, t.y - centre.y);
+        if dx.abs() >= dy.abs() {
+            Vec2::new(dx.signum(), 0.0)
+        } else {
+            Vec2::new(0.0, dy.signum())
+        }
+    };
+    for (li, &layer) in layers.iter().enumerate() {
+        if left.is_empty() {
+            break;
+        }
+        let mut base: Vec<FieldPad> = if layer == field.layer {
+            field.pads.clone()
+        } else {
+            fixed
+                .iter()
+                .filter(|(p, _, ls)| near(*p) && ls.contains(&layer))
+                .map(|(p, r, _)| FieldPad { pos: *p, r: *r })
+                .chain(left.iter().map(|&k| FieldPad {
+                    pos: endpoints[k].1,
+                    r: via_r,
+                }))
+                .collect()
+        };
+        let mut still = Vec::new();
+        let n0 = left.len();
+        // biggest group first; each later group sees the earlier escapes
+        let mut groups: Vec<(Vec2, Vec<usize>)> = Vec::new();
+        for &k in &left {
+            let d = side(k);
+            match groups.iter_mut().find(|(g, _)| g.x == d.x && g.y == d.y) {
+                Some((_, v)) => v.push(k),
+                None => groups.push((d, vec![k])),
+            }
+        }
+        groups.sort_by_key(|(_, v)| std::cmp::Reverse(v.len()));
+        for (dir, ks) in groups {
+            let lf = PinField {
+                pads: base.clone(),
+                min: field.min,
+                max: field.max,
+                pitch: field.pitch,
+                layer,
+            };
+            let batch: Vec<(String, Vec2)> = ks
+                .iter()
+                .map(|&k| (endpoints[k].0.clone(), endpoints[k].1))
+                .collect();
+            let plans = plan_field_escapes_toward(session, pcb, &lf, &batch, width, Some(dir));
+            for (k, plan) in ks.into_iter().zip(plans) {
+                match plan {
+                    Some(p) => {
+                        // the escape's copper is an obstacle for the next group
+                        for (a, b) in &p.segments {
+                            let n = ((dist(*a, *b) / (width / 2.0)).ceil() as usize).max(1);
+                            for i in 0..=n {
+                                let f = i as f64 / n as f64;
+                                base.push(FieldPad {
+                                    pos: Vec2::new(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f),
+                                    r: width / 2.0,
+                                });
+                            }
+                        }
+                        out[k] = Some((li, p));
+                    }
+                    None => still.push(k),
+                }
+            }
+        }
+        log::info!(
+            "escape: {:?} took {} of {} endpoints",
+            layer,
+            n0 - still.len(),
+            n0
+        );
+        left = still;
     }
     out
 }

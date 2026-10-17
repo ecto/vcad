@@ -1271,7 +1271,7 @@ fn pad_min_dimension(pad: &Pad) -> f64 {
 // ============================================================================
 
 /// All copper layers, ordered top → bottom, for via span enumeration.
-const COPPER_STACK: [PcbLayer; 8] = [
+const COPPER_STACK: [PcbLayer; 10] = [
     PcbLayer::FCu,
     PcbLayer::In1Cu,
     PcbLayer::In2Cu,
@@ -1279,6 +1279,8 @@ const COPPER_STACK: [PcbLayer; 8] = [
     PcbLayer::In4Cu,
     PcbLayer::In5Cu,
     PcbLayer::In6Cu,
+    PcbLayer::In7Cu,
+    PcbLayer::In8Cu,
     PcbLayer::BCu,
 ];
 
@@ -1612,6 +1614,26 @@ fn check_connectivity(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<D
     detect_same_net_bypass(&nodes, net_ties, &contacts, violations);
 }
 
+thread_local! {
+    static FROZEN_FILLS: std::cell::RefCell<Option<std::sync::Arc<Vec<crate::copper_pour::FilledZone>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Run `f` with the zone pours frozen at their current fill: connectivity
+/// queries inside reuse them instead of re-pouring every zone per call. For
+/// repair loops that add a few vias / stubs of one net and ask "did the island
+/// count drop?" thousands of times - the new copper can only carve other nets'
+/// pours, which doesn't change that net's own continuity.
+pub fn with_frozen_fills<R>(
+    fills: Vec<crate::copper_pour::FilledZone>,
+    f: impl FnOnce() -> R,
+) -> R {
+    let prev = FROZEN_FILLS.with(|c| c.replace(Some(std::sync::Arc::new(fills))));
+    let r = f();
+    FROZEN_FILLS.with(|c| *c.borrow_mut() = prev);
+    r
+}
+
 /// Build connectivity nodes from all copper on the board.
 fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
     let mut nodes = Vec::new();
@@ -1671,7 +1693,10 @@ fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
     // clearance voids), not the raw rectangle — otherwise a ground plane reads
     // as touching every net it overlaps. `fill_zones` returns one result per
     // zone in order, so the index lines up with `pcb.zones`.
-    let filled = crate::copper_pour::fill_zones(pcb);
+    let filled = FROZEN_FILLS
+        .with(|f| f.borrow().clone())
+        .filter(|f| f.len() == pcb.zones.len())
+        .unwrap_or_else(|| std::sync::Arc::new(crate::copper_pour::fill_zones(pcb)));
     for (i, zone) in pcb.zones.iter().enumerate() {
         if zone.outline.len() < 3 {
             continue;
@@ -2957,9 +2982,84 @@ fn continuity_of(pcb: &Pcb, nodes: &[ConnNode], dsu: &mut Dsu, net: &str) -> Net
 /// island. `continuous` is the single bit those gates key off.
 /// Continuity of a single net. Rebuilds the whole board's connectivity per call,
 /// so it is not the tool for scoring every net on a large board.
+/// This net's copper alone (pads, traces, vias, its own pours) with its
+/// connectivity: only that copper can join the net's islands. Pours are still
+/// filled against the WHOLE board (other nets carve them), or taken from the
+/// frozen fills when a repair loop has pinned them. On a dense board the
+/// whole-board build was ~1.5 s, and the repair loops ask per candidate via.
+fn net_connectivity(pcb: &Pcb, net: &str) -> (Pcb, Vec<ConnNode>, Dsu) {
+    let frozen = FROZEN_FILLS
+        .with(|f| f.borrow().clone())
+        .filter(|f| f.len() == pcb.zones.len());
+    let fills: Vec<crate::copper_pour::FilledZone> = pcb
+        .zones
+        .iter()
+        .enumerate()
+        .filter(|(_, z)| z.net == net)
+        .map(|(i, z)| match &frozen {
+            Some(f) => f[i].clone(),
+            None => crate::copper_pour::fill_zone(pcb, z),
+        })
+        .collect();
+    let mut own = pcb.clone();
+    own.traces.retain(|t| t.net == net);
+    own.trace_arcs.retain(|t| t.net == net);
+    own.vias.retain(|v| v.net == net);
+    own.zones.retain(|z| z.net == net);
+    for fp in &mut own.footprints {
+        fp.pads.retain(|p| p.net.as_deref() == Some(net));
+    }
+    let prev = FROZEN_FILLS.with(|c| c.replace(Some(std::sync::Arc::new(fills))));
+    let (nodes, dsu) = build_connectivity(&own);
+    FROZEN_FILLS.with(|c| *c.borrow_mut() = prev);
+    (own, nodes, dsu)
+}
+
+/// Island count, pad coverage and worst island of one net.
+#[tracing::instrument(level = "info", skip_all)]
 pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
+    let (own, nodes, mut dsu) = net_connectivity(pcb, net);
+    let mut r = continuity_of(&own, &nodes, &mut dsu, net);
+    r.total_pads = pcb
+        .footprints
+        .iter()
+        .flat_map(|f| &f.pads)
+        .filter(|p| p.net.as_deref() == Some(net))
+        .count();
+    r
+}
+
+/// Positions of the net's pads that are NOT on its main island (the one
+/// holding the most pads): the only pads a repair needs to work on.
+#[tracing::instrument(level = "info", skip_all)]
+pub fn stranded_pads(pcb: &Pcb, net: &str) -> Vec<Vec2> {
+    let (_, nodes, mut dsu) = net_connectivity(pcb, net);
+    let mut pads_of: HashMap<usize, usize> = HashMap::new();
+    let roots: Vec<Option<usize>> = (0..nodes.len())
+        .map(|i| (nodes[i].pad.is_some() && nodes[i].net == net).then(|| dsu.find(i)))
+        .collect();
+    for r in roots.iter().flatten() {
+        *pads_of.entry(*r).or_default() += 1;
+    }
+    let Some((&main, _)) = pads_of.iter().max_by_key(|(_, n)| **n) else {
+        return Vec::new();
+    };
+    nodes
+        .iter()
+        .zip(&roots)
+        .filter(|(_, r)| matches!(r, Some(r) if *r != main))
+        .map(|(n, _)| n.pos)
+        .collect()
+}
+
+/// Island counts for many nets from ONE connectivity build: the batch form of
+/// [`analyze_net_continuity`] for whole-board passes (which nets are split?).
+#[tracing::instrument(level = "info", skip_all)]
+pub fn net_islands(pcb: &Pcb, nets: &[String]) -> std::collections::HashMap<String, usize> {
     let (nodes, mut dsu) = build_connectivity(pcb);
-    continuity_of(pcb, &nodes, &mut dsu, net)
+    nets.iter()
+        .map(|n| (n.clone(), continuity_of(pcb, &nodes, &mut dsu, n).islands))
+        .collect()
 }
 
 /// True if a net name looks like a power/ground rail — the nets whose copper is
