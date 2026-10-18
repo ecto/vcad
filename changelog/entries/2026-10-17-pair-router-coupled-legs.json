@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-17-pair-router-coupled-legs",
+  "version": "0.10.0",
+  "date": "2026-10-17",
+  "category": "fix",
+  "title": "Pair router keeps coupled legs together",
+  "summary": "The router no longer rips or shoves one leg of a coupled pair or routes a twin twice; diff-pair gap checks use coupled segments only, matching KiCad.",
+  "features": ["pcb", "electronics", "routing"],
+  "mcpTools": ["route_nets", "route_diff_pair", "run_drc"]
+}

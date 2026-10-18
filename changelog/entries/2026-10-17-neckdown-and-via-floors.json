@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-17-neckdown-and-via-floors",
+  "version": "0.10.0",
+  "date": "2026-10-17",
+  "category": "feat",
+  "title": "Per-class neck-down and inferred via floors",
+  "summary": "Net classes get a neck-down minimum width; via size floors are inferred from the board with provenance reported.",
+  "features": ["pcb", "electronics", "routing"],
+  "mcpTools": ["route_nets", "set_design_rules"]
+}

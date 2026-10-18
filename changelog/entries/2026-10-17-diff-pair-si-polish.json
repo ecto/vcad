@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-17-diff-pair-si-polish",
+  "version": "0.10.0",
+  "date": "2026-10-17",
+  "category": "feat",
+  "title": "Differentiable diff-pair SI polish",
+  "summary": "Routed diff pairs are tuned by a tang-based claim compiler with SCO/SQP solvers and mined cuts, improving coupling and skew without breaking connectivity.",
+  "features": ["pcb", "electronics", "routing"],
+  "mcpTools": ["route_nets", "route_diff_pair"]
+}

@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-17-drc-inner-layers-in7-in8",
+  "version": "0.10.0",
+  "date": "2026-10-17",
+  "category": "fix",
+  "title": "DRC sees In7/In8 copper on 10-layer boards",
+  "summary": "The DRC copper stack skipped In7Cu/In8Cu, reporting thousands of false disjoint-net fragments on 10-layer boards.",
+  "features": ["pcb", "electronics", "routing"],
+  "mcpTools": ["run_drc"]
+}
