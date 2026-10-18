@@ -818,6 +818,21 @@ pub struct DesignRules {
     )]
     #[cfg_attr(feature = "ts-rs", ts(rename = "inferredFloors"))]
     pub inferred_floors: Vec<String>,
+    /// Whether the fab may STACK microvias (a microvia landing on the one
+    /// below, which needs filled/planarized microvias). `false` (default):
+    /// consecutive microvias must be staggered (DRC `MicroviaStack`). An
+    /// importer may infer `true` from a board that already stacks them; it
+    /// then lists `allowStackedMicrovias` in [`Self::inferred_floors`].
+    #[serde(
+        rename = "allowStackedMicrovias",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    #[cfg_attr(
+        feature = "ts-rs",
+        ts(rename = "allowStackedMicrovias", optional, as = "Option<bool>")
+    )]
+    pub allow_stacked_microvias: bool,
 }
 
 /// Default neck region length from a pad's copper edge (mm) — the same
@@ -1375,6 +1390,55 @@ pub const PLANE_MAX_SIGNAL_SHARE: f64 = 0.03;
 pub const PLANE_MIN_COVERAGE: f64 = 0.6;
 
 impl Pcb {
+    /// Copper layers of this board, front to back (the full stack when the
+    /// stackup is empty).
+    pub fn copper_stack(&self) -> Vec<PcbLayer> {
+        PcbLayer::COPPER_STACK
+            .iter()
+            .copied()
+            .filter(|l| {
+                self.stackup.layers.is_empty() || self.stackup.layers.iter().any(|s| s.layer == *l)
+            })
+            .collect()
+    }
+
+    /// Index pairs of STACKED microvias: two declared microvias, each on one
+    /// adjacent layer pair, on consecutive spans (sharing one copper layer),
+    /// whose drills overlap in plan (centre distance below the larger drill).
+    /// Staggered microvias are not listed.
+    pub fn stacked_microvia_pairs(&self) -> Vec<(usize, usize)> {
+        let stack = self.copper_stack();
+        let idx = |l: PcbLayer| stack.iter().position(|&c| c == l);
+        let micro: Vec<(usize, usize, usize)> = self
+            .vias
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.is_micro())
+            .filter_map(|(i, v)| {
+                let (a, b) = (idx(v.start_layer)?, idx(v.end_layer)?);
+                let (lo, hi) = (a.min(b), a.max(b));
+                (hi == lo + 1).then_some((i, lo, hi))
+            })
+            .collect();
+        let mut out = Vec::new();
+        for x in 0..micro.len() {
+            for y in (x + 1)..micro.len() {
+                let ((i, alo, ahi), (j, blo, bhi)) = (micro[x], micro[y]);
+                if !(ahi == blo || bhi == alo) {
+                    continue;
+                }
+                let (va, vb) = (&self.vias[i], &self.vias[j]);
+                let d = ((va.position.x - vb.position.x).powi(2)
+                    + (va.position.y - vb.position.y).powi(2))
+                .sqrt();
+                if d < va.drill.max(vb.drill) - 1e-6 {
+                    out.push((i, j));
+                }
+            }
+        }
+        out
+    }
+
     /// Infer each copper layer's [`LayerRole`] from its copper, for layers
     /// with no authored role. A layer carrying at most
     /// [`PLANE_MAX_SIGNAL_SHARE`] of the board's trace length whose dominant
@@ -1517,6 +1581,7 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,

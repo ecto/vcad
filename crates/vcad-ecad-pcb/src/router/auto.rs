@@ -1123,6 +1123,12 @@ pub fn route_all_with_opts(
     // copper is still hole-to-hole illegal. Enforces the invariant that an
     // autoroute pass never returns HoleToHole or SameNetBypass violations of
     // its own making.
+    log::info!(
+        "route work: {} maze searches so far (work budget {} searches/ms, rescue {} searches/conn)",
+        super::maze::maze_searches(),
+        work_per_ms(),
+        rescue_searches()
+    );
     let stitch_via_pts: Vec<Vec2> = stitch.vias.iter().map(|(p, _, _, _)| *p).collect();
     // Snapshot before legalization, not before the prune below: legalization
     // now prunes dead copper itself (it has to — see `legalize`), so a net that
@@ -2042,12 +2048,13 @@ fn arsenal_sweep(
     fail_cache: &mut FailCache,
 ) -> Vec<Conn> {
     let sw = Stopwatch::start();
+    let work = WorkBudget::for_ms(ARSENAL_SWEEP_BUDGET_MS);
     let total = pending.len();
     let mut still: Vec<Conn> = Vec::new();
     let mut rescued = 0usize;
     let mut it = pending.into_iter();
     for (net, from, to) in it.by_ref() {
-        if wall_budgets() && sw.ms() > ARSENAL_SWEEP_BUDGET_MS {
+        if (wall_budgets() && sw.ms() > ARSENAL_SWEEP_BUDGET_MS) || work.over() {
             log::info!("arsenal sweep over budget — deferring remainder");
             still.push((net, from, to));
             break;
@@ -2256,7 +2263,17 @@ fn route_batch(
     let mut committed = 0usize;
     let mut conflicts = 0usize;
     let batch_size = rayon::current_num_threads().max(1) * 2;
+    let work = deadline_ms.map(WorkBudget::for_ms);
     while !queue.is_empty() {
+        if let Some(w) = work.filter(|w| w.over()) {
+            log::info!(
+                "route_batch over its work budget ({} searches) — deferring {} conns",
+                w.units,
+                queue.len()
+            );
+            unrouted.extend(queue.drain(..).map(|(c, _)| c));
+            break;
+        }
         // Over-deadline: report the remaining queue unrouted rather than
         // routing it. Every caller that passes a deadline already handles an
         // unrouted connection — a stuck one stays pending, a ripped victim
@@ -2474,6 +2491,8 @@ fn try_route_inner(
     if !rescue {
         return None;
     }
+    // Per-connection rescue budget (deterministic, see `rescue_searches`).
+    let rescue_work = WorkBudget::searches(rescue_searches());
     // Both direct maze attempts (coarse + fine retry) failed. If an endpoint
     // sits inside a dense pin field (BGA / fine-pitch lattice), plan a
     // flow-based escape out of the field and re-search from the egress point.
@@ -2490,6 +2509,9 @@ fn try_route_inner(
         max_expansions,
     ) {
         return Some(p);
+    }
+    if rescue_work.over() {
+        return None;
     }
     // Coupled differential-pair stage: a `_P`/`_N` (or `_C`/`_T`) net whose
     // lone placement failed is exactly the anti-pattern — route it WITH its
@@ -2511,6 +2533,9 @@ fn try_route_inner(
             placed.push(theirs);
             return Some(mine);
         }
+    }
+    if rescue_work.over() {
+        return None;
     }
     // Last resort — true shove: displace the routed traces blocking the
     // corridor sideways (bounded, transactional) instead of ripping them,
@@ -2962,7 +2987,16 @@ pub(super) fn validate_and_commit(
         // different size than either part (two stacked microvias F-In1 +
         // In1-In2 become one drilled F-In2 via), so it is re-probed at its own
         // size below rather than trusted.
-        let (p, la, lb) = match new_vias.iter().position(|(q, _, _)| dist(*q, p) < 0.05) {
+        // A board that allows stacked microvias keeps a consecutive micro hop
+        // as its own via on top of the one below (no union, no drilled via).
+        let stacked = new_vias.iter().any(|&(q, qa, qb)| {
+            dist(q, p) < 0.05 && session.via_sizing().may_stack((qa, qb), (la, lb))
+        });
+        let (p, la, lb) = match new_vias
+            .iter()
+            .position(|(q, _, _)| dist(*q, p) < 0.05)
+            .filter(|_| !stacked)
+        {
             Some(i) => {
                 let (q, a0, b0) = new_vias.remove(i);
                 let (lo, hi) = span_union(&copper, (a0, b0), (la, lb));
@@ -2973,8 +3007,9 @@ pub(super) fn validate_and_commit(
         let spec = session.via_spec(net, la, lb);
         let drill_r = spec.drill / 2.0;
         if let Some(&(q, qa, qb)) = new_vias.iter().find(|&&(q, qa, qb)| {
-            dist(q, p) - drill_r - session.via_spec(net, qa, qb).drill / 2.0
-                < session.hole_to_hole() - 1e-6
+            !(dist(q, p) < 0.05 && session.via_sizing().may_stack((qa, qb), (la, lb)))
+                && dist(q, p) - drill_r - session.via_spec(net, qa, qb).drill / 2.0
+                    < session.hole_to_hole() - 1e-6
         }) {
             log::debug!(
                 "validate: {net} via ({:.3},{:.3}) hole-to-hole illegal against its own \
@@ -3975,6 +4010,68 @@ fn wall_budgets() -> bool {
     *ON.get_or_init(|| std::env::var("VCAD_ROUTE_NO_DEADLINES").as_deref() != Ok("1"))
 }
 
+/// Deterministic work budget: maze searches (`maze::maze_searches`), not wall
+/// clock, so a route under `VCAD_ROUTE_NO_DEADLINES=1` finishes and gives the
+/// same answer at any machine load. Every budgeted scope (arsenal sweep,
+/// route batch, rip-up pass, joint-repair round, per-connection rescue)
+/// converts its wall-clock budget to searches at [`work_per_ms`] and stops
+/// when EITHER is spent (the wall clock only when deadlines are live).
+#[derive(Clone, Copy)]
+pub(super) struct WorkBudget {
+    start: u64,
+    units: u64,
+}
+
+impl WorkBudget {
+    /// A budget of `units` maze searches from now.
+    pub(super) fn searches(units: u64) -> Self {
+        Self {
+            start: super::maze::maze_searches(),
+            units,
+        }
+    }
+    /// A budget equivalent to `ms` of wall clock.
+    pub(super) fn for_ms(ms: f64) -> Self {
+        Self::searches((ms * work_per_ms()).ceil() as u64)
+    }
+    /// Searches spent since the budget started.
+    pub(super) fn spent(&self) -> u64 {
+        super::maze::maze_searches().saturating_sub(self.start)
+    }
+    /// Whether the budget is spent.
+    pub(super) fn over(&self) -> bool {
+        self.spent() > self.units
+    }
+}
+
+/// Maze searches per millisecond of a scope's nominal wall budget
+/// (`VCAD_ROUTE_WORK_PER_MS`, default 0.05 = one search per 20 ms — measured
+/// on the CM5 at ~0.03-0.08 searches/ms under load, so the work cap sits near
+/// the wall cap it replaces).
+pub(super) fn work_per_ms() -> f64 {
+    static V: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("VCAD_ROUTE_WORK_PER_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.05)
+    })
+}
+
+/// Per-connection rescue budget in maze searches
+/// (`VCAD_ROUTE_RESCUE_SEARCHES`, default 400): once a failing connection's
+/// rescue arsenal (escape, coupled pair, shove) has spent it, the remaining
+/// stages are skipped. Applies with or without wall-clock deadlines.
+pub(super) fn rescue_searches() -> u64 {
+    static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("VCAD_ROUTE_RESCUE_SEARCHES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(400)
+    })
+}
+
 /// Rounds of [`route_all_with_opts`]'s island stitching: each round re-judges
 /// connectivity, since a stitch can land in a plane island that is itself
 /// stranded.
@@ -4194,8 +4291,14 @@ fn ripup_pass(
     let copper = copper_layers(pcb);
     let mut still: Vec<Conn> = Vec::new();
 
+    let work = deadline_ms.map(WorkBudget::for_ms);
     let mut unrouted = unrouted.into_iter();
     for (net, from, to) in unrouted.by_ref() {
+        if work.is_some_and(|w| w.over()) {
+            log::info!("ripup pass over its work budget — deferring remainder");
+            still.push((net, from, to));
+            break;
+        }
         // Over-deadline: park the rest as pending — negotiation's keep-best
         // treats an abandoned round exactly like a converged one.
         if let Some(d) = deadline_ms.filter(|_| wall_budgets()) {
@@ -4451,8 +4554,9 @@ fn joint_window_repair(
         // remaining windows carry to the next escalation or the final report.
         let round_budget_ms = 300_000.0 * (max_expansions as f64 / 200_000.0).max(1.0);
         let sw_round = Stopwatch::start();
+        let work_round = WorkBudget::for_ms(round_budget_ms);
         for (gw, stuck) in groups {
-            if wall_budgets() && sw_round.ms() > round_budget_ms {
+            if (wall_budgets() && sw_round.ms() > round_budget_ms) || work_round.over() {
                 still.extend(stuck);
                 continue;
             }
@@ -4801,6 +4905,7 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,

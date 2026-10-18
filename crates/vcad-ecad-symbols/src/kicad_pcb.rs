@@ -356,6 +356,19 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
     for line in pcb.infer_layer_roles() {
         ctx.warn(line);
     }
+    // Stacked microvias: a .kicad_pcb carries no fab stacking capability, so
+    // a board that already stacks them is the evidence it is allowed.
+    let stacks = pcb.stacked_microvia_pairs().len();
+    if stacks > 0 && !pcb.rules.allow_stacked_microvias {
+        ctx.warn(format!(
+            "INFERRED fab capability: allowStackedMicrovias = true (the board stacks {stacks} \
+             microvia pair(s) of its own; fallback was false)"
+        ));
+        pcb.rules.allow_stacked_microvias = true;
+        pcb.rules
+            .inferred_floors
+            .push("allowStackedMicrovias".into());
+    }
     Ok((pcb, ctx.finish()))
 }
 
@@ -821,6 +834,7 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
     let setup = root.find("setup");
     let uvia = |key: &str, dflt: f64| setup.and_then(|s| child_f64(s, key)).unwrap_or(dflt);
     DesignRules {
+        allow_stacked_microvias: false,
         inferred_floors: Vec::new(),
         // KiCad's own defaults when the board omits them (they normally live
         // in the .kicad_pro); `parse_kicad_pcb` logs which were defaulted.

@@ -1101,10 +1101,20 @@ fn check_hole_to_hole(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Ve
         .map(|h| in_scope(region, |r| r.hits_point(h.pos, h.radius)))
         .collect();
 
+    // Stacked microvias on a board that allows them are one laser stack, not
+    // two colliding holes (vias come first in `holes`, in board order).
+    let stacks: std::collections::HashSet<(usize, usize)> = if pcb.rules.allow_stacked_microvias {
+        pcb.stacked_microvia_pairs().into_iter().collect()
+    } else {
+        Default::default()
+    };
     // O(n^2) check — fine for typical PCB sizes; use spatial index for large boards
     for i in 0..holes.len() {
         for j in (i + 1)..holes.len() {
             if !in_region[i] && !in_region[j] {
+                continue;
+            }
+            if stacks.contains(&(i, j)) {
                 continue;
             }
             let dx = holes[i].pos.x - holes[j].pos.x;
@@ -1153,57 +1163,34 @@ fn check_hole_to_hole(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Ve
 /// plan (centre distance below the larger drill). Staggered microvias — the
 /// next hop offset so its drill lands clear of the one below — pass.
 fn check_microvia_stack(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
-    let stack: Vec<PcbLayer> = PcbLayer::COPPER_STACK
-        .iter()
-        .copied()
-        .filter(|l| {
-            pcb.stackup.layers.is_empty() || pcb.stackup.layers.iter().any(|s| s.layer == *l)
-        })
-        .collect();
-    let idx = |l: PcbLayer| stack.iter().position(|&c| c == l);
-    let micro: Vec<(&vcad_ir::ecad::Via, usize, usize)> = pcb
-        .vias
-        .iter()
-        .filter(|v| is_legal_microvia(pcb, v))
-        .filter_map(|v| {
-            let (a, b) = (idx(v.start_layer)?, idx(v.end_layer)?);
-            Some((v, a.min(b), a.max(b)))
-        })
-        .collect();
-    for i in 0..micro.len() {
-        for j in (i + 1)..micro.len() {
-            let ((va, alo, ahi), (vb, blo, bhi)) = (micro[i], micro[j]);
-            // consecutive hops: one span ends on the layer the other starts
-            if !(ahi == blo || bhi == alo) {
-                continue;
-            }
-            let d = ((va.position.x - vb.position.x).powi(2)
-                + (va.position.y - vb.position.y).powi(2))
-            .sqrt();
-            let need = va.drill.max(vb.drill);
-            if d >= need - 1e-6 {
-                continue;
-            }
-            if !in_scope(region, |r| r.hits_point(va.position, va.diameter / 2.0))
-                && !in_scope(region, |r| r.hits_point(vb.position, vb.diameter / 2.0))
-            {
-                continue;
-            }
-            violations.push(DrcViolation {
-                rule: DrcRuleType::MicroviaStack,
-                severity: DrcSeverity::Error,
-                position: va.position,
-                message: format!(
-                    "Stacked microvias net '{}' {:?}-{:?} over {:?}-{:?}: drills {:.3}mm apart \
-                     (< {:.3}mm) — stagger them",
-                    va.net, va.start_layer, va.end_layer, vb.start_layer, vb.end_layer, d, need
-                ),
-                actual: d,
-                required: need,
-                provenance: DrcProvenance::Routing,
-                generated: false,
-            });
+    // The fab may stack (declared, or inferred from the board's own stacks).
+    if pcb.rules.allow_stacked_microvias {
+        return;
+    }
+    for (i, j) in pcb.stacked_microvia_pairs() {
+        let (va, vb) = (&pcb.vias[i], &pcb.vias[j]);
+        if !in_scope(region, |r| r.hits_point(va.position, va.diameter / 2.0))
+            && !in_scope(region, |r| r.hits_point(vb.position, vb.diameter / 2.0))
+        {
+            continue;
         }
+        let d = ((va.position.x - vb.position.x).powi(2) + (va.position.y - vb.position.y).powi(2))
+            .sqrt();
+        let need = va.drill.max(vb.drill);
+        violations.push(DrcViolation {
+            rule: DrcRuleType::MicroviaStack,
+            severity: DrcSeverity::Error,
+            position: va.position,
+            message: format!(
+                "Stacked microvias net '{}' {:?}-{:?} over {:?}-{:?}: drills {:.3}mm apart \
+                 (< {:.3}mm) — stagger them (the board does not allow stacked microvias)",
+                va.net, va.start_layer, va.end_layer, vb.start_layer, vb.end_layer, d, need
+            ),
+            actual: d,
+            required: need,
+            provenance: DrcProvenance::Routing,
+            generated: false,
+        });
     }
 }
 
@@ -3738,6 +3725,7 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
@@ -5392,6 +5380,30 @@ mod tests {
             !judge(0.0, (f, i1)),
             "two same-span microvias are not a stack (hole-to-hole judges them)"
         );
+        // A board that allows stacking: the coincident stack passes.
+        let mut pcb = clean_pcb();
+        for (k, l) in [(1, PcbLayer::In1Cu), (2, PcbLayer::In2Cu)] {
+            let mut s = pcb.stackup.layers[0].clone();
+            s.layer = l;
+            pcb.stackup.layers.insert(k, s);
+        }
+        for (a, b) in [(f, i1), (i1, i2)] {
+            pcb.vias.push(Via {
+                via_type: Some(Micro),
+                position: Vec2::new(30.0, 60.0),
+                diameter: 0.21,
+                drill: 0.12,
+                start_layer: a,
+                end_layer: b,
+                net: "2".to_string(),
+                source: None,
+            });
+        }
+        assert_eq!(pcb.stacked_microvia_pairs().len(), 1);
+        pcb.rules.allow_stacked_microvias = true;
+        assert!(!check_drc(&pcb)
+            .iter()
+            .any(|v| v.rule == DrcRuleType::MicroviaStack));
     }
 
     /// Every violation carries a provenance, and a via drill fault is routing.

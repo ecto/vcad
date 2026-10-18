@@ -271,6 +271,16 @@ impl RouteResult3d {
     }
 }
 
+/// Every 3D maze search ever started in this process: the router's
+/// deterministic WORK unit (see `auto::WorkBudget`). Each search is itself
+/// capped by its expansion budget, so a cap on searches bounds the work.
+static MAZE_SEARCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The running count of 3D maze searches (see [`MAZE_SEARCHES`]).
+pub fn maze_searches() -> u64 {
+    MAZE_SEARCHES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Layer-aware A* over `(x, y, layer)`: routes `net` from `start` to `end`
 /// across `layers` (the board's copper stack, front → back), choosing via
 /// positions as part of the search.
@@ -314,6 +324,7 @@ pub fn route_net_maze3d(
     offgrid_vias: bool,
 ) -> RouteResult3d {
     let nl = layers.len();
+    MAZE_SEARCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if nl == 0 {
         return RouteResult3d::fail(net);
     }
@@ -1450,6 +1461,7 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,

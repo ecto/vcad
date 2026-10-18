@@ -1541,7 +1541,15 @@ minMicroviaDiameter: number,
  * that were INFERRED from the board's own copper because the source
  * file authored none. DRC findings against an inferred floor say so.
  */
-inferredFloors: Array<string>, };
+inferredFloors: Array<string>, 
+/**
+ * Whether the fab may STACK microvias (a microvia landing on the one
+ * below, which needs filled/planarized microvias). `false` (default):
+ * consecutive microvias must be staggered (DRC `MicroviaStack`). An
+ * importer may infer `true` from a board that already stacks them; it
+ * then lists `allowStackedMicrovias` in [`Self::inferred_floors`].
+ */
+allowStackedMicrovias?: boolean, };
 
 /**
  * A vcad document — the `.vcad` file format.

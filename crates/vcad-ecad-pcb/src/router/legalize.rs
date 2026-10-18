@@ -509,6 +509,13 @@ fn merge_same_net_vias(
                 continue;
             }
             let drill_j = drill_of(&vias[j]);
+            // An allowed microvia stack is two vias by design, not a duplicate.
+            if sizing.may_stack(
+                (vias[i].start_layer, vias[i].end_layer),
+                (vias[j].start_layer, vias[j].end_layer),
+            ) {
+                continue;
+            }
             let edge =
                 d2(vias[i].position, vias[j].position).sqrt() - drill_i / 2.0 - drill_j / 2.0;
             if edge < min_spacing - 1e-6 {
@@ -857,6 +864,7 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,

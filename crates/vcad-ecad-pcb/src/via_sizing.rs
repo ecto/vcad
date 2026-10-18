@@ -52,6 +52,7 @@ pub struct ViaSizing {
     min_ring: f64,
     micro_floor: (f64, f64),
     micro_override: Option<(f64, f64)>,
+    allow_stack: bool,
 }
 
 impl ViaSizing {
@@ -90,6 +91,7 @@ impl ViaSizing {
             // The router's microvia knob (`RouteOptions::microvia`), set for
             // the duration of a routing pass.
             micro_override: crate::router::maze::microvia(),
+            allow_stack: rules.allow_stacked_microvias,
         }
     }
 
@@ -116,6 +118,21 @@ impl ViaSizing {
             return false;
         };
         i.abs_diff(j) == 1 && self.copper.len() > 2
+    }
+
+    /// Whether two microvias on spans `a` and `b` may STACK at one point:
+    /// the board allows stacking, both are microvia spans, and they are
+    /// consecutive (share exactly one layer).
+    pub fn may_stack(&self, a: (PcbLayer, PcbLayer), b: (PcbLayer, PcbLayer)) -> bool {
+        if !self.allow_stack || !self.is_micro_span(a.0, a.1) || !self.is_micro_span(b.0, b.1) {
+            return false;
+        }
+        let r = |(x, y): (PcbLayer, PcbLayer)| {
+            let (i, j) = (self.idx(x).unwrap_or(0), self.idx(y).unwrap_or(0));
+            (i.min(j), i.max(j))
+        };
+        let ((alo, ahi), (blo, bhi)) = (r(a), r(b));
+        ahi == blo || bhi == alo
     }
 
     /// The microvia size for `net`, if microvias are usable: the override, or
@@ -216,6 +233,7 @@ mod tests {
             min_ring: ring,
             micro_floor: (0.2, 0.1),
             micro_override: None,
+            allow_stack: false,
         }
     }
 
@@ -235,6 +253,22 @@ mod tests {
         assert_eq!(b.via_type, ViaType::Blind);
         assert!((b.diameter - 0.40).abs() < 1e-12);
         assert!((s.max_spec("X").diameter - 0.40).abs() < 1e-12);
+    }
+
+    #[test]
+    fn stacking_only_when_allowed_and_consecutive() {
+        let mut s = board(10, (0.21, 0.12), 0.15, 0.125);
+        let (f, i1, i2, i3) = (
+            PcbLayer::FCu,
+            PcbLayer::In1Cu,
+            PcbLayer::In2Cu,
+            PcbLayer::In3Cu,
+        );
+        assert!(!s.may_stack((f, i1), (i1, i2)), "off by default");
+        s.allow_stack = true;
+        assert!(s.may_stack((f, i1), (i1, i2)));
+        assert!(!s.may_stack((f, i1), (i2, i3)), "not consecutive");
+        assert!(!s.may_stack((f, i1), (i1, i3)), "second span is drilled");
     }
 
     #[test]
