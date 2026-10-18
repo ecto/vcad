@@ -234,8 +234,24 @@ fn main() {
                     effort,
                     priority_nets: priority.clone(),
                     pour_policy,
+                    // The flow path respects layer roles end to end: the
+                    // fallback may not put signal on plane layers either
+                    // (VCAD_FLOW_FALLBACK_PLANES=0 lifts it).
+                    no_route_layers: if std::env::var("VCAD_FLOW_FALLBACK_PLANES").as_deref()
+                        == Ok("0")
+                    {
+                        Vec::new()
+                    } else {
+                        pcb.plane_layers()
+                    },
                     ..Default::default()
                 },
+            );
+            println!(
+                "flow fallback: {} routed, {} unrouted (plane layers {:?} closed to signal)",
+                fb.routed_nets.len(),
+                fb.unrouted_nets.len(),
+                pcb.plane_layers()
             );
             let still: BTreeSet<&String> = fb.unrouted_nets.iter().collect();
             let mut routed: Vec<String> = r
