@@ -20,7 +20,7 @@ use vcad_ecad_pcb::router::classes::{apply_classes, classify_nets};
 use vcad_ecad_pcb::router::length_match::net_routed_length;
 use vcad_ecad_pcb::router::{route_all_with_opts, RouteOptions};
 use vcad_ecad_symbols::parse_kicad_pcb;
-use vcad_ir::ecad::{Trace, Via};
+use vcad_ir::ecad::Trace;
 
 fn seg_len(a: vcad_ir::Vec2, b: vcad_ir::Vec2) -> f64 {
     ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt()
@@ -253,17 +253,10 @@ fn main() {
             source: None,
         });
     }
+    // Each via at its span's size (microvia / drilled), as the router sized it.
+    let sized = pcb.clone();
     for v in &r.vias {
-        pcb.vias.push(Via {
-            position: v.position,
-            diameter: pcb.rules.default_rules.via_diameter,
-            drill: pcb.rules.default_rules.via_drill,
-            start_layer: v.start_layer,
-            end_layer: v.end_layer,
-            net: v.net.clone(),
-            source: None,
-            via_type: v.via_type,
-        });
+        pcb.vias.push(v.to_board_via(&sized, None));
     }
     // Stage bisection: dump the board as route_all left it, before si_finish
     // rewrites any of it.

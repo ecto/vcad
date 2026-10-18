@@ -2289,7 +2289,9 @@ fn detect_unstitched_pads(
         }
     }
 
-    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+    // The largest via the board can mint (its drilled size), so the
+    // suggested escape clears whatever span gets used.
+    let via_r = crate::via_sizing::ViaSizing::from_pcb(pcb).max_spec("").r();
     let suggest_offset =
         via_r + pcb.rules.default_rules.clearance + pcb.rules.default_rules.trace_width / 2.0;
 

@@ -303,7 +303,16 @@ pub(super) fn try_route_pair_reason(
 
     let (w, gap) = pair_geometry(session, pcb, net, width);
     let half_sep = (w + gap) / 2.0;
-    let via_d = pcb.rules.default_rules.via_diameter;
+    // Corridor sizing: the pair's smallest via (a microvia on an HDI board,
+    // where pair transitions hop one dielectric; else the drilled via). A
+    // deeper transition realizes at its own, larger size (`via_r_of`) and is
+    // judged by `validate_and_commit` like every other via.
+    let sizing = session.via_sizing().clone();
+    let via_d = sizing
+        .micro_size(net)
+        .map(|m| m.0)
+        .unwrap_or_else(|| sizing.drilled_size(net).0);
+    let via_r_of = |a: PcbLayer, b: PcbLayer| sizing.spec(net, a, b).r();
     let clearance = session.clearance_for(net);
     // The phantom corridor must cover everything realize_legs emits: the two
     // legs AND the via dog-bones, which sit at ±via_off with via_d discs
@@ -421,7 +430,7 @@ pub(super) fn try_route_pair_reason(
             (mid_from, mid_to),
             [from, to, p_from, p_to],
             half_sep,
-            via_d / 2.0,
+            &via_r_of,
             clearance,
             w,
             &copper,
@@ -554,7 +563,6 @@ pub(super) fn try_route_pair_reason(
                 e_pt,
                 search,
                 fat_w,
-                via_d,
                 Some(cong),
                 budget,
                 1.0,
@@ -618,7 +626,6 @@ pub(super) fn try_route_pair_reason(
                     end,
                     search,
                     cw,
-                    via_d,
                     Some(cong),
                     budget,
                     1.0,
@@ -805,7 +812,6 @@ pub(super) fn try_route_pair_reason(
                 to,
                 &[to_layer],
                 nw,
-                via_d,
                 Some(cong),
                 120_000,
                 0.5,
@@ -940,7 +946,7 @@ pub(super) fn try_route_pair_reason(
             continue;
         };
         let Some((leg_a, leg_b)) =
-            realize_legs(&center_t, half_sep, via_off, via_d / 2.0, clearance, w)
+            realize_legs(&center_t, half_sep, via_off, &via_r_of, clearance, w)
         else {
             last_bail = PairBail::DegenerateCenterline;
             continue;
@@ -1171,7 +1177,7 @@ fn direct_centerline(
     (mid_from, mid_to): (Vec2, Vec2),
     pads: [Vec2; 4],
     half_sep: f64,
-    via_r: f64,
+    via_r: &dyn Fn(PcbLayer, PcbLayer) -> f64,
     clearance: f64,
     w: f64,
     copper: &[PcbLayer],
@@ -1226,7 +1232,7 @@ fn realize_legs(
     center: &[(Vec2, Vec2, PcbLayer)],
     half_sep: f64,
     _via_off: f64,
-    via_r: f64,
+    via_r_of: &dyn Fn(PcbLayer, PcbLayer) -> f64,
     clearance: f64,
     w: f64,
 ) -> Option<(Leg, Leg)> {
@@ -1336,20 +1342,26 @@ fn realize_legs(
     }
     // In-line vias demand the disc clears the other leg's line — but only
     // when the centerline actually changes layers.
-    let has_transition = seg_layers.windows(2).any(|w2| w2[0] != w2[1]);
-    if has_transition && 2.0 * half_sep < via_r + clearance + w / 2.0 + 0.01 {
-        log::debug!(
-            "pair: in-line via gate: 2*half_sep {} too small",
-            2.0 * half_sep
-        );
-        return None;
+    // Each transition at its own span's via size (microvia hop vs drilled).
+    for w2 in seg_layers.windows(2).filter(|w2| w2[0] != w2[1]) {
+        if 2.0 * half_sep < via_r_of(w2[0], w2[1]) + clearance + w / 2.0 + 0.01 {
+            log::debug!(
+                "pair: in-line via gate: 2*half_sep {} too small for {:?}-{:?}",
+                2.0 * half_sep,
+                w2[0],
+                w2[1]
+            );
+            return None;
+        }
     }
-    let need = 2.0 * via_r + clearance + 0.04;
     let lat = 2.0 * half_sep;
-    let stagger = if lat >= need {
-        0.0
-    } else {
-        (need * need - lat * lat).sqrt()
+    let stagger_for = |via_r: f64| {
+        let need = 2.0 * via_r + clearance + 0.04;
+        if lat >= need {
+            0.0
+        } else {
+            (need * need - lat * lat).sqrt()
+        }
     };
 
     let leg = |sign: f64| -> Option<Leg> {
@@ -1367,6 +1379,8 @@ fn realize_legs(
             // back along its previous segment so the two discs clear.
             if k > 0 && seg_layers[k - 1] != l {
                 let pl = seg_layers[k - 1];
+                let via_r = via_r_of(pl, l);
+                let stagger = stagger_for(via_r);
                 let vp = if sign > 0.0 {
                     off[k]
                 } else {
@@ -1728,7 +1742,6 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
                     pads[i],
                     &copper_layers(&work),
                     session.width_for(net, width),
-                    work.rules.default_rules.via_diameter,
                     Some(&cong),
                     effort_expansions,
                     1.0,
@@ -1810,14 +1823,8 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
             }
             for &(pt, la, lb) in &pl.via_pts {
                 work.vias.push(Via {
-                    via_type: None,
-                    position: pt,
-                    diameter: work.rules.default_rules.via_diameter,
-                    drill: work.rules.default_rules.via_drill,
-                    start_layer: la,
-                    end_layer: lb,
-                    net: pl.net.clone(),
                     source: None,
+                    ..super::auto::board_via(session.via_sizing(), pt, &pl.net, la, lb)
                 });
             }
         }
@@ -1845,14 +1852,8 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
                 }
                 for &(pt, la, lb) in &pl.via_pts {
                     work.vias.push(Via {
-                        via_type: None,
-                        position: pt,
-                        diameter: work.rules.default_rules.via_diameter,
-                        drill: work.rules.default_rules.via_drill,
-                        start_layer: la,
-                        end_layer: lb,
-                        net: pl.net.clone(),
                         source: None,
+                        ..super::auto::board_via(session.via_sizing(), pt, &pl.net, la, lb)
                     });
                 }
             }

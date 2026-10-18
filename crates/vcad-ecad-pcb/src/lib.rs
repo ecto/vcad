@@ -29,6 +29,7 @@ pub mod session;
 pub mod spatial;
 pub mod srj;
 pub mod teardrop;
+pub mod via_sizing;
 
 pub use copper_pour::{fill_zones, FilledZone};
 pub use critique::{critique_net, NetCritique};

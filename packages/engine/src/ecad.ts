@@ -869,6 +869,11 @@ export interface RoutedVia {
    *  when the board's via meets the microvia minimums); absent on older
    *  kernels. */
   via_type?: "through" | "blind" | "micro" | null;
+  /** Pad diameter (mm) for this via's span (microvia vs drilled); absent or
+   *  0 on older kernels — fall back to the board default. */
+  diameter?: number;
+  /** Drill diameter (mm) for this via's span; absent or 0 on older kernels. */
+  drill?: number;
 }
 
 /** Why a connection could not be routed, and where — so an agent or human can

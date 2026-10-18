@@ -305,7 +305,6 @@ pub fn route_net_maze3d(
     end: Vec2,
     end_layers: &[PcbLayer],
     width: f64,
-    via_diameter: f64,
     congestion: Option<&Congestion>,
     max_expansions: usize,
     pitch_scale: f64,
@@ -320,7 +319,6 @@ pub fn route_net_maze3d(
     }
     let clearance = session.clearance_for(net);
     let half_w = width / 2.0;
-    let via_r = via_diameter / 2.0;
 
     let grid = Grid::new_scaled(outline, start, end, width, clearance, pitch_scale, window);
     let plane = grid.nx * grid.ny;
@@ -342,17 +340,21 @@ pub fn route_net_maze3d(
     // A via at `p` spanning layer indices `a..=b` must clear other-net
     // copper on every spanned layer (and only those — a microvia between
     // adjacent layers doesn't care about copper elsewhere in the stack).
+    // HDI mode (the caller's microvia knob): one dielectric per hop.
     let micro = microvia();
+    // Each span at its own size (microvia on an adjacent pair, drilled
+    // through/blind/buried otherwise) — the size it is committed and written
+    // back at (`crate::via_sizing`).
     let via_ok = |p: Vec2, a: usize, b: usize| -> bool {
-        let r = match micro {
-            Some((d, _)) if is_microvia_span(layers, a, b) => d / 2.0,
-            _ => via_r,
+        let (la, lb) = (layers[a.min(b)], layers[a.max(b)]);
+        let disc = CopperGeom::Disc {
+            center: p,
+            r: session.via_spec(net, la, lb).r(),
         };
-        let disc = CopperGeom::Disc { center: p, r };
         // The drill barrel is layer-independent: a blind/buried via must keep
         // the hole-to-hole rule against every other-net hole on the board, not
         // just the ones sharing its copper layers.
-        session.probe_via_drill(p, net).legal
+        session.probe_via_span(p, net, la, lb).legal
             && layers[a.min(b)..=a.max(b)]
                 .iter()
                 .all(|&l| session.probe(&disc, l, net, clearance).legal)
@@ -1591,7 +1593,6 @@ mod tests {
             Vec2::new(35.0, 20.0),
             &[PcbLayer::FCu],
             0.25,
-            0.8,
             None,
             0,
             1.0,
@@ -1626,7 +1627,6 @@ mod tests {
             Vec2::new(35.0, 20.0),
             &[PcbLayer::FCu],
             0.25,
-            0.8,
             None,
             0,
             1.0,
@@ -1688,7 +1688,6 @@ mod tests {
             Vec2::new(35.0, 20.0),
             &[PcbLayer::FCu],
             0.25,
-            0.8,
             None,
             0,
             1.0,
@@ -1724,7 +1723,6 @@ mod tests {
             Vec2::new(35.0, 20.0),
             &[PcbLayer::BCu],
             0.25,
-            0.8,
             None,
             0,
             1.0,

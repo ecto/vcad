@@ -274,17 +274,9 @@ fn run(pcb: &Pcb, negotiation_rounds: usize) -> Score {
             source: None,
         });
     }
+    let sized = applied.clone();
     for v in &r.vias {
-        applied.vias.push(Via {
-            via_type: None,
-            position: v.position,
-            diameter: applied.rules.default_rules.via_diameter,
-            drill: applied.rules.default_rules.via_drill,
-            start_layer: v.start_layer,
-            end_layer: v.end_layer,
-            net: v.net.clone(),
-            source: None,
-        });
+        applied.vias.push(v.to_board_via(&sized, None));
     }
     // Compare against the bare board so any pre-existing land-pattern
     // violations don't count against the router — only copper it added can
