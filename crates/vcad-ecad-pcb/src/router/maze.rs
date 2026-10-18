@@ -92,6 +92,18 @@ pub fn is_microvia_span(layers: &[PcbLayer], a: usize, b: usize) -> bool {
     hi == lo + 1 && (lo == 0 || hi + 1 == layers.len())
 }
 
+/// Exponent of the maze's via-size price (`VCAD_MICRO_BIAS`, default 2.0;
+/// 0 = every span priced alike, the pre-sizing behaviour).
+pub fn micro_bias() -> f64 {
+    static V: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("VCAD_MICRO_BIAS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2.0)
+    })
+}
+
 /// Plane layers: no trace runs on them (a signal there cuts the plane into
 /// islands); vias still pass through. Empty by default.
 static NO_ROUTE_LAYERS: std::sync::RwLock<Vec<PcbLayer>> = std::sync::RwLock::new(Vec::new());
@@ -373,6 +385,14 @@ pub fn route_net_maze3d(
     let cong = congestion.filter(|c| !c.is_flat());
     let node_cost =
         |cell: usize| -> f64 { cong.map(|c| c.cost_at(grid.world_of(cell))).unwrap_or(0.0) };
+    let r_min_via = {
+        let sz = session.via_sizing();
+        sz.micro_size(net)
+            .unwrap_or_else(|| sz.drilled_size(net))
+            .0
+            .max(1e-6)
+            / 2.0
+    };
 
     // --- A* over (cell, layer) -------------------------------------------
     let n = plane * nl;
@@ -651,7 +671,16 @@ pub fn route_net_maze3d(
                 // the airwire grows (floor 0.3 at >= ~20mm).
                 let haul = dist(start, end);
                 let haul_scale = (6.0 / haul.max(1.0)).clamp(0.3, 1.0);
-                let tentative = g[node] + VIA_COST * haul_scale * (0.4 + 0.6 * span_frac);
+                // Microvia bias: a via's price scales with the board area its
+                // barrel takes, (r / r_smallest)^MICRO_BIAS — a drilled 0.40
+                // via is ~3.6x a 0.21 microvia at the default exponent 2, so
+                // a layer change goes down as microvia hops (staggered, or
+                // stacked where the board allows) wherever the hops fit, the
+                // way the human CM5 fans out.
+                let r_span = session.via_spec(net, layers[lo], layers[hi]).r();
+                let size_factor = (r_span / r_min_via).powf(micro_bias());
+                let tentative =
+                    g[node] + VIA_COST * haul_scale * (0.4 + 0.6 * span_frac) * size_factor;
                 if tentative < g[nb] {
                     g[nb] = tentative;
                     came[nb] = node;
