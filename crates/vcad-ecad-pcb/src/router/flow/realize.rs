@@ -16,10 +16,72 @@
 use std::collections::HashMap;
 
 use super::cdt::CutGraph;
+use crate::session::{RouteSession, SpanId};
+use crate::spatial::{CopperElement, CopperGeom};
+use vcad_ir::Vec2;
 
 /// Safety margin (mm) on every wire-to-wire spacing: the funnel's bends and
 /// the crossing angle are estimates, the DRC is exact.
 pub const MARGIN: f64 = 0.012;
+
+/// Replace each bend `P` of `path` that sits on one of `corners` by an arc of radius `r` around `P` on
+/// the bend's outer side (chords at most 30° apart, on a radius enlarged so
+/// every chord stays `r` from `P`). The funnel bends exactly at the points
+/// that bound it — obstacle corners in centerline space — so a wire wider
+/// than the graph's design width, or any wire plus a margin, has to wrap
+/// them rather than touch them.
+pub fn round_bends(path: &[[f64; 2]], corners: &[([f64; 2], [f64; 2], f64)]) -> Vec<[f64; 2]> {
+    if path.len() < 3 || corners.is_empty() {
+        return path.to_vec();
+    }
+    let mut out = vec![path[0]];
+    for i in 1..path.len() - 1 {
+        let (a, p, b) = (path[i - 1], path[i], path[i + 1]);
+        let (la, lb) = (d2(a, p), d2(p, b));
+        let Some(&(_, center, r)) = corners.iter().find(|c| d2(c.0, p) < 1e-7) else {
+            out.push(p);
+            continue;
+        };
+        if la < 1e-9 || lb < 1e-9 {
+            out.push(p);
+            continue;
+        }
+        let u = [(p[0] - a[0]) / la, (p[1] - a[1]) / la];
+        let w = [(b[0] - p[0]) / lb, (b[1] - p[1]) / lb];
+        let turn = u[0] * w[1] - u[1] * w[0]; // > 0: left turn
+        let ang = (u[0] * w[0] + u[1] * w[1]).clamp(-1.0, 1.0).acos();
+        if ang < 1e-6 || turn.abs() < 1e-12 {
+            out.push(p);
+            continue;
+        }
+        // outer normal: right of travel for a left turn, left for a right
+        let n = |d: [f64; 2]| {
+            if turn > 0.0 {
+                [d[1], -d[0]]
+            } else {
+                [-d[1], d[0]]
+            }
+        };
+        let (n0, n1) = (n(u), n(w));
+        let a0 = n0[1].atan2(n0[0]);
+        let mut sweep = n1[1].atan2(n1[0]) - a0;
+        while sweep > std::f64::consts::PI {
+            sweep -= std::f64::consts::TAU;
+        }
+        while sweep < -std::f64::consts::PI {
+            sweep += std::f64::consts::TAU;
+        }
+        let k = ((sweep.abs() / (std::f64::consts::PI / 6.0)).ceil() as usize).max(1);
+        let rr = r / (sweep.abs() / k as f64 / 2.0).cos();
+        for j in 0..=k {
+            let t = a0 + sweep * j as f64 / k as f64;
+            let rad = rr;
+            out.push([center[0] + rad * t.cos(), center[1] + rad * t.sin()]);
+        }
+    }
+    out.push(*path.last().unwrap());
+    out
+}
 use super::funnel::{funnel, portal_params, Portal};
 
 /// One crossing of a wire word.
@@ -29,10 +91,28 @@ pub struct Wx {
     pub cut: u32,
     /// Face the wire leaves.
     pub from: u32,
-    /// Allowed centerline interval, mm from the cut's `a` vertex.
+    /// Free extent on the cut (centerline space of the graph's design
+    /// width), mm from the cut's `a` vertex; `lo == hi` pins the crossing.
     pub lo: f64,
-    /// Upper end of the interval.
+    /// Upper end of the extent.
     pub hi: f64,
+    /// Room the wire keeps from the extent's ends (its extra half-width over
+    /// the design width, plus margin). The ends are obstacle corners, so a
+    /// bend there wraps the corner at this radius.
+    pub pad: f64,
+}
+
+impl Wx {
+    /// Usable interval: the extent less `pad` at both ends.
+    pub fn span(&self) -> (f64, f64) {
+        let (a, b) = (self.lo + self.pad, self.hi - self.pad);
+        if a <= b {
+            (a, b)
+        } else {
+            let m = (self.lo + self.hi) / 2.0;
+            (m, m)
+        }
+    }
 }
 
 /// One per-layer wire word.
@@ -46,6 +126,14 @@ pub struct Wire {
     pub clearance: f64,
     /// Net id (wires of one net need no spacing).
     pub net: u32,
+    /// Net name (for the oracle).
+    pub net_name: String,
+    /// A known-good starting polyline (the human's), used as the feasible
+    /// start instead of the funnel through the starting crossing points.
+    pub start_path: Option<Vec<[f64; 2]>>,
+    /// Differential partner net and the pair gap (edge to edge) the two legs
+    /// keep instead of the clearance.
+    pub twin: Option<(u32, f64)>,
     /// Start point.
     pub start: [f64; 2],
     /// End point.
@@ -138,18 +226,30 @@ pub fn realize_wires(
     order: &HashMap<(usize, u32), Vec<usize>>,
     init: Option<&[Vec<f64>]>,
     sweeps: usize,
+    oracle: Option<&RouteSession>,
 ) -> Vec<Vec<[f64; 2]>> {
     let need = |a: &Wire, b: &Wire, sin: f64| -> f64 {
         if a.net == b.net {
             0.0
         } else {
-            (a.width / 2.0 + a.clearance.max(b.clearance) + b.width / 2.0 + MARGIN) / sin.max(0.2)
+            let gap = match (a.twin, b.twin) {
+                (Some((t, g)), _) if t == b.net => g,
+                (_, Some((t, g))) if t == a.net => g,
+                _ => a.clearance.max(b.clearance),
+            };
+            (a.width / 2.0 + gap + b.width / 2.0 + MARGIN) / sin.max(0.2)
         }
     };
     // Current crossing positions and angles.
     let mut pos: Vec<Vec<(f64, f64)>> = Vec::with_capacity(wires.len());
     for (wi, w) in wires.iter().enumerate() {
-        let free: Vec<Portal> = w.xs.iter().map(|x| portal(cg, w, x, x.lo, x.hi)).collect();
+        let free: Vec<Portal> =
+            w.xs.iter()
+                .map(|x| {
+                    let (a, b) = x.span();
+                    portal(cg, w, x, a, b)
+                })
+                .collect();
         let path = funnel(w.start, w.end, &free);
         let mut v = crossings(cg, w, &free, &path);
         if let Some(init) = init {
@@ -200,8 +300,8 @@ pub fn realize_wires(
                     pos[a.0][a.1].1.min(pos[b.0][b.1].1),
                 )
             };
-            let lo = |i: usize| wires[g[i].0].xs[g[i].1].lo;
-            let hi = |i: usize| wires[g[i].0].xs[g[i].1].hi;
+            let lo = |i: usize| wires[g[i].0].xs[g[i].1].span().0;
+            let hi = |i: usize| wires[g[i].0].xs[g[i].1].span().1;
             let mut x: Vec<f64> = (0..n)
                 .map(|i| pos[g[i].0][g[i].1].0.clamp(lo(i), hi(i)))
                 .collect();
@@ -250,8 +350,7 @@ pub fn realize_wires(
             .enumerate()
             .map(|(xi, x)| {
                 let (l, r) = nbr[wi][xi];
-                let mut lo = x.lo;
-                let mut hi = x.hi;
+                let (mut lo, mut hi) = x.span();
                 if let Some((lw, lx)) = l {
                     let p = pos[lw][lx];
                     lo = lo.max(p.0 + need(&wires[lw], w, p.1.min(pos[wi][xi].1)));
@@ -260,17 +359,76 @@ pub fn realize_wires(
                     let p = pos[rw][rx];
                     hi = hi.min(p.0 - need(&wires[rw], w, p.1.min(pos[wi][xi].1)));
                 }
-                let cur = pos[wi][xi].0;
                 if lo > hi {
-                    (cur, cur) // squeezed: stay put
+                    // squeezed: stay where the (feasible) start put it
+                    let cur = pos[wi][xi].0;
+                    (cur, cur)
                 } else {
                     (lo, hi)
                 }
             })
             .collect()
     };
-    let mut paths: Vec<Vec<[f64; 2]>> = vec![Vec::new(); wires.len()];
-    for sweep in 0..sweeps.max(1) {
+    // Exact gate: every wire's current polyline lives in a copy of the
+    // oracle; a relaxation step is kept only if it adds no violation against
+    // fixed copper and the other wires (the start is feasible, so the end is).
+    let mut sess = oracle.cloned();
+    let mut spans: Vec<Vec<SpanId>> = vec![Vec::new(); wires.len()];
+    let layer_of = |w: &Wire| cg.layers[w.layer].layer;
+    let seg = |a: [f64; 2], b: [f64; 2], w: &Wire| CopperGeom::Segment {
+        a: Vec2::new(a[0], a[1]),
+        b: Vec2::new(b[0], b[1]),
+        half_w: w.width / 2.0,
+    };
+    // the nets a polyline violates clearance to, and how many segments do
+    // per offending net, the closest approach of a polyline
+    let bad =
+        |s: &RouteSession, w: &Wire, p: &[[f64; 2]]| -> std::collections::BTreeMap<String, f64> {
+            let mut nets: std::collections::BTreeMap<String, f64> =
+                std::collections::BTreeMap::new();
+            for q in p.windows(2).filter(|q| d2(q[0], q[1]) > 1e-9) {
+                let r = s.probe(&seg(q[0], q[1], w), layer_of(w), &w.net_name, w.clearance);
+                for b in r.blockers {
+                    let e = nets.entry(b.net).or_insert(f64::INFINITY);
+                    *e = e.min(b.distance);
+                }
+            }
+            nets
+        };
+    let commit = |s: &mut RouteSession, w: &Wire, p: &[[f64; 2]]| -> Vec<SpanId> {
+        p.windows(2)
+            .filter(|q| d2(q[0], q[1]) > 1e-9)
+            .map(|q| {
+                let hw = w.width / 2.0;
+                s.commit(CopperElement {
+                    min: [q[0][0].min(q[1][0]) - hw, q[0][1].min(q[1][1]) - hw],
+                    max: [q[0][0].max(q[1][0]) + hw, q[0][1].max(q[1][1]) + hw],
+                    net: w.net_name.clone(),
+                    layer: layer_of(w),
+                    geom: seg(q[0], q[1], w),
+                })
+            })
+            .collect()
+    };
+    let mut paths: Vec<Vec<[f64; 2]>> = Vec::with_capacity(wires.len());
+    for (wi, w) in wires.iter().enumerate() {
+        let ps: Vec<Portal> =
+            w.xs.iter()
+                .zip(&pos[wi])
+                .map(|(x, p)| portal(cg, w, x, p.0, p.0))
+                .collect();
+        let mut p = vec![w.start];
+        p.extend(funnel(w.start, w.end, &ps));
+        p.dedup_by(|a, b| d2(*a, *b) < 1e-9);
+        if let Some(sp) = &w.start_path {
+            p = sp.clone();
+        }
+        if let Some(s) = sess.as_mut() {
+            spans[wi] = commit(s, w, &p);
+        }
+        paths.push(p);
+    }
+    for _ in 0..sweeps {
         for wi in 0..wires.len() {
             let w = &wires[wi];
             let ivs = channel(&pos, wi);
@@ -281,14 +439,55 @@ pub fn realize_wires(
                     .collect();
             let path = funnel(w.start, w.end, &ps);
             let cr = crossings(cg, w, &ps, &path);
-            for (p, c) in pos[wi].iter_mut().zip(cr) {
-                *p = c;
+            let mut p = vec![w.start];
+            p.extend(path);
+            p.dedup_by(|a, b| d2(*a, *b) < 1e-9);
+            // thick path: a bend at an obstacle-bounded portal end wraps the
+            // obstacle corner at the wire's pad radius (a bend at a
+            // neighbour's slot or a pinned point is not a corner)
+            let mut corners: Vec<([f64; 2], [f64; 2], f64)> = Vec::new();
+            for (x, &(lo, hi)) in w.xs.iter().zip(&ivs) {
+                if x.pad <= 0.0 || x.hi - x.lo < 2.0 * x.pad {
+                    continue;
+                }
+                let lg = &cg.layers[w.layer];
+                let c = &lg.cuts[x.cut as usize];
+                let at = |s: f64| {
+                    let (a, b) = (lg.vpos(c.a), lg.vpos(c.b));
+                    let u = (s / c.len.max(1e-12)).clamp(0.0, 1.0);
+                    [a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1])]
+                };
+                let (el, eh) = x.span();
+                if (lo - el).abs() < 1e-9 {
+                    corners.push((at(lo), at(x.lo), x.pad));
+                }
+                if (hi - eh).abs() < 1e-9 {
+                    corners.push((at(hi), at(x.hi), x.pad));
+                }
             }
-            if sweep + 1 == sweeps.max(1) {
-                let mut p = vec![w.start];
-                p.extend(path);
-                p.dedup_by(|a, b| d2(*a, *b) < 1e-9);
-                paths[wi] = p;
+            let cand = round_bends(&p, &corners);
+            let accept = match sess.as_mut() {
+                None => true,
+                Some(s) => {
+                    for id in spans[wi].drain(..) {
+                        s.remove(id);
+                    }
+                    let new = bad(s, w, &cand);
+                    let old = bad(s, w, &paths[wi]);
+                    // never a new offending net, never closer to an old one
+                    let ok = new
+                        .iter()
+                        .all(|(n, d)| old.get(n).is_some_and(|o| *d >= o - 1e-6));
+                    let keep = if ok { &cand } else { &paths[wi] };
+                    spans[wi] = commit(s, w, keep);
+                    ok
+                }
+            };
+            if accept {
+                for (q, c) in pos[wi].iter_mut().zip(cr) {
+                    *q = c;
+                }
+                paths[wi] = cand;
             }
         }
     }
@@ -299,6 +498,22 @@ pub fn realize_wires(
 mod tests {
     use super::*;
     use crate::router::flow::cdt::{CopperFilter, CutGraph, CutParams};
+
+    /// A bend at a corner becomes an arc that keeps every chord at least the
+    /// radius from the corner, on the outside of the turn.
+    #[test]
+    fn bends_wrap_corners() {
+        let corner = [1.0, 0.0];
+        // bend point 0.1 above the corner, path going over it
+        let p = vec![[0.0, -0.5], [1.0, 0.1], [2.0, -0.5]];
+        let out = round_bends(&p, &[([1.0, 0.1], corner, 0.1)]);
+        assert!(out.len() > 3);
+        for s in out.windows(2) {
+            assert!(seg_dist(corner, s[0], s[1]) >= 0.1 - 1e-9, "{out:?}");
+        }
+        // a bend not on a corner is left alone
+        assert_eq!(round_bends(&p, &[]), p);
+    }
 
     /// Two wires of different nets asked to run 0.2 mm apart through the
     /// same cuts come out at least `w + s` apart wherever they share one.
@@ -336,6 +551,7 @@ mod tests {
                         from,
                         lo: q[0],
                         hi: q[1],
+                        pad: 0.0,
                     };
                     from = x.into;
                     w
@@ -347,12 +563,15 @@ mod tests {
             width: 0.2,
             clearance: 0.2,
             net,
+            net_name: format!("N{net}"),
+            start_path: None,
+            twin: None,
             start: [3.0, y],
             end: [17.0, y],
             xs: word([3.0, y], [17.0, y]),
         };
         let wires = vec![mk(9.9, 0), mk(10.1, 1)];
-        let polys = realize_wires(&cg, &wires, &HashMap::new(), None, 3);
+        let polys = realize_wires(&cg, &wires, &HashMap::new(), None, 3, None);
         // y of each wire where it passes x = 10 (between the pad pairs)
         let y_at = |p: &Vec<[f64; 2]>, x: f64| {
             p.windows(2)

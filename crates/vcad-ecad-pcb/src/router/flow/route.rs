@@ -93,9 +93,10 @@ struct Px {
     from: u32,
     /// Free part used (`None` for an own-copper crossing).
     part: Option<u16>,
-    /// Allowed centerline interval (mm from cut.a).
+    /// Free extent (mm from cut.a) and the room kept from its ends.
     lo: f64,
     hi: f64,
+    pad: f64,
 }
 
 /// One per-layer run of a realized route.
@@ -251,11 +252,10 @@ fn runs_of(g: &FlowGraph, emb: &Embedding, k: &Commodity, p: &EPath, eps: f64) -
                 let lg = &g.cg.layers[layer as usize];
                 let c = &lg.cuts[cut as usize];
                 let (pa, pb) = (lg.vpos(c.a), lg.vpos(c.b));
-                let (s0, s1) = match part {
+                let (s0, s1, pad) = match part {
                     Some(pt) => {
                         let q = emb.bounds(layer, cut, pt);
-                        let e = eps.min((q[1] - q[0]) / 2.0);
-                        (q[0] + e, q[1] - e)
+                        (q[0], q[1], eps)
                     }
                     None => {
                         // Own-copper crossing: keep the wire inside the raw
@@ -281,9 +281,9 @@ fn runs_of(g: &FlowGraph, emb: &Embedding, k: &Commodity, p: &EPath, eps: f64) -
                             .max_by(|x, y| (x[1] - x[0]).total_cmp(&(y[1] - y[0])))
                             .map(|x| [x[0] * c.len, x[1] * c.len]);
                         match best {
-                            Some(x) if x[1] - x[0] > 2.0 * eps => (x[0] + eps, x[1] - eps),
-                            Some(x) => ((x[0] + x[1]) / 2.0, (x[0] + x[1]) / 2.0),
-                            None => (c.len / 2.0, c.len / 2.0),
+                            Some(x) if x[1] - x[0] > 2.0 * eps => (x[0] + eps, x[1] - eps, 0.0),
+                            Some(x) => ((x[0] + x[1]) / 2.0, (x[0] + x[1]) / 2.0, 0.0),
+                            None => (c.len / 2.0, c.len / 2.0, 0.0),
                         }
                     }
                 };
@@ -293,6 +293,7 @@ fn runs_of(g: &FlowGraph, emb: &Embedding, k: &Commodity, p: &EPath, eps: f64) -
                     part,
                     lo: s0,
                     hi: s1,
+                    pad,
                 });
             }
             EStep::Via { site, to, .. } => {
@@ -432,6 +433,9 @@ fn realize(
                 width: k.width,
                 clearance: session.clearance_for(&k.net),
                 net: k.net_id,
+                net_name: k.net.clone(),
+                start_path: None,
+                twin: twin_of(&k.net, session, &g.net_id),
                 start: r.pre.unwrap_or(r.start),
                 end: r.post.unwrap_or(r.end),
                 xs: r
@@ -442,6 +446,7 @@ fn realize(
                         from: x.from,
                         lo: x.lo,
                         hi: x.hi,
+                        pad: x.pad,
                     })
                     .collect(),
             });
@@ -473,7 +478,7 @@ fn realize(
             }
         }
     }
-    let polys = realize_wires(cg, &wires, &order, None, 3);
+    let polys = realize_wires(cg, &wires, &order, None, 3, Some(session));
     let sizing = session.via_sizing();
     ks.iter()
         .zip(&epaths)
@@ -516,6 +521,14 @@ fn realize(
             (segs, vs)
         })
         .collect()
+}
+
+/// The differential partner of `net` (by the session's pair rules) and the
+/// pair gap.
+fn twin_of(net: &str, session: &RouteSession, ids: &HashMap<String, u32>) -> Option<(u32, f64)> {
+    ids.iter()
+        .filter(|(n, _)| n.as_str() != net)
+        .find_map(|(n, &id)| session.pair_gap_between(net, n).map(|gap| (id, gap)))
 }
 
 /// Vias committed so far: position → (net, spans standing there).

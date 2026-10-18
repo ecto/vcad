@@ -53,6 +53,21 @@ fn main() {
     if pcb.stackup.layers.iter().all(|l| l.role.is_none()) {
         pcb.infer_layer_roles();
     }
+    // Name-based net classes (diff pairs, groups), as cm5_bench applies
+    // them: the human's pair legs run at the pair gap, not the clearance.
+    {
+        let all: Vec<String> = pcb
+            .footprints
+            .iter()
+            .flat_map(|f| f.pads.iter().filter_map(|p| p.net.clone()))
+            .filter(|n| !n.is_empty())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let cls = vcad_ecad_pcb::router::classes::classify_nets(&all);
+        vcad_ecad_pcb::router::classes::apply_classes(&mut pcb, &cls);
+    }
+    let session = vcad_ecad_pcb::session::RouteSession::from_pcb(&pcb);
     let mut params = CutParams::from_pcb(&pcb);
     // The graph is inflated for the narrowest track a chain uses (w0); wider
     // chains shrink their portals by the extra half-width.
@@ -108,10 +123,15 @@ fn main() {
                 adj.entry(key(segs[i].1)).or_default().push(i);
             }
             let mut used = vec![false; segs.len()];
+            // a chain breaks at branch points and where the width changes
+            let brk = |k: (i64, i64)| {
+                let v = &adj[&k];
+                v.len() != 2 || (segs[v[0]].2 - segs[v[1]].2).abs() > 1e-9
+            };
             let mut starts: Vec<usize> = ids
                 .iter()
                 .copied()
-                .filter(|&i| adj[&key(segs[i].0)].len() != 2 || adj[&key(segs[i].1)].len() != 2)
+                .filter(|&i| brk(key(segs[i].0)) || brk(key(segs[i].1)))
                 .collect();
             starts.extend(ids.iter().copied()); // cycles
             for s0 in starts {
@@ -120,7 +140,7 @@ fn main() {
                 }
                 // orient so we start at a non-degree-2 end when possible
                 let (mut a, mut b) = (segs[s0].0, segs[s0].1);
-                if adj[&key(a)].len() == 2 && adj[&key(b)].len() != 2 {
+                if !brk(key(a)) && brk(key(b)) {
                     std::mem::swap(&mut a, &mut b);
                 }
                 used[s0] = true;
@@ -129,7 +149,7 @@ fn main() {
                 let mut cur = b;
                 loop {
                     let nb = &adj[&key(cur)];
-                    if nb.len() != 2 {
+                    if brk(key(cur)) {
                         break;
                     }
                     let Some(&nx) = nb.iter().find(|&&j| !used[j]) else {
@@ -220,15 +240,14 @@ fn main() {
             .map(|x| {
                 let c = &lg.cuts[x.cut as usize];
                 by_cut.entry((ch.layer, x.cut)).or_default().push((x.s, ci));
-                let (lo, hi) = match c.part_at(x.s) {
+                let (lo, hi, pad) = match c.part_at(x.s) {
                     Some(k) => {
                         let q = c.parts[k];
-                        let e = shrink.min((q[1] - q[0]) / 2.0);
-                        (q[0] + e, q[1] - e)
+                        (q[0], q[1], shrink)
                     }
                     None => {
                         off_part += 1;
-                        (x.s, x.s)
+                        (x.s, x.s, 0.0)
                     }
                 };
                 let _ = x.sin;
@@ -237,6 +256,7 @@ fn main() {
                     from: x.from,
                     lo,
                     hi,
+                    pad,
                 }
             })
             .collect();
@@ -245,10 +265,23 @@ fn main() {
             width: ch.width,
             clearance: params.clearance,
             net: nid,
+            net_name: ch.net.clone(),
+            start_path: Some(ch.pts.clone()),
+            twin: None,
             start: ch.pts[0],
             end: *ch.pts.last().unwrap(),
             xs,
         });
+    }
+    // differential partners
+    for (w, ch) in wires.iter_mut().zip(&chains) {
+        w.twin = net_ids.iter().find_map(|(n, &id)| {
+            session
+                .pair_gap_between(&ch.net, n)
+                .filter(|_| n != &ch.net)
+                .map(|g| (id, g))
+        });
+        w.clearance = session.clearance_for(&ch.net);
     }
     let order: HashMap<(usize, u32), Vec<usize>> = by_cut
         .into_iter()
@@ -265,7 +298,122 @@ fn main() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(3);
-    let polys = realize_wires(&cg, &wires, &order, Some(&init), sweeps);
+    // the oracle sees fixed copper only (pads + the human's vias)
+    let mut fixed = pcb.clone();
+    fixed.traces.clear();
+    fixed.trace_arcs.clear();
+    let fixed_session = vcad_ecad_pcb::session::RouteSession::from_pcb(&fixed);
+    let polys = realize_wires(
+        &cg,
+        &wires,
+        &order,
+        Some(&init),
+        sweeps,
+        Some(&fixed_session),
+    );
+    if std::env::var("VCAD_FLOW_CROSS").is_ok() {
+        // realized wires of different nets that cross: share a cut? which?
+        let cross = |p: [f64; 2], q: [f64; 2], a: [f64; 2], b: [f64; 2]| {
+            let o = vcad_ecad_pcb::router::flow::cdt::orient;
+            let (d1, d2, d3, d4) = (o(p, q, a), o(p, q, b), o(a, b, p), o(a, b, q));
+            d1 * d2 < 0.0 && d3 * d4 < 0.0
+        };
+        let mut n = 0;
+        for i in 0..wires.len() {
+            for j in i + 1..wires.len() {
+                if wires[i].layer != wires[j].layer || wires[i].net == wires[j].net {
+                    continue;
+                }
+                let hit = polys[i].windows(2).find_map(|a| {
+                    polys[j]
+                        .windows(2)
+                        .find(|b| cross(a[0], a[1], b[0], b[1]))
+                        .map(|b| (a[0], b[0]))
+                });
+                if let Some((pa, _)) = hit {
+                    n += 1;
+                    if n <= 15 {
+                        let shared: Vec<u32> = wires[i]
+                            .xs
+                            .iter()
+                            .filter(|x| wires[j].xs.iter().any(|y| y.cut == x.cut))
+                            .map(|x| x.cut)
+                            .collect();
+                        println!(
+                            "CROSS {} x {} near {:?}: shared cuts {} pinned i {} j {}",
+                            chains[i].net,
+                            chains[j].net,
+                            pa,
+                            shared.len(),
+                            wires[i].xs.iter().filter(|x| x.lo == x.hi).count(),
+                            wires[j].xs.iter().filter(|x| x.lo == x.hi).count()
+                        );
+                    }
+                }
+            }
+        }
+        println!("crossing wire pairs: {n}");
+        // realized segments too close to fixed copper (pads + vias)
+        let mut fixed = pcb.clone();
+        fixed.traces.clear();
+        fixed.trace_arcs.clear();
+        let s = vcad_ecad_pcb::session::RouteSession::from_pcb(&fixed);
+        let mut bad = 0;
+        let mut bad_h = 0;
+        let mut shown = 0;
+        for (ci, (ch, p)) in chains.iter().zip(&polys).enumerate() {
+            let probe = |a: [f64; 2], b: [f64; 2]| {
+                s.probe(
+                    &vcad_ecad_pcb::spatial::CopperGeom::Segment {
+                        a: Vec2::new(a[0], a[1]),
+                        b: Vec2::new(b[0], b[1]),
+                        half_w: ch.width / 2.0,
+                    },
+                    cg.layers[ch.layer].layer,
+                    &ch.net,
+                    params.clearance,
+                )
+            };
+            let hb = ch.pts.windows(2).any(|w| !probe(w[0], w[1]).legal);
+            if hb {
+                bad_h += 1;
+            }
+            for w in p.windows(2) {
+                let r = probe(w[0], w[1]);
+                if !r.legal && !hb {
+                    bad += 1;
+                    if shown < 12 {
+                        shown += 1;
+                        let b = &r.blockers[0];
+                        println!(
+                            "FIXED {} w {} seg {:?}->{:?}: {} at {:.3} (chain {ci})",
+                            ch.net, ch.width, w[0], w[1], b.net, b.distance
+                        );
+                    }
+                    break;
+                }
+            }
+        }
+        println!("chains hitting fixed copper: funneled-only {bad}, human already {bad_h}");
+        // the same for the human input
+        let mut h = 0;
+        for i in 0..chains.len() {
+            for j in i + 1..chains.len() {
+                if chains[i].layer != chains[j].layer || chains[i].net == chains[j].net {
+                    continue;
+                }
+                if chains[i].pts.windows(2).any(|a| {
+                    chains[j]
+                        .pts
+                        .windows(2)
+                        .any(|b| cross(a[0], a[1], b[0], b[1]))
+                }) {
+                    h += 1;
+                }
+            }
+        }
+        println!("crossing human chain pairs: {h}");
+    }
 
     // --- funnel, measure, rebuild.
     let mut human_len = 0.0;
@@ -347,7 +495,10 @@ fn main() {
         let pairs = |b: &Pcb| -> std::collections::BTreeSet<(String, String)> {
             check_drc(b)
                 .into_iter()
-                .filter(|v| matches!(format!("{:?}", v.rule).as_str(), "Clearance" | "Short"))
+                .filter(|v| {
+                    let r = format!("{:?}", v.rule);
+                    r == "Clearance" || (r == "Short" && std::env::var("VCAD_FLOW_SHORTS").is_ok())
+                })
                 .filter_map(|v| {
                     let q: Vec<&str> = v.message.split('\'').collect();
                     (q.len() >= 4).then(|| {
@@ -377,7 +528,7 @@ fn main() {
             new.len(),
             hp.difference(&fp).count()
         );
-        for p in new.iter().take(12) {
+        for p in new.iter() {
             println!("  new pair {p:?}");
         }
     }
