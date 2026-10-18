@@ -385,14 +385,11 @@ pub fn route_net_maze3d(
     let cong = congestion.filter(|c| !c.is_flat());
     let node_cost =
         |cell: usize| -> f64 { cong.map(|c| c.cost_at(grid.world_of(cell))).unwrap_or(0.0) };
-    let r_min_via = {
-        let sz = session.via_sizing();
-        sz.micro_size(net)
-            .unwrap_or_else(|| sz.drilled_size(net))
-            .0
-            .max(1e-6)
-            / 2.0
-    };
+    // Reference: the DRILLED via keeps the historical price, smaller vias
+    // are discounted. (Inflating drilled vias instead raised every path's g
+    // above the distance heuristic and starved the A* of its expansion
+    // budget: full-CM5 round 1 placed 431/518 instead of 500.)
+    let r_ref_via = session.via_sizing().drilled_size(net).0.max(1e-6) / 2.0;
     // Differential pairs keep flat via pricing: their phantom centerline is
     // realized as two vias per transition and the coupled run, not the via
     // area, is what they optimize (biased pair searches coupled 26 of 48
@@ -681,13 +678,13 @@ pub fn route_net_maze3d(
                 let haul = dist(start, end);
                 let haul_scale = (6.0 / haul.max(1.0)).clamp(0.3, 1.0);
                 // Microvia bias: a via's price scales with the board area its
-                // barrel takes, (r / r_smallest)^MICRO_BIAS — a drilled 0.40
-                // via is ~3.6x a 0.21 microvia at the default exponent 2, so
+                // barrel takes, (r / r_drilled)^MICRO_BIAS — a 0.21 microvia
+                // costs ~0.28x a drilled 0.40 via at the default exponent 2, so
                 // a layer change goes down as microvia hops (staggered, or
                 // stacked where the board allows) wherever the hops fit, the
                 // way the human CM5 fans out.
                 let r_span = session.via_spec(net, layers[lo], layers[hi]).r();
-                let size_factor = (r_span / r_min_via).powf(bias);
+                let size_factor = (r_span / r_ref_via).min(1.0).powf(bias);
                 let tentative =
                     g[node] + VIA_COST * haul_scale * (0.4 + 0.6 * span_frac) * size_factor;
                 if tentative < g[nb] {
