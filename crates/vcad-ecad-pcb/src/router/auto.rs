@@ -4220,6 +4220,18 @@ impl WorkBudget {
     }
 }
 
+/// What is left of a `total_ms` scope budget for a nested call: wall clock
+/// when deadlines are live, else the scope's WORK converted back to ms — so
+/// a `VCAD_ROUTE_NO_DEADLINES=1` route never reads the clock.
+fn remaining_ms(total_ms: f64, sw: &Stopwatch, work: Option<&WorkBudget>) -> f64 {
+    if wall_budgets() {
+        (total_ms - sw.ms()).max(0.0)
+    } else {
+        let spent = work.map_or(0.0, |w| w.spent() as f64 / work_per_ms());
+        (total_ms - spent).max(0.0)
+    }
+}
+
 /// Maze searches per millisecond of a scope's nominal wall budget
 /// (`VCAD_ROUTE_WORK_PER_MS`, default 0.05 = one search per 20 ms — measured
 /// on the CM5 at ~0.03-0.08 searches/ms under load, so the work cap sits near
@@ -4575,7 +4587,7 @@ fn ripup_pass(
             // The victim re-route inherits what is left of the pass budget:
             // it is a whole batch inside one connection's iteration, so
             // leaving it unbounded is what made the budget advisory.
-            deadline_ms.map(|d| (d - sw_pass.ms()).max(0.0)),
+            deadline_ms.map(|d| remaining_ms(d, &sw_pass, work.as_ref())),
         ));
     }
     still.extend(unrouted);
@@ -4784,7 +4796,7 @@ fn joint_window_repair(
                 true,
                 &mut fail_cache,
                 &HashMap::new(),
-                Some((round_budget_ms - sw_round.ms()).max(0.0)),
+                Some(remaining_ms(round_budget_ms, &sw_round, Some(&work_round))),
             );
             lost.extend(reroute_victims_with_restore(
                 session,
@@ -4798,7 +4810,7 @@ fn joint_window_repair(
                 true,
                 &mut fail_cache,
                 &HashMap::new(),
-                Some((round_budget_ms - sw_round.ms()).max(0.0)),
+                Some(remaining_ms(round_budget_ms, &sw_round, Some(&work_round))),
             ));
             // Last resort for a small surviving clique: the COMPLETE window
             // router — either a joint routing the heuristics missed, or a
