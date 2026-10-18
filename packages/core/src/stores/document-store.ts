@@ -2209,7 +2209,6 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         minMicroviaDrill: 0.1,
         minMicroviaDiameter: 0.2,
         inferredFloors: [],
-    inferredFloors: [],
       },
       footprints: [],
       traces: [],
