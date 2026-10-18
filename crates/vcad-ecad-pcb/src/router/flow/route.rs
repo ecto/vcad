@@ -22,7 +22,7 @@ use super::embed::{EPath, EStep, Embedding};
 use super::flow::{
     choose_sites, Commodity, FlowGraph, FlowParams, FlowPath, IterStat, Step, Terminal,
 };
-use super::funnel::{funnel, portal_params, spread_slots, Portal};
+use super::realize::{realize_wires, Wire, Wx};
 use crate::router::{RouteAllResult, RoutedTrace, RoutedVia};
 use crate::session::RouteSession;
 use crate::spatial::{CopperElement, CopperGeom};
@@ -85,9 +85,12 @@ struct PadT {
 /// One crossing of a run.
 struct Px {
     cut: u32,
+    from: u32,
     /// Free part used (`None` for an own-copper crossing).
     part: Option<u16>,
-    portal: Portal,
+    /// Allowed centerline interval (mm from cut.a).
+    lo: f64,
+    hi: f64,
 }
 
 /// One per-layer run of a realized route.
@@ -104,17 +107,6 @@ struct Run {
 
 fn d2(a: [f64; 2], b: [f64; 2]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
-}
-
-fn seg_dist(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
-    let ab = [b[0] - a[0], b[1] - a[1]];
-    let l2 = ab[0] * ab[0] + ab[1] * ab[1];
-    let t = if l2 < 1e-18 {
-        0.0
-    } else {
-        (((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / l2).clamp(0.0, 1.0)
-    };
-    d2(p, [a[0] + t * ab[0], a[1] + t * ab[1]])
 }
 
 /// Build the commodities of `pcb` (MST per net over its pad centers).
@@ -252,17 +244,8 @@ fn runs_of(g: &FlowGraph, emb: &Embedding, k: &Commodity, p: &EPath, eps: f64) -
                 part,
             } => {
                 let lg = &g.cg.layers[layer as usize];
-                let t = lg.tris[from as usize];
-                let kk = (0..3)
-                    .find(|&i| lg.tri_cut[from as usize][i] == cut)
-                    .unwrap_or(0);
-                let rv = t[kk];
                 let c = &lg.cuts[cut as usize];
                 let (pa, pb) = (lg.vpos(c.a), lg.vpos(c.b));
-                let at = |s: f64| {
-                    let u = s / c.len.max(1e-12);
-                    [pa[0] + u * (pb[0] - pa[0]), pa[1] + u * (pb[1] - pa[1])]
-                };
                 let (s0, s1) = match part {
                     Some(pt) => {
                         let q = emb.bounds(layer, cut, pt);
@@ -299,19 +282,13 @@ fn runs_of(g: &FlowGraph, emb: &Embedding, k: &Commodity, p: &EPath, eps: f64) -
                         }
                     }
                 };
-                // right vertex is c.a ⇒ right end is s0.
-                let portal = if rv == c.a {
-                    Portal {
-                        left: at(s1),
-                        right: at(s0),
-                    }
-                } else {
-                    Portal {
-                        left: at(s0),
-                        right: at(s1),
-                    }
-                };
-                runs.last_mut().unwrap().px.push(Px { cut, part, portal });
+                runs.last_mut().unwrap().px.push(Px {
+                    cut,
+                    from,
+                    part,
+                    lo: s0,
+                    hi: s1,
+                });
             }
             EStep::Via { site, to, .. } => {
                 let pos = g.sites[site as usize].pos;
@@ -429,7 +406,7 @@ fn realize(
         emb.stats[0],
         emb.stats[1]
     );
-    let mut all_runs: Vec<Vec<Run>> = ks
+    let all_runs: Vec<Vec<Run>> = ks
         .iter()
         .zip(&epaths)
         .map(|(k, p)| {
@@ -438,149 +415,74 @@ fn realize(
                 .unwrap_or_default()
         })
         .collect();
-    let from_of = |r: &Run| r.pre.unwrap_or(r.start);
-    let to_of = |r: &Run| r.post.unwrap_or(r.end);
-    // Unconstrained crossing positions (mm from cut.a) per wire per part.
-    // Also the sine of the crossing angle: wires crossing a cut obliquely
-    // need `pitch / sin θ` of cut length between them.
-    type Want = (f64, usize, usize, f64);
-    let mut want: HashMap<(usize, u32, u16, usize), Want> = HashMap::new();
+    // One wire per run; the embedding's order along every cut.
+    let mut wires: Vec<Wire> = Vec::new();
+    let mut wire_of: HashMap<(usize, usize), usize> = HashMap::new();
+    for (ki, runs) in all_runs.iter().enumerate() {
+        let k = &ks[ki];
+        for (ri, r) in runs.iter().enumerate() {
+            wire_of.insert((ki, ri), wires.len());
+            wires.push(Wire {
+                layer: r.layer,
+                width: k.width,
+                clearance: session.clearance_for(&k.net),
+                net: k.net_id,
+                start: r.pre.unwrap_or(r.start),
+                end: r.post.unwrap_or(r.end),
+                xs: r
+                    .px
+                    .iter()
+                    .map(|x| Wx {
+                        cut: x.cut,
+                        from: x.from,
+                        lo: x.lo,
+                        hi: x.hi,
+                    })
+                    .collect(),
+            });
+        }
+    }
+    let mut order: HashMap<(usize, u32), Vec<usize>> = HashMap::new();
     for (ki, runs) in all_runs.iter().enumerate() {
         for (ri, r) in runs.iter().enumerate() {
-            let ps: Vec<Portal> = r.px.iter().map(|x| x.portal).collect();
-            let path = funnel(from_of(r), to_of(r), &ps);
-            let ts = portal_params(&path, &ps);
-            let lg = &cg.layers[r.layer];
-            for (pi, (x, t)) in r.px.iter().zip(ts).enumerate() {
-                let Some(pt) = x.part else { continue };
-                let c = &lg.cuts[x.cut as usize];
-                let p = &x.portal;
-                let q = [
-                    p.left[0] + t * (p.right[0] - p.left[0]),
-                    p.left[1] + t * (p.right[1] - p.left[1]),
-                ];
-                let (ca, cb) = (lg.vpos(c.a), lg.vpos(c.b));
-                let cd = [(cb[0] - ca[0]) / c.len, (cb[1] - ca[1]) / c.len];
-                let sin = path
-                    .windows(2)
-                    .filter(|w| d2(w[0], w[1]) > 1e-9)
-                    .min_by(|u, v| seg_dist(q, u[0], u[1]).total_cmp(&seg_dist(q, v[0], v[1])))
-                    .map(|w| {
-                        let l = d2(w[0], w[1]);
-                        let d = [(w[1][0] - w[0][0]) / l, (w[1][1] - w[0][1]) / l];
-                        (d[0] * cd[1] - d[1] * cd[0]).abs()
-                    })
-                    .unwrap_or(1.0);
-                want.insert((r.layer, x.cut, pt, ki), (d2(ca, q), ri, pi, sin));
-            }
-        }
-    }
-    // Slots in embedded order.
-    let mut keys: Vec<(u8, u32, u16)> = Vec::new();
-    for runs in &all_runs {
-        for r in runs {
             for x in &r.px {
-                if let Some(pt) = x.part {
-                    keys.push((r.layer as u8, x.cut, pt));
+                if x.part.is_none() || order.contains_key(&(r.layer, x.cut)) {
+                    continue;
                 }
+                let c = &cg.layers[r.layer].cuts[x.cut as usize];
+                let mut ord = Vec::new();
+                for pt in 0..c.parts.len() as u16 {
+                    for &w in emb.part_wires(r.layer as u8, x.cut, pt) {
+                        // the run of commodity `w` that crosses this cut
+                        let runs_w = &all_runs[w as usize];
+                        if let Some(rw) = runs_w
+                            .iter()
+                            .position(|q| q.layer == r.layer && q.px.iter().any(|y| y.cut == x.cut))
+                        {
+                            ord.push(wire_of[&(w as usize, rw)]);
+                        }
+                    }
+                }
+                let _ = (ki, ri);
+                order.insert((r.layer, x.cut), ord);
             }
         }
     }
-    keys.sort_unstable();
-    keys.dedup();
-    for (layer, cut, part) in keys {
-        let order: Vec<usize> = emb
-            .part_wires(layer, cut, part)
-            .iter()
-            .map(|&w| w as usize)
-            .filter(|w| want.contains_key(&(layer as usize, cut, part, *w)))
-            .collect();
-        if order.len() < 2 {
-            continue;
-        }
-        let lg = &cg.layers[layer as usize];
-        let c = &lg.cuts[cut as usize];
-        let q = emb.bounds(layer, cut, part);
-        let ws: Vec<f64> = order
-            .iter()
-            .map(|w| want[&(layer as usize, cut, part, *w)].0)
-            .collect();
-        let pitch: Vec<f64> = order
-            .windows(2)
-            .map(|w| {
-                let (a, b) = (&ks[w[0]], &ks[w[1]]);
-                let s = session
-                    .clearance_for(&a.net)
-                    .max(session.clearance_for(&b.net));
-                let sin = want[&(layer as usize, cut, part, w[0])]
-                    .3
-                    .min(want[&(layer as usize, cut, part, w[1])].3)
-                    .max(0.25);
-                (a.width / 2.0 + s + b.width / 2.0 + 2e-3) / sin
-            })
-            .collect();
-        let w0 = cg.params.width;
-        let lo = q[0] + eps + ((ks[order[0]].width - w0) / 2.0).max(0.0);
-        let hi = q[1] - eps - ((ks[*order.last().unwrap()].width - w0) / 2.0).max(0.0);
-        let slots = spread_slots(&ws, &pitch, lo, hi.max(lo));
-        let (pa, pb) = (lg.vpos(c.a), lg.vpos(c.b));
-        for (w, s) in order.iter().zip(slots) {
-            let (_, ri, pi, _) = want[&(layer as usize, cut, part, *w)];
-            let u = s / c.len.max(1e-12);
-            let pt = [pa[0] + u * (pb[0] - pa[0]), pa[1] + u * (pb[1] - pa[1])];
-            all_runs[*w][ri].px[pi].portal = Portal {
-                left: pt,
-                right: pt,
-            };
-        }
-    }
+    let polys = realize_wires(cg, &wires, &order, None, 3);
     let sizing = session.via_sizing();
     ks.iter()
         .zip(&epaths)
         .zip(&all_runs)
-        .map(|((k, p), runs)| {
+        .enumerate()
+        .map(|(ki, ((k, p), runs))| {
             let Some(p) = p else {
                 return (Vec::new(), Vec::new());
             };
             let mut segs = Vec::new();
-            for r in runs {
-                let ps: Vec<Portal> = r.px.iter().map(|x| x.portal).collect();
+            for (ri, r) in runs.iter().enumerate() {
                 let mut path = vec![r.start];
-                path.extend(funnel(from_of(r), to_of(r), &ps));
+                path.extend(polys[wire_of[&(ki, ri)]].iter().copied());
                 path.push(r.end);
-                if std::env::var("VCAD_FLOW_TRACE").as_deref() == Ok(k.net.as_str()) {
-                    eprintln!(
-                        "TRACE {} layer {:?} start {:?} pre {:?} post {:?} end {:?}",
-                        k.net, cg.layers[r.layer].layer, r.start, r.pre, r.post, r.end
-                    );
-                    for x in &r.px {
-                        let c = &cg.layers[r.layer].cuts[x.cut as usize];
-                        let lg = &cg.layers[r.layer];
-                        eprintln!(
-                            "  cut {} a {:?} b {:?} part {:?} L {:?} R {:?} parts {:?} blocks {:?}",
-                            x.cut,
-                            lg.vpos(c.a),
-                            lg.vpos(c.b),
-                            x.part,
-                            x.portal.left,
-                            x.portal.right,
-                            c.parts,
-                            c.blocks
-                        );
-                        if let Some(pt) = x.part {
-                            let ws: Vec<&str> = emb
-                                .part_wires(r.layer as u8, x.cut, pt)
-                                .iter()
-                                .map(|&w| ks[w as usize].net.as_str())
-                                .collect();
-                            eprintln!(
-                                "    wires {ws:?} bounds {:?}",
-                                emb.bounds(r.layer as u8, x.cut, pt)
-                            );
-                        }
-                    }
-                    eprintln!("  path {path:?}");
-                }
                 for w in path.windows(2) {
                     if d2(w[0], w[1]) < 1e-6 {
                         continue;

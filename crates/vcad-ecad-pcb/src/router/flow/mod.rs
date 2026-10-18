@@ -11,6 +11,7 @@
 //!   gaps between the wires already placed, at the market's prices.
 //! - [`funnel`] — realize a route's homotopy word as the shortest path
 //!   through its sleeve.
+//! - [`realize`] — funnel each wire word and space the wires sharing a cut.
 //! - [`route`] — [`route_flow`], the end-to-end pass behind `VCAD_FLOW=1`.
 
 pub mod cdt;
@@ -19,6 +20,7 @@ pub mod embed;
 pub mod flow;
 pub mod funnel;
 pub mod human;
+pub mod realize;
 pub mod route;
 
 pub use route::{flow_enabled, route_flow, FlowOptions, FlowReport};

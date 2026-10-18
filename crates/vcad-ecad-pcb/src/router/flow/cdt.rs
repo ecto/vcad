@@ -424,6 +424,9 @@ pub enum CopperFilter {
     All,
     /// Pads only: the board as the router sees it before routing.
     PadsOnly,
+    /// Pads and vias (no traces): the fixed layer changes of an existing
+    /// routing, with its wires removed.
+    PadsAndVias,
 }
 
 /// Collect the obstacles of `layer`.
@@ -437,9 +440,11 @@ pub fn layer_obstacles(
     let c_of = |net: &str| cl.get(net).copied().unwrap_or(p.clearance).max(p.clearance);
     let mut out = Vec::new();
     let mut probe = pcb.clone();
-    if filter == CopperFilter::PadsOnly {
+    if filter != CopperFilter::All {
         probe.traces.clear();
         probe.trace_arcs.clear();
+    }
+    if filter == CopperFilter::PadsOnly {
         probe.vias.clear();
     }
     for e in copper_elements(&probe) {
@@ -477,7 +482,7 @@ pub fn layer_obstacles(
         }
     }
     // Vias are discs too; re-tag them so reports can tell them apart.
-    if filter == CopperFilter::All {
+    if filter != CopperFilter::PadsOnly {
         for o in out.iter_mut() {
             if let CopperGeom::Disc { center, .. } = o.geom {
                 if pcb.vias.iter().any(|v| {
