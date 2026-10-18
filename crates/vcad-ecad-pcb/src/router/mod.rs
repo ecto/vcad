@@ -50,6 +50,7 @@ pub mod complete;
 pub mod congestion;
 pub mod diff_pair;
 pub mod escape;
+pub mod flow;
 pub mod global;
 pub mod grid;
 pub(crate) mod legalize;
