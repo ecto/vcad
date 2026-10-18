@@ -756,6 +756,7 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
                 (ecad::PcbLayer::FCu, ecad::PcbLayer::BCu)
             };
             ctx.fixed_vias.push(ecad::Via {
+                via_type: None,
                 position: Vec2::new(ctx.f64_val(&fields[0])?, ctx.f64_val(&fields[1])?),
                 diameter: ctx.f64_val(&fields[2])?,
                 drill: ctx.f64_val(&fields[3])?,
@@ -841,6 +842,8 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
                 .map(|k| ctx.f64_val(&fields[k]))
                 .collect::<Result<_, _>>()?;
             ctx.classes.push(ecad::NetClassRules {
+                neck_width: None,
+                neck_length: None,
                 name,
                 trace_width: f[0],
                 clearance: f[1],

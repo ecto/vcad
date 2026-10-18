@@ -1525,7 +1525,23 @@ minAnnularRing: number,
 /**
  * Minimum drill diameter in mm.
  */
-minDrill: number, };
+minDrill: number, 
+/**
+ * Minimum microvia drill (mm) — KiCad's `uvia_min_drill`. Microvias
+ * ([`ViaType::Micro`]) are judged by these two minimums instead of
+ * `min_drill` / `min_annular_ring` (laser-drilled, one dielectric deep).
+ */
+minMicroviaDrill: number, 
+/**
+ * Minimum microvia pad diameter (mm) — KiCad's `uvia_min_size`.
+ */
+minMicroviaDiameter: number, 
+/**
+ * Provenance: names of the floors above (`minDrill`, `minAnnularRing`)
+ * that were INFERRED from the board's own copper because the source
+ * file authored none. DRC findings against an inferred floor say so.
+ */
+inferredFloors: Array<string>, };
 
 /**
  * A vcad document — the `.vcad` file format.
@@ -2444,6 +2460,19 @@ noComponents: boolean, };
 export type LabelScope = "Local" | "Global" | "Hierarchical";
 
 /**
+ * What a copper layer is for.
+ */
+export type LayerRole = { "kind": "signal" } | { "kind": "plane", 
+/**
+ * The plane's net.
+ */
+net: string, } | { "kind": "split", 
+/**
+ * The pour nets sharing the layer.
+ */
+nets: Array<string>, };
+
+/**
  * Physical layer stackup for impedance calculations.
  */
 export type LayerStackup = { 
@@ -2824,7 +2853,20 @@ targetImpedance?: number,
  * Same contract as [`Self::target_impedance`], solving the pair leg width
  * at the class's declared [`Self::diff_pair_gap`].
  */
-targetDiffImpedance?: number, };
+targetDiffImpedance?: number, 
+/**
+ * Neck-down minimum width (mm): within the neck region of a same-net pad
+ * (see [`Self::neck_length`]) a trace may narrow to this width instead of
+ * [`Self::trace_width`] — the pad-entry neck of a BGA / fine-pitch land.
+ * `None`: no neck allowance, the class width applies everywhere.
+ */
+neckWidth?: number, 
+/**
+ * Neck region length (mm), measured from the pad's copper edge: a neck
+ * segment must lie entirely within this distance of a same-net pad.
+ * `None` with a `neck_width` set: [`DEFAULT_NECK_LENGTH`].
+ */
+neckLength?: number, };
 
 /**
  * An intentional connection between two or more otherwise-distinct nets
@@ -3923,7 +3965,17 @@ dielectricEr?: number,
 /**
  * Material name (e.g. "FR4", "Rogers 4350B").
  */
-material?: string, };
+material?: string, 
+/**
+ * Copper layer role (signal / plane / split plane). `None`: unknown —
+ * treated as signal.
+ */
+role?: LayerRole, 
+/**
+ * True when `role` was INFERRED (e.g. from pour coverage on import)
+ * rather than authored.
+ */
+roleInferred?: boolean, };
 
 /**
  * One contributor in a linear tolerance chain.
@@ -4305,7 +4357,17 @@ net: string,
  * Who placed this via. Absent on pre-provenance documents (treated as
  * autorouted, i.e. rippable by `route_nets`).
  */
-source?: CopperSource, };
+source?: CopperSource, 
+/**
+ * Declared construction type. `None` on documents that predate it: such
+ * a via is judged by the through/blind rules (never assumed micro).
+ */
+viaType?: ViaType, };
+
+/**
+ * Via construction type, KiCad semantics.
+ */
+export type ViaType = "through" | "blind" | "micro";
 
 /**
  * Vignette effect settings.

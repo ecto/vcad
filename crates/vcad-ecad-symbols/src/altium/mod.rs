@@ -803,6 +803,7 @@ pub(crate) fn build_pcb(set: RecordSet) -> Result<Pcb, String> {
                     .filter(|l| l.is_copper())
                     .unwrap_or(*span.last().unwrap_or(&PcbLayer::BCu));
                 vias.push(Via {
+                    via_type: None,
                     position,
                     diameter,
                     drill,
@@ -854,6 +855,8 @@ pub(crate) fn build_pcb(set: RecordSet) -> Result<Pcb, String> {
                     .find(|e| layers.map(AltiumLayer::from_id(e.id)) == Some(layer));
                 let last = i + 1 >= n;
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer,
                     copper_thickness: declared
                         .and_then(|e| e.copper_mm)
@@ -1061,7 +1064,12 @@ fn default_rules(records: &[Record]) -> DesignRules {
             .and_then(|r| r.len_mm(key))
     };
     DesignRules {
+        inferred_floors: Vec::new(),
+        min_microvia_drill: 0.1,
+        min_microvia_diameter: 0.2,
         default_rules: NetClassRules {
+            neck_width: None,
+            neck_length: None,
             name: "Default".into(),
             trace_width: rule("Width", "MINLIMIT").unwrap_or(0.25),
             clearance: rule("Clearance", "GAP").unwrap_or(0.15),

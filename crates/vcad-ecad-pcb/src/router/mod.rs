@@ -11,10 +11,12 @@
 //! - [`congestion`] -- PathFinder-style negotiated-congestion history-cost field
 
 pub mod auto;
+pub mod claims_ir;
 pub mod classes;
 pub mod descent;
 #[cfg(feature = "gpu")]
 pub mod gpu_bridge;
+pub mod sco;
 pub mod si_claims;
 
 /// Wall-clock timer that is a no-op on wasm32 (where `Instant::now` traps).
@@ -63,7 +65,7 @@ pub use auto::{
     UnroutedDiagnostic,
 };
 pub use congestion::Congestion;
-pub use descent::{descend_board, DescentReport};
+pub use descent::{descend_board, descend_board_with, DescentReport, DescentSolver};
 pub use diff_pair::route_diff_pair;
 pub use length_match::{
     check_length_match, match_lengths, LengthMatchOptions, LengthMatchResult, NetLengthReport,
@@ -851,6 +853,8 @@ mod pcb_route_tests {
             },
             stackup: LayerStackup {
                 layers: vec![StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::FCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: Some(1.5),
@@ -860,7 +864,12 @@ mod pcb_route_tests {
             },
             nets: vec![],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".into(),
                     trace_width: 0.25,
                     clearance: 0.2,

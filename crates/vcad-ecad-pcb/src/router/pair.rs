@@ -366,7 +366,7 @@ pub(super) fn try_route_pair_reason(
     let mut ripped: Vec<Placed> = Vec::new();
     let mut kept: Vec<Placed> = Vec::new();
     for p in std::mem::take(placed) {
-        if p.net == partner && p.stubs.is_empty() && overlaps_span(&p) {
+        if p.net == partner && !p.coupled && p.stubs.is_empty() && overlaps_span(&p) {
             for &s in &p.spans {
                 session.remove(s);
             }
@@ -709,6 +709,9 @@ pub(super) fn try_route_pair_reason(
     // width. A 0.2mm pair leg cannot pass between 0.4mm-pitch pads; the
     // 0.08mm single can — exactly how the human escapes these fields.
     let nw = pcb.rules.default_rules.trace_width.min(w);
+    let neck_len = crate::drc::net_class(pcb, net)
+        .and_then(|c| c.neck_length)
+        .unwrap_or(vcad_ir::ecad::DEFAULT_NECK_LENGTH);
     type ConnectorCopper = (Vec<(Vec2, Vec2, PcbLayer)>, Vec<(Vec2, PcbLayer, PcbLayer)>);
     let connect = |session: &RouteSession,
                    net: &str,
@@ -882,14 +885,20 @@ pub(super) fn try_route_pair_reason(
             // vias live on `pl`, which is not in `placed` yet.
             let mut ctx: Vec<Placed> = placed.iter().filter(|p| p.net == net).cloned().collect();
             ctx.push(pl.clone());
+            // Neck discipline: the connector is narrow only inside the neck
+            // region of its pad (the class neck length, measured here from
+            // the pad CENTRE — conservative against DRC's pad-edge rule);
+            // past it the copper goes back to full leg width, so no narrow
+            // copper ever leaves the region (MinTraceWidth stays clean).
+            let (wide, thin) = split_at_neck(&copper, pad, neck_len);
             let cand = Candidate {
                 net: net.clone(),
                 from: pad,
                 to: end,
-                width: nw,
-                segments: vec![],
+                width: w,
+                segments: wide,
                 vias,
-                thin_segments: copper,
+                thin_segments: thin,
                 thin_width: nw,
             };
             let Some(p) = validate_and_commit(session, pcb, cand, &ctx) else {
@@ -897,6 +906,7 @@ pub(super) fn try_route_pair_reason(
                 return false;
             };
             pl.spans.extend(p.spans);
+            pl.segments.extend(p.segments);
             pl.stubs.extend(p.stubs);
             pl.via_pts.extend(p.via_pts);
         }
@@ -985,7 +995,7 @@ pub(super) fn try_route_pair_reason(
         }
         last_bail = PairBail::Connector;
     }
-    let Some((placed_mine, placed_theirs, center_len)) = outcome else {
+    let Some((mut placed_mine, mut placed_theirs, center_len)) = outcome else {
         restore(session, placed, ripped);
         return Err(last_bail);
     };
@@ -995,7 +1005,41 @@ pub(super) fn try_route_pair_reason(
         center_len,
         placed_mine.via_pts.len(),
     );
+    placed_mine.coupled = true;
+    placed_theirs.coupled = true;
     Ok((placed_mine, placed_theirs))
+}
+
+/// Split a connector polyline into the part beyond `r` of `pad` (returned
+/// first, to be drawn at full width) and the part within it (narrow neck),
+/// cutting any segment that crosses the circle at the crossing point.
+type LayerSegs = Vec<(Vec2, Vec2, PcbLayer)>;
+
+fn split_at_neck(segs: &[(Vec2, Vec2, PcbLayer)], pad: Vec2, r: f64) -> (LayerSegs, LayerSegs) {
+    let (mut wide, mut thin) = (Vec::new(), Vec::new());
+    let inside = |p: Vec2| dist(p, pad) <= r;
+    for &(a, b, l) in segs {
+        match (inside(a), inside(b)) {
+            (true, true) => thin.push((a, b, l)),
+            (false, false) => wide.push((a, b, l)),
+            (ia, _) => {
+                // Bisect for the circle crossing.
+                let (mut lo, mut hi) = if ia { (a, b) } else { (b, a) };
+                for _ in 0..40 {
+                    let m = Vec2::new((lo.x + hi.x) / 2.0, (lo.y + hi.y) / 2.0);
+                    if inside(m) {
+                        lo = m;
+                    } else {
+                        hi = m;
+                    }
+                }
+                let (pin, pout) = if ia { (a, b) } else { (b, a) };
+                thin.push((pin, lo, l));
+                wide.push((lo, pout, l));
+            }
+        }
+    }
+    (wide, thin)
 }
 
 /// Shorten a centerline by `r_from` millimetres at its start and `r_to` at its
@@ -1766,6 +1810,7 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
             }
             for &(pt, la, lb) in &pl.via_pts {
                 work.vias.push(Via {
+                    via_type: None,
                     position: pt,
                     diameter: work.rules.default_rules.via_diameter,
                     drill: work.rules.default_rules.via_drill,
@@ -1800,6 +1845,7 @@ pub fn polish_pairs(pcb: &mut Pcb, effort_expansions: usize) -> (usize, usize) {
                 }
                 for &(pt, la, lb) in &pl.via_pts {
                     work.vias.push(Via {
+                        via_type: None,
                         position: pt,
                         diameter: work.rules.default_rules.via_diameter,
                         drill: work.rules.default_rules.via_drill,
@@ -1961,6 +2007,8 @@ mod tests {
             stackup: LayerStackup {
                 layers: vec![
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::FCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: Some(1.5),
@@ -1968,6 +2016,8 @@ mod tests {
                         material: Some("FR4".into()),
                     },
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::BCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: None,
@@ -1978,7 +2028,12 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".into(),
                     trace_width: 0.25,
                     clearance: 0.15,
@@ -1990,6 +2045,8 @@ mod tests {
                     target_diff_impedance: None,
                 },
                 class_rules: vec![NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "DIFF".into(),
                     trace_width: 0.2,
                     clearance: 0.15,
@@ -2135,6 +2192,8 @@ mod tests {
             200_000,
         );
         let (p, n) = result.expect("open-board pair must route coupled");
+        // Both legs carry the coupled mark rip-up / repair / shove honour.
+        assert!(p.coupled && n.coupled);
         assert_eq!(p.net, "/ETH.2_P");
         assert_eq!(n.net, "/ETH.2_N");
         assert!(!p.segments.is_empty() && !n.segments.is_empty());
@@ -2179,6 +2238,65 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Connector neck split: copper within r of the pad stays narrow, the
+    /// rest goes wide, a crossing segment is cut at the circle.
+    #[test]
+    fn connector_split_keeps_narrow_copper_inside_the_neck() {
+        let pad = Vec2::new(0.0, 0.0);
+        let l = PcbLayer::FCu;
+        let segs = vec![
+            (Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), l),
+            (Vec2::new(1.0, 0.0), Vec2::new(3.0, 0.0), l),
+            (Vec2::new(3.0, 0.0), Vec2::new(3.0, 2.0), l),
+        ];
+        let (wide, thin) = split_at_neck(&segs, pad, 1.5);
+        assert!(thin
+            .iter()
+            .all(|(a, b, _)| dist(*a, pad) <= 1.5 + 1e-9 && dist(*b, pad) <= 1.5 + 1e-9));
+        assert!(wide
+            .iter()
+            .all(|(a, b, _)| dist(*a, pad) >= 1.5 - 1e-9 && dist(*b, pad) >= 1.5 - 1e-9));
+        let len =
+            |v: &[(Vec2, Vec2, PcbLayer)]| v.iter().map(|(a, b, _)| dist(*a, *b)).sum::<f64>();
+        assert!((len(&thin) - 1.5).abs() < 1e-6 && (len(&wide) - 3.5).abs() < 1e-6);
+    }
+
+    /// A pair routed coupled in the pair-first stage lays BOTH legs; the
+    /// twin's own ratsnest connection must not be routed again as a single
+    /// (full CM5: duplicated legs doubled one net's length and their
+    /// congestion got coupled pairs ripped).
+    #[test]
+    fn pair_first_does_not_reroute_the_twin() {
+        let mut pcb = pair_board();
+        // Far pads on the back, like CM5's PCIe.TX (FCu test pad -> BCu
+        // ball): the coupled route then changes layers, and the twin's
+        // ratsnest connection is not short-circuited by same-layer contact.
+        for pad in &mut pcb.footprints[1].pads {
+            pad.layers = vec![PcbLayer::BCu];
+        }
+        // Pair-first keys on the declared diff-pair class name.
+        let members = pcb.rules.net_class_assignments.remove("DIFF").unwrap();
+        pcb.rules.class_rules[0].name = crate::router::classes::DIFF_PAIR_CLASS.into();
+        pcb.rules
+            .net_class_assignments
+            .insert(crate::router::classes::DIFF_PAIR_CLASS.into(), members);
+        let r = crate::router::route_all(&pcb, 0.25, &[]);
+        assert!(r.unrouted_nets.is_empty(), "{:?}", r.unrouted_nets);
+        let len = |net: &str| -> f64 {
+            r.traces
+                .iter()
+                .filter(|t| t.net == net)
+                .map(|t| (t.end - t.start).length())
+                .sum()
+        };
+        let (lp, ln) = (len("/ETH.2_P"), len("/ETH.2_N"));
+        // Pads 40 mm apart: one route per leg is ~40-45 mm.
+        for (net, l) in [("/ETH.2_P", lp), ("/ETH.2_N", ln)] {
+            assert!(l > 35.0 && l < 55.0, "{net} carries {l:.1} mm of copper");
+        }
+        assert!((lp - ln).abs() < 2.0, "skew {:.2} mm", (lp - ln).abs());
     }
 
     /// Every via a pair route REPORTS must be a via the session KNOWS about.
@@ -2468,10 +2586,19 @@ mod tests {
                 .map(|&(a, b, l)| (a, b, l, p.width))
                 .collect()
         };
+        // DRC's pad-breakout exemption (drc::check_clearance): a segment
+        // with an endpoint within 1.5 mm of either twin's pads needs only
+        // base clearance — full-width connector copper leaving the neck
+        // region sits exactly there.
+        let pads = [mine.from, mine.to, theirs.from, theirs.to];
+        let breakout = |a: Vec2, b: Vec2| {
+            pads.iter()
+                .any(|q| dist(*q, a) <= 1.5 || dist(*q, b) <= 1.5)
+        };
         let mut worst_leg = f64::INFINITY;
         for &(a1, b1, l1, w1) in &legs(mine) {
             for &(a2, b2, l2, w2) in &legs(theirs) {
-                if l1 == l2 {
+                if l1 == l2 && !(breakout(a1, b1) && breakout(a2, b2)) {
                     worst_leg = worst_leg.min(seg_seg(a1, b1, a2, b2) - w1 / 2.0 - w2 / 2.0);
                 }
             }
@@ -2520,6 +2647,7 @@ mod tests {
         }
         for v in &r.vias {
             pcb.vias.push(Via {
+                via_type: None,
                 position: v.position,
                 diameter: pcb.rules.default_rules.via_diameter,
                 drill: pcb.rules.default_rules.via_drill,

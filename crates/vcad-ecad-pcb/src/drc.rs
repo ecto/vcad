@@ -53,6 +53,9 @@ pub enum DrcRuleType {
     /// Invisible to every net-based rule, but it short-circuits the structure
     /// between the two points.
     SameNetBypass,
+    /// Signal copper (a trace) on a layer whose stackup role is plane /
+    /// split plane: it cuts the plane. Plane layers carry vias only.
+    PlaneLayerSignal,
 }
 
 /// DRC violation severity.
@@ -226,6 +229,7 @@ fn check_drc_scoped(pcb: &Pcb, region: Option<DrcRegion>) -> Vec<DrcViolation> {
     check_clearance(pcb, &index, &net_ties, &dp_map, region, &mut violations);
     check_pad_clearance(pcb, &net_ties, &dp_map, region, &mut violations);
     check_min_trace_width(pcb, region, &mut violations);
+    check_plane_layer_signal(pcb, region, &mut violations);
     check_min_drill(pcb, region, &mut violations);
     check_edge_clearance(pcb, region, &mut violations);
     check_hole_to_hole(pcb, region, &mut violations);
@@ -800,6 +804,50 @@ fn check_pad_clearance(
     }
 }
 
+/// Report every trace on a plane / split-plane layer (stackup role). The
+/// plane's own net is not exempt: a trace on a plane layer is a cut either way
+/// — pour copper belongs in the zone, not in traces.
+fn check_plane_layer_signal(
+    pcb: &Pcb,
+    region: Option<&DrcRegion>,
+    violations: &mut Vec<DrcViolation>,
+) {
+    let planes = pcb.plane_layers();
+    if planes.is_empty() {
+        return;
+    }
+    for t in pcb.traces.iter().filter(|t| planes.contains(&t.layer)) {
+        if !in_scope(region, |r| r.hits_segment(t.start, t.end, t.width / 2.0)) {
+            continue;
+        }
+        let inferred = pcb
+            .stackup
+            .layers
+            .iter()
+            .any(|l| l.layer == t.layer && l.role_inferred);
+        violations.push(DrcViolation {
+            rule: DrcRuleType::PlaneLayerSignal,
+            severity: DrcSeverity::Error,
+            position: Vec2::new((t.start.x + t.end.x) / 2.0, (t.start.y + t.end.y) / 2.0),
+            message: format!(
+                "Signal trace on plane layer {:?} for net '{}' ({:.2} mm){}",
+                t.layer,
+                t.net,
+                (t.end - t.start).length(),
+                if inferred {
+                    " (layer role INFERRED from pour coverage)"
+                } else {
+                    ""
+                }
+            ),
+            actual: (t.end - t.start).length(),
+            required: 0.0,
+            provenance: DrcProvenance::Routing,
+            generated: false,
+        });
+    }
+}
+
 /// Check that all traces meet the minimum trace width.
 fn check_min_trace_width(
     pcb: &Pcb,
@@ -817,7 +865,7 @@ fn check_min_trace_width(
         }
         let min_width = net_width.get(&trace.net).copied().unwrap_or(default_width);
 
-        if trace.width < min_width - 1e-6 {
+        if trace.width < min_width - 1e-6 && !neck_allows(pcb, trace) {
             violations.push(DrcViolation {
                 rule: DrcRuleType::MinTraceWidth,
                 severity: DrcSeverity::Error,
@@ -839,6 +887,39 @@ fn check_min_trace_width(
 }
 
 /// Check that all drills meet the minimum drill diameter.
+/// A via declared [`vcad_ir::ecad::ViaType::Micro`] whose span really is a
+/// microvia: two ADJACENT copper layers of this board's stack (KiCad 8+
+/// allows a microvia on any adjacent pair — CM5's own file carries In1-In2
+/// and In7-In8 microvias). A declared microvia with any other span is judged
+/// by the ordinary via rules (fail-closed: no microvia minimums).
+pub fn is_legal_microvia(pcb: &Pcb, via: &vcad_ir::ecad::Via) -> bool {
+    if !via.is_micro() {
+        return false;
+    }
+    let stack: Vec<PcbLayer> = PcbLayer::COPPER_STACK
+        .iter()
+        .copied()
+        .filter(|l| {
+            pcb.stackup.layers.is_empty() || pcb.stackup.layers.iter().any(|s| s.layer == *l)
+        })
+        .collect();
+    let idx = |l: PcbLayer| stack.iter().position(|&c| c == l);
+    let (Some(a), Some(b)) = (idx(via.start_layer), idx(via.end_layer)) else {
+        return false;
+    };
+    let (lo, hi) = (a.min(b), a.max(b));
+    hi == lo + 1
+}
+
+/// Provenance suffix for a finding against a floor the importer inferred.
+fn inferred_note(pcb: &Pcb, floor: &str, applies: bool) -> &'static str {
+    if applies && pcb.rules.inferred_floors.iter().any(|f| f == floor) {
+        " (floor INFERRED from the board's own vias, not authored)"
+    } else {
+        ""
+    }
+}
+
 fn check_min_drill(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     let min_drill = pcb.rules.min_drill;
 
@@ -847,14 +928,23 @@ fn check_min_drill(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<D
         if !in_scope(region, |r| r.hits_point(via.position, via.diameter / 2.0)) {
             continue;
         }
+        // A legal microvia is judged by the microvia minimum (KiCad
+        // `uvia_min_drill`); anything else by the via minimum.
+        let (min_drill, kind) = if is_legal_microvia(pcb, via) {
+            (pcb.rules.min_microvia_drill, "Microvia")
+        } else {
+            (min_drill, "Via")
+        };
         if via.drill < min_drill - 1e-6 {
             violations.push(DrcViolation {
                 rule: DrcRuleType::MinDrill,
                 severity: DrcSeverity::Error,
                 position: via.position,
                 message: format!(
-                    "Via drill {:.3}mm below minimum {:.3}mm",
-                    via.drill, min_drill
+                    "{kind} drill {:.3}mm below minimum {:.3}mm{}",
+                    via.drill,
+                    min_drill,
+                    inferred_note(pcb, "minDrill", kind == "Via")
                 ),
                 actual: via.drill,
                 required: min_drill,
@@ -1060,13 +1150,36 @@ fn check_annular_ring(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Ve
         if !in_scope(region, |r| r.hits_point(via.position, via.diameter / 2.0)) {
             continue;
         }
+        // KiCad microvia semantics: a microvia's pad is constrained by
+        // `uvia_min_size` (diameter), not by the via annular-ring rule.
+        if is_legal_microvia(pcb, via) {
+            let min_d = pcb.rules.min_microvia_diameter;
+            if via.diameter < min_d - 1e-6 {
+                violations.push(DrcViolation {
+                    rule: DrcRuleType::AnnularRing,
+                    severity: DrcSeverity::Error,
+                    position: via.position,
+                    message: format!("Microvia diameter {:.3}mm < {:.3}mm", via.diameter, min_d),
+                    actual: via.diameter,
+                    required: min_d,
+                    provenance: DrcProvenance::Routing,
+                    generated: false,
+                });
+            }
+            continue;
+        }
         let ring = (via.diameter - via.drill) / 2.0;
         if ring < min_ring - 1e-6 {
             violations.push(DrcViolation {
                 rule: DrcRuleType::AnnularRing,
                 severity: DrcSeverity::Error,
                 position: via.position,
-                message: format!("Via annular ring {:.3}mm < {:.3}mm", ring, min_ring),
+                message: format!(
+                    "Via annular ring {:.3}mm < {:.3}mm{}",
+                    ring,
+                    min_ring,
+                    inferred_note(pcb, "minAnnularRing", true)
+                ),
                 actual: ring,
                 required: min_ring,
                 provenance: DrcProvenance::Routing,
@@ -2970,6 +3083,112 @@ fn continuity_of(pcb: &Pcb, nodes: &[ConnNode], dsu: &mut Dsu, net: &str) -> Net
     }
 }
 
+/// Same-net connectivity of ONE net, for edits that must not split it.
+///
+/// Built from the exact node/touch/same-net-DSU machinery DRC's
+/// `NetIslands`/`UnconnectedNet` checks use. A net without zones is judged
+/// on a board reduced to its own traces, vias and pads (the same-net graph
+/// never unions foreign copper, so dropping it changes nothing but cost). A
+/// net WITH zones keeps every other net's copper, because its pour fill is
+/// carved by that copper — foreign copper moving can fracture the plane —
+/// and drops only the other nets' zones.
+pub(crate) struct NetGraph {
+    /// Galvanic components among the net's copper nodes.
+    pub components: usize,
+    /// Every same-net touch involving a trace: `(trace, other, at)` where
+    /// `trace` indexes `pcb.traces`, `other` is `Some(trace index)` when the
+    /// other node is also a trace (else a via/pad/pour), and `at` is the
+    /// approximate contact point.
+    pub trace_contacts: Vec<(usize, Option<usize>, Vec2)>,
+    /// `SameNetBypass` findings on this net, exactly as `check_drc` reports
+    /// them (same detector, same contacts).
+    pub bypasses: usize,
+}
+
+/// [`NetGraph`] for `net` on `pcb`.
+pub(crate) fn net_graph(pcb: &Pcb, net: &str) -> NetGraph {
+    let mut b = pcb.clone();
+    let poured = pcb.zones.iter().any(|z| z.net == net);
+    let trace_ids: Vec<usize> = (0..pcb.traces.len())
+        .filter(|&i| poured || pcb.traces[i].net == net)
+        .collect();
+    b.zones.retain(|z| z.net == net);
+    if !poured {
+        b.traces.retain(|t| t.net == net);
+        b.vias.retain(|v| v.net == net);
+        for fp in &mut b.footprints {
+            fp.pads.retain(|p| p.net.as_deref() == Some(net));
+        }
+        b.footprints.retain(|f| !f.pads.is_empty());
+    }
+    let net_ties = NetTieGroups::from_pcb(pcb);
+    let (nodes, _global, contacts) = build_connectivity_with_contacts(&b);
+    let mut dsu = build_same_net_dsu(&nodes, &contacts, &net_ties);
+    let mut roots: std::collections::BTreeSet<usize> = Default::default();
+    for (i, n) in nodes.iter().enumerate() {
+        if n.net == net {
+            roots.insert(dsu.find(i));
+        }
+    }
+    // Node order in build_conn_nodes: traces first.
+    let nt = trace_ids.len();
+    let mut trace_contacts = Vec::new();
+    for c in &contacts {
+        if nodes[c.i].net != net || nodes[c.j].net != net {
+            continue;
+        }
+        let tr = |k: usize| (k < nt).then(|| trace_ids[k]);
+        if let Some(a) = tr(c.i) {
+            trace_contacts.push((a, tr(c.j), c.at));
+        }
+        if let Some(b) = tr(c.j) {
+            trace_contacts.push((b, tr(c.i), c.at));
+        }
+    }
+    let mut bypass = Vec::new();
+    detect_same_net_bypass(&nodes, &net_ties, &contacts, &mut bypass);
+    let tag = format!("net '{net}'");
+    NetGraph {
+        components: roots.len(),
+        trace_contacts,
+        bypasses: bypass.iter().filter(|v| v.message.contains(&tag)).count(),
+    }
+}
+
+/// Every net's pads grouped by galvanic island under DRC's own board-wide
+/// connectivity (pours filled with their clearance voids), largest island
+/// first. Each pad is `(world position, first copper layer)`. One
+/// connectivity build for the whole board.
+pub(crate) fn pad_islands(pcb: &Pcb) -> BTreeMap<String, Vec<Vec<(Vec2, PcbLayer)>>> {
+    let (nodes, mut dsu) = build_connectivity(pcb);
+    let mut by_net: BTreeMap<String, BTreeMap<usize, Vec<(Vec2, PcbLayer)>>> = BTreeMap::new();
+    for (i, n) in nodes.iter().enumerate() {
+        if n.pad.is_none() || n.net.is_empty() {
+            continue;
+        }
+        let Some(layer) = (0..COPPER_STACK.len())
+            .find(|b| n.layers & (1 << b) != 0)
+            .map(|b| COPPER_STACK[b])
+        else {
+            continue;
+        };
+        by_net
+            .entry(n.net.clone())
+            .or_default()
+            .entry(dsu.find(i))
+            .or_default()
+            .push((n.pos, layer));
+    }
+    by_net
+        .into_iter()
+        .map(|(net, groups)| {
+            let mut g: Vec<_> = groups.into_values().collect();
+            g.sort_by_key(|v| std::cmp::Reverse(v.len()));
+            (net, g)
+        })
+        .collect()
+}
+
 /// Analyze the galvanic continuity of one net's realized copper.
 ///
 /// The verification leaf behind the power/PDN and impedance PASS-gates: returns
@@ -3139,6 +3358,56 @@ pub(crate) fn build_net_clearance_map(pcb: &Pcb) -> HashMap<String, f64> {
     map
 }
 
+/// The net class `net` belongs to (its first class assignment), if any.
+pub(crate) fn net_class<'a>(pcb: &'a Pcb, net: &str) -> Option<&'a vcad_ir::ecad::NetClassRules> {
+    pcb.rules.class_rules.iter().find(|c| {
+        pcb.rules
+            .net_class_assignments
+            .get(&c.name)
+            .is_some_and(|v| v.iter().any(|n| n == net))
+    })
+}
+
+/// Whether a narrow segment is a legal NECK: its class declares a
+/// `neck_width`, the segment is at least that wide, and BOTH endpoints lie
+/// within the class `neck_length` (default [`vcad_ir::ecad::DEFAULT_NECK_LENGTH`])
+/// of a same-net pad's copper edge (planar distance, any layer). Elsewhere the class
+/// width applies. (The pad-entry neck of KiCad custom rules / Altium's
+/// neck-down: a bounded length from the land, not a blanket width waiver.)
+pub(crate) fn neck_allows_segment(pcb: &Pcb, net: &str, a: Vec2, b: Vec2, width: f64) -> bool {
+    let Some(class) = net_class(pcb, net) else {
+        return false;
+    };
+    let Some(neck_w) = class.neck_width else {
+        return false;
+    };
+    if width < neck_w - 1e-6 {
+        return false;
+    }
+    let len = class
+        .neck_length
+        .unwrap_or(vcad_ir::ecad::DEFAULT_NECK_LENGTH);
+    let near_pad = |p: Vec2| {
+        let pt = CopperGeom::Disc { center: p, r: 0.0 };
+        pcb.footprints.iter().any(|fp| {
+            fp.pads.iter().any(|pad| {
+                // Planar distance from the land's copper edge, any layer: a
+                // BGA dog-bone escape necks on the layer below the ball too.
+                pad.net.as_deref() == Some(net) && {
+                    let c = crate::geometry::pad_world_position(fp, pad);
+                    let rot = (fp.rotation + pad.rotation).to_radians();
+                    pt.distance_to(&crate::spatial::pad_geom(pad, c, rot)) <= len + 1e-9
+                }
+            })
+        })
+    };
+    near_pad(a) && near_pad(b)
+}
+
+fn neck_allows(pcb: &Pcb, t: &vcad_ir::ecad::Trace) -> bool {
+    neck_allows_segment(pcb, &t.net, t.start, t.end, t.width)
+}
+
 /// Build a map of net ID to minimum trace width from design rules.
 pub(crate) fn build_net_trace_width_map(pcb: &Pcb) -> HashMap<String, f64> {
     let mut map = HashMap::new();
@@ -3260,7 +3529,12 @@ fn pair_aware_clearance_w(
     let Some(&(gap, leg_w)) = dp_map.get(&key) else {
         return fallback;
     };
-    let is_leg = |w: Option<f64>| w.map(|w| w >= leg_w - 0.01).unwrap_or(true);
+    // KiCad parity (deliberate, user-approved 2026-10-17, revisitable): the
+    // diff-pair gap constrains COUPLED SEGMENTS only. Copper with no width of
+    // its own — a twin's via annulus, a pad — is not leg copper and gets the
+    // normal same-class clearance. (Previously a via counted as a leg, which
+    // made every pair layer-transition via pair DRC-illegal.)
+    let is_leg = |w: Option<f64>| w.is_some_and(|w| w >= leg_w - 0.01);
     if !is_leg(w_a) || !is_leg(w_b) {
         return fallback;
     }
@@ -3366,6 +3640,8 @@ mod tests {
             stackup: LayerStackup {
                 layers: vec![
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::FCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: Some(1.5),
@@ -3373,6 +3649,8 @@ mod tests {
                         material: Some("FR4".to_string()),
                     },
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::BCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: None,
@@ -3392,7 +3670,12 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".to_string(),
                     trace_width: 0.25,
                     clearance: 0.2,
@@ -3431,6 +3714,7 @@ mod tests {
             ],
             trace_arcs: vec![],
             vias: vec![Via {
+                via_type: None,
                 position: Vec2::new(50.0, 40.0),
                 diameter: 0.8,
                 drill: 0.4,
@@ -3476,6 +3760,7 @@ mod tests {
             // A GND (net "2") through-via FCu->BCu that physically passes
             // through the In2Cu 3V3 plane.
             pcb.vias.push(Via {
+                via_type: None,
                 position: Vec2::new(70.0, 40.0),
                 diameter: 0.8,
                 drill: 0.4,
@@ -3855,6 +4140,7 @@ mod tests {
     fn detect_min_drill_violation() {
         let mut pcb = clean_pcb();
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(30.0, 60.0),
             diameter: 0.6,
             drill: 0.15, // below 0.2 minimum
@@ -3905,6 +4191,7 @@ mod tests {
         let mut pcb = clean_pcb();
         // Place two vias very close together
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(50.5, 40.0),
             diameter: 0.8,
             drill: 0.4,
@@ -3930,6 +4217,7 @@ mod tests {
         let mut pcb = clean_pcb();
         // Via with very thin annular ring
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(70.0, 40.0),
             diameter: 0.5,
             drill: 0.4, // ring = 0.05mm < 0.15mm
@@ -4024,6 +4312,8 @@ mod tests {
         pcb.vias.clear();
         // A diff-pair class (0.1mm gap, 0.2mm legs) with USB_P / USB_N.
         pcb.rules.class_rules.push(NetClassRules {
+            neck_width: None,
+            neck_length: None,
             name: "DP".into(),
             trace_width: 0.2,
             clearance: 0.2,
@@ -4429,6 +4719,7 @@ mod tests {
             no_components: false,
         });
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(50.0, 50.0),
             diameter: 0.8,
             drill: 0.4,
@@ -4750,6 +5041,7 @@ mod tests {
         btrace.layer = PcbLayer::BCu;
         // Via at (40,40) bridging FCu→BCu on net 1.
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(40.0, 40.0),
             diameter: 0.8,
             drill: 0.4,
@@ -4897,11 +5189,104 @@ mod tests {
         }
     }
 
+    /// Neck-down: copper below the class width passes only at >= the class
+    /// neck width AND inside the neck region of a same-net pad.
+    #[test]
+    fn neck_width_allowed_only_near_pads() {
+        let judge = |w: f64, a: (f64, f64), b: (f64, f64)| {
+            let mut pcb = clean_pcb();
+            let net = "NK".to_string();
+            pcb.footprints.push(footprint(
+                "U1",
+                (50.0, 40.0),
+                0.0,
+                vec![smd_pad("1", (0.0, 0.0), "NK")],
+            ));
+            let c = Vec2::new(50.0, 40.0);
+            pcb.rules.class_rules.push(vcad_ir::ecad::NetClassRules {
+                name: "SI".into(),
+                trace_width: 0.2,
+                clearance: 0.1,
+                via_diameter: 0.4,
+                via_drill: 0.2,
+                diff_pair_gap: None,
+                diff_pair_width: None,
+                target_impedance: None,
+                target_diff_impedance: None,
+                neck_width: Some(0.08),
+                neck_length: Some(1.0),
+            });
+            pcb.rules
+                .net_class_assignments
+                .insert("SI".into(), vec![net.clone()]);
+            pcb.traces.push(vcad_ir::ecad::Trace {
+                start: Vec2::new(c.x + a.0, c.y + a.1),
+                end: Vec2::new(c.x + b.0, c.y + b.1),
+                width: w,
+                layer: PcbLayer::FCu,
+                net,
+                source: None,
+            });
+            check_drc(&pcb)
+                .iter()
+                .any(|v| v.rule == DrcRuleType::MinTraceWidth)
+        };
+        // 0.08 neck leaving the pad: passes.
+        assert!(!judge(0.08, (0.0, 0.0), (0.0, 0.8)));
+        // Same width far from any pad: fails.
+        assert!(judge(0.08, (0.0, 20.0), (0.0, 21.0)));
+        // Below the neck minimum even at the pad: fails.
+        assert!(judge(0.06, (0.0, 0.0), (0.0, 0.8)));
+    }
+
+    /// Microvias are judged by the microvia minimums (KiCad uvia_min_drill /
+    /// uvia_min_size), not the via drill / annular-ring floors; a "micro" via
+    /// whose span is not adjacent-outer gets the ordinary via rules.
+    #[test]
+    fn microvias_judged_by_their_own_minimums() {
+        let via = |d: f64, dr: f64, a: PcbLayer, b: PcbLayer, t| Via {
+            via_type: Some(t),
+            position: Vec2::new(30.0, 60.0),
+            diameter: d,
+            drill: dr,
+            start_layer: a,
+            end_layer: b,
+            net: "2".to_string(),
+            source: None,
+        };
+        use vcad_ir::ecad::ViaType::{Micro, Through};
+        let judge = |v: Via| {
+            let mut pcb = clean_pcb();
+            // Stack = F.Cu, In1.Cu, B.Cu.
+            let mut l1 = pcb.stackup.layers[0].clone();
+            l1.layer = PcbLayer::In1Cu;
+            pcb.stackup.layers.insert(1, l1);
+            pcb.vias.push(v);
+            let r = check_drc(&pcb);
+            (
+                r.iter().any(|x| x.rule == DrcRuleType::MinDrill),
+                r.iter().any(|x| x.rule == DrcRuleType::AnnularRing),
+            )
+        };
+        let (f, i1, b) = (PcbLayer::FCu, PcbLayer::In1Cu, PcbLayer::BCu);
+        // CM5's laser microvia 0.21/0.12 F.Cu-In1.Cu: legal.
+        assert_eq!(judge(via(0.21, 0.12, f, i1, Micro)), (false, false));
+        // Same geometry declared through: fails drill and ring floors.
+        assert_eq!(judge(via(0.21, 0.12, f, b, Through)), (true, true));
+        // In1.Cu-B.Cu: adjacent and outer in this 3-layer stack — legal too.
+        assert_eq!(judge(via(0.21, 0.12, i1, b, Micro)), (false, false));
+        // Microvia below its own minimums still fails.
+        assert_eq!(judge(via(0.18, 0.08, f, i1, Micro)), (true, true));
+        // "Micro" spanning F.Cu-B.Cu is not a microvia: via rules apply.
+        assert_eq!(judge(via(0.21, 0.12, f, b, Micro)), (true, true));
+    }
+
     /// Every violation carries a provenance, and a via drill fault is routing.
     #[test]
     fn via_drill_fault_is_routing_provenance() {
         let mut pcb = clean_pcb();
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(30.0, 60.0),
             diameter: 0.6,
             drill: 0.15,
@@ -4913,6 +5298,12 @@ mod tests {
         let v = check_drc(&pcb);
         let d = v.iter().find(|v| v.rule == DrcRuleType::MinDrill).unwrap();
         assert_eq!(d.provenance, DrcProvenance::Routing);
+        assert!(!d.message.contains("INFERRED"));
+        // A finding against an inferred floor says so.
+        pcb.rules.inferred_floors = vec!["minDrill".into()];
+        let v = check_drc(&pcb);
+        let d = v.iter().find(|v| v.rule == DrcRuleType::MinDrill).unwrap();
+        assert!(d.message.contains("INFERRED"), "{}", d.message);
         assert!(
             !d.generated,
             "a via is never a generated footprint artifact"
@@ -5255,6 +5646,7 @@ mod tests {
 
         // Stitch the plane to the net with a via FCu→In1Cu over the trace.
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(30.0, 40.0),
             diameter: 0.8,
             drill: 0.4,
@@ -5299,6 +5691,39 @@ mod tests {
             islands[0].actual, 3.0,
             "three disjoint stubs = three islands"
         );
+    }
+
+    /// In7Cu/In8Cu copper must take part in connectivity: they were missing
+    /// from the stack, so every segment on them was its own island and a
+    /// chain of N touching In7 segments read as N fragments.
+    #[test]
+    fn inner_layers_7_and_8_connect() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        for layer in [PcbLayer::In7Cu, PcbLayer::In8Cu] {
+            let mut a = trace((10.0, 10.0), (15.0, 10.0), "SIG");
+            let mut b = trace((15.0, 10.0), (20.0, 12.0), "SIG");
+            let mut c = trace((20.0, 12.0), (25.0, 12.0), "SIG");
+            for t in [&mut a, &mut b, &mut c] {
+                t.layer = layer;
+            }
+            pcb.traces = vec![a, b, c];
+            assert_eq!(net_graph(&pcb, "SIG").components, 1, "{layer:?}");
+        }
+        // A through via joins In7 to In8.
+        pcb.traces[0].layer = PcbLayer::In7Cu;
+        pcb.vias.push(Via {
+            via_type: None,
+            position: Vec2::new(15.0, 10.0),
+            diameter: 0.4,
+            drill: 0.2,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::BCu,
+            net: "SIG".into(),
+            source: None,
+        });
+        assert_eq!(net_graph(&pcb, "SIG").components, 1);
     }
 
     /// A correctly routed net (every piece of its copper galvanically joined)
@@ -5432,6 +5857,7 @@ mod tests {
         )];
         // The stitching via: a +3V3 through-via at the pad reaching the In1Cu plane.
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(50.0, 40.0),
             diameter: 0.8,
             drill: 0.4,
@@ -5510,6 +5936,7 @@ mod tests {
         assert!((outer.x - 57.2).abs() < 1e-9 && (outer.y - 40.0).abs() < 1e-9);
         // The coil's inner terminal via.
         pcb.vias.push(Via {
+            via_type: None,
             position: inner,
             diameter: 0.6,
             drill: 0.3,
@@ -5556,6 +5983,10 @@ mod tests {
             "the inner-via contact must be flagged, positions: {:?}",
             bypass.iter().map(|x| x.position).collect::<Vec<_>>()
         );
+        // The per-net graph (the descent's commit gate) counts the same
+        // findings the board DRC reports.
+        assert_eq!(net_graph(&pcb, "COIL").bypasses, bypass.len());
+        assert_eq!(net_graph(&pcb, "OTHER").bypasses, 0);
     }
 
     /// The sanctioned lead-out: the same spiral + inner via, but the lead
@@ -5574,6 +6005,7 @@ mod tests {
         let center = Vec2::new(50.0, 40.0);
         let (inner, outer) = add_spiral(&mut pcb, center, 10, 2.6, 7.2, 0.25, "COIL");
         pcb.vias.push(Via {
+            via_type: None,
             position: inner,
             diameter: 0.6,
             drill: 0.3,
@@ -5625,6 +6057,7 @@ mod tests {
         // A GND trace on FCu, terminated by a stitching via into the plane…
         pcb.traces.push(trace((20.0, 40.0), (40.0, 40.0), "2"));
         let via = |x: f64, y: f64| Via {
+            via_type: None,
             position: Vec2::new(x, y),
             diameter: 0.8,
             drill: 0.4,

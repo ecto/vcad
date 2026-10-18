@@ -731,6 +731,8 @@ mod tests {
             },
             stackup: LayerStackup {
                 layers: vec![StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::FCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: None,
@@ -749,7 +751,12 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".to_string(),
                     trace_width: 0.25,
                     clearance: 0.2,
@@ -816,6 +823,7 @@ mod tests {
             }],
             trace_arcs: vec![],
             vias: vec![Via {
+                via_type: None,
                 position: Vec2::new(10.0, 40.0),
                 diameter: 0.8,
                 drill: 0.4,
@@ -845,6 +853,8 @@ mod tests {
     #[test]
     fn via_indexed_on_all_spanned_layers() {
         let copper = |layer| StackupLayer {
+            role: None,
+            role_inferred: false,
             layer,
             copper_thickness: Some(0.035),
             dielectric_thickness: None,
@@ -852,6 +862,7 @@ mod tests {
             material: None,
         };
         let via = |start_layer, end_layer| Via {
+            via_type: None,
             position: Vec2::new(50.0, 40.0),
             diameter: 0.8,
             drill: 0.4,
@@ -884,7 +895,12 @@ mod tests {
                 name: "VCC".to_string(),
             }],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".to_string(),
                     trace_width: 0.25,
                     clearance: 0.2,
@@ -990,7 +1006,12 @@ mod tests {
             stackup: LayerStackup { layers: vec![] },
             nets: vec![],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".to_string(),
                     trace_width: 0.25,
                     clearance: 0.2,

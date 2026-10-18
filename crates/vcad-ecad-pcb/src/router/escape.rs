@@ -463,6 +463,24 @@ pub fn plan_field_escapes_toward(
             if cap <= 0 {
                 continue;
             }
+            // The channel model sees only the field's pads; copper already
+            // in the session (routed traces, vias, fan-out) is invisible to
+            // it, so plans ran straight into it and every one was dropped by
+            // the final probe. Keep nodes off live copper here instead.
+            if !session
+                .probe(
+                    &CopperGeom::Disc {
+                        center: p,
+                        r: w / 2.0,
+                    },
+                    field.layer,
+                    "",
+                    clr,
+                )
+                .legal
+            {
+                continue;
+            }
             let id = grid.idx(i, j);
             node_cap[id] = cap;
             // Node-split arc capped at 1: plans in a batch are then
@@ -496,6 +514,22 @@ pub fn plan_field_escapes_toward(
                 let b = grid.pos(ni as usize, nj as usize);
                 let cap = tracks_fit(channel_along_seg(field, a, b), w, clr);
                 if cap <= 0 {
+                    continue;
+                }
+                // Same as the nodes: the edge must be free of live copper.
+                if !session
+                    .probe(
+                        &CopperGeom::Segment {
+                            a,
+                            b,
+                            half_w: w / 2.0,
+                        },
+                        field.layer,
+                        "",
+                        clr,
+                    )
+                    .legal
+                {
                     continue;
                 }
                 let cost = (dist(a, b) * COST_SCALE) as i64;
@@ -633,7 +667,25 @@ pub fn plan_field_escapes_toward(
                 .legal
         });
         if !legal {
-            log::info!("escape: planned escape for {conn_net} failed session probe — dropped");
+            // Evidence: what the plan ran into (the flow network models only
+            // the field's own pad channels).
+            let blk = segments.iter().find_map(|(a, b)| {
+                let pr = session.probe(
+                    &CopperGeom::Segment {
+                        a: *a,
+                        b: *b,
+                        half_w: ww / 2.0,
+                    },
+                    field.layer,
+                    conn_net,
+                    clearance,
+                );
+                pr.blockers.first().map(|bl| (bl.net.clone(), bl.distance))
+            });
+            log::info!(
+                "escape: planned escape for {conn_net} failed session probe — dropped (blocker {:?})",
+                blk
+            );
             continue;
         }
         let egress = *pts.last().expect("polyline has >= 2 points");
@@ -804,6 +856,8 @@ mod tests {
             stackup: LayerStackup {
                 layers: vec![
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::FCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: Some(1.5),
@@ -811,6 +865,8 @@ mod tests {
                         material: Some("FR4".into()),
                     },
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::BCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: None,
@@ -821,7 +877,12 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".into(),
                     trace_width: width,
                     clearance,
@@ -941,6 +1002,62 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// The plan routes around copper already in the session (it used to see
+    /// only the field's pad channels and every such plan was dropped by the
+    /// final probe): with a foreign trace walling off three sides of the
+    /// field, every surviving plan is legal and leaves through the open side.
+    #[test]
+    fn plans_avoid_live_session_copper() {
+        let pcb0 = board(vec![bga(8, 8, 0.65, 0.3, Vec2::new(25.0, 25.0))], 0.1, 0.1);
+        let fields = detect_pin_fields(&pcb0);
+        let field = fields[0].clone();
+        let mut pcb = pcb0.clone();
+        // Walls just outside the pad bbox on the left, top and bottom.
+        let (lo, hi) = (field.min, field.max);
+        for (a, b) in [
+            (
+                Vec2::new(lo.x - 0.4, lo.y - 2.0),
+                Vec2::new(lo.x - 0.4, hi.y + 2.0),
+            ),
+            (
+                Vec2::new(lo.x - 2.0, lo.y - 0.4),
+                Vec2::new(hi.x + 2.0, lo.y - 0.4),
+            ),
+            (
+                Vec2::new(lo.x - 2.0, hi.y + 0.4),
+                Vec2::new(hi.x + 2.0, hi.y + 0.4),
+            ),
+        ] {
+            pcb.traces.push(Trace {
+                start: a,
+                end: b,
+                width: 0.1,
+                layer: field.layer,
+                net: "WALL".into(),
+                source: None,
+            });
+        }
+        let session = RouteSession::from_pcb(&pcb);
+        let eps: Vec<(String, Vec2)> = (2..=5usize)
+            .map(|i| {
+                (
+                    format!("N{i}_3"),
+                    Vec2::new(25.0 + i as f64 * 0.65, 25.0 + 3.0 * 0.65),
+                )
+            })
+            .collect();
+        let plans = plan_field_escapes(&session, &pcb, &field, &eps, 0.1);
+        let ok: Vec<&EscapePlan> = plans.iter().flatten().collect();
+        assert!(!ok.is_empty(), "the open right side still admits escapes");
+        for p in ok {
+            assert!(
+                p.egress.x > hi.x,
+                "must leave through the open side: {:?}",
+                p.egress
+            );
         }
     }
 

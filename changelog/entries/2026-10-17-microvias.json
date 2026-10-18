@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-17-microvias",
+  "version": "0.10.0",
+  "date": "2026-10-17",
+  "category": "feat",
+  "title": "Microvias as a via type",
+  "summary": "Microvias are a first-class via type with KiCad semantics (adjacent-layer span, own size rules), imported and exported faithfully.",
+  "features": ["pcb", "electronics", "routing"],
+  "mcpTools": ["add_via", "import_kicad", "export_kicad"]
+}

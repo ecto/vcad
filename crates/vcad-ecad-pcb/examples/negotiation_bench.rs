@@ -77,6 +77,8 @@ fn board(w: f64, h: f64, footprints: Vec<Footprint>, keepouts: Vec<Keepout>) -> 
         stackup: LayerStackup {
             layers: vec![
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::FCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: Some(1.5),
@@ -84,6 +86,8 @@ fn board(w: f64, h: f64, footprints: Vec<Footprint>, keepouts: Vec<Keepout>) -> 
                     material: Some("FR4".into()),
                 },
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::BCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: None,
@@ -94,7 +98,12 @@ fn board(w: f64, h: f64, footprints: Vec<Footprint>, keepouts: Vec<Keepout>) -> 
         },
         nets: vec![],
         rules: DesignRules {
+            inferred_floors: Vec::new(),
+            min_microvia_drill: 0.1,
+            min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
+                neck_width: None,
+                neck_length: None,
                 name: "Default".into(),
                 trace_width: 0.25,
                 clearance: 0.2,
@@ -267,6 +276,7 @@ fn run(pcb: &Pcb, negotiation_rounds: usize) -> Score {
     }
     for v in &r.vias {
         applied.vias.push(Via {
+            via_type: None,
             position: v.position,
             diameter: applied.rules.default_rules.via_diameter,
             drill: applied.rules.default_rules.via_drill,

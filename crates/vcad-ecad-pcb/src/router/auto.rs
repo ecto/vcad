@@ -60,6 +60,43 @@ pub struct RoutedVia {
     pub start_layer: PcbLayer,
     /// Bottom of the via's copper span.
     pub end_layer: PcbLayer,
+    /// Construction type the router intends (see [`router_via_type`]):
+    /// a microvia where the span is one adjacent pair and the board's via
+    /// size meets its microvia minimums. Consumers copy it onto `Via`.
+    #[serde(default)]
+    pub via_type: Option<vcad_ir::ecad::ViaType>,
+}
+
+/// The via type the router emits for a span on `pcb` at the board's default
+/// via size: [`ViaType::Micro`](vcad_ir::ecad::ViaType::Micro) when the span
+/// is one adjacent layer pair and the default via meets the microvia
+/// minimums, else through (outer to outer) or blind.
+pub fn router_via_type(pcb: &Pcb, start: PcbLayer, end: PcbLayer) -> vcad_ir::ecad::ViaType {
+    use vcad_ir::ecad::ViaType;
+    let d = &pcb.rules.default_rules;
+    let probe = vcad_ir::ecad::Via {
+        position: Vec2::new(0.0, 0.0),
+        diameter: d.via_diameter,
+        drill: d.via_drill,
+        start_layer: start,
+        end_layer: end,
+        net: String::new(),
+        source: None,
+        via_type: Some(ViaType::Micro),
+    };
+    if crate::drc::is_legal_microvia(pcb, &probe)
+        && d.via_drill >= pcb.rules.min_microvia_drill - 1e-9
+        && d.via_diameter >= pcb.rules.min_microvia_diameter - 1e-9
+    {
+        return ViaType::Micro;
+    }
+    let copper = copper_layers(pcb);
+    let outer = |l: PcbLayer| copper.first() == Some(&l) || copper.last() == Some(&l);
+    if outer(start) && outer(end) {
+        ViaType::Through
+    } else {
+        ViaType::Blind
+    }
 }
 
 /// Why a connection could not be routed, and where — so an agent or human can
@@ -358,6 +395,17 @@ pub(super) struct Placed {
     pub(super) stub_width: f64,
     pub(super) via_pts: Vec<(Vec2, PcbLayer, PcbLayer)>,
     pub(super) spans: Vec<SpanId>,
+    /// One leg of a differential pair the pair router laid COUPLED with its
+    /// twin. Never ripped or shoved on its own: re-routing one leg as a
+    /// single destroys the coupling (full CM5: pair-first logged 46 coupled
+    /// pairs, 24-30 ended below 0.5 coupled after rip-up/repair re-routed
+    /// one leg, and re-routed pairs left the old leg behind — 35.8 mm skew).
+    pub(super) coupled: bool,
+    /// Plane fan-out stitching laid before signal routing (see
+    /// [`plane_fanout_first`]): `stubs`/`via_pts` carry the stitches of one
+    /// net, never ripped (also `coupled`), and the later stitch pass skips
+    /// the pads they serve (`fanout_pads`).
+    pub(super) fanout: bool,
 }
 
 /// Route every unrouted net on `pcb` (optionally restricted to `nets_filter`).
@@ -397,7 +445,23 @@ pub fn route_all_with_opts(
     super::maze::set_through_vias_only(opts.through_vias_only);
     super::maze::set_microvia(opts.microvia);
     FAST.store(opts.fast, std::sync::atomic::Ordering::Relaxed);
-    super::maze::set_no_route_layers(&opts.no_route_layers);
+    // Plane / split-plane layers (stackup roles, authored or inferred) carry
+    // no signal: a trace there cuts the plane. Union with the caller's list.
+    let mut no_route = opts.no_route_layers.clone();
+    // Opt-in (`VCAD_ENFORCE_PLANES=1`): on the full CM5 enforcing the
+    // inferred roles (4 signal layers, as the human routes it) took split nets
+    // 34 -> 64 with today's router, so the default only REPORTS plane-layer
+    // signal (DRC PlaneLayerSignal) and still routes there.
+    let enforce = std::env::var("VCAD_ENFORCE_PLANES").as_deref() == Ok("1");
+    for l in pcb.plane_layers().into_iter().filter(|_| enforce) {
+        if !no_route.contains(&l) {
+            no_route.push(l);
+        }
+    }
+    if !no_route.is_empty() {
+        log::info!("no-route (plane) layers: {no_route:?}");
+    }
+    super::maze::set_no_route_layers(&no_route);
     let synthesized = synthesize_pours(pcb, &opts.pour_policy, nets_filter);
     let poured_board;
     let pcb = if synthesized.is_empty() {
@@ -437,6 +501,40 @@ pub fn route_all_with_opts(
     // spot near it taken. The copper rides along on a working copy of the board
     // and joins the result with the post-route stitches below.
     let pcb_in = pcb;
+    // Planned plane fan-out for dense pin fields: a microvia IN the pad from
+    // each outer-layer plane pin straight down to its plane on the adjacent
+    // layer (the HDI fan-out the CM5's own layout uses: 956 F.Cu-In1.Cu
+    // microvias). It occupies no routing room on the pad layer and lands
+    // inside the net's own plane, so pairs and signals route around nothing
+    // they could have used. Committed as fixed board copper before every
+    // other pass; the stitch passes skip the pads it served.
+    let micro_fan = if !planes.is_empty() && planned_microvia_fanout() {
+        plan_microvia_fanout(pcb, &planes, nets_filter)
+    } else {
+        Vec::new()
+    };
+    let micro_pads: Vec<Vec2> = micro_fan.iter().map(|m| m.0).collect();
+    let micro_board;
+    let pcb = if micro_fan.is_empty() {
+        pcb
+    } else {
+        log::info!("planned microvia fan-out: {} plane pin(s)", micro_fan.len());
+        let mut p = pcb.clone();
+        for (pt, net, a, b) in &micro_fan {
+            p.vias.push(vcad_ir::ecad::Via {
+                via_type: Some(vcad_ir::ecad::ViaType::Micro),
+                position: *pt,
+                diameter: pcb.rules.default_rules.via_diameter,
+                drill: pcb.rules.default_rules.via_drill,
+                start_layer: *a,
+                end_layer: *b,
+                net: net.clone(),
+                source: Some(vcad_ir::ecad::CopperSource::Autoroute),
+            });
+        }
+        micro_board = p;
+        &micro_board
+    };
     let prestitch = if opts.prestitch_planes && !planes.is_empty() {
         let mut s0 = RouteSession::from_pcb(pcb);
         let ps = stitch_planes(
@@ -447,6 +545,8 @@ pub fn route_all_with_opts(
             &[],
             width,
             &board_holes(pcb),
+            true,
+            &micro_pads,
         );
         log::info!(
             "plane prestitch: {} via(s), {} pad(s) left for after routing",
@@ -474,6 +574,7 @@ pub fn route_all_with_opts(
             }
             for (v, net) in &ps.vias {
                 p.vias.push(vcad_ir::ecad::Via {
+                    via_type: None,
                     position: *v,
                     diameter: pcb.rules.default_rules.via_diameter,
                     drill: pcb.rules.default_rules.via_drill,
@@ -714,6 +815,8 @@ pub fn route_all_with_opts(
         &placed,
         width,
         &holes,
+        true,
+        &[fanout_pads(&placed), micro_pads.clone()].concat(),
     );
     {
         let mut per_net: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
@@ -801,6 +904,98 @@ pub fn route_all_with_opts(
         }
     }
 
+    // Island stitching. `stitch_planes` trusts a pad that sits on a layer
+    // carrying a same-net zone to flood into it, but a dense outer-layer pour
+    // fragments around other-net copper: on the full CM5 the GND FCu pour left
+    // its pads in 289 disjoint groups, and 33 nets the router reported routed
+    // were split under DRC. Judge the realized copper with DRC's own
+    // connectivity and drop one stitch per stranded island (any pad of it that
+    // escapes to a via reaching the net's other plane layers) — not a via per
+    // pad, which measured 4.8x slower and crowded 14 signal nets out.
+    if !planes.is_empty() {
+        let mut holes_now = holes.clone();
+        holes_now.extend(
+            stitch
+                .vias
+                .iter()
+                .map(|(p, _)| (*p, pcb.rules.default_rules.via_drill / 2.0)),
+        );
+        for p in &placed {
+            holes_now.extend(
+                p.via_pts
+                    .iter()
+                    .map(|(v, _, _)| (*v, pcb.rules.default_rules.via_drill / 2.0)),
+            );
+        }
+        let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+        let drill_r = pcb.rules.default_rules.via_drill / 2.0;
+        let copper = copper_layers(pcb);
+        for round in 0..ISLAND_STITCH_ROUNDS {
+            let board = realized_board(pcb, &placed, &stitch, &session, width);
+            let islands = crate::drc::pad_islands(&board);
+            let mut added = 0usize;
+            let mut stranded = 0usize;
+            for (net, groups) in &islands {
+                if groups.len() < 2 || !planes.contains_key(net) {
+                    continue;
+                }
+                if !nets_filter.is_empty() && !nets_filter.iter().any(|n| n == net) {
+                    continue;
+                }
+                let clearance = session.clearance_for(net);
+                let w = session.width_for(net, width);
+                for group in &groups[1..] {
+                    stranded += 1;
+                    let extra: Vec<Vec2> = stitch
+                        .vias
+                        .iter()
+                        .filter(|(_, n)| n == net)
+                        .map(|(p, _)| *p)
+                        .collect();
+                    for &(pad_pt, pad_layer) in group {
+                        let mut spans: Vec<SpanId> = Vec::new();
+                        match escape_endpoint(
+                            &mut session,
+                            pcb,
+                            net,
+                            pad_pt,
+                            pad_layer,
+                            w,
+                            clearance,
+                            via_r,
+                            &copper,
+                            &placed,
+                            &extra,
+                            &mut spans,
+                            true,
+                            &holes_now,
+                        ) {
+                            Some(Escape {
+                                via: Some(v), stub, ..
+                            }) => {
+                                if let Some((a, b)) = stub {
+                                    stitch.stubs.push((a, b, net.clone(), pad_layer));
+                                }
+                                stitch.vias.push((v, net.clone()));
+                                holes_now.push((v, drill_r));
+                                stitch.nets.insert(net.clone());
+                                added += 1;
+                                break;
+                            }
+                            _ => rollback(&mut session, &spans),
+                        }
+                    }
+                }
+            }
+            log::info!(
+                "island stitch round {round}: {stranded} stranded plane island(s), {added} stitched"
+            );
+            if added == 0 {
+                break;
+            }
+        }
+    }
+
     // Invariant audit over everything this pass is about to emit — placed
     // routes plus the plane stitching — against the settled session.
     audit_placed(&session, pcb, &placed);
@@ -832,6 +1027,7 @@ pub fn route_all_with_opts(
         }
         for &(pt, la, lb) in &p.via_pts {
             vias.push(RoutedVia {
+                via_type: None,
                 position: pt,
                 net: p.net.clone(),
                 start_layer: la,
@@ -845,6 +1041,16 @@ pub fn route_all_with_opts(
     // stitched again (it saw the prestitch as foreign board copper) keeps only
     // its prestitch.
     let pcb = pcb_in;
+    for (pt, net, a, b) in &micro_fan {
+        vias.push(RoutedVia {
+            position: *pt,
+            net: net.clone(),
+            start_layer: *a,
+            end_layer: *b,
+            via_type: Some(vcad_ir::ecad::ViaType::Micro),
+        });
+        stitch.nets.insert(net.clone());
+    }
     if let Some(ps) = prestitch {
         let pre_pads: Vec<Vec2> = ps
             .stubs
@@ -886,6 +1092,7 @@ pub fn route_all_with_opts(
     );
     for (pt, net) in &stitch.vias {
         vias.push(RoutedVia {
+            via_type: None,
             position: *pt,
             net: net.clone(),
             start_layer: through_top,
@@ -1030,6 +1237,60 @@ pub fn route_all_with_opts(
                 at.x, at.y
             ),
         });
+    }
+    for v in &mut vias {
+        v.via_type = Some(router_via_type(pcb, v.start_layer, v.end_layer));
+    }
+    // Fail-closed completion: a net is routed only if DRC's own connectivity
+    // over the returned copper agrees its pads form ONE island. The router's
+    // per-connection bookkeeping disagreed with DRC on 33 full-CM5 nets
+    // (plane nets whose same-layer pour fragmented, escapes that ended on a
+    // dead via) and reported 407/408 routed against 374 DRC-connected.
+    {
+        use vcad_ir::ecad::{Trace, Via};
+        let mut b = pcb.clone();
+        b.traces.extend(traces.iter().map(|t| Trace {
+            start: t.start,
+            end: t.end,
+            width: t.width,
+            layer: t.layer,
+            net: t.net.clone(),
+            source: None,
+        }));
+        b.vias.extend(vias.iter().map(|v| Via {
+            via_type: None,
+            position: v.position,
+            diameter: pcb.rules.default_rules.via_diameter,
+            drill: pcb.rules.default_rules.via_drill,
+            start_layer: v.start_layer,
+            end_layer: v.end_layer,
+            net: v.net.clone(),
+            source: None,
+        }));
+        for (net, groups) in crate::drc::pad_islands(&b) {
+            if groups.len() < 2 || !routed.contains(&net) || unrouted.contains(&net) {
+                continue;
+            }
+            let at = groups[1][0].0;
+            unrouted.insert(net.clone());
+            diagnostics.push(UnroutedDiagnostic {
+                net: net.clone(),
+                from: groups[0][0].0,
+                to: at,
+                blocking_nets: Vec::new(),
+                region_min: at,
+                region_max: at,
+                suggested_layer: None,
+                suggested_via: None,
+                reason: format!(
+                    "pads split across {} disjoint copper groups under DRC connectivity \
+                     (a stranded group near ({:.2}, {:.2}))",
+                    groups.len(),
+                    at.x,
+                    at.y
+                ),
+            });
+        }
     }
     // A net both routed and (partially) failed is still incompletely connected —
     // keep it flagged so the caller knows to inspect it.
@@ -1383,7 +1644,22 @@ fn route_pass(
         let mut routed_pairs: std::collections::BTreeSet<String> = Default::default();
         let mut deferred = Vec::with_capacity(conns.len());
         let mut coupled = 0usize;
+        // The partner connections a coupled pair already realized. A pair
+        // routed from one leg's connection also lays the twin's copper; the
+        // twin's own ratsnest connection must not then be routed AGAIN as a
+        // single (CM5: PCIe.TX_P carried its coupled In2 leg plus a ~20 mm
+        // single-ended duplicate; a 4-net PCIe.TX/ETH.3 subset routed 157 mm
+        // of copper before this, 118 mm after).
+        let mut covered: Vec<(String, Vec2, Vec2)> = Vec::new();
+        let same_conn = |c: &(String, Vec2, Vec2), net: &str, a: Vec2, b: Vec2| {
+            c.0 == net
+                && ((dist(c.1, a) < 1e-3 && dist(c.2, b) < 1e-3)
+                    || (dist(c.1, b) < 1e-3 && dist(c.2, a) < 1e-3))
+        };
         for (net, from, to) in std::mem::take(&mut conns) {
+            if covered.iter().any(|c| same_conn(c, &net, from, to)) {
+                continue;
+            }
             let base = super::pair::pair_partner(&net).map(|p| {
                 if p < net {
                     format!("{p}|{net}")
@@ -1404,6 +1680,7 @@ fn route_pass(
                     cong,
                     max_expansions,
                 ) {
+                    covered.push((theirs.net.clone(), theirs.from, theirs.to));
                     placed.push(mine);
                     placed.push(theirs);
                     coupled += 1;
@@ -1418,6 +1695,67 @@ fn route_pass(
         conns = deferred;
         if coupled > 0 {
             log::info!("pair-first: {coupled} pairs routed coupled");
+        }
+    }
+
+    // Plane fan-out, after the coupled pairs and before every single: drop
+    // the stitching via of each plane pad that needs one while the board is
+    // still nearly empty — the order a human BGA layout uses. Stitching only
+    // after routing left 536 stranded plane islands on the full CM5, 192 of
+    // them unreachable by then; fanning out BEFORE the pairs cost 13 coupled
+    // pairs (46 -> 33) because the vias took the pair corridors.
+    if plane_fanout_first() {
+        let planes = plane_layers(pcb);
+        if !planes.is_empty() {
+            let mut holes = board_holes(pcb);
+            let drill_r = pcb.rules.default_rules.via_drill / 2.0;
+            for p in &placed {
+                holes.extend(p.via_pts.iter().map(|(v, _, _)| (*v, drill_r)));
+            }
+            let st = stitch_planes(
+                &mut session,
+                pcb,
+                &planes,
+                nets_filter,
+                &placed,
+                width,
+                &holes,
+                false,
+                &[],
+            );
+            let copper = copper_layers(pcb);
+            let (top, bot) = (
+                *copper.first().unwrap_or(&PcbLayer::FCu),
+                *copper.last().unwrap_or(&PcbLayer::BCu),
+            );
+            let mut by_net: BTreeMap<String, Placed> = BTreeMap::new();
+            for (pt, net) in &st.vias {
+                let e = by_net.entry(net.clone()).or_insert_with(|| Placed {
+                    net: net.clone(),
+                    from: *pt,
+                    to: *pt,
+                    width: session.width_for(net, width),
+                    segments: Vec::new(),
+                    stubs: Vec::new(),
+                    stub_width: session.width_for(net, width),
+                    via_pts: Vec::new(),
+                    spans: Vec::new(),
+                    coupled: true,
+                    fanout: true,
+                });
+                e.via_pts.push((*pt, top, bot));
+            }
+            for (a, b, net, l) in &st.stubs {
+                if let Some(e) = by_net.get_mut(net) {
+                    e.stubs.push((*a, *b, *l));
+                }
+            }
+            log::info!(
+                "plane fan-out: {} via(s) over {} net(s) before singles",
+                st.vias.len(),
+                by_net.len()
+            );
+            placed.extend(by_net.into_values());
         }
     }
 
@@ -1702,7 +2040,7 @@ fn arsenal_sweep(
     let mut rescued = 0usize;
     let mut it = pending.into_iter();
     for (net, from, to) in it.by_ref() {
-        if sw.ms() > ARSENAL_SWEEP_BUDGET_MS {
+        if wall_budgets() && sw.ms() > ARSENAL_SWEEP_BUDGET_MS {
             log::info!("arsenal sweep over budget — deferring remainder");
             still.push((net, from, to));
             break;
@@ -1921,7 +2259,7 @@ fn route_batch(
         // advisory only: they are checked between connections, and one
         // connection's victim re-route is itself a whole batch, so a 92-second
         // round measured 231 seconds.
-        if let Some(d) = deadline_ms {
+        if let Some(d) = deadline_ms.filter(|_| wall_budgets()) {
             if sw.ms() > d {
                 log::info!(
                     "route_batch over {d:.0}ms budget — deferring {} conns",
@@ -2516,6 +2854,26 @@ pub(super) fn validate_and_commit(
     let copper = copper_layers(pcb);
     let (segments, route_vias) = (cand.segments, cand.vias);
 
+    // Width rule, exactly as DRC's MinTraceWidth judges it: copper below the
+    // net's class width is legal only as a neck (class neck_width, within the
+    // neck region of a same-net pad — `drc::neck_allows_segment`).
+    let class_w = crate::drc::build_net_trace_width_map(pcb)
+        .get(net)
+        .copied()
+        .unwrap_or(pcb.rules.default_rules.trace_width);
+    let width_ok = |a: Vec2, b: Vec2, sw: f64| {
+        sw >= class_w - 1e-6 || crate::drc::neck_allows_segment(pcb, net, a, b, sw)
+    };
+    if !segments.iter().all(|(a, b, _)| width_ok(*a, *b, w))
+        || !cand
+            .thin_segments
+            .iter()
+            .all(|(a, b, _)| width_ok(*a, *b, cand.thin_width))
+    {
+        log::debug!("validate: {net} narrow copper outside the neck region");
+        return None;
+    }
+
     // Every segment must still be legal on its own layer.
     for (a, b, l) in &segments {
         let seg = CopperGeom::Segment {
@@ -2680,6 +3038,8 @@ pub(super) fn validate_and_commit(
         stub_width: cand.thin_width,
         via_pts: new_vias,
         spans,
+        coupled: false,
+        fanout: false,
     })
 }
 
@@ -3101,6 +3461,8 @@ fn try_route_fanout(
         stub_width: w,
         via_pts: via_pts.into_iter().map(|v| (v, front, back)).collect(),
         spans,
+        coupled: false,
+        fanout: false,
     })
 }
 
@@ -3430,6 +3792,190 @@ fn plane_layers(pcb: &Pcb) -> BTreeMap<String, Vec<PcbLayer>> {
     m
 }
 
+/// Whether plane fan-out runs before the single-ended routing. Opt-in
+/// (`VCAD_PLANE_FANOUT_FIRST=1`): on the full CM5 it cut stranded plane
+/// islands (GND 82 -> 2 groups) but split MORE nets overall (30 -> 38) and
+/// ran 3427 s vs 1152 s, so stitch-after-routing + island stitching stays
+/// the default.
+fn plane_fanout_first() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_PLANE_FANOUT_FIRST").as_deref() == Ok("1"))
+}
+
+/// Whether the planned microvia fan-out runs. Opt-in
+/// (`VCAD_MICROVIA_FANOUT=1`): on the full CM5 it fanned out 670 plane pins
+/// and cut GND from 75 to 42 pad groups and the route-attributable DRC count
+/// 2054 -> 1733, but the in-pad microvias occupy In1/In8 under the BGAs,
+/// where signals also route, and DRC-split nets rose 32 -> 39.
+fn planned_microvia_fanout() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_MICROVIA_FANOUT").as_deref() == Ok("1"))
+}
+
+/// Plan via-in-pad microvias for plane pins: an SMD pad on an outer layer
+/// whose net has a plane on the ADJACENT layer, where the board's default
+/// via is a legal microvia for that hop ([`router_via_type`]), fits inside
+/// the pad, and probes clearance- and hole-legal on both layers. Returns
+/// `(pad center, net, pad layer, plane layer)`.
+fn plan_microvia_fanout(
+    pcb: &Pcb,
+    planes: &BTreeMap<String, Vec<PcbLayer>>,
+    nets_filter: &[String],
+) -> Vec<(Vec2, String, PcbLayer, PcbLayer)> {
+    let copper = copper_layers(pcb);
+    if copper.len() < 3 {
+        return Vec::new();
+    }
+    let mut session = RouteSession::from_pcb(pcb);
+    let via_d = pcb.rules.default_rules.via_diameter;
+    let via_r = via_d / 2.0;
+    let mut out = Vec::new();
+    for fp in &pcb.footprints {
+        for pad in &fp.pads {
+            let Some(net) = pad.net.as_ref().filter(|n| !n.is_empty()) else {
+                continue;
+            };
+            let Some(layers) = planes.get(net) else {
+                continue;
+            };
+            if !nets_filter.is_empty() && !nets_filter.iter().any(|n| n == net) {
+                continue;
+            }
+            if pad.drill.is_some() {
+                continue;
+            }
+            let Some(pad_layer) = pad.layers.iter().copied().find(|l| l.is_copper()) else {
+                continue;
+            };
+            let adj = if pad_layer == copper[0] {
+                copper[1]
+            } else if Some(&pad_layer) == copper.last() {
+                copper[copper.len() - 2]
+            } else {
+                continue;
+            };
+            if !layers.contains(&adj)
+                || router_via_type(pcb, pad_layer, adj) != vcad_ir::ecad::ViaType::Micro
+            {
+                continue;
+            }
+            // Via-in-pad: the annulus must sit inside the land.
+            let min_dim = match &pad.shape {
+                PadShape::Circle { diameter } => *diameter,
+                PadShape::Rect { width, height } | PadShape::RoundRect { width, height, .. } => {
+                    width.min(*height)
+                }
+                _ => continue,
+            };
+            if via_d > min_dim + 1e-9 {
+                continue;
+            }
+            let pt = crate::geometry::pad_world_position(fp, pad);
+            let clearance = session.clearance_for(net);
+            let disc = CopperGeom::Disc {
+                center: pt,
+                r: via_r,
+            };
+            if !session.probe(&disc, adj, net, clearance).legal
+                || !session.probe(&disc, pad_layer, net, clearance).legal
+                || !session.probe_drill(pt, session.via_drill_for(net)).legal
+            {
+                continue;
+            }
+            let mut spans = Vec::new();
+            commit_via(&mut session, net, pt, via_r, &[pad_layer, adj], &mut spans);
+            out.push((pt, net.clone(), pad_layer, adj));
+        }
+    }
+    out
+}
+
+/// Pads a plane fan-out already stitched: each fan-out stub's pad end and
+/// each at-pad fan-out via.
+fn fanout_pads(placed: &[Placed]) -> Vec<Vec2> {
+    placed
+        .iter()
+        .filter(|p| p.fanout)
+        .flat_map(|p| {
+            p.stubs
+                .iter()
+                .map(|(a, _, _)| *a)
+                .chain(p.via_pts.iter().map(|(v, _, _)| *v))
+        })
+        .collect()
+}
+
+/// Whether the router's wall-clock budgets are live. They make a route
+/// load-dependent: the same full-CM5 route deferred 2 connections at load ~8
+/// and 10 at load ~20 (routability 0.998 vs 0.985), so A/B measurements
+/// across loads compare the machine, not the change.
+/// `VCAD_ROUTE_NO_DEADLINES=1` turns every budget off for deterministic
+/// benchmarking (results then depend only on the board and the code).
+fn wall_budgets() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_ROUTE_NO_DEADLINES").as_deref() != Ok("1"))
+}
+
+/// Rounds of [`route_all_with_opts`]'s island stitching: each round re-judges
+/// connectivity, since a stitch can land in a plane island that is itself
+/// stranded.
+const ISLAND_STITCH_ROUNDS: usize = 3;
+
+/// `pcb` plus everything this pass has realized so far (placed routes and the
+/// plane stitching), as a board DRC can judge.
+fn realized_board(
+    pcb: &Pcb,
+    placed: &[Placed],
+    stitch: &Stitch,
+    session: &RouteSession,
+    width: f64,
+) -> Pcb {
+    use vcad_ir::ecad::{Trace, Via};
+    let mut b = pcb.clone();
+    let via = |pt: Vec2, net: &str, a: PcbLayer, z: PcbLayer| Via {
+        via_type: None,
+        position: pt,
+        diameter: pcb.rules.default_rules.via_diameter,
+        drill: pcb.rules.default_rules.via_drill,
+        start_layer: a,
+        end_layer: z,
+        net: net.to_string(),
+        source: None,
+    };
+    let tr = |a: Vec2, z: Vec2, w: f64, l: PcbLayer, net: &str| Trace {
+        start: a,
+        end: z,
+        width: w,
+        layer: l,
+        net: net.to_string(),
+        source: None,
+    };
+    for p in placed {
+        for &(a, z, l) in &p.segments {
+            b.traces.push(tr(a, z, p.width, l, &p.net));
+        }
+        for &(a, z, l) in &p.stubs {
+            b.traces.push(tr(a, z, p.stub_width, l, &p.net));
+        }
+        for &(pt, la, lb) in &p.via_pts {
+            b.vias.push(via(pt, &p.net, la, lb));
+        }
+    }
+    for (a, z, net, l) in &stitch.stubs {
+        b.traces
+            .push(tr(*a, *z, session.width_for(net, width), *l, net));
+    }
+    let copper = copper_layers(pcb);
+    let (top, bot) = (
+        *copper.first().unwrap_or(&PcbLayer::FCu),
+        *copper.last().unwrap_or(&PcbLayer::BCu),
+    );
+    for (pt, net) in &stitch.vias {
+        b.vias.push(via(*pt, net, top, bot));
+    }
+    b
+}
+
 /// Plane stitching output: dog-bone stubs, stitching vias, and net bookkeeping.
 struct Stitch {
     /// Stub segments (pad → via) with their net and pad layer.
@@ -3452,6 +3998,7 @@ struct Stitch {
 /// copper pour voids around it on every other-net plane it passes through, so
 /// the result is clearance-legal by construction. A pad already sitting on one
 /// of its planes floods directly and needs no via.
+#[allow(clippy::too_many_arguments)]
 #[tracing::instrument(level = "info", skip_all)]
 fn stitch_planes(
     session: &mut RouteSession,
@@ -3461,6 +4008,8 @@ fn stitch_planes(
     placed: &[Placed],
     width: f64,
     holes: &[Hole],
+    trust_same_layer: bool,
+    skip_pads: &[Vec2],
 ) -> Stitch {
     let mut out = Stitch {
         stubs: Vec::new(),
@@ -3492,8 +4041,13 @@ fn stitch_planes(
             if !nets_filter.is_empty() && !nets_filter.iter().any(|n| n == net) {
                 continue;
             }
-            // A pad already on one of its planes floods straight into it.
-            if pad.layers.iter().any(|l| layers.contains(l)) {
+            // A pad already on one of its planes floods straight into it —
+            // when trusted. The fan-out-first pass does not trust a same-layer
+            // pour while the net has a plane elsewhere (a dense outer pour
+            // fragments around the routing that comes later).
+            let on_own = pad.layers.iter().any(|l| layers.contains(l));
+            let elsewhere = layers.iter().any(|l| !pad.layers.contains(l));
+            if on_own && (trust_same_layer || !elsewhere) {
                 out.nets.insert(net.clone());
                 continue;
             }
@@ -3501,6 +4055,10 @@ fn stitch_planes(
                 continue;
             };
             let pad_pt = crate::geometry::pad_world_position(fp, pad);
+            if skip_pads.iter().any(|q| dist(*q, pad_pt) < 1e-6) {
+                out.nets.insert(net.clone());
+                continue;
+            }
             // A fine-pitch pad can't take an at-pad drill — force the dog-bone.
             // Pitch is the nearest neighbour's spacing in the footprint's own
             // frame (rotation/translation preserve relative distances).
@@ -3580,7 +4138,7 @@ fn ripup_pass(
     for (net, from, to) in unrouted.by_ref() {
         // Over-deadline: park the rest as pending — negotiation's keep-best
         // treats an abandoned round exactly like a converged one.
-        if let Some(d) = deadline_ms {
+        if let Some(d) = deadline_ms.filter(|_| wall_budgets()) {
             if sw_pass.ms() > d {
                 log::info!("ripup pass over {d:.0}ms budget — deferring remainder");
                 still.push((net, from, to));
@@ -3611,7 +4169,9 @@ fn ripup_pass(
         let victim_set: HashSet<usize> = placed
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.net != net && p.spans.iter().any(|s| blocker_spans.contains(s)))
+            .filter(|(_, p)| {
+                p.net != net && !p.coupled && p.spans.iter().any(|s| blocker_spans.contains(s))
+            })
             .map(|(i, _)| i)
             .collect();
         if victim_set.is_empty() || victim_set.len() > RIPUP_MAX_VICTIMS {
@@ -3832,7 +4392,7 @@ fn joint_window_repair(
         let round_budget_ms = 300_000.0 * (max_expansions as f64 / 200_000.0).max(1.0);
         let sw_round = Stopwatch::start();
         for (gw, stuck) in groups {
-            if sw_round.ms() > round_budget_ms {
+            if wall_budgets() && sw_round.ms() > round_budget_ms {
                 still.extend(stuck);
                 continue;
             }
@@ -3856,7 +4416,7 @@ fn joint_window_repair(
             let mut victims = Vec::new();
             let mut kept = Vec::new();
             for p in std::mem::take(placed) {
-                if in_window(&p) {
+                if in_window(&p) && !p.coupled {
                     for &s in &p.spans {
                         session.remove(s);
                     }
@@ -4146,6 +4706,8 @@ mod tests {
             stackup: LayerStackup {
                 layers: vec![
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::FCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: Some(1.5),
@@ -4153,6 +4715,8 @@ mod tests {
                         material: Some("FR4".into()),
                     },
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::BCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: None,
@@ -4163,7 +4727,12 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".into(),
                     trace_width: 0.25,
                     clearance: 0.2,
@@ -4203,6 +4772,8 @@ mod tests {
         ]
         .into_iter()
         .map(|layer| StackupLayer {
+            role: None,
+            role_inferred: false,
             layer,
             copper_thickness: Some(0.035),
             dielectric_thickness: Some(0.5),
@@ -4289,6 +4860,7 @@ mod tests {
             (b, "B", PcbLayer::In2Cu, PcbLayer::BCu),
         ] {
             judged.vias.push(Via {
+                via_type: None,
                 position: p,
                 diameter: via_r * 2.0,
                 drill,
@@ -4320,6 +4892,7 @@ mod tests {
         }
         for v in &r.vias {
             pcb.vias.push(Via {
+                via_type: v.via_type,
                 position: v.position,
                 diameter: 0.8,
                 drill: 0.4,
@@ -4607,6 +5180,8 @@ mod tests {
         ]);
         // Put PWR in a wide net class.
         pcb.rules.class_rules.push(NetClassRules {
+            neck_width: None,
+            neck_length: None,
             name: "Power".into(),
             trace_width: 0.6,
             clearance: 0.2,
@@ -4731,6 +5306,8 @@ mod tests {
         pcb.stackup = LayerStackup {
             layers: vec![
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::FCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: Some(0.2),
@@ -4738,6 +5315,8 @@ mod tests {
                     material: Some("FR4".into()),
                 },
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::In1Cu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: Some(1.1),
@@ -4745,6 +5324,8 @@ mod tests {
                     material: Some("FR4".into()),
                 },
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::In2Cu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: Some(0.2),
@@ -4752,6 +5333,8 @@ mod tests {
                     material: Some("FR4".into()),
                 },
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::BCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: None,
@@ -5034,6 +5617,185 @@ mod tests {
             "planes must connect their pads, still unconnected: {:?}",
             unconnected.iter().map(|v| &v.message).collect::<Vec<_>>()
         );
+    }
+
+    /// A same-layer pour that does not reach every pad is not a plane for
+    /// those pads. GND has an FCu pour covering only U1 plus a whole-board
+    /// In1Cu plane; every GND pad sits on FCu, so stitch_planes trusts all of
+    /// them to "flood" — yet U2/U3 touch no copper at all. The island pass
+    /// must stitch the stranded groups, and the routed claim must agree with
+    /// DRC (full CM5: 33 nets reported routed were split under DRC).
+    #[test]
+    fn island_stitch_connects_pads_a_partial_pour_strands() {
+        let mut fcu = plane("GND", PcbLayer::FCu);
+        fcu.outline = vec![
+            Vec2::new(4.0, 4.0),
+            Vec2::new(12.0, 4.0),
+            Vec2::new(12.0, 12.0),
+            Vec2::new(4.0, 12.0),
+        ];
+        let pcb0 = board4(
+            vec![
+                fp("U1", 8.0, 8.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U2", 25.0, 8.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U3", 42.0, 22.0, vec![pad("1", 0.0, 0.0, "GND")]),
+            ],
+            vec![fcu, plane("GND", PcbLayer::In1Cu)],
+        );
+        let r = route_all(&pcb0, 0.25, &[]);
+        let mut pcb = pcb0.clone();
+        apply(&mut pcb, &r);
+        let split = crate::drc::pad_islands(&pcb)
+            .get("GND")
+            .map(|g| g.len())
+            .unwrap_or(0);
+        assert_eq!(split, 1, "GND pads must form one island");
+        assert!(
+            r.routed_nets.iter().any(|n| n == "GND"),
+            "{:?}",
+            r.diagnostics
+        );
+        assert!(
+            r.vias.iter().filter(|v| v.net == "GND").count() >= 2,
+            "U2 and U3 need stitches"
+        );
+    }
+
+    /// Plane-role layers carry no signal: with In1Cu marked a GND plane the
+    /// router routes everything elsewhere, and DRC reports a trace there.
+    #[test]
+    fn no_signal_routing_on_plane_layers() {
+        let mut pcb0 = board4(
+            vec![
+                fp(
+                    "U1",
+                    8.0,
+                    8.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, 2.0, "B")],
+                ),
+                fp(
+                    "U2",
+                    40.0,
+                    22.0,
+                    vec![pad("1", 0.0, 0.0, "A"), pad("2", 0.0, 2.0, "B")],
+                ),
+            ],
+            vec![],
+        );
+        for l in &mut pcb0.stackup.layers {
+            if l.layer == PcbLayer::In1Cu {
+                l.role = Some(vcad_ir::ecad::LayerRole::Plane { net: "GND".into() });
+            }
+        }
+        let r = route_all_with_opts(
+            &pcb0,
+            0.25,
+            &[],
+            &RouteOptions {
+                no_route_layers: pcb0.plane_layers(),
+                ..Default::default()
+            },
+        );
+        assert!(r.unrouted_nets.is_empty(), "{:?}", r.unrouted_nets);
+        assert!(r.traces.iter().all(|t| t.layer != PcbLayer::In1Cu));
+        super::super::maze::set_no_route_layers(&[]);
+        let mut pcb = pcb0.clone();
+        pcb.traces.push(vcad_ir::ecad::Trace {
+            start: Vec2::new(20.0, 5.0),
+            end: Vec2::new(25.0, 5.0),
+            width: 0.25,
+            layer: PcbLayer::In1Cu,
+            net: "A".into(),
+            source: None,
+        });
+        assert!(crate::drc::check_drc(&pcb)
+            .iter()
+            .any(|v| v.rule == crate::drc::DrcRuleType::PlaneLayerSignal));
+    }
+
+    /// Planned fan-out: an outer-layer plane pin over its plane on the
+    /// adjacent layer gets a via-in-pad microvia down to it, and DRC sees the
+    /// net connected.
+    #[test]
+    fn plane_pins_fan_out_with_microvia_in_pad() {
+        use vcad_ir::ecad::ViaType;
+        let mut pcb0 = board4(
+            vec![
+                fp("U1", 8.0, 8.0, vec![pad("1", 0.0, 0.0, "GND")]),
+                fp("U2", 25.0, 8.0, vec![pad("1", 0.0, 0.0, "GND")]),
+            ],
+            vec![plane("GND", PcbLayer::In1Cu)],
+        );
+        pcb0.rules.default_rules.via_diameter = 0.21;
+        pcb0.rules.default_rules.via_drill = 0.12;
+        let fan = plan_microvia_fanout(&pcb0, &plane_layers(&pcb0), &[]);
+        assert_eq!(fan.len(), 2, "{fan:?}");
+        assert!(fan
+            .iter()
+            .all(|(_, n, a, b)| n == "GND" && *a == PcbLayer::FCu && *b == PcbLayer::In1Cu));
+        let mut pcb = pcb0.clone();
+        for (pt, net, a, b) in &fan {
+            pcb.vias.push(Via {
+                via_type: Some(ViaType::Micro),
+                position: *pt,
+                diameter: 0.21,
+                drill: 0.12,
+                start_layer: *a,
+                end_layer: *b,
+                net: net.clone(),
+                source: None,
+            });
+        }
+        assert_eq!(crate::drc::pad_islands(&pcb)["GND"].len(), 1);
+        assert!(!crate::drc::check_drc(&pcb).iter().any(|v| matches!(
+            v.rule,
+            crate::drc::DrcRuleType::MinDrill | crate::drc::DrcRuleType::AnnularRing
+        )));
+    }
+
+    /// Router vias carry their intended type: an adjacent-pair span at a via
+    /// size meeting the microvia minimums is a microvia; DRC then judges it
+    /// by those minimums.
+    #[test]
+    fn router_marks_adjacent_hops_as_microvias() {
+        use vcad_ir::ecad::ViaType;
+        let mut pcb = board4(vec![], vec![]);
+        pcb.rules.default_rules.via_diameter = 0.21;
+        pcb.rules.default_rules.via_drill = 0.12;
+        let t = |a, b| router_via_type(&pcb, a, b);
+        assert_eq!(t(PcbLayer::FCu, PcbLayer::In1Cu), ViaType::Micro);
+        assert_eq!(t(PcbLayer::FCu, PcbLayer::BCu), ViaType::Through);
+        assert_eq!(t(PcbLayer::FCu, PcbLayer::In2Cu), ViaType::Blind);
+        // Below the microvia minimums the hop is not a microvia.
+        pcb.rules.min_microvia_drill = 0.15;
+        assert_eq!(
+            router_via_type(&pcb, PcbLayer::FCu, PcbLayer::In1Cu),
+            ViaType::Blind
+        );
+    }
+
+    /// The routed claim is fail-closed: a pad DRC sees stranded makes its net
+    /// unrouted, whatever the per-connection bookkeeping recorded.
+    #[test]
+    fn pad_islands_groups_pads_by_drc_connectivity() {
+        let pcb = board4(
+            vec![
+                fp("U1", 8.0, 8.0, vec![pad("1", 0.0, 0.0, "SIG")]),
+                fp("U2", 25.0, 8.0, vec![pad("1", 0.0, 0.0, "SIG")]),
+            ],
+            vec![],
+        );
+        assert_eq!(crate::drc::pad_islands(&pcb)["SIG"].len(), 2);
+        let mut joined = pcb.clone();
+        joined.traces.push(vcad_ir::ecad::Trace {
+            start: Vec2::new(8.0, 8.0),
+            end: Vec2::new(25.0, 8.0),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: "SIG".into(),
+            source: None,
+        });
+        assert_eq!(crate::drc::pad_islands(&joined)["SIG"].len(), 1);
     }
 
     #[test]
@@ -5565,6 +6327,8 @@ mod tests {
             stub_width: 0.25,
             via_pts: Vec::new(),
             spans,
+            coupled: false,
+            fanout: false,
         }];
         (
             pcb,
@@ -5732,6 +6496,10 @@ mod tests {
     /// Assign `net` to a class routing at `width` mm.
     fn with_class(pcb: &mut Pcb, net: &str, width: f64) {
         pcb.rules.class_rules.push(NetClassRules {
+            // The class declares its pad-entry neck; without one, copper
+            // below the class width is a MinTraceWidth violation anywhere.
+            neck_width: Some(0.2),
+            neck_length: None,
             name: "power".into(),
             trace_width: width,
             clearance: 0.2,

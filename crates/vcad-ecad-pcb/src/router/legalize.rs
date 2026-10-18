@@ -692,6 +692,7 @@ fn candidate_pcb(pcb: &Pcb, traces: &[RoutedTrace], vias: &[RoutedVia]) -> Pcb {
     for v in vias {
         let (diameter, drill) = via_geom_for(pcb, &v.net);
         c.vias.push(Via {
+            via_type: None,
             position: v.position,
             diameter,
             drill,
@@ -833,6 +834,8 @@ mod tests {
             stackup: LayerStackup {
                 layers: vec![
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::FCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: Some(1.5),
@@ -840,6 +843,8 @@ mod tests {
                         material: Some("FR4".into()),
                     },
                     StackupLayer {
+                        role: None,
+                        role_inferred: false,
                         layer: PcbLayer::BCu,
                         copper_thickness: Some(0.035),
                         dielectric_thickness: None,
@@ -850,7 +855,12 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".into(),
                     trace_width: 0.25,
                     clearance: 0.2,
@@ -880,6 +890,7 @@ mod tests {
 
     fn rvia(x: f64, y: f64, net: &str) -> RoutedVia {
         RoutedVia {
+            via_type: None,
             position: Vec2::new(x, y),
             net: net.into(),
             start_layer: PcbLayer::FCu,
@@ -1002,6 +1013,7 @@ mod tests {
         // A pre-existing (manual) via on net B — a fixed hole the router must
         // respect.
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(10.0, 10.0),
             diameter: 0.8,
             drill: 0.4,
@@ -1112,6 +1124,7 @@ mod tests {
     fn illegal_plane_stitch_is_dropped_without_demoting_the_net() {
         let mut pcb = board();
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(10.0, 10.0),
             diameter: 0.8,
             drill: 0.4,
@@ -1189,6 +1202,7 @@ mod tests {
             .vias
             .iter()
             .map(|v| RoutedVia {
+                via_type: None,
                 position: v.position,
                 net: v.net.clone(),
                 start_layer: v.start_layer,

@@ -120,6 +120,8 @@ mod tests {
             },
             stackup: LayerStackup {
                 layers: vec![StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::FCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: None,
@@ -129,7 +131,12 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                inferred_floors: Vec::new(),
+                min_microvia_drill: 0.1,
+                min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
+                    neck_width: None,
+                    neck_length: None,
                     name: "Default".into(),
                     trace_width: 0.25,
                     clearance: 0.2,
@@ -178,6 +185,7 @@ mod tests {
                 trace((10.0, 20.5), (20.0, 20.5), PcbLayer::FCu, "GND"),
             ],
             vec![Via {
+                via_type: None,
                 position: Vec2::new(20.0, 20.0),
                 diameter: 0.8,
                 drill: 0.4,

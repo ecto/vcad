@@ -145,6 +145,10 @@ function defaultDesignRules(): DesignRules {
     holeToHole: 0.5,
     minAnnularRing: 0.15,
     minDrill: 0.2,
+    // KiCad's microvia defaults (uvia_min_drill / uvia_min_size).
+    minMicroviaDrill: 0.1,
+    minMicroviaDiameter: 0.2,
+    inferredFloors: [],
   };
 }
 
@@ -3436,6 +3440,7 @@ export async function routeNets(args: Record<string, unknown>, toolCtx?: ToolCon
         endLayer: v.end_layer ?? "BCu",
         net: v.net,
         source: "autoroute",
+        ...(v.via_type ? { viaType: v.via_type } : {}),
       });
       viasAdded++;
     }
@@ -8417,6 +8422,9 @@ export async function describePcb(args: Record<string, unknown>) {
     holeToHole: dr.holeToHole,
     minAnnularRing: dr.minAnnularRing,
     minDrill: dr.minDrill,
+    minMicroviaDrill: dr.minMicroviaDrill,
+    minMicroviaDiameter: dr.minMicroviaDiameter,
+    inferredFloors: dr.inferredFloors,
   };
 
   // --- Zones: { net, layer, bbox, fill } -----------------------------------

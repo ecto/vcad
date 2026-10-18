@@ -895,7 +895,12 @@ impl RouteSession {
                     let strict = self.strict_pair_coupling;
                     let leg = |g: &CopperGeom| match g {
                         CopperGeom::Segment { half_w, .. } => 2.0 * half_w >= leg_w - 0.01,
-                        _ => strict,
+                        // KiCad parity: non-segment twin copper is never
+                        // coupled (matches drc::pair_aware_clearance_w).
+                        _ => {
+                            let _ = strict;
+                            false
+                        }
                     };
                     if leg(geom) && leg(&e.geom) && !self.in_pair_breakout(geom, &e.geom, net, twin)
                     {
@@ -990,7 +995,12 @@ mod tests {
 
     fn rules() -> DesignRules {
         DesignRules {
+            inferred_floors: Vec::new(),
+            min_microvia_drill: 0.1,
+            min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
+                neck_width: None,
+                neck_length: None,
                 name: "Default".into(),
                 trace_width: 0.25,
                 clearance: 0.2,
@@ -1024,6 +1034,8 @@ mod tests {
             },
             stackup: LayerStackup {
                 layers: vec![StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::FCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: None,
@@ -1244,6 +1256,7 @@ mod tests {
     fn drill_probe_sees_holes_no_copper_probe_could() {
         let mut pcb = empty_pcb();
         pcb.vias.push(vcad_ir::ecad::Via {
+            via_type: None,
             position: Vec2::new(50.0, 50.0),
             diameter: 0.8,
             drill: 0.4,

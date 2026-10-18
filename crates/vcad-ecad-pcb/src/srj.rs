@@ -149,6 +149,8 @@ pub fn srj_to_pcb(srj: &SimpleRouteJson) -> Result<Pcb, String> {
     let w = srj.min_trace_width;
 
     let copper = |layer| StackupLayer {
+        role: None,
+        role_inferred: false,
         layer,
         copper_thickness: Some(0.035),
         dielectric_thickness: Some(1.6 / stack.len().max(2) as f64),
@@ -237,7 +239,12 @@ pub fn srj_to_pcb(srj: &SimpleRouteJson) -> Result<Pcb, String> {
         },
         nets,
         rules: DesignRules {
+            inferred_floors: Vec::new(),
+            min_microvia_drill: 0.1,
+            min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
+                neck_width: None,
+                neck_length: None,
                 name: "Default".into(),
                 trace_width: w,
                 // SRJ carries no clearance; tscircuit's checks use the trace

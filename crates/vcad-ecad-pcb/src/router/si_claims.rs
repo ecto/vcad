@@ -485,6 +485,29 @@ pub fn group_skews(pcb: &Pcb, classifier: &NetClassifier) -> BTreeMap<String, (u
     out
 }
 
+/// Bridge into the unified `vcad.receipt/1` schema: every SI claim becomes a
+/// `ReceiptClaim` with `basis: Measured` — the geometric oracle ran over
+/// the actual board copper — under the [`RECEIPT_DOMAIN`] domain. Broken
+/// bounds are `Fail` claims, not omissions: the receipt is fail-closed.
+pub fn to_receipt_claims(set: &SiClaimSet) -> Vec<vcad_receipt::ReceiptClaim> {
+    use vcad_receipt::{ClaimBasis, ClaimQuantity, OracleRef, ReceiptClaim};
+    let oracle = OracleRef::new("vcad-ecad-pcb::si_claims", env!("CARGO_PKG_VERSION"));
+    set.claims
+        .iter()
+        .map(|c| {
+            let desc = format!("{} <= {} {} — {}", c.name, c.bound, c.unit, c.note);
+            let id = format!("si.{}", c.name);
+            let base = if c.holds {
+                ReceiptClaim::pass(id, RECEIPT_DOMAIN, desc, oracle.clone())
+            } else {
+                ReceiptClaim::fail(id, RECEIPT_DOMAIN, desc, oracle.clone())
+            };
+            base.with_basis(ClaimBasis::Measured)
+                .with_measured(ClaimQuantity::new(c.value, c.unit.clone()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -562,27 +585,4 @@ mod tests {
         assert!((skew.value - 5.0).abs() < 1e-9);
         assert!(!skew.holds, "5mm > 1.1mm bound");
     }
-}
-
-/// Bridge into the unified `vcad.receipt/1` schema: every SI claim becomes a
-/// `ReceiptClaim` with `basis: Measured` — the geometric oracle ran over
-/// the actual board copper — under the [`RECEIPT_DOMAIN`] domain. Broken
-/// bounds are `Fail` claims, not omissions: the receipt is fail-closed.
-pub fn to_receipt_claims(set: &SiClaimSet) -> Vec<vcad_receipt::ReceiptClaim> {
-    use vcad_receipt::{ClaimBasis, ClaimQuantity, OracleRef, ReceiptClaim};
-    let oracle = OracleRef::new("vcad-ecad-pcb::si_claims", env!("CARGO_PKG_VERSION"));
-    set.claims
-        .iter()
-        .map(|c| {
-            let desc = format!("{} <= {} {} — {}", c.name, c.bound, c.unit, c.note);
-            let id = format!("si.{}", c.name);
-            let base = if c.holds {
-                ReceiptClaim::pass(id, RECEIPT_DOMAIN, desc, oracle.clone())
-            } else {
-                ReceiptClaim::fail(id, RECEIPT_DOMAIN, desc, oracle.clone())
-            };
-            base.with_basis(ClaimBasis::Measured)
-                .with_measured(ClaimQuantity::new(c.value, c.unit.clone()))
-        })
-        .collect()
 }

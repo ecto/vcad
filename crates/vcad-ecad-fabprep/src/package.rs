@@ -229,6 +229,7 @@ mod tests {
         with_smd_pad(&mut pcb, "R1", "2", 8.0, 2.0, "A");
         with_trace(&mut pcb, "A", 2.0, 2.0, 8.0, 2.0);
         pcb.vias.push(vcad_ir::ecad::Via {
+            via_type: None,
             position: vcad_ir::Vec2::new(5.0, 2.0),
             diameter: 0.4,
             drill: 0.2,

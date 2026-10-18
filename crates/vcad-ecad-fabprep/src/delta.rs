@@ -58,6 +58,7 @@ pub const ROUTE_FIXABLE: &[DrcRuleType] = &[
     DrcRuleType::MinDrill,
     DrcRuleType::Keepout,
     DrcRuleType::SameNetBypass,
+    DrcRuleType::PlaneLayerSignal,
 ];
 
 /// Every rule name this crate knows, for validating a caller's waiver list. A
@@ -79,6 +80,7 @@ pub const ALL_RULES: &[DrcRuleType] = &[
     DrcRuleType::NetIslands,
     DrcRuleType::UnstitchedPad,
     DrcRuleType::SameNetBypass,
+    DrcRuleType::PlaneLayerSignal,
 ];
 
 /// Stable rule label for reports and JSON keys.

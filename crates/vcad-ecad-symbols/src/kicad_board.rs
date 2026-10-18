@@ -394,7 +394,12 @@ pub struct BoardSpec {
 /// JLC-class 4-layer defaults: 0.15 mm trace / clearance, 0.45 / 0.25 mm vias.
 pub fn default_rules() -> DesignRules {
     DesignRules {
+        inferred_floors: Vec::new(),
+        min_microvia_drill: 0.1,
+        min_microvia_diameter: 0.2,
         default_rules: NetClassRules {
+            neck_width: None,
+            neck_length: None,
             name: "Default".into(),
             trace_width: 0.15,
             clearance: 0.15,
@@ -522,6 +527,8 @@ pub fn board_from_sheet(
         layers: copper
             .iter()
             .map(|l| StackupLayer {
+                role: None,
+                role_inferred: false,
                 layer: *l,
                 copper_thickness: Some(0.035),
                 dielectric_thickness: Some(spec.thickness / spec.layers as f64),

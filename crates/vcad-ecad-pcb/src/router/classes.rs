@@ -126,6 +126,11 @@ pub fn apply_classes(pcb: &mut Pcb, classifier: &NetClassifier) {
     let dp_width = d.diff_pair_width.unwrap_or(0.2);
     let dp_gap = d.diff_pair_gap.unwrap_or(0.25);
     let rule = NetClassRules {
+        // Pad-entry necks: the pair router draws its pad connectors at the
+        // board default width (CM5: 0.08, the width its own BGA escapes use),
+        // legal only within the default neck region of the pad.
+        neck_width: Some(d.trace_width.min(dp_width)),
+        neck_length: None,
         name: DIFF_PAIR_CLASS.to_string(),
         trace_width: dp_width,
         clearance: d.clearance,

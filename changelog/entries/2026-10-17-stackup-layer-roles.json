@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-17-stackup-layer-roles",
+  "version": "0.10.0",
+  "date": "2026-10-17",
+  "category": "feat",
+  "title": "Stackup layer roles inferred from pours",
+  "summary": "Plane, split-plane and signal roles are inferred from copper pours; DRC reports signals routed on plane layers (enforcement opt-in).",
+  "features": ["pcb", "electronics", "routing"],
+  "mcpTools": ["run_drc", "set_stackup"]
+}

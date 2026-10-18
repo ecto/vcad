@@ -260,6 +260,7 @@ fn sample_board() -> Pcb {
 
     let vias = vec![
         Via {
+            via_type: None,
             position: Vec2::new(14.0, 11.05),
             diameter: 0.8,
             drill: 0.4,
@@ -269,6 +270,7 @@ fn sample_board() -> Pcb {
             source: None,
         },
         Via {
+            via_type: None,
             position: Vec2::new(27.7, 14.31),
             diameter: 0.8,
             drill: 0.4,
@@ -303,7 +305,12 @@ fn sample_board() -> Pcb {
         stackup: LayerStackup { layers: vec![] },
         nets,
         rules: DesignRules {
+            inferred_floors: Vec::new(),
+            min_microvia_drill: 0.1,
+            min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
+                neck_width: None,
+                neck_length: None,
                 name: "Default".to_string(),
                 trace_width: 0.25,
                 clearance: 0.2,
@@ -335,7 +342,12 @@ fn sample_board() -> Pcb {
 
 fn base_rules() -> DesignRules {
     DesignRules {
+        inferred_floors: Vec::new(),
+        min_microvia_drill: 0.1,
+        min_microvia_diameter: 0.2,
         default_rules: NetClassRules {
+            neck_width: None,
+            neck_length: None,
             name: "Default".to_string(),
             trace_width: 0.2,
             clearance: 0.2,
@@ -548,6 +560,7 @@ fn complex_board() -> Pcb {
         });
         if n.is_multiple_of(3) {
             vias.push(Via {
+                via_type: None,
                 position: end,
                 diameter: 0.6,
                 drill: 0.3,

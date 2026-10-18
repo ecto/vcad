@@ -1490,7 +1490,12 @@ mod tests {
 
     fn default_rules() -> DesignRules {
         DesignRules {
+            inferred_floors: Vec::new(),
+            min_microvia_drill: 0.1,
+            min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
+                neck_width: None,
+                neck_length: None,
                 name: "Default".into(),
                 trace_width: 0.25,
                 clearance: 0.2,
@@ -1514,6 +1519,8 @@ mod tests {
         LayerStackup {
             layers: vec![
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::FCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: Some(1.5),
@@ -1521,6 +1528,8 @@ mod tests {
                     material: Some("FR4".into()),
                 },
                 StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: PcbLayer::BCu,
                     copper_thickness: Some(0.035),
                     dielectric_thickness: None,
@@ -1616,6 +1625,7 @@ mod tests {
         // 2) A via with a 0.1mm drill — below JLC 0.2mm min drill, and a
         //    0.05mm annular ring (0.2 dia / 0.1 drill) below 0.13mm.
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(25.0, 20.0),
             diameter: 0.2,
             drill: 0.1,
@@ -1698,6 +1708,7 @@ mod tests {
             properties: std::collections::HashMap::new(),
         });
         pcb.vias.push(Via {
+            via_type: None,
             position: Vec2::new(20.0, 20.0),
             diameter: 0.4,
             drill: 0.2,
@@ -1731,6 +1742,8 @@ mod tests {
         let mut pcb = base_pcb();
         pcb.stackup.layers = vec![
             StackupLayer {
+                role: None,
+                role_inferred: false,
                 layer: PcbLayer::FCu,
                 copper_thickness: Some(0.035),
                 dielectric_thickness: Some(0.2),
@@ -1738,6 +1751,8 @@ mod tests {
                 material: Some("FR4".into()),
             },
             StackupLayer {
+                role: None,
+                role_inferred: false,
                 layer: PcbLayer::In1Cu,
                 copper_thickness: Some(0.035),
                 dielectric_thickness: Some(0.2),
@@ -1745,6 +1760,8 @@ mod tests {
                 material: Some("FR4".into()),
             },
             StackupLayer {
+                role: None,
+                role_inferred: false,
                 layer: PcbLayer::In2Cu,
                 copper_thickness: Some(0.035),
                 dielectric_thickness: Some(0.2),
@@ -1752,6 +1769,8 @@ mod tests {
                 material: Some("FR4".into()),
             },
             StackupLayer {
+                role: None,
+                role_inferred: false,
                 layer: PcbLayer::BCu,
                 copper_thickness: Some(0.035),
                 dielectric_thickness: None,

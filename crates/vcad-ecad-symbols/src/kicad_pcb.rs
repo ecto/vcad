@@ -276,6 +276,20 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
 
     // 5. Parse design rules
     let rules = parse_design_rules(root);
+    let has_micro = root
+        .find_all("via")
+        .iter()
+        .any(|v| v.children().and_then(|c| c.get(1)).and_then(|x| x.as_str()) == Some("micro"));
+    for (key, v) in [
+        ("uvia_min_drill", rules.min_microvia_drill),
+        ("uvia_min_size", rules.min_microvia_diameter),
+    ] {
+        if has_micro && root.find("setup").and_then(|s| child_f64(s, key)).is_none() {
+            ctx.warn(format!(
+                "board setup has no ({key}); using KiCad's default {v} mm for microvias"
+            ));
+        }
+    }
 
     // 6. Parse footprints. Legacy boards (KiCad 4/5, e.g. the VESC 4.12)
     // call them `module`; the inner shape (pads, at, layer) is compatible.
@@ -320,7 +334,8 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
     // whose own copper is 0.1 mm tracks and 0.2 mm vias. The board's existing
     // copper is the best available evidence of its fab capability: calibrate
     // the default rules against it.
-    let rules = calibrate_rules_from_copper(rules, &traces, &vias);
+    let mut rules = calibrate_rules_from_copper(rules, &traces, &vias);
+    infer_via_floors(root, &mut rules, &vias, &ctx);
 
     let pcb = Pcb {
         outline,
@@ -335,7 +350,52 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
         keepouts: vec![],
         net_ties: vec![],
     };
+    // KiCad's layer type is "signal" by default and carries no plane intent
+    // on boards like the CM5, so roles are inferred from the copper itself.
+    let mut pcb = pcb;
+    for line in pcb.infer_layer_roles() {
+        ctx.warn(line);
+    }
     Ok((pcb, ctx.finish()))
+}
+
+/// Via floors when the file authors none: the board's own non-micro vias are
+/// the only evidence of its fab capability, so the floor is the smallest drill
+/// / annular ring among them (through and blind alike — KiCad keeps one via
+/// floor for both). Logged loudly and recorded in `rules.inferred_floors` so
+/// every DRC finding against it says the floor was inferred, not authored.
+fn infer_via_floors(root: &SExpr<'_>, rules: &mut DesignRules, vias: &[Via], ctx: &Ctx<'_>) {
+    let setup = root.find("setup");
+    let authored = |k: &str| setup.and_then(|s| child_f64(s, k)).is_some();
+    let normal: Vec<&Via> = vias.iter().filter(|v| !v.is_micro()).collect();
+    if normal.is_empty() {
+        return;
+    }
+    if !authored("via_min_drill") {
+        let min = normal.iter().map(|v| v.drill).fold(f64::INFINITY, f64::min);
+        ctx.warn(format!(
+            "INFERRED via floor: board authors no (via_min_drill); using the smallest drill \
+             of its own {} non-micro vias, {min} mm (fallback was {} mm)",
+            normal.len(),
+            rules.min_drill
+        ));
+        rules.min_drill = min;
+        rules.inferred_floors.push("minDrill".into());
+    }
+    if !authored("via_min_annulus") {
+        let min = normal
+            .iter()
+            .map(|v| (v.diameter - v.drill) / 2.0)
+            .fold(f64::INFINITY, f64::min);
+        ctx.warn(format!(
+            "INFERRED via floor: board authors no (via_min_annulus); using the smallest annular \
+             ring of its own {} non-micro vias, {min} mm (fallback was {} mm)",
+            normal.len(),
+            rules.min_annular_ring
+        ));
+        rules.min_annular_ring = min;
+        rules.inferred_floors.push("minAnnularRing".into());
+    }
 }
 
 /// Calibrate imported design rules against the board's existing copper.
@@ -559,6 +619,8 @@ fn parse_stackup(root: &SExpr<'_>, warnings: &mut Vec<String>) -> LayerStackup {
     let layers: Vec<StackupLayer> = copper_layers
         .iter()
         .map(|&layer| StackupLayer {
+            role: None,
+            role_inferred: false,
             layer,
             copper_thickness: Some(0.035),
             dielectric_thickness: None,
@@ -611,6 +673,8 @@ fn parse_declared_stackup(root: &SExpr<'_>, copper: &[PcbLayer]) -> Option<Layer
             // between it and this one.
             if let Some((prev, cu_t)) = pending.take() {
                 out.push(StackupLayer {
+                    role: None,
+                    role_inferred: false,
                     layer: prev,
                     copper_thickness: cu_t,
                     dielectric_thickness: (saw_diel && diel_t > 0.0).then_some(diel_t),
@@ -641,6 +705,8 @@ fn parse_declared_stackup(root: &SExpr<'_>, copper: &[PcbLayer]) -> Option<Layer
     }
     if let Some((last, cu_t)) = pending {
         out.push(StackupLayer {
+            role: None,
+            role_inferred: false,
             layer: last,
             copper_thickness: cu_t,
             dielectric_thickness: None,
@@ -710,6 +776,8 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
             .unwrap_or("")
             .to_string();
         let rules = NetClassRules {
+            neck_width: None,
+            neck_length: None,
             name: name.clone(),
             trace_width: child_f64(block, "trace_width").unwrap_or(trace_width),
             clearance: child_f64(block, "clearance").unwrap_or(clearance_val),
@@ -737,6 +805,8 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
     }
 
     let default_rules = default_from_class.unwrap_or(NetClassRules {
+        neck_width: None,
+        neck_length: None,
         name: "Default".to_string(),
         trace_width,
         clearance: clearance_val,
@@ -748,7 +818,17 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
         target_diff_impedance: None,
     });
 
+    let setup = root.find("setup");
+    let uvia = |key: &str, dflt: f64| setup.and_then(|s| child_f64(s, key)).unwrap_or(dflt);
     DesignRules {
+        inferred_floors: Vec::new(),
+        // KiCad's own defaults when the board omits them (they normally live
+        // in the .kicad_pro); `parse_kicad_pcb` logs which were defaulted.
+        min_microvia_drill: uvia("uvia_min_drill", vcad_ir::ecad::DEFAULT_MIN_MICROVIA_DRILL),
+        min_microvia_diameter: uvia(
+            "uvia_min_size",
+            vcad_ir::ecad::DEFAULT_MIN_MICROVIA_DIAMETER,
+        ),
         default_rules,
         class_rules,
         net_class_assignments,
@@ -1126,7 +1206,20 @@ fn parse_via(node: &SExpr<'_>, ctx: &Ctx<'_>) -> Option<Via> {
             }
         };
 
+    // KiCad's type token sits right after `via`: `micro`, `blind`, or none
+    // (through).
+    let token = node
+        .children()
+        .and_then(|c| c.get(1))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let via_type = Some(match token {
+        "micro" => vcad_ir::ecad::ViaType::Micro,
+        "blind" => vcad_ir::ecad::ViaType::Blind,
+        _ => vcad_ir::ecad::ViaType::Through,
+    });
     Some(Via {
+        via_type,
         position,
         diameter,
         drill,

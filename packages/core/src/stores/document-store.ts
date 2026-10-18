@@ -2205,6 +2205,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         holeToHole: 0.25,
         minAnnularRing: 0.13,
         minDrill: 0.2,
+        // KiCad's microvia defaults (uvia_min_drill / uvia_min_size).
+        minMicroviaDrill: 0.1,
+        minMicroviaDiameter: 0.2,
+        inferredFloors: [],
       },
       footprints: [],
       traces: [],

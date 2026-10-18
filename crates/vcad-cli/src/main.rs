@@ -1243,6 +1243,7 @@ fn plan_bga_escapes(
             per_layer[li] += 1;
             if plan.layer != copper[0] {
                 pcb.vias.push(Via {
+                    via_type: None,
                     position: *at,
                     diameter: via_d,
                     drill: via_drill,
@@ -1644,6 +1645,7 @@ fn route_file(
         source: Some(CopperSource::Autoroute),
     }));
     pcb.vias.extend(r.vias.iter().map(|v| Via {
+        via_type: None,
         position: v.position,
         diameter: vd,
         drill: vdrill,
@@ -1771,6 +1773,7 @@ fn route_file(
             trial
                 .vias
                 .extend(r2.vias.iter().filter(|v| in_split(&v.net)).map(|v| Via {
+                    via_type: None,
                     position: v.position,
                     diameter: vd,
                     drill: vdrill,
@@ -4235,6 +4238,7 @@ fn stitch_to_planes(
                         }
                         let n0 = (work.traces.len(), work.vias.len());
                         work.vias.push(Via {
+                            via_type: None,
                             position: v,
                             diameter: vd,
                             drill: vdrill,
@@ -4336,6 +4340,7 @@ fn restore_layer_change_vias(
                 .any(|e| e.1 == t.net && e.2 != t.layer && near(e.0, q));
             if other_layer && via_fits(q, &t.net) {
                 added.push(Via {
+                    via_type: None,
                     position: q,
                     diameter: pcb.rules.default_rules.via_diameter,
                     drill: pcb.rules.default_rules.via_drill,

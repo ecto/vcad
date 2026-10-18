@@ -37,7 +37,8 @@ export type DrcRuleType =
   | "Keepout"
   | "Short"
   | "NetIslands"
-  | "SameNetBypass";
+  | "SameNetBypass"
+  | "PlaneLayerSignal";
 
 export type DrcSeverity = "Error" | "Warning";
 
@@ -864,6 +865,10 @@ export interface RoutedVia {
   start_layer: PcbLayer;
   /** Bottom of the via's copper span. */
   end_layer: PcbLayer;
+  /** Construction type the router intends (microvia on an adjacent pair
+   *  when the board's via meets the microvia minimums); absent on older
+   *  kernels. */
+  via_type?: "through" | "blind" | "micro" | null;
 }
 
 /** Why a connection could not be routed, and where — so an agent or human can
