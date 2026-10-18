@@ -1719,6 +1719,13 @@ fn route_pass(
         }
     }
 
+    // Ring-by-ring BGA escape on microvias (opt-in `VCAD_RING_ESCAPE=1`),
+    // after the coupled pairs and before the singles: see `ring_escape`.
+    if ring_escape_on() {
+        let esc = ring_escape(&mut session, pcb, &placed, width, nets_filter);
+        placed.extend(esc);
+    }
+
     // Plane fan-out, after the coupled pairs and before every single: drop
     // the stitching via of each plane pad that needs one while the board is
     // still nearly empty — the order a human BGA layout uses. Stitching only
@@ -3894,6 +3901,175 @@ fn plane_layers(pcb: &Pcb) -> BTreeMap<String, Vec<PcbLayer>> {
 /// islands (GND 82 -> 2 groups) but split MORE nets overall (30 -> 38) and
 /// ran 3427 s vs 1152 s, so stitch-after-routing + island stitching stays
 /// the default.
+fn ring_escape_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_RING_ESCAPE").as_deref() == Ok("1"))
+}
+
+/// Ring-by-ring escape of every dense pin field's signal balls, planned
+/// before general routing (the human BGA order): outer rings escape on the
+/// pad layer, the rest drop by microvia-in-pad to the next routable layer
+/// and escape there, and so on down at most [`RING_ESCAPE_DEPTH`] layers
+/// (`escape::plan_multilayer_escapes`). A drop deeper than one dielectric is
+/// a STACK of microvias when the board allows stacking, else a drilled via
+/// (which must then fit the ball like any other). Plane / no-route layers
+/// are skipped. Every escape is committed fail-closed through
+/// `validate_and_commit` as fixed (never-ripped) same-net copper; the later
+/// routes tap it as their tree source.
+fn ring_escape(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    placed: &[Placed],
+    width: f64,
+    nets_filter: &[String],
+) -> Vec<Placed> {
+    let copper = copper_layers(pcb);
+    let fields = cached_pin_fields(pcb);
+    let planes = plane_layers(pcb);
+    let routed: BTreeSet<&str> = placed.iter().map(|p| p.net.as_str()).collect();
+    let mut pads_of: HashMap<&str, Vec<Vec2>> = HashMap::new();
+    for fp in &pcb.footprints {
+        for pad in &fp.pads {
+            if let Some(n) = pad.net.as_deref().filter(|n| !n.is_empty()) {
+                pads_of
+                    .entry(n)
+                    .or_default()
+                    .push(crate::geometry::pad_world_position(fp, pad));
+            }
+        }
+    }
+    let sizing = session.via_sizing().clone();
+    let mut out: Vec<Placed> = Vec::new();
+    let (mut planned, mut kept) = (0usize, 0usize);
+    for field in fields.iter() {
+        let Some(pi) = copper.iter().position(|&l| l == field.layer) else {
+            continue;
+        };
+        // routable layers going inward from the pad layer
+        let dir: isize = if pi == 0 { 1 } else { -1 };
+        let mut layers = Vec::new();
+        let mut k = pi as isize;
+        while layers.len() < RING_ESCAPE_DEPTH && k >= 0 && (k as usize) < copper.len() {
+            let l = copper[k as usize];
+            if !super::maze::is_no_route(l) {
+                layers.push(l);
+            }
+            k += dir;
+        }
+        let (lo, hi) = field.bbox();
+        let inside = |p: Vec2| {
+            p.x >= lo.x - 1e-6 && p.x <= hi.x + 1e-6 && p.y >= lo.y - 1e-6 && p.y <= hi.y + 1e-6
+        };
+        let mut endpoints: Vec<(String, Vec2, Vec2)> = Vec::new();
+        for fp in &pcb.footprints {
+            for pad in &fp.pads {
+                let Some(n) = pad.net.as_deref().filter(|n| !n.is_empty()) else {
+                    continue;
+                };
+                let at = crate::geometry::pad_world_position(fp, pad);
+                if !inside(at)
+                    || planes.contains_key(n)
+                    || routed.contains(n)
+                    || super::pair::pair_partner(n).is_some()
+                    || (!nets_filter.is_empty() && !nets_filter.iter().any(|f| f == n))
+                {
+                    continue;
+                }
+                let outside: Vec<Vec2> =
+                    pads_of[n].iter().copied().filter(|q| !inside(*q)).collect();
+                if outside.is_empty() {
+                    continue;
+                }
+                let k = outside.len() as f64;
+                let t = Vec2::new(
+                    outside.iter().map(|q| q.x).sum::<f64>() / k,
+                    outside.iter().map(|q| q.y).sum::<f64>() / k,
+                );
+                endpoints.push((n.to_string(), at, t));
+            }
+        }
+        if endpoints.is_empty() {
+            continue;
+        }
+        let fixed: Vec<(Vec2, f64, Vec<PcbLayer>)> = pcb
+            .vias
+            .iter()
+            .map(|v| {
+                let ls: Vec<PcbLayer> = copper
+                    .iter()
+                    .copied()
+                    .filter(|l| l.spanned_by(v.start_layer, v.end_layer))
+                    .collect();
+                (v.position, v.diameter / 2.0, ls)
+            })
+            .collect();
+        // The drop's via chain from the pad layer to `l`.
+        let chain = |net: &str, l: PcbLayer| -> Option<Vec<(PcbLayer, PcbLayer)>> {
+            let li = copper.iter().position(|&c| c == l)?;
+            if li == pi {
+                return Some(Vec::new());
+            }
+            let (a, b) = (pi.min(li), pi.max(li));
+            if b == a + 1
+                || !sizing.may_stack(
+                    (copper[a], copper[a + 1]),
+                    (copper[a + 1], copper[(a + 2).min(b)]),
+                )
+            {
+                return Some(vec![(field.layer, l)]);
+            }
+            let hops: Vec<(PcbLayer, PcbLayer)> =
+                (a..b).map(|i| (copper[i], copper[i + 1])).collect();
+            let _ = net;
+            Some(hops)
+        };
+        let via_r = |l: PcbLayer| -> f64 {
+            chain("", l)
+                .unwrap_or_default()
+                .iter()
+                .map(|&(x, y)| sizing.spec("", x, y).r())
+                .fold(0.0, f64::max)
+        };
+        let plans = escape::plan_multilayer_escapes(
+            session, pcb, field, &endpoints, &layers, &fixed, &via_r, width,
+        );
+        for ((net, at, _), plan) in endpoints.iter().zip(plans) {
+            let Some((_, plan)) = plan else { continue };
+            planned += 1;
+            let w = session.width_for(net, width);
+            let vias: Vec<(Vec2, PcbLayer, PcbLayer)> = chain(net, plan.layer)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(x, y)| (*at, x, y))
+                .collect();
+            let cand = Candidate {
+                net: net.clone(),
+                from: *at,
+                to: plan.egress,
+                width: w,
+                segments: plan
+                    .segments
+                    .iter()
+                    .map(|&(a, b)| (a, b, plan.layer))
+                    .collect(),
+                vias,
+                thin_segments: vec![],
+                thin_width: w,
+            };
+            if let Some(mut p) = validate_and_commit(session, pcb, cand, &out) {
+                p.coupled = true;
+                out.push(p);
+                kept += 1;
+            }
+        }
+    }
+    log::info!("ring escape: {kept} of {planned} planned ball escapes committed");
+    out
+}
+
+/// Layers the ring escape walks inward from a pin field's pad layer.
+const RING_ESCAPE_DEPTH: usize = 3;
+
 fn plane_fanout_first() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("VCAD_PLANE_FANOUT_FIRST").as_deref() == Ok("1"))
@@ -5996,6 +6172,79 @@ mod tests {
                         | crate::drc::DrcRuleType::AnnularRing
                         | crate::drc::DrcRuleType::HoleToHole
                         | crate::drc::DrcRuleType::MicroviaStack
+                )
+            })
+            .collect();
+        assert!(bad.is_empty(), "{bad:?}");
+    }
+
+    /// Ring escape: a 7x7 0.8 mm BGA whose every ball leaves the field. Outer
+    /// balls escape on F.Cu, inner ones drop by microvia; everything it
+    /// commits is DRC-clean and every drop is a microvia.
+    #[test]
+    fn ring_escape_drops_inner_balls_on_microvias() {
+        let mut balls = Vec::new();
+        let mut outs = Vec::new();
+        for i in 0..7 {
+            for j in 0..7 {
+                let n = format!("S{i}{j}");
+                let mut p = pad("1", i as f64 * 0.8, j as f64 * 0.8, &n);
+                p.number = format!("{i}{j}");
+                p.shape = PadShape::Circle { diameter: 0.4 };
+                balls.push(p);
+                outs.push(fp(
+                    &format!("R{i}{j}"),
+                    5.0 + i as f64 * 6.0,
+                    21.0 + j as f64 * 1.2,
+                    vec![pad("1", 0.0, 0.0, &n)],
+                ));
+            }
+        }
+        let mut fps = vec![fp("U1", 15.0, 12.0, balls)];
+        fps.extend(outs);
+        let mut pcb = board4(fps, vec![]);
+        pcb.rules.default_rules.via_diameter = 0.21;
+        pcb.rules.default_rules.via_drill = 0.12;
+        pcb.rules.default_rules.trace_width = 0.1;
+        pcb.rules.default_rules.clearance = 0.1;
+        pcb.rules.min_drill = 0.15;
+        pcb.rules.min_annular_ring = 0.125;
+        // The CM5 case: the fab stacks microvias, so a two-layer drop is a
+        // stack of two microvias (without it, it would be a drilled via).
+        pcb.rules.allow_stacked_microvias = true;
+        let mut session = RouteSession::from_pcb(&pcb);
+        let esc = ring_escape(&mut session, &pcb, &[], 0.1, &[]);
+        assert!(esc.len() >= 10, "only {} escapes", esc.len());
+        let deep = esc.iter().filter(|p| !p.via_pts.is_empty()).count();
+        assert!(deep > 0, "inner balls drop a layer");
+        let sz = session.via_sizing();
+        for p in &esc {
+            for &(_, a, b) in &p.via_pts {
+                assert!(sz.is_micro_span(a, b), "{a:?}-{b:?}");
+            }
+        }
+        let mut b = pcb.clone();
+        for p in &esc {
+            for &(a, z, l) in &p.segments {
+                b.traces.push(vcad_ir::ecad::Trace {
+                    start: a,
+                    end: z,
+                    width: p.width,
+                    layer: l,
+                    net: p.net.clone(),
+                    source: None,
+                });
+            }
+            for &(v, a, z) in &p.via_pts {
+                b.vias.push(board_via(sz, v, &p.net, a, z));
+            }
+        }
+        let bad: Vec<_> = crate::drc::check_drc(&b)
+            .into_iter()
+            .filter(|v| {
+                !matches!(
+                    v.rule,
+                    crate::drc::DrcRuleType::UnconnectedNet | crate::drc::DrcRuleType::NetIslands
                 )
             })
             .collect();

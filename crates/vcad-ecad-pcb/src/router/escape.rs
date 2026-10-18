@@ -51,7 +51,7 @@ pub struct PinField {
     /// Nearest-neighbor pad pitch (mm) — the lattice spacing.
     pitch: f64,
     /// Copper layer the field's pads (and thus escapes) live on.
-    layer: PcbLayer,
+    pub(crate) layer: PcbLayer,
 }
 
 impl PinField {
