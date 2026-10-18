@@ -618,14 +618,9 @@ pub fn route_all_with_opts(
                 });
             }
             let sizing = crate::via_sizing::ViaSizing::from_pcb(pcb);
-            for (v, net) in &ps.vias {
-                p.vias.push(board_via(
-                    &sizing,
-                    *v,
-                    net,
-                    *copper.first().unwrap_or(&PcbLayer::FCu),
-                    *copper.last().unwrap_or(&PcbLayer::BCu),
-                ));
+            let _ = &copper;
+            for (v, net, a, b) in &ps.vias {
+                p.vias.push(board_via(&sizing, *v, net, *a, *b));
             }
             prestitched_board = p;
             &prestitched_board
@@ -863,7 +858,7 @@ pub fn route_all_with_opts(
     );
     {
         let mut per_net: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
-        for (_, n) in &stitch.vias {
+        for (_, n, _, _) in &stitch.vias {
             per_net.entry(n.as_str()).or_default().0 += 1;
         }
         for (n, _) in &stitch.failed_pads {
@@ -887,8 +882,8 @@ pub fn route_all_with_opts(
         let mut targets: Vec<Vec2> = stitch
             .vias
             .iter()
-            .filter(|(_, n)| n == &net)
-            .map(|(p, _)| *p)
+            .filter(|(_, n, _, _)| n == &net)
+            .map(|(p, _, _, _)| *p)
             .collect();
         if let Some(layers) = planes.get(&net) {
             for fp in &pcb.footprints {
@@ -961,7 +956,7 @@ pub fn route_all_with_opts(
             stitch
                 .vias
                 .iter()
-                .map(|(p, n)| (*p, session.via_drill_for(n) / 2.0)),
+                .map(|(p, n, a, b)| (*p, session.via_spec(n, *a, *b).drill / 2.0)),
         );
         for p in &placed {
             holes_now.extend(placed_holes(&session, p));
@@ -986,39 +981,46 @@ pub fn route_all_with_opts(
                     let extra: Vec<Vec2> = stitch
                         .vias
                         .iter()
-                        .filter(|(_, n)| n == net)
-                        .map(|(p, _)| *p)
+                        .filter(|(_, n, _, _)| n == net)
+                        .map(|(p, _, _, _)| *p)
                         .collect();
-                    for &(pad_pt, pad_layer) in group {
-                        let mut spans: Vec<SpanId> = Vec::new();
-                        match escape_endpoint(
-                            &mut session,
-                            pcb,
-                            net,
-                            pad_pt,
-                            pad_layer,
-                            w,
-                            clearance,
-                            &copper,
-                            &placed,
-                            &extra,
-                            &mut spans,
-                            true,
-                            &holes_now,
-                        ) {
-                            Some(Escape {
-                                via: Some(v), stub, ..
-                            }) => {
-                                if let Some((a, b)) = stub {
-                                    stitch.stubs.push((a, b, net.clone(), pad_layer));
+                    'pads: for &(pad_pt, pad_layer) in group {
+                        // A stranded island needs every plane: the through
+                        // stitch first, then the short hop to the nearest
+                        // plane (a microvia when it is the adjacent layer).
+                        let spans_try = stitch_spans(&copper, pad_layer, &planes[net], true);
+                        for span in spans_try {
+                            let mut spans: Vec<SpanId> = Vec::new();
+                            match escape_endpoint(
+                                &mut session,
+                                pcb,
+                                net,
+                                pad_pt,
+                                pad_layer,
+                                w,
+                                clearance,
+                                span,
+                                &placed,
+                                &extra,
+                                &mut spans,
+                                true,
+                                &holes_now,
+                            ) {
+                                Some(Escape {
+                                    via: Some(v), stub, ..
+                                }) => {
+                                    if let Some((a, b)) = stub {
+                                        stitch.stubs.push((a, b, net.clone(), pad_layer));
+                                    }
+                                    let (sa, sb) = (span[0], span[span.len() - 1]);
+                                    stitch.vias.push((v, net.clone(), sa, sb));
+                                    holes_now.push((v, session.via_spec(net, sa, sb).drill / 2.0));
+                                    stitch.nets.insert(net.clone());
+                                    added += 1;
+                                    break 'pads;
                                 }
-                                stitch.vias.push((v, net.clone()));
-                                holes_now.push((v, session.via_drill_for(net) / 2.0));
-                                stitch.nets.insert(net.clone());
-                                added += 1;
-                                break;
+                                _ => rollback(&mut session, &spans),
                             }
-                            _ => rollback(&mut session, &spans),
                         }
                     }
                 }
@@ -1080,7 +1082,7 @@ pub fn route_all_with_opts(
             .stubs
             .iter()
             .map(|(a, _, _, _)| *a)
-            .chain(ps.vias.iter().map(|(v, _)| *v))
+            .chain(ps.vias.iter().map(|(v, _, _, _)| *v))
             .collect();
         let near = |p: Vec2| pre_pads.iter().any(|q| dist(*q, p) < 1e-3);
         let dup_vias: Vec<Vec2> = stitch
@@ -1092,7 +1094,7 @@ pub fn route_all_with_opts(
         stitch.stubs.retain(|(a, _, _, _)| !near(*a));
         stitch
             .vias
-            .retain(|(v, _)| !near(*v) && !dup_vias.iter().any(|d| dist(*d, *v) < 1e-3));
+            .retain(|(v, _, _, _)| !near(*v) && !dup_vias.iter().any(|d| dist(*d, *v) < 1e-3));
         stitch.failed_pads.retain(|(_, p)| !near(*p));
         stitch.stubs.extend(ps.stubs);
         stitch.vias.extend(ps.vias);
@@ -1109,13 +1111,8 @@ pub fn route_all_with_opts(
             net: net.clone(),
         });
     }
-    let copper_all = copper_layers(pcb);
-    let (through_top, through_bot) = (
-        *copper_all.first().unwrap_or(&PcbLayer::FCu),
-        *copper_all.last().unwrap_or(&PcbLayer::BCu),
-    );
-    for (pt, net) in &stitch.vias {
-        vias.push(RoutedVia::new(*pt, net, through_top, through_bot));
+    for (pt, net, a, b) in &stitch.vias {
+        vias.push(RoutedVia::new(*pt, net, *a, *b));
     }
     for n in &stitch.nets {
         routed.insert(n.clone());
@@ -1126,7 +1123,7 @@ pub fn route_all_with_opts(
     // copper is still hole-to-hole illegal. Enforces the invariant that an
     // autoroute pass never returns HoleToHole or SameNetBypass violations of
     // its own making.
-    let stitch_via_pts: Vec<Vec2> = stitch.vias.iter().map(|(p, _)| *p).collect();
+    let stitch_via_pts: Vec<Vec2> = stitch.vias.iter().map(|(p, _, _, _)| *p).collect();
     // Snapshot before legalization, not before the prune below: legalization
     // now prunes dead copper itself (it has to — see `legalize`), so a net that
     // ends up with nothing left has to be detectable across both passes.
@@ -1740,13 +1737,8 @@ fn route_pass(
                 false,
                 &[],
             );
-            let copper = copper_layers(pcb);
-            let (top, bot) = (
-                *copper.first().unwrap_or(&PcbLayer::FCu),
-                *copper.last().unwrap_or(&PcbLayer::BCu),
-            );
             let mut by_net: BTreeMap<String, Placed> = BTreeMap::new();
-            for (pt, net) in &st.vias {
+            for (pt, net, sa, sb) in &st.vias {
                 let e = by_net.entry(net.clone()).or_insert_with(|| Placed {
                     net: net.clone(),
                     from: *pt,
@@ -1760,7 +1752,7 @@ fn route_pass(
                     coupled: true,
                     fanout: true,
                 });
-                e.via_pts.push((*pt, top, bot));
+                e.via_pts.push((*pt, *sa, *sb));
             }
             for (a, b, net, l) in &st.stubs {
                 if let Some(e) = by_net.get_mut(net) {
@@ -1999,12 +1991,12 @@ fn audit_stitch(session: &RouteSession, pcb: &Pcb, stitch: &Stitch, width: f64) 
             );
         }
     }
-    for (p, net) in &stitch.vias {
+    for (p, net, sa, sb) in &stitch.vias {
         let g = CopperGeom::Disc {
             center: *p,
-            r: session.via_sizing().max_spec(net).r(),
+            r: session.via_spec(net, *sa, *sb).r(),
         };
-        for &l in &copper {
+        for &l in copper.iter().filter(|l| l.spanned_by(*sa, *sb)) {
             let pr = session.probe(&g, l, net, session.clearance_for(net));
             if !pr.legal {
                 bad += 1;
@@ -3787,6 +3779,40 @@ fn board_holes(pcb: &Pcb) -> Vec<Hole> {
     holes
 }
 
+/// Copper spans a stitching via from `pad_layer` may take, in trial order:
+/// the short hop to the nearest of the net's `planes` (a microvia when it is
+/// the adjacent layer) and the full through span — through first when
+/// `through_first` (a stranded island needs every plane).
+fn stitch_spans<'a>(
+    copper: &'a [PcbLayer],
+    pad_layer: PcbLayer,
+    planes: &[PcbLayer],
+    through_first: bool,
+) -> Vec<&'a [PcbLayer]> {
+    let full: &[PcbLayer] = copper;
+    let pi = copper.iter().position(|&l| l == pad_layer);
+    let short = pi.and_then(|pi| {
+        planes
+            .iter()
+            .filter_map(|p| copper.iter().position(|l| l == p))
+            .filter(|&q| q != pi)
+            .min_by_key(|&q| q.abs_diff(pi))
+            .map(|q| &copper[pi.min(q)..=pi.max(q)])
+    });
+    let mut out = Vec::new();
+    match short {
+        Some(s) if s.len() < full.len() => {
+            if through_first {
+                out.extend([full, s]);
+            } else {
+                out.extend([s, full]);
+            }
+        }
+        _ => out.push(full),
+    }
+    out
+}
+
 /// The drilled holes of a placed connection's vias, each at its span's size.
 fn placed_holes<'a>(session: &'a RouteSession, p: &'a Placed) -> impl Iterator<Item = Hole> + 'a {
     p.via_pts
@@ -3997,8 +4023,9 @@ fn realized_board(
         *copper.first().unwrap_or(&PcbLayer::FCu),
         *copper.last().unwrap_or(&PcbLayer::BCu),
     );
-    for (pt, net) in &stitch.vias {
-        b.vias.push(via(*pt, net, top, bot));
+    let _ = (top, bot);
+    for (pt, net, a, z) in &stitch.vias {
+        b.vias.push(via(*pt, net, *a, *z));
     }
     b
 }
@@ -4007,8 +4034,9 @@ fn realized_board(
 struct Stitch {
     /// Stub segments (pad → via) with their net and pad layer.
     stubs: Vec<(Vec2, Vec2, String, PcbLayer)>,
-    /// Stitching via centers with their net.
-    vias: Vec<(Vec2, String)>,
+    /// Stitching vias: center, net, and copper span (pad layer to a plane
+    /// layer — a microvia when the plane is the adjacent layer).
+    vias: Vec<(Vec2, String, PcbLayer, PcbLayer)>,
     /// Nets that got at least one pad onto their plane (via or direct flood).
     nets: BTreeSet<String>,
     /// Each (net, pad position) that could not be stitched legally — both the net
@@ -4100,29 +4128,36 @@ fn stitch_planes(
             let extra: Vec<Vec2> = out
                 .vias
                 .iter()
-                .filter(|(_, n)| n == net)
-                .map(|(p, _)| *p)
+                .filter(|(_, n, _, _)| n == net)
+                .map(|(p, _, _, _)| *p)
                 .collect();
-            let mut spans: Vec<SpanId> = Vec::new();
-            match escape_endpoint(
-                session, pcb, net, pad_pt, pad_layer, w, clearance, &copper, placed, &extra,
-                &mut spans, fine_pitch, &holes,
-            ) {
-                Some(e) => {
+            // Microvia-first: the short hop to the nearest plane (a laser
+            // microvia when the plane is the adjacent layer), then the
+            // through stitch.
+            let mut done = false;
+            for span in stitch_spans(&copper, pad_layer, layers, false) {
+                let mut spans: Vec<SpanId> = Vec::new();
+                if let Some(e) = escape_endpoint(
+                    session, pcb, net, pad_pt, pad_layer, w, clearance, span, placed, &extra,
+                    &mut spans, fine_pitch, &holes,
+                ) {
                     if let Some((a, b)) = e.stub {
                         out.stubs.push((a, b, net.clone(), pad_layer));
                     }
                     if let Some(v) = e.via {
-                        out.vias.push((v, net.clone()));
-                        holes.push((v, session.via_drill_for(net) / 2.0));
+                        let (sa, sb) = (span[0], span[span.len() - 1]);
+                        out.vias.push((v, net.clone(), sa, sb));
+                        holes.push((v, session.via_spec(net, sa, sb).drill / 2.0));
                     }
                     out.nets.insert(net.clone());
                     // spans stay committed — the stitching copper is part of the board.
+                    done = true;
+                    break;
                 }
-                None => {
-                    rollback(session, &spans);
-                    out.failed_pads.push((net.clone(), pad_pt));
-                }
+                rollback(session, &spans);
+            }
+            if !done {
+                out.failed_pads.push((net.clone(), pad_pt));
             }
         }
     }
@@ -5860,6 +5895,20 @@ mod tests {
             })
             .collect();
         assert!(bad.is_empty(), "{bad:?}");
+    }
+
+    /// Stitch spans: the short hop to the nearest plane, and the through span,
+    /// in the requested order.
+    #[test]
+    fn stitch_spans_prefer_nearest_plane_hop() {
+        use PcbLayer::*;
+        let cu = [FCu, In1Cu, In2Cu, BCu];
+        let s = stitch_spans(&cu, FCu, &[In2Cu, In1Cu], false);
+        assert_eq!(s, vec![&cu[0..=1], &cu[..]]);
+        let s = stitch_spans(&cu, BCu, &[In1Cu], true);
+        assert_eq!(s, vec![&cu[..], &cu[1..=3]]);
+        // plane span IS the through span: one entry
+        assert_eq!(stitch_spans(&cu, FCu, &[BCu], false).len(), 1);
     }
 
     /// The routed claim is fail-closed: a pad DRC sees stranded makes its net
