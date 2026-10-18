@@ -393,6 +393,15 @@ pub fn route_net_maze3d(
             .max(1e-6)
             / 2.0
     };
+    // Differential pairs keep flat via pricing: their phantom centerline is
+    // realized as two vias per transition and the coupled run, not the via
+    // area, is what they optimize (biased pair searches coupled 26 of 48
+    // pairs on the full CM5 instead of 42).
+    let bias = if super::pair::pair_partner(net).is_some() {
+        0.0
+    } else {
+        micro_bias()
+    };
 
     // --- A* over (cell, layer) -------------------------------------------
     let n = plane * nl;
@@ -678,7 +687,7 @@ pub fn route_net_maze3d(
                 // stacked where the board allows) wherever the hops fit, the
                 // way the human CM5 fans out.
                 let r_span = session.via_spec(net, layers[lo], layers[hi]).r();
-                let size_factor = (r_span / r_min_via).powf(micro_bias());
+                let size_factor = (r_span / r_min_via).powf(bias);
                 let tentative =
                     g[node] + VIA_COST * haul_scale * (0.4 + 0.6 * span_frac) * size_factor;
                 if tentative < g[nb] {
