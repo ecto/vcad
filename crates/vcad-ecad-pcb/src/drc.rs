@@ -56,6 +56,12 @@ pub enum DrcRuleType {
     /// Signal copper (a trace) on a layer whose stackup role is plane /
     /// split plane: it cuts the plane. Plane layers carry vias only.
     PlaneLayerSignal,
+    /// Two microvias on consecutive spans (sharing one copper layer) whose
+    /// laser drills overlap — a STACKED microvia. Stacking needs filled,
+    /// planarized microvias, a fab capability the board does not declare;
+    /// microvias must be staggered (the next hop's drill lands clear of the
+    /// one below).
+    MicroviaStack,
 }
 
 /// DRC violation severity.
@@ -234,6 +240,7 @@ fn check_drc_scoped(pcb: &Pcb, region: Option<DrcRegion>) -> Vec<DrcViolation> {
     check_edge_clearance(pcb, region, &mut violations);
     check_hole_to_hole(pcb, region, &mut violations);
     check_annular_ring(pcb, region, &mut violations);
+    check_microvia_stack(pcb, region, &mut violations);
     check_keepout(pcb, region, &mut violations);
     check_courtyard_overlap(pcb, region, &mut violations);
     // Board-global by construction (a union-find over ALL copper): never scoped.
@@ -1137,6 +1144,65 @@ fn check_hole_to_hole(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Ve
                     generated,
                 });
             }
+        }
+    }
+}
+
+/// Stacked-microvia check (see [`DrcRuleType::MicroviaStack`]): two legal
+/// microvias whose spans meet at one copper layer and whose drills overlap in
+/// plan (centre distance below the larger drill). Staggered microvias — the
+/// next hop offset so its drill lands clear of the one below — pass.
+fn check_microvia_stack(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
+    let stack: Vec<PcbLayer> = PcbLayer::COPPER_STACK
+        .iter()
+        .copied()
+        .filter(|l| {
+            pcb.stackup.layers.is_empty() || pcb.stackup.layers.iter().any(|s| s.layer == *l)
+        })
+        .collect();
+    let idx = |l: PcbLayer| stack.iter().position(|&c| c == l);
+    let micro: Vec<(&vcad_ir::ecad::Via, usize, usize)> = pcb
+        .vias
+        .iter()
+        .filter(|v| is_legal_microvia(pcb, v))
+        .filter_map(|v| {
+            let (a, b) = (idx(v.start_layer)?, idx(v.end_layer)?);
+            Some((v, a.min(b), a.max(b)))
+        })
+        .collect();
+    for i in 0..micro.len() {
+        for j in (i + 1)..micro.len() {
+            let ((va, alo, ahi), (vb, blo, bhi)) = (micro[i], micro[j]);
+            // consecutive hops: one span ends on the layer the other starts
+            if !(ahi == blo || bhi == alo) {
+                continue;
+            }
+            let d = ((va.position.x - vb.position.x).powi(2)
+                + (va.position.y - vb.position.y).powi(2))
+            .sqrt();
+            let need = va.drill.max(vb.drill);
+            if d >= need - 1e-6 {
+                continue;
+            }
+            if !in_scope(region, |r| r.hits_point(va.position, va.diameter / 2.0))
+                && !in_scope(region, |r| r.hits_point(vb.position, vb.diameter / 2.0))
+            {
+                continue;
+            }
+            violations.push(DrcViolation {
+                rule: DrcRuleType::MicroviaStack,
+                severity: DrcSeverity::Error,
+                position: va.position,
+                message: format!(
+                    "Stacked microvias net '{}' {:?}-{:?} over {:?}-{:?}: drills {:.3}mm apart \
+                     (< {:.3}mm) — stagger them",
+                    va.net, va.start_layer, va.end_layer, vb.start_layer, vb.end_layer, d, need
+                ),
+                actual: d,
+                required: need,
+                provenance: DrcProvenance::Routing,
+                generated: false,
+            });
         }
     }
 }
@@ -5281,6 +5347,51 @@ mod tests {
         assert_eq!(judge(via(0.18, 0.08, f, i1, Micro)), (true, true));
         // "Micro" spanning F.Cu-B.Cu is not a microvia: via rules apply.
         assert_eq!(judge(via(0.21, 0.12, f, b, Micro)), (true, true));
+    }
+
+    /// Microvias on consecutive spans must be staggered: drills that overlap
+    /// in plan are a stacked microvia; offset by a drill or more they pass.
+    #[test]
+    fn stacked_microvias_flagged_staggered_pass() {
+        use vcad_ir::ecad::ViaType::Micro;
+        let (f, i1, i2) = (PcbLayer::FCu, PcbLayer::In1Cu, PcbLayer::In2Cu);
+        let judge = |dx: f64, second: (PcbLayer, PcbLayer)| {
+            let mut pcb = clean_pcb();
+            // Stack = F.Cu, In1.Cu, In2.Cu, B.Cu.
+            for (k, l) in [(1, PcbLayer::In1Cu), (2, PcbLayer::In2Cu)] {
+                let mut s = pcb.stackup.layers[0].clone();
+                s.layer = l;
+                pcb.stackup.layers.insert(k, s);
+            }
+            for (x, (a, b)) in [(30.0, (f, i1)), (30.0 + dx, second)] {
+                pcb.vias.push(Via {
+                    via_type: Some(Micro),
+                    position: Vec2::new(x, 60.0),
+                    diameter: 0.21,
+                    drill: 0.12,
+                    start_layer: a,
+                    end_layer: b,
+                    net: "2".to_string(),
+                    source: None,
+                });
+            }
+            check_drc(&pcb)
+                .iter()
+                .any(|v| v.rule == DrcRuleType::MicroviaStack)
+        };
+        assert!(
+            judge(0.0, (i1, i2)),
+            "coincident F-In1 + In1-In2 is a stack"
+        );
+        assert!(judge(0.05, (i1, i2)), "overlapping drills are a stack");
+        assert!(
+            !judge(0.3, (i1, i2)),
+            "staggered by more than a drill passes"
+        );
+        assert!(
+            !judge(0.0, (f, i1)),
+            "two same-span microvias are not a stack (hole-to-hole judges them)"
+        );
     }
 
     /// Every violation carries a provenance, and a via drill fault is routing.

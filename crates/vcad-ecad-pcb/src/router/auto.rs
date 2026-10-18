@@ -5855,6 +5855,7 @@ mod tests {
                     crate::drc::DrcRuleType::MinDrill
                         | crate::drc::DrcRuleType::AnnularRing
                         | crate::drc::DrcRuleType::HoleToHole
+                        | crate::drc::DrcRuleType::MicroviaStack
                 )
             })
             .collect();

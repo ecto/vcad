@@ -38,7 +38,8 @@ export type DrcRuleType =
   | "Short"
   | "NetIslands"
   | "SameNetBypass"
-  | "PlaneLayerSignal";
+  | "PlaneLayerSignal"
+  | "MicroviaStack";
 
 export type DrcSeverity = "Error" | "Warning";
 
