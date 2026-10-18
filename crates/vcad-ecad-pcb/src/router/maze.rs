@@ -92,15 +92,18 @@ pub fn is_microvia_span(layers: &[PcbLayer], a: usize, b: usize) -> bool {
     hi == lo + 1 && (lo == 0 || hi + 1 == layers.len())
 }
 
-/// Exponent of the maze's via-size price (`VCAD_MICRO_BIAS`, default 2.0;
-/// 0 = every span priced alike, the pre-sizing behaviour).
+/// Exponent of the maze's via-size price (`VCAD_MICRO_BIAS`; default 0 =
+/// every span priced alike). Opt-in: on the full CM5 any bias (2.0, either
+/// inflating drilled vias or discounting microvias) cut the first batch from
+/// 401/434 to 325-ish committed and ran 3x slower — cheap microvia hops pull
+/// singles through the plane-layer stack into hop chains the oracle rejects.
 pub fn micro_bias() -> f64 {
     static V: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
     *V.get_or_init(|| {
         std::env::var("VCAD_MICRO_BIAS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(2.0)
+            .unwrap_or(0.0)
     })
 }
 
