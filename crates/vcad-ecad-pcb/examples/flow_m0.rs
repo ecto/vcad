@@ -50,7 +50,17 @@ fn main() {
         pcb.plane_layers()
     );
     let t0 = Instant::now();
-    let g = CutGraph::build(&pcb, params, CopperFilter::PadsOnly);
+    let mut g = CutGraph::build(&pcb, params, CopperFilter::PadsOnly);
+    if std::env::var("VCAD_FLOW_SITES").as_deref() == Ok("1") {
+        let mut stripped = pcb.clone();
+        stripped.traces.clear();
+        stripped.vias.clear();
+        let specs =
+            vcad_ecad_pcb::router::flow::flow::choose_sites(&stripped, &g, &Default::default());
+        let pts: Vec<[f64; 2]> = specs.iter().map(|s| s.pos).collect();
+        println!("with {} via sites as Steiner vertices", pts.len());
+        g = CutGraph::build_with(&pcb, params, CopperFilter::PadsOnly, &pts);
+    }
     let build_ms = t0.elapsed().as_secs_f64() * 1e3;
     let t1 = Instant::now();
     let rep = human_load(&pcb, &g);
@@ -92,6 +102,48 @@ fn main() {
         println!(
             "  {} @({:.3},{:.3}) len {:.3} free {:.3} cap {} wires {} excess {:.3} {:?}",
             o.layer, o.at[0], o.at[1], o.len, o.free, o.cap, o.wires, o.excess, o.nets
+        );
+    }
+    // Free faces (usable by any net) that nevertheless overlap a grown
+    // obstacle: the triangulation failing to respect an obstacle.
+    for lg in &g.layers {
+        let mut bad = 0usize;
+        let mut free = 0usize;
+        for f in 0..lg.tris.len() {
+            if !lg.tri_live[f] || lg.tri_block[f] || lg.tri_obs[f] != u32::MAX {
+                continue;
+            }
+            free += 1;
+            let t = lg.tris[f];
+            let (a, b, c) = (lg.vpos(t[0]), lg.vpos(t[1]), lg.vpos(t[2]));
+            let mut hit = false;
+            for (u, v) in [
+                (0.2, 0.2),
+                (0.6, 0.2),
+                (0.2, 0.6),
+                (0.4, 0.4),
+                (0.1, 0.45),
+                (0.45, 0.1),
+            ] {
+                let w = 1.0 - u - v;
+                let p = [
+                    w * a[0] + u * b[0] + v * c[0],
+                    w * a[1] + u * b[1] + v * c[1],
+                ];
+                if !lg.obstacles_at(p, -1e-4).is_empty() {
+                    hit = true;
+                }
+            }
+            if hit {
+                bad += 1;
+                if bad <= 3 {
+                    println!("  overlap {:?} face {f}: {a:?} {b:?} {c:?}", lg.layer);
+                }
+            }
+        }
+        println!(
+            "{:?}: {free} free faces, {bad} overlap a grown obstacle",
+            lg.layer
         );
     }
     // VCAD_FLOW_PROBE=layer,x,y: dump the obstacles and cuts near a point.

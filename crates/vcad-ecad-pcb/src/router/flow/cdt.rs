@@ -162,10 +162,15 @@ pub struct LayerCdt {
     /// Obstacle whose inflated shape contains the face centroid ([`NONE`] in
     /// free space).
     pub tri_obs: Vec<u32>,
+    /// Face is unusable by every net: its centroid is inside the inflation of
+    /// the board edge / a keepout, or of copper of two different nets.
+    pub tri_block: Vec<bool>,
     /// Cuts.
     pub cuts: Vec<Cut>,
     /// Obstacles on this layer.
     pub obstacles: Vec<Obstacle>,
+    /// Vertex id of each Steiner point passed to [`LayerCdt::build`].
+    pub steiner: Vec<u32>,
     tri_index: RTree<GeomWithData<Rectangle<[f64; 2]>, u32>>,
     obs_index: RTree<GeomWithData<Rectangle<[f64; 2]>, u32>>,
 }
@@ -452,6 +457,25 @@ pub fn layer_obstacles(
             kind,
         });
     }
+    // Plated through-holes occupy every copper layer, whatever layers the
+    // importer listed (KiCad's `*.Cu` arrives as F/B only): keep their pad
+    // shape as an obstacle on the inner layers too.
+    for fp in &pcb.footprints {
+        for pad in &fp.pads {
+            if pad.drill.is_none() || pad.layers.contains(&layer) {
+                continue;
+            }
+            let center = crate::geometry::pad_world_position(fp, pad);
+            let rot = (fp.rotation + pad.rotation).to_radians();
+            let net = pad.net.clone().unwrap_or_default();
+            out.push(Obstacle {
+                grow: c_of(&net) + p.width / 2.0,
+                net,
+                geom: crate::spatial::pad_geom(pad, center, rot),
+                kind: ObsKind::Pad,
+            });
+        }
+    }
     // Vias are discs too; re-tag them so reports can tell them apart.
     if filter == CopperFilter::All {
         for o in out.iter_mut() {
@@ -495,8 +519,18 @@ pub fn layer_obstacles(
 }
 
 impl LayerCdt {
-    /// Build the cut graph of `layer` from explicit obstacles.
-    pub fn build(pcb: &Pcb, layer: PcbLayer, obstacles: Vec<Obstacle>, p: &CutParams) -> Self {
+    /// Build the cut graph of `layer` from explicit obstacles, plus Steiner
+    /// vertices `steiner` (via sites: owned by no obstacle, `vobs` = [`NONE`]).
+    /// A Steiner vertex is a point obstacle of centerline radius
+    /// `(w0 + s) / 2`, so the two cuts it splits a channel into never hold more
+    /// than the channel did.
+    pub fn build(
+        pcb: &Pcb,
+        layer: PcbLayer,
+        obstacles: Vec<Obstacle>,
+        steiner: &[[f64; 2]],
+        p: &CutParams,
+    ) -> Self {
         // --- vertices: boundary samples of every inflated obstacle, deduped.
         let mut verts: Vec<[f64; 2]> = Vec::new();
         let mut vobs: Vec<u32> = Vec::new();
@@ -511,6 +545,21 @@ impl LayerCdt {
                     e.insert(verts.len());
                     verts.push(v);
                     vobs.push(i as u32);
+                }
+            }
+        }
+        let mut steiner_vid = Vec::with_capacity(steiner.len());
+        for &v in steiner {
+            let key = ((v[0] * 1e5).round() as i64, (v[1] * 1e5).round() as i64);
+            match seen.entry(key) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(verts.len());
+                    steiner_vid.push(verts.len() as u32);
+                    verts.push(v);
+                    vobs.push(NONE);
+                }
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    steiner_vid.push(*e.get() as u32);
                 }
             }
         }
@@ -586,6 +635,7 @@ impl LayerCdt {
         );
         let mut tri_live = Vec::with_capacity(nf);
         let mut tri_obs = Vec::with_capacity(nf);
+        let mut tri_block = Vec::with_capacity(nf);
         for t in &tris {
             let c = centroid(&verts, t);
             let cp = Vec2::new(c[0], c[1]);
@@ -597,15 +647,30 @@ impl LayerCdt {
                     .any(|h| h.len() >= 3 && point_in_polygon(cp, h));
             tri_live.push(live);
             let mut best = NONE;
+            let mut block = false;
             for g in obs_index.locate_all_at_point(&c) {
                 let o = &obstacles[g.data as usize];
-                if matches!(o.kind, ObsKind::Edge | ObsKind::Keepout) {
+                if !obstacle_contains(o, c, 0.0) {
                     continue;
                 }
-                if obstacle_contains(o, c, 0.0) && (best == NONE || g.data < best) {
+                if matches!(o.kind, ObsKind::Edge | ObsKind::Keepout) {
+                    block = true;
+                    continue;
+                }
+                if best == NONE || g.data < best {
                     best = g.data;
                 }
             }
+            if best != NONE && !block {
+                let net = &obstacles[best as usize].net;
+                block = obs_index.locate_all_at_point(&c).any(|g| {
+                    let o = &obstacles[g.data as usize];
+                    !matches!(o.kind, ObsKind::Edge | ObsKind::Keepout)
+                        && o.net != *net
+                        && obstacle_contains(o, c, 0.0)
+                });
+            }
+            tri_block.push(block);
             tri_obs.push(best);
         }
 
@@ -639,6 +704,14 @@ impl LayerCdt {
                 clip_obstacle(pa, pb, &obstacles[g.data as usize], &mut iv);
                 ivo.extend(std::iter::repeat_n(g.data, iv.len() - n0));
             }
+            let rs = (p.width + p.clearance) / 2.0;
+            for (end, pt) in [(cut.a, pa), (cut.b, pb)] {
+                if vobs[end as usize] == NONE {
+                    let n0 = iv.len();
+                    clip_disc(pa, pb, pt, rs, &mut iv);
+                    ivo.extend(std::iter::repeat_n(NONE, iv.len() - n0));
+                }
+            }
             let (parts, blocks) = free_parts(&iv, &ivo, len, &obstacles);
             cut.parts = parts;
             cut.blocks = blocks;
@@ -667,11 +740,34 @@ impl LayerCdt {
             tri_nbr,
             tri_live,
             tri_obs,
+            tri_block,
             cuts,
             obstacles,
+            steiner: steiner_vid,
             tri_index,
             obs_index,
         }
+    }
+
+    /// Capacity (default width) of cut `c` if a disc of centerline radius
+    /// `r` stood at `center` (a via placed at a site).
+    pub fn cap_with_disc(&self, c: u32, center: [f64; 2], r: f64, p: &CutParams) -> u32 {
+        let cut = &self.cuts[c as usize];
+        let (pa, pb) = (self.vpos(cut.a), self.vpos(cut.b));
+        let mut iv = Vec::new();
+        clip_disc(pa, pb, center, r, &mut iv);
+        let Some(d) = iv.first().map(|x| [x[0] * cut.len, x[1] * cut.len]) else {
+            return cut.cap;
+        };
+        let mut cap = 0;
+        for q in &cut.parts {
+            for piece in [[q[0], q[1].min(d[0])], [q[0].max(d[1]), q[1]]] {
+                if piece[1] - piece[0] > 1e-3 {
+                    cap += p.fit(piece[1] - piece[0]);
+                }
+            }
+        }
+        cap
     }
 
     /// Extra room (mm) a wire of `net` gets in free part `k` of cut `c` by
@@ -858,7 +954,7 @@ fn free_parts(
             let ob = &obstacles[o as usize];
             matches!(ob.kind, ObsKind::Pad | ObsKind::Via | ObsKind::Trace) && !ob.net.is_empty()
         };
-        let tag = if single(o) { o } else { NONE };
+        let tag = if o != NONE && single(o) { o } else { NONE };
         match blocks.last_mut() {
             Some((b, t)) if x[0] <= b[1] + 1e-6 => {
                 b[1] = b[1].max(x[1]);
@@ -901,6 +997,16 @@ pub struct CutGraph {
 impl CutGraph {
     /// Build every signal layer's graph (plane / split-plane layers get none).
     pub fn build(pcb: &Pcb, params: CutParams, filter: CopperFilter) -> Self {
+        Self::build_with(pcb, params, filter, &[])
+    }
+
+    /// [`CutGraph::build`] with Steiner vertices (via sites) on every layer.
+    pub fn build_with(
+        pcb: &Pcb,
+        params: CutParams,
+        filter: CopperFilter,
+        steiner: &[[f64; 2]],
+    ) -> Self {
         let planes = pcb.plane_layers();
         let copper: Vec<PcbLayer> = PcbLayer::COPPER_STACK
             .iter()
@@ -911,7 +1017,15 @@ impl CutGraph {
         use rayon::prelude::*;
         let layers = copper
             .par_iter()
-            .map(|&l| LayerCdt::build(pcb, l, layer_obstacles(pcb, l, &params, filter), &params))
+            .map(|&l| {
+                LayerCdt::build(
+                    pcb,
+                    l,
+                    layer_obstacles(pcb, l, &params, filter),
+                    steiner,
+                    &params,
+                )
+            })
             .collect();
         Self { params, layers }
     }
@@ -970,7 +1084,7 @@ mod tests {
         let mut obs = layer_obstacles(&pcb, PcbLayer::FCu, &p, CopperFilter::PadsOnly);
         obs.push(obs_disc(10.0, 10.0, 0.5, 0.15));
         obs.push(obs_disc(13.0, 10.0, 0.5, 0.15));
-        let g = LayerCdt::build(&pcb, PcbLayer::FCu, obs, &p);
+        let g = LayerCdt::build(&pcb, PcbLayer::FCu, obs, &[], &p);
         // Walking the perpendicular bisector crosses the cut between them.
         let (pa, pb) = ([11.5, 8.0], [11.5, 12.0]);
         let (word, _) = g.walk(pa, pb, None).expect("walk");

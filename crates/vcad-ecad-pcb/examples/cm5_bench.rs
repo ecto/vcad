@@ -174,17 +174,28 @@ fn main() {
         println!("pours: synthesis DISABLED (VCAD_POUR_SYNTH=0)");
     }
     let t0 = Instant::now();
-    let r = route_all_with_opts(
-        &pcb,
-        width,
-        &filter,
-        &RouteOptions {
-            effort,
-            priority_nets: priority.clone(),
-            pour_policy,
-            ..Default::default()
-        },
-    );
+    // VCAD_FLOW=1: the flow-core router (one market; see router::flow).
+    let r = if vcad_ecad_pcb::router::flow::flow_enabled() {
+        let (r, rep) =
+            vcad_ecad_pcb::router::flow::route_flow(&pcb, width, &filter, &Default::default());
+        println!(
+            "flow: {}/{} connections committed, LB {:.1} mm, UB {:?}, gap {:?}",
+            rep.committed, rep.commodities, rep.lower_bound, rep.upper_bound, rep.gap
+        );
+        r
+    } else {
+        route_all_with_opts(
+            &pcb,
+            width,
+            &filter,
+            &RouteOptions {
+                effort,
+                priority_nets: priority.clone(),
+                pour_policy,
+                ..Default::default()
+            },
+        )
+    };
     let elapsed = t0.elapsed();
 
     let routed_len: f64 = r.traces.iter().map(|t| seg_len(t.start, t.end)).sum();
