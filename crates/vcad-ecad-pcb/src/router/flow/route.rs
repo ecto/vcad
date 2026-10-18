@@ -74,6 +74,11 @@ pub struct FlowReport {
     pub ms: [f64; 4],
     /// Per round: [open connections, committed, rejected].
     pub rounds: Vec<[usize; 3]>,
+    /// Plane access: [pads needing a via, pads without a legal site, vias
+    /// committed].
+    pub access: [usize; 3],
+    /// Final duality gap of the access auction.
+    pub access_gap: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -501,15 +506,20 @@ fn realize(
                 if let EStep::Via { site, span, .. } = *st {
                     let s = &g.sites[site as usize];
                     let sp = &s.spans[span as usize];
-                    let mut v = RoutedVia::new(Vec2::new(s.pos[0], s.pos[1]), &k.net, sp.a, sp.b);
-                    v.size_with(sizing);
-                    vs.push(v);
+                    for &(a, b) in &sp.stack {
+                        let mut v = RoutedVia::new(Vec2::new(s.pos[0], s.pos[1]), &k.net, a, b);
+                        v.size_with(sizing);
+                        vs.push(v);
+                    }
                 }
             }
             (segs, vs)
         })
         .collect()
 }
+
+/// Vias committed so far: position → (net, spans standing there).
+type PlacedVias = HashMap<(i64, i64), (String, Vec<(PcbLayer, PcbLayer)>)>;
 
 fn via_key(p: Vec2) -> (i64, i64) {
     ((p.x * 1e4).round() as i64, (p.y * 1e4).round() as i64)
@@ -530,13 +540,24 @@ fn spanned(pcb: &Pcb, v: &RoutedVia) -> Vec<PcbLayer> {
 fn try_commit(
     pcb: &Pcb,
     session: &mut RouteSession,
-    placed_vias: &mut HashMap<(i64, i64), String>,
+    placed_vias: &mut PlacedVias,
     net: &str,
     segs: &[RoutedTrace],
     vs: &mut Vec<RoutedVia>,
 ) -> bool {
     let clr = session.clearance_for(net);
-    vs.retain(|v| placed_vias.get(&via_key(v.position)).map(|n| n.as_str()) != Some(net));
+    // the same via already standing (same net, same span): reuse it
+    vs.retain(|v| {
+        !placed_vias
+            .get(&via_key(v.position))
+            .is_some_and(|(n, spans)| n == net && spans.contains(&(v.start_layer, v.end_layer)))
+    });
+    // a same-net via at the point on other layers: this one stacks on it
+    let stacks_on = |v: &RoutedVia| {
+        placed_vias
+            .get(&via_key(v.position))
+            .is_some_and(|(n, _)| n == net)
+    };
     let seg_ok = |s: &RouteSession, t: &RoutedTrace| {
         s.probe(
             &CopperGeom::Segment {
@@ -551,9 +572,10 @@ fn try_commit(
         .legal
     };
     let via_ok = |s: &RouteSession, v: &RoutedVia| {
-        !placed_vias.contains_key(&via_key(v.position))
-            && s.probe_via_span(v.position, net, v.start_layer, v.end_layer)
-                .legal
+        (stacks_on(v) || !placed_vias.contains_key(&via_key(v.position)))
+            && (stacks_on(v)
+                || s.probe_via_span(v.position, net, v.start_layer, v.end_layer)
+                    .legal)
             && spanned(pcb, v).into_iter().all(|l| {
                 s.probe(
                     &CopperGeom::Disc {
@@ -616,7 +638,10 @@ fn try_commit(
     for v in vs.iter() {
         let r = v.diameter / 2.0;
         session.commit_drill(v.position, v.drill);
-        placed_vias.insert(via_key(v.position), net.to_string());
+        let e = placed_vias
+            .entry(via_key(v.position))
+            .or_insert_with(|| (net.to_string(), Vec::new()));
+        e.1.push((v.start_layer, v.end_layer));
         for l in spanned(pcb, v) {
             session.commit(CopperElement {
                 min: [v.position.x - r, v.position.y - r],
@@ -661,11 +686,12 @@ pub fn route_flow(
     opts: &FlowOptions,
 ) -> (RouteAllResult, FlowReport) {
     let mut rep = FlowReport::default();
-    let plane_nets: BTreeSet<String> = pcb
-        .zones
-        .iter()
-        .filter(|z| !z.net.is_empty() && z.outline.len() >= 3)
-        .map(|z| z.net.clone())
+    // Nets carried by a plane-role pour reach it through access vias (the
+    // exact sub-market in `access`); every other net is routed.
+    let plane_nets: BTreeSet<String> = super::access::plane_poured(pcb)
+        .keys()
+        .map(|n| n.to_string())
+        .filter(|n| nets_filter.is_empty() || nets_filter.contains(n))
         .collect();
     rep.plane_nets = plane_nets.len();
     let mut session = RouteSession::from_pcb(pcb);
@@ -673,7 +699,78 @@ pub fn route_flow(
     let mut board = pcb.clone();
     let mut traces: Vec<RoutedTrace> = Vec::new();
     let mut vias: Vec<RoutedVia> = Vec::new();
-    let mut placed_vias: HashMap<(i64, i64), String> = HashMap::new();
+    let mut placed_vias: PlacedVias = HashMap::new();
+    if !plane_nets.is_empty() {
+        let sw = crate::router::Stopwatch::start();
+        let mk =
+            super::access::AccessMarket::build(pcb, opts.params.micro_cost, opts.params.via_cost);
+        let (choice, stats) = mk.solve(200, 2.0);
+        let sizing = session.via_sizing().clone();
+        let mut ok = 0usize;
+        for av in mk.vias(&choice) {
+            let pad = &mk.pads[av.pad];
+            if !plane_nets.contains(&pad.net) {
+                continue;
+            }
+            let pos = Vec2::new(av.pos[0], av.pos[1]);
+            let c = Vec2::new(pad.center[0], pad.center[1]);
+            let segs: Vec<RoutedTrace> = if (pos.x - c.x).abs() + (pos.y - c.y).abs() > 1e-9 {
+                vec![RoutedTrace {
+                    start: c,
+                    end: pos,
+                    width: session.width_for(&pad.net, width),
+                    layer: pad.layer,
+                    net: pad.net.clone(),
+                }]
+            } else {
+                Vec::new()
+            };
+            let mut v = RoutedVia::new(pos, &pad.net, av.span.0, av.span.1);
+            v.size_with(&sizing);
+            let mut vs = vec![v];
+            if try_commit(
+                pcb,
+                &mut session,
+                &mut placed_vias,
+                &pad.net,
+                &segs,
+                &mut vs,
+            ) {
+                ok += 1;
+                for t in &segs {
+                    board.traces.push(vcad_ir::ecad::Trace {
+                        start: t.start,
+                        end: t.end,
+                        width: t.width,
+                        layer: t.layer,
+                        net: t.net.clone(),
+                        source: None,
+                    });
+                }
+                for v in &vs {
+                    board.vias.push(v.to_board_via(pcb, None));
+                }
+                traces.extend(segs);
+                vias.extend(vs);
+            }
+        }
+        let last = stats.last();
+        rep.access = [
+            mk.pads.len(),
+            mk.options.iter().filter(|o| o.is_empty()).count(),
+            ok,
+        ];
+        rep.access_gap = last.map(|s| s.gap);
+        log::info!(
+            "flow access: {} pads need a plane via, {} without a legal site, {ok} committed; \
+             auction {} iterations, gap {:?}, {:.0} ms",
+            rep.access[0],
+            rep.access[1],
+            stats.len(),
+            rep.access_gap,
+            sw.ms()
+        );
+    }
     let mut done: BTreeSet<(String, [i64; 4])> = BTreeSet::new();
     let mut all: BTreeSet<(String, [i64; 4])> = BTreeSet::new();
     let mut net_of_conn: BTreeMap<(String, [i64; 4]), String> = BTreeMap::new();

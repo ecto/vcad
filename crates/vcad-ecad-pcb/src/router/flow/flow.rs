@@ -35,6 +35,8 @@ pub struct SpanSpec {
     pub a: PcbLayer,
     /// Bottom copper layer.
     pub b: PcbLayer,
+    /// The physical vias (one, or a stack of microvias at one point).
+    pub stack: Vec<(PcbLayer, PcbLayer)>,
     /// Cost (mm-equivalent).
     pub cost: f64,
     /// Barrel radius in centerline space (pad radius + clearance + w0/2).
@@ -57,6 +59,8 @@ pub struct SiteSpan {
     pub a: PcbLayer,
     /// Bottom copper layer of the span.
     pub b: PcbLayer,
+    /// The physical vias.
+    pub stack: Vec<(PcbLayer, PcbLayer)>,
     /// Graph layer indices (signal layers) the span touches.
     pub layers: Vec<u8>,
     /// Cost (mm-equivalent).
@@ -304,14 +308,12 @@ pub fn choose_sites(pcb: &Pcb, cg: &CutGraph, params: &FlowParams) -> Vec<SiteSp
         return Vec::new();
     }
     let sig: Vec<PcbLayer> = cg.layers.iter().map(|l| l.layer).collect();
-    // Span catalog: through, plus one span per pair of consecutive signal
-    // layers (blind/buried/micro per the board's via table).
-    let mut spans: Vec<(PcbLayer, PcbLayer)> = vec![(copper[0], *copper.last().unwrap())];
-    for w in sig.windows(2) {
-        if (w[0], w[1]) != spans[0] {
-            spans.push((w[0], w[1]));
-        }
-    }
+    // Span catalog: every single via of the board's catalog that joins two
+    // signal layers, plus stacks of two consecutive microvias (when the board
+    // allows stacking) — on an HDI stack the signal layers sit behind planes
+    // (F–In1–In2), so a signal layer change is a stack.
+    let stacks = signal_stacks(pcb, &sig, &sizing);
+    let spans: Vec<(PcbLayer, PcbLayer)> = stacks.iter().flatten().copied().collect();
     let idx = |l: PcbLayer| copper.iter().position(|&c| c == l).unwrap_or(0);
     let session = RouteSession::from_pcb(pcb);
     let clr = pcb.rules.default_rules.clearance;
@@ -323,21 +325,47 @@ pub fn choose_sites(pcb: &Pcb, cg: &CutGraph, params: &FlowParams) -> Vec<SiteSp
             (m.0.max(s.diameter), m.1.max(s.drill))
         });
     let pitch = (max_spec.0 + clr).max(max_spec.1 + pcb.rules.hole_to_hole) + 1e-3;
-    let mut cands: Vec<[f64; 2]> = Vec::new();
+    // Via-in-pad sites first (the HDI escape: a microvia stack straight down
+    // from an SMD pad; only the pad's own net can reach it, since the faces
+    // around it are inside the pad), then free-space face centroids.
+    let planes = super::access::plane_poured(pcb);
+    type Cand = ([f64; 2], Option<(String, PcbLayer)>);
+    let mut pad_sites: Vec<Cand> = Vec::new();
+    for fp in &pcb.footprints {
+        for pad in &fp.pads {
+            let Some(net) = pad.net.as_deref().filter(|n| !n.is_empty()) else {
+                continue;
+            };
+            if pad.drill.is_some() || planes.contains_key(net) {
+                continue;
+            }
+            let Some(&pl) = pad.layers.iter().find(|l| l.is_copper()) else {
+                continue;
+            };
+            let c = crate::geometry::pad_world_position(fp, pad);
+            pad_sites.push(([c.x, c.y], Some((net.to_string(), pl))));
+        }
+    }
+    pad_sites.sort_by(|a, b| a.0[0].total_cmp(&b.0[0]).then(a.0[1].total_cmp(&b.0[1])));
+    let mut free: Vec<[f64; 2]> = Vec::new();
     for lg in &cg.layers {
         for f in 0..lg.tris.len() {
             if lg.tri_live[f] && lg.tri_obs[f] == NONE && !lg.tri_block[f] {
-                cands.push(lg.tri_centroid(f as u32));
+                free.push(lg.tri_centroid(f as u32));
             }
         }
     }
-    cands.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
-    cands.dedup_by(|a, b| dist(*a, *b) < 1e-6);
+    free.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+    free.dedup_by(|a, b| dist(*a, *b) < 1e-6);
+    let cands: Vec<Cand> = pad_sites
+        .into_iter()
+        .chain(free.into_iter().map(|p| (p, None)))
+        .collect();
     let mut grid: HashMap<(i64, i64), Vec<[f64; 2]>> = HashMap::new();
     let key = |p: [f64; 2]| ((p[0] / pitch).floor() as i64, (p[1] / pitch).floor() as i64);
     let probe_net = "\u{2}flow-site";
     let mut out = Vec::new();
-    for p in cands {
+    for (p, owner) in cands {
         let k = key(p);
         let near = (-1..=1).any(|dx| {
             (-1..=1).any(|dy| {
@@ -353,38 +381,64 @@ pub fn choose_sites(pcb: &Pcb, cg: &CutGraph, params: &FlowParams) -> Vec<SiteSp
             pos: p,
             spans: Vec::new(),
         };
-        for &(a, b) in &spans {
-            let spec = sizing.spec("", a, b);
-            if !session.probe_via_span(center, "", a, b).legal {
-                continue;
+        let pnet = owner.as_ref().map(|o| o.0.as_str()).unwrap_or(probe_net);
+        for stack in &stacks {
+            // an in-pad stack must start on the pad's layer
+            if let Some((_, pl)) = &owner {
+                if !stack.iter().any(|&(a, b)| a == *pl || b == *pl) {
+                    continue;
+                }
             }
-            let (ia, ib) = (idx(a), idx(b));
-            let legal = copper[ia.min(ib)..=ia.max(ib)].iter().all(|&l| {
-                session
-                    .probe(
-                        &CopperGeom::Disc {
-                            center,
-                            r: spec.r(),
-                        },
-                        l,
-                        probe_net,
-                        clr,
-                    )
-                    .legal
+            let legal = stack.iter().all(|&(a, b)| {
+                let spec = sizing.spec("", a, b);
+                let (ia, ib) = (idx(a), idx(b));
+                session.probe_via_span(center, pnet, a, b).legal
+                    && copper[ia.min(ib)..=ia.max(ib)].iter().all(|&l| {
+                        session
+                            .probe(
+                                &CopperGeom::Disc {
+                                    center,
+                                    r: spec.r(),
+                                },
+                                l,
+                                pnet,
+                                clr,
+                            )
+                            .legal
+                    })
             });
-            let touches = sig.iter().filter(|l| l.spanned_by(a, b)).count();
-            if !legal || touches < 2 {
+            if !legal {
                 continue;
             }
+            let ext = |pick: fn(usize, usize) -> usize| {
+                stack
+                    .iter()
+                    .flat_map(|&(a, b)| [idx(a), idx(b)])
+                    .reduce(pick)
+                    .map(|i| copper[i])
+                    .unwrap()
+            };
+            let (a, b) = (ext(usize::min), ext(usize::max));
             site.spans.push(SpanSpec {
                 a,
                 b,
-                cost: if sizing.is_micro_span(a, b) {
-                    params.micro_cost
-                } else {
-                    params.via_cost
-                },
-                r_center: spec.r() + clr + w0 / 2.0,
+                stack: stack.clone(),
+                cost: stack
+                    .iter()
+                    .map(|&(x, y)| {
+                        if sizing.is_micro_span(x, y) {
+                            params.micro_cost
+                        } else {
+                            params.via_cost
+                        }
+                    })
+                    .sum(),
+                r_center: stack
+                    .iter()
+                    .map(|&(x, y)| sizing.spec("", x, y).r())
+                    .fold(0.0, f64::max)
+                    + clr
+                    + w0 / 2.0,
             });
         }
         if site.spans.is_empty() {
@@ -392,6 +446,32 @@ pub fn choose_sites(pcb: &Pcb, cg: &CutGraph, params: &FlowParams) -> Vec<SiteSp
         }
         grid.entry(k).or_default().push(p);
         out.push(site);
+    }
+    out
+}
+
+/// Via constructions that join two signal layers: single vias of the
+/// board's catalog ([`super::access::span_catalog`]) that touch two signal
+/// layers, and two-microvia stacks (when the board allows stacking) whose
+/// extent does.
+pub fn signal_stacks(
+    pcb: &Pcb,
+    sig: &[PcbLayer],
+    sizing: &crate::via_sizing::ViaSizing,
+) -> Vec<Vec<(PcbLayer, PcbLayer)>> {
+    let cat = super::access::span_catalog(pcb);
+    let touches = |a: PcbLayer, b: PcbLayer| sig.iter().filter(|l| l.spanned_by(a, b)).count();
+    let mut out: Vec<Vec<(PcbLayer, PcbLayer)>> = cat
+        .iter()
+        .filter(|&&(a, b)| touches(a, b) >= 2)
+        .map(|&s| vec![s])
+        .collect();
+    for &x in &cat {
+        for &y in &cat {
+            if x != y && x.1 == y.0 && sizing.may_stack(x, y) && touches(x.0, y.1) >= 2 {
+                out.push(vec![x, y]);
+            }
+        }
     }
     out
 }
@@ -545,6 +625,7 @@ impl<'g> FlowGraph<'g> {
                 spans.push(SiteSpan {
                     a: ss.a,
                     b: ss.b,
+                    stack: ss.stack.clone(),
                     layers,
                     cost: ss.cost,
                     cuts,

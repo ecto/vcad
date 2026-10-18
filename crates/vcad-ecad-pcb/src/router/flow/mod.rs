@@ -1,6 +1,7 @@
 //! The "flow core" router: everything is min-cost flow under prices on one
 //! graph (see `docs/router-one-market-math.md`).
 //!
+//! - [`access`] — plane access as an exact sub-market (pads → via sites).
 //! - [`cdt`] — per signal layer, a Delaunay triangulation of clearance-inflated
 //!   obstacles; triangle edges are *cuts* with exact wire capacities.
 //! - [`human`] — map an existing (human) routing onto the cut graph and
@@ -14,6 +15,7 @@
 //! - [`realize`] — funnel each wire word and space the wires sharing a cut.
 //! - [`route`] — [`route_flow`], the end-to-end pass behind `VCAD_FLOW=1`.
 
+pub mod access;
 pub mod cdt;
 pub mod embed;
 #[allow(clippy::module_inception)]
