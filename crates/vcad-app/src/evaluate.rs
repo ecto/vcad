@@ -231,6 +231,7 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
         | CsgOp::Text2D { .. }
         | CsgOp::Sweep { .. }
         | CsgOp::Loft { .. }
+        | CsgOp::Hull { .. }
         | CsgOp::ImportedMesh { .. }
         | CsgOp::PcbBoard { .. }
         | CsgOp::EmbroideryPattern { .. }

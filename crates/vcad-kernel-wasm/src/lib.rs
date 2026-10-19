@@ -1407,6 +1407,23 @@ impl Solid {
             .map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Convex hull of a flat `[x, y, z, ...]` point cloud.
+    #[wasm_bindgen(js_name = hullPoints)]
+    pub fn hull_points(points: Vec<f64>) -> Result<Solid, JsError> {
+        vcad_kernel::Solid::hull(&[], &points)
+            .map(|inner| Solid { inner })
+            .ok_or_else(|| JsError::new("hull: points do not span a volume"))
+    }
+
+    /// Convex hull of this solid together with `other`. Hull is associative,
+    /// so an n-ary hull folds pairwise.
+    #[wasm_bindgen(js_name = hullWith)]
+    pub fn hull_with(&self, other: &Solid) -> Result<Solid, JsError> {
+        vcad_kernel::Solid::hull(&[&self.inner, &other.inner], &[])
+            .map(|inner| Solid { inner })
+            .ok_or_else(|| JsError::new("hull: inputs do not span a volume"))
+    }
+
     // =========================================================================
     // Boolean operations
     // =========================================================================
@@ -5173,6 +5190,17 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         vcad_ir::CsgOp::Loft { .. } => Err(JsError::new(
             "Loft not supported in VCode evaluation - use evaluateDocument",
         )),
+
+        vcad_ir::CsgOp::Hull { children, points } => {
+            let solids = children
+                .iter()
+                .map(|id| evaluate_node(doc, *id))
+                .collect::<Result<Vec<_>, _>>()?;
+            let refs: Vec<&vcad_kernel::Solid> = solids.iter().map(|s| &s.inner).collect();
+            vcad_kernel::Solid::hull(&refs, points)
+                .map(|inner| Solid { inner })
+                .ok_or_else(|| JsError::new("hull: inputs do not span a volume"))
+        }
 
         vcad_ir::CsgOp::ImportedMesh { .. } => Err(JsError::new(
             "ImportedMesh not supported in VCode evaluation - use evaluateDocument",

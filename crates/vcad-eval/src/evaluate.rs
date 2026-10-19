@@ -1019,6 +1019,17 @@ fn evaluate_op_timed(
             Ok(Some(solid))
         }
 
+        CsgOp::Hull { children, points } => {
+            let mut solids = Vec::with_capacity(children.len());
+            for id in children {
+                if let Some(s) = eval_child(*id, cache)? {
+                    solids.push(s);
+                }
+            }
+            let refs: Vec<&Solid> = solids.iter().collect();
+            Ok(Solid::hull(&refs, points))
+        }
+
         CsgOp::Loft { sketches, closed } => {
             let mut profiles = Vec::with_capacity(sketches.len());
             for sketch_id in sketches {
@@ -2619,6 +2630,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::Revolve { .. } => "Revolve",
         CsgOp::Sweep { .. } => "Sweep",
         CsgOp::Loft { .. } => "Loft",
+        CsgOp::Hull { .. } => "Hull",
         CsgOp::ImportedMesh { .. } => "ImportedMesh",
         CsgOp::StepImport { .. } => "StepImport",
         CsgOp::MeshImport { .. } => "MeshImport",
@@ -3305,6 +3317,65 @@ mod tests {
             },
         );
         id + 100
+    }
+
+    /// Hull of two separated cubes is the slab spanning them, and it is a
+    /// B-rep that a downstream difference actually cuts.
+    #[test]
+    fn hull_of_solids_and_points() {
+        let mut nodes: HashMap<NodeId, vcad_ir::Node> = HashMap::new();
+        let a = cube_at(1, 0.0, &mut nodes);
+        let b = cube_at(2, 30.0, &mut nodes);
+        let node = |id: NodeId, op: CsgOp| vcad_ir::Node { id, name: None, op };
+        nodes.insert(
+            10,
+            node(
+                10,
+                CsgOp::Hull {
+                    children: vec![a, b],
+                    points: Vec::new(),
+                },
+            ),
+        );
+        let mut cache = HashMap::new();
+        let hull = evaluate_node(10, &nodes, &mut cache).unwrap().unwrap();
+        assert!(hull.as_brep().is_some());
+        assert!((hull.volume() - 40.0 * 10.0 * 10.0).abs() < 1e-3);
+
+        // Point-cloud form: a tetrahedron (interior point ignored).
+        nodes.insert(
+            11,
+            node(
+                11,
+                CsgOp::Hull {
+                    children: Vec::new(),
+                    points: vec![
+                        0.0, 0.0, 0.0, 6.0, 0.0, 0.0, 0.0, 6.0, 0.0, 0.0, 0.0, 6.0, 1.0, 1.0, 1.0,
+                    ],
+                },
+            ),
+        );
+        let tet = evaluate_node(11, &nodes, &mut cache).unwrap().unwrap();
+        assert!((tet.volume() - 36.0).abs() < 1e-6);
+
+        // Downstream boolean: cut a 10 mm cube out of the middle of the slab.
+        let tool = cube_at(3, 15.0, &mut nodes);
+        nodes.insert(
+            12,
+            node(
+                12,
+                CsgOp::Difference {
+                    left: 10,
+                    right: tool,
+                },
+            ),
+        );
+        let cut = evaluate_node(12, &nodes, &mut cache).unwrap().unwrap();
+        assert!(
+            (cut.volume() - 3000.0).abs() < 1.0,
+            "difference on a hull should remove the tool, got {}",
+            cut.volume()
+        );
     }
 
     /// A left-leaning union chain fuses as a balanced tree with the same

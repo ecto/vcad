@@ -85,6 +85,9 @@
   [Sweep Sketch Path]
   [Loft (Vec Sketch)]
   [LoftClosed (Vec Sketch)]
+  ; [Hull solids points] — convex hull of the solids' vertices plus a flat
+  ; #[x y z ...] point list (either may be empty)
+  [Hull (Vec Solid) (Vec f64)]
   ; Patterns
   [LinearPattern Solid f64 f64 f64 Int f64]
   [CircularPattern Solid f64 f64 f64 f64 f64 f64 Int f64]
@@ -302,6 +305,14 @@
 [let union [fn [other s] [Union s other]]]
 [let difference [fn [tool s] [Difference s tool]]]
 [let intersection [fn [other s] [Intersection s other]]]
+
+; Convex hull — the smallest convex solid enclosing its inputs.
+;   [hull a b c]                       hull of the solids together
+;   [hull-points #[x0 y0 z0 x1 ...]]   hull of a point cloud (>= 4 points)
+; Curved inputs are tessellated first, so the result is faceted (mesh-backed;
+; downstream booleans accept it).
+[let hull [fn [& solids] [Hull solids #[]]]]
+[let hull-points [fn [pts] [Hull #[] pts]]]
 
 ; Transforms (subject-last)
 [let translate [fn [x y z s] [Translate s x y z]]]
