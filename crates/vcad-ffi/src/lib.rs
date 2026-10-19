@@ -433,6 +433,50 @@ pub extern "C" fn vcad_scene_from_loon(loon: *const u8, loon_len: usize) -> *mut
     .unwrap_or(ptr::null_mut())
 }
 
+/// Compile a `.loon` **file** (UTF-8 path bytes) to `.vcad` document JSON.
+///
+/// Unlike [`vcad_scene_from_loon`] this is the file path: `[use ...]` modules
+/// and relative `import-mesh` paths resolve against the file's own directory
+/// (mesh paths are rewritten absolute), so the returned JSON evaluates through
+/// [`vcad_scene_from_json_in`] / `vcad_eval_begin` exactly like a `.vcad`
+/// document — assemblies, joints and materials included. That is how the
+/// native app opens a generated loon assembly as an ordinary document.
+/// Returns an owned NUL-terminated string (free with `vcad_cam_free`), or null
+/// with `vcad_last_error` set.
+#[no_mangle]
+pub extern "C" fn vcad_loon_file_to_json(path: *const u8, path_len: usize) -> *mut c_char {
+    if path.is_null() {
+        return ptr::null_mut();
+    }
+    err::clear_error();
+    catch_unwind(AssertUnwindSafe(|| {
+        let bytes = unsafe { std::slice::from_raw_parts(path, path_len) };
+        let Ok(p) = std::str::from_utf8(bytes) else {
+            err::set_error("path is not UTF-8");
+            return ptr::null_mut();
+        };
+        let path = std::path::Path::new(p);
+        let mut doc = match vcad_loon::eval_vcad_file(path) {
+            Ok(d) => d,
+            Err(e) => {
+                err::set_error(format!("loon: {e}"));
+                return ptr::null_mut();
+            }
+        };
+        if let Some(dir) = path.parent() {
+            vcad_eval::resolve_mesh_paths(&mut doc, dir);
+        }
+        match serde_json::to_string(&doc).map(CString::new) {
+            Ok(Ok(c)) => c.into_raw(),
+            _ => {
+                err::set_error("could not serialize the compiled document");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 /// Number of evaluated parts (visible document roots) in the scene.
 #[no_mangle]
 pub extern "C" fn vcad_scene_part_count(scene: *const VcadScene) -> usize {
