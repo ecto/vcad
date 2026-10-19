@@ -1549,7 +1549,14 @@ inferredFloors: Array<string>,
  * importer may infer `true` from a board that already stacks them; it
  * then lists `allowStackedMicrovias` in [`Self::inferred_floors`].
  */
-allowStackedMicrovias?: boolean, };
+allowStackedMicrovias?: boolean, 
+/**
+ * Rule areas: polygons inside which a reduced minimum trace width (and
+ * optionally clearance) applies — dense pin fields and their escapes.
+ * An importer may infer them from the board's own copper; such areas
+ * carry `inferred: true` and their provenance.
+ */
+ruleAreas?: Array<RuleArea>, };
 
 /**
  * A vcad document — the `.vcad` file format.
@@ -3542,6 +3549,41 @@ verdict: ReceiptVerdict, };
  * pass — it is a promissory note, redeemed by re-running the slow oracle.
  */
 export type ReceiptVerdict = "pass" | "provisional" | "fail" | "unverifiable";
+
+/**
+ * A design-rule area: inside `outline` (on `layers`, or every copper layer
+ * when empty) a trace may run at `min_trace_width`, and copper keeps
+ * `clearance` when given.
+ */
+export type RuleArea = { 
+/**
+ * Name (e.g. the footprint reference it was derived from).
+ */
+name: string, 
+/**
+ * Closed polygon outline.
+ */
+outline: Array<Vec2>, 
+/**
+ * Layers it applies to (empty = all copper layers).
+ */
+layers?: Array<PcbLayer>, 
+/**
+ * Minimum trace width inside the area (mm).
+ */
+minTraceWidth: number, 
+/**
+ * Clearance inside the area (mm), if it overrides the class clearance.
+ */
+clearance?: number, 
+/**
+ * Inferred by an importer rather than authored.
+ */
+inferred?: boolean, 
+/**
+ * How it was derived (logged and quoted by the DRC).
+ */
+provenance?: string, };
 
 /**
  * Count of violations of one rule.

@@ -833,6 +833,73 @@ pub struct DesignRules {
         ts(rename = "allowStackedMicrovias", optional, as = "Option<bool>")
     )]
     pub allow_stacked_microvias: bool,
+    /// Rule areas: polygons inside which a reduced minimum trace width (and
+    /// optionally clearance) applies — dense pin fields and their escapes.
+    /// An importer may infer them from the board's own copper; such areas
+    /// carry `inferred: true` and their provenance.
+    #[serde(rename = "ruleAreas", default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(
+        feature = "ts-rs",
+        ts(rename = "ruleAreas", optional, as = "Option<Vec<RuleArea>>")
+    )]
+    pub rule_areas: Vec<RuleArea>,
+}
+
+/// A design-rule area: inside `outline` (on `layers`, or every copper layer
+/// when empty) a trace may run at `min_trace_width`, and copper keeps
+/// `clearance` when given.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct RuleArea {
+    /// Name (e.g. the footprint reference it was derived from).
+    pub name: String,
+    /// Closed polygon outline.
+    pub outline: Vec<Vec2>,
+    /// Layers it applies to (empty = all copper layers).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, as = "Option<Vec<PcbLayer>>"))]
+    pub layers: Vec<PcbLayer>,
+    /// Minimum trace width inside the area (mm).
+    #[serde(rename = "minTraceWidth")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "minTraceWidth"))]
+    pub min_trace_width: f64,
+    /// Clearance inside the area (mm), if it overrides the class clearance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub clearance: Option<f64>,
+    /// Inferred by an importer rather than authored.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, as = "Option<bool>"))]
+    pub inferred: bool,
+    /// How it was derived (logged and quoted by the DRC).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, as = "Option<String>"))]
+    pub provenance: String,
+}
+
+impl RuleArea {
+    /// Whether `p` on `layer` lies inside the area.
+    pub fn contains(&self, p: Vec2, layer: PcbLayer) -> bool {
+        if !self.layers.is_empty() && !self.layers.contains(&layer) {
+            return false;
+        }
+        let v = &self.outline;
+        let n = v.len();
+        if n < 3 {
+            return false;
+        }
+        let mut inside = false;
+        let mut j = n - 1;
+        for i in 0..n {
+            let (a, b) = (v[i], v[j]);
+            if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+                inside = !inside;
+            }
+            j = i;
+        }
+        inside
+    }
 }
 
 /// Default neck region length from a pad's copper edge (mm) — the same
@@ -1583,6 +1650,7 @@ mod tests {
             rules: DesignRules {
                 allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
+                rule_areas: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {

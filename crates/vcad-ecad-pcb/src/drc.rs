@@ -891,7 +891,10 @@ fn check_min_trace_width(
         }
         let min_width = net_width.get(&trace.net).copied().unwrap_or(default_width);
 
-        if trace.width < min_width - 1e-6 && !neck_allows(pcb, trace) {
+        if trace.width < min_width - 1e-6
+            && !neck_allows(pcb, trace)
+            && !rule_area_allows(pcb, trace.start, trace.end, trace.layer, trace.width)
+        {
             violations.push(DrcViolation {
                 rule: DrcRuleType::MinTraceWidth,
                 severity: DrcSeverity::Error,
@@ -904,12 +907,7 @@ fn check_min_trace_width(
                     trace.width,
                     min_width,
                     trace.net,
-                    if pcb.rules.inferred_floors.iter().any(|f| f == "neckWidth") {
-                        " (outside the neck region; neck width inferred from the board's own \
-                         pad-entry tracks)"
-                    } else {
-                        ""
-                    }
+                    rule_area_note(pcb, trace)
                 ),
                 actual: trace.width,
                 required: min_width,
@@ -3486,6 +3484,40 @@ pub(crate) fn neck_allows_segment(pcb: &Pcb, net: &str, a: Vec2, b: Vec2, width:
     near_pad(a) && near_pad(b)
 }
 
+/// Whether segment `a`–`b` of `width` on `layer` lies in a rule area (both
+/// ends inside one) whose reduced minimum width it meets.
+pub(crate) fn rule_area_allows(pcb: &Pcb, a: Vec2, b: Vec2, layer: PcbLayer, width: f64) -> bool {
+    pcb.rules
+        .rule_areas
+        .iter()
+        .any(|r| width >= r.min_trace_width - 1e-6 && r.contains(a, layer) && r.contains(b, layer))
+}
+
+fn rule_area_note(pcb: &Pcb, t: &vcad_ir::ecad::Trace) -> String {
+    let inside = pcb
+        .rules
+        .rule_areas
+        .iter()
+        .find(|r| r.contains(t.start, t.layer) || r.contains(t.end, t.layer));
+    match inside {
+        Some(r) => format!(
+            " (in {} rule area '{}' but below its {:.3}mm or leaving it{})",
+            if r.inferred { "inferred" } else { "authored" },
+            r.name,
+            r.min_trace_width,
+            if r.inferred {
+                format!("; {}", r.provenance)
+            } else {
+                String::new()
+            }
+        ),
+        None if pcb.rules.rule_areas.iter().any(|r| r.inferred) => {
+            " (outside every inferred rule area)".to_string()
+        }
+        None => String::new(),
+    }
+}
+
 fn neck_allows(pcb: &Pcb, t: &vcad_ir::ecad::Trace) -> bool {
     neck_allows_segment(pcb, &t.net, t.start, t.end, t.width)
 }
@@ -3754,6 +3786,7 @@ mod tests {
             rules: DesignRules {
                 allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
+                rule_areas: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
@@ -5366,24 +5399,30 @@ mod tests {
         assert!(judge("SIG", 0.6), "other net is reported");
     }
 
-    /// An inferred neck on the default rules covers unclassed nets, and the
-    /// finding outside its region says the neck was inferred.
+    /// An inferred rule area admits its reduced width inside it; outside,
+    /// the finding says so.
     #[test]
-    fn inferred_default_neck_covers_unclassed_nets() {
+    fn inferred_rule_area_admits_reduced_width() {
         let judge = |a: (f64, f64), b: (f64, f64)| {
             let mut pcb = clean_pcb();
-            pcb.footprints.push(footprint(
-                "U1",
-                (50.0, 40.0),
-                0.0,
-                vec![smd_pad("1", (0.0, 0.0), "NK")],
-            ));
             pcb.rules.default_rules.trace_width = 0.1;
-            pcb.rules.default_rules.neck_width = Some(0.06);
-            pcb.rules.inferred_floors.push("neckWidth".into());
+            pcb.rules.rule_areas.push(vcad_ir::ecad::RuleArea {
+                name: "U1".into(),
+                outline: vec![
+                    Vec2::new(40.0, 30.0),
+                    Vec2::new(60.0, 30.0),
+                    Vec2::new(60.0, 50.0),
+                    Vec2::new(40.0, 50.0),
+                ],
+                layers: vec![],
+                min_trace_width: 0.06,
+                clearance: None,
+                inferred: true,
+                provenance: "test".into(),
+            });
             pcb.traces.push(vcad_ir::ecad::Trace {
-                start: Vec2::new(50.0 + a.0, 40.0 + a.1),
-                end: Vec2::new(50.0 + b.0, 40.0 + b.1),
+                start: Vec2::new(a.0, a.1),
+                end: Vec2::new(b.0, b.1),
                 width: 0.06,
                 layer: PcbLayer::FCu,
                 net: "NK".into(),
@@ -5393,9 +5432,19 @@ mod tests {
                 .into_iter()
                 .find(|v| v.rule == DrcRuleType::MinTraceWidth)
         };
-        assert!(judge((0.0, 0.0), (0.0, 0.8)).is_none());
-        let far = judge((0.0, 20.0), (0.0, 21.0)).expect("outside the neck region");
-        assert!(far.message.contains("inferred"), "{}", far.message);
+        assert!(judge((45.0, 40.0), (55.0, 40.0)).is_none());
+        let out = judge((45.0, 60.0), (55.0, 60.0)).expect("outside the area");
+        assert!(
+            out.message.contains("inferred rule area"),
+            "{}",
+            out.message
+        );
+        let leaving = judge((45.0, 40.0), (55.0, 60.0)).expect("leaves the area");
+        assert!(
+            leaving.message.contains("inferred rule area"),
+            "{}",
+            leaving.message
+        );
     }
 
     /// Microvias are judged by the microvia minimums (KiCad uvia_min_drill /

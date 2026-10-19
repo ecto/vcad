@@ -272,6 +272,7 @@ fn main() {
             lead: None,
             tail: None,
             neck: None,
+            area: None,
             twin: None,
             start: ch.pts[0],
             end: *ch.pts.last().unwrap(),

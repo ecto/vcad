@@ -176,6 +176,7 @@ pub(super) fn commodities(
     let w0 = g.cg.params.width;
     let s0 = g.cg.params.clearance;
     let mut out = Vec::new();
+    let areas = std::sync::Arc::new(pcb.rules.rule_areas.clone());
     for (net, pads) in by_net {
         if pads.len() < 2 || skip.contains(&net) {
             continue;
@@ -200,6 +201,12 @@ pub(super) fn commodities(
         let neck = neck_rule(pcb, &net)
             .filter(|&(nw, _)| nw < w - 1e-9)
             .map(|(nw, len)| (nw, (nw + s) / (w0 + s0), len));
+        let area = areas
+            .iter()
+            .map(|a| a.min_trace_width)
+            .fold(None::<f64>, |m, x| Some(m.map_or(x, |m| m.min(x))))
+            .filter(|&aw| aw < w - 1e-9)
+            .map(|aw| (aw, (aw + s) / (w0 + s0), areas.clone()));
         for _ in 1..n {
             let (j, _) = (0..n)
                 .filter(|&j| !inn[j])
@@ -226,6 +233,7 @@ pub(super) fn commodities(
                     width: w,
                     units,
                     neck,
+                    area: area.clone(),
                     src: a,
                     dst: b,
                 });
@@ -503,6 +511,7 @@ fn realize(
                 neck: k
                     .neck
                     .map(|(nw, _, rad)| (nw, rad, vec![k.src.point, k.dst.point])),
+                area: k.area.as_ref().map(|(aw, _, a)| (*aw, a.clone())),
                 xs: r
                     .px
                     .iter()
@@ -995,6 +1004,7 @@ pub fn route_flow(
         .iter()
         .chain(std::iter::once(&pcb.rules.default_rules))
         .filter_map(|c| c.neck_width)
+        .chain(pcb.rules.rule_areas.iter().map(|a| a.min_trace_width))
         .fold(width, f64::min);
     for round in 0..opts.rounds.max(1) {
         let sw = crate::router::Stopwatch::start();

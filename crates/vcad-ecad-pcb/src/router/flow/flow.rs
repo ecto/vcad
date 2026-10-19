@@ -147,26 +147,63 @@ pub struct Commodity {
     /// Neck rule `(width, units, radius)`: within `radius` of either pad
     /// centre the wire may run at the neck width, consuming `units`.
     pub neck: Option<(f64, f64, f64)>,
+    /// Rule areas `(width, units, areas)`: inside any of them the wire may
+    /// run at the area's reduced width, consuming `units`.
+    pub area: Option<RegionRule>,
+}
+
+/// A reduced-width region rule shared by the commodities it applies to:
+/// `(width, units, areas)`.
+pub type RegionRule = (f64, f64, std::sync::Arc<Vec<vcad_ir::ecad::RuleArea>>);
+
+/// Whether `p` lies in any of `areas` (layer-agnostic: the areas a flow
+/// graph is given apply on every copper layer).
+pub fn in_areas(areas: &[vcad_ir::ecad::RuleArea], p: [f64; 2]) -> bool {
+    areas.iter().any(|r| {
+        let l = r
+            .layers
+            .first()
+            .copied()
+            .unwrap_or(vcad_ir::ecad::PcbLayer::FCu);
+        r.contains(vcad_ir::Vec2::new(p[0], p[1]), l)
+    })
 }
 
 impl Commodity {
-    /// Track width at `p` (the neck width in its pads' neck regions).
-    pub fn width_at(&self, p: [f64; 2]) -> f64 {
+    fn necked(&self, p: [f64; 2]) -> Option<(f64, f64)> {
         match self.neck {
-            Some((w, _, _)) if self.units_at(p) < self.units => w,
-            _ => self.width,
+            Some((w, u, r)) if dist(p, self.src.point) <= r || dist(p, self.dst.point) <= r => {
+                Some((w, u))
+            }
+            _ => None,
         }
     }
 
-    /// Capacity units this wire consumes crossing a cut at `p`: the neck
-    /// units in its own pads' neck region, else the class units.
-    pub fn units_at(&self, p: [f64; 2]) -> f64 {
-        match self.neck {
-            Some((_, u, r)) if dist(p, self.src.point) <= r || dist(p, self.dst.point) <= r => {
-                u.min(self.units)
-            }
-            _ => self.units,
+    fn regioned(&self, p: [f64; 2]) -> Option<(f64, f64)> {
+        match &self.area {
+            Some((w, u, a)) if in_areas(a, p) => Some((*w, *u)),
+            _ => None,
         }
+    }
+
+    /// Track width at `p`: the narrowest of the class width, its pads' neck
+    /// width (in the neck regions) and a rule area's width (inside one).
+    pub fn width_at(&self, p: [f64; 2]) -> f64 {
+        [self.necked(p), self.regioned(p)]
+            .into_iter()
+            .flatten()
+            .map(|x| x.0)
+            .fold(self.width, f64::min)
+    }
+
+    /// Capacity units this wire consumes crossing a cut at `p` (the units of
+    /// [`Self::width_at`]).
+    pub fn units_at(&self, p: [f64; 2]) -> f64 {
+        [self.necked(p), self.regioned(p)]
+            .into_iter()
+            .flatten()
+            .map(|x| x.1)
+            .fold(self.units, f64::min)
     }
 }
 
@@ -1365,6 +1402,7 @@ mod tests {
             src: term(0.0),
             dst: term(10.0),
             neck: Some((0.06, 1.0, 1.5)),
+            area: None,
         };
         assert_eq!(k.units_at([1.0, 0.5]), 1.0);
         assert_eq!(k.units_at([9.5, 0.0]), 1.0);

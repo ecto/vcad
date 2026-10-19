@@ -1588,6 +1588,7 @@ fn build_gripper_slice2_board(connector_x: f64) -> Pcb {
     let rules = DesignRules {
         allow_stacked_microvias: false,
         inferred_floors: Vec::new(),
+        rule_areas: Vec::new(),
         min_microvia_drill: 0.1,
         min_microvia_diameter: 0.2,
         default_rules: NetClassRules {

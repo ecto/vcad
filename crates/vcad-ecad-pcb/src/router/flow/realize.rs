@@ -112,10 +112,25 @@ impl Wire {
     /// Width of the segment `a`–`b`: the neck width when both ends lie in
     /// one pad's neck region, else the class width.
     pub fn seg_width(&self, a: [f64; 2], b: [f64; 2]) -> f64 {
-        match &self.neck {
-            Some((nw, r, cs)) if cs.iter().any(|c| d2(*c, a) <= *r && d2(*c, b) <= *r) => *nw,
-            _ => self.width,
+        let mut w = self.width;
+        if let Some((nw, r, cs)) = &self.neck {
+            if cs.iter().any(|c| d2(*c, a) <= *r && d2(*c, b) <= *r) {
+                w = w.min(*nw);
+            }
         }
+        if let Some((aw, areas)) = &self.area {
+            if areas.iter().any(|ar| {
+                let l = ar
+                    .layers
+                    .first()
+                    .copied()
+                    .unwrap_or(vcad_ir::ecad::PcbLayer::FCu);
+                ar.contains(Vec2::new(a[0], a[1]), l) && ar.contains(Vec2::new(b[0], b[1]), l)
+            }) {
+                w = w.min(*aw);
+            }
+        }
+        w
     }
 }
 
@@ -154,6 +169,9 @@ pub struct Wire {
     /// Neck: (width, radius, pad centres) — a segment with both ends within
     /// the radius of one of the centres is drawn at the neck width.
     pub neck: Option<(f64, f64, Vec<[f64; 2]>)>,
+    /// Rule areas: a segment with both ends inside one is drawn at the
+    /// area width.
+    pub area: Option<(f64, std::sync::Arc<Vec<vcad_ir::ecad::RuleArea>>)>,
     /// A known-good starting polyline (the human's), used as the feasible
     /// start instead of the funnel through the starting crossing points.
     pub start_path: Option<Vec<[f64; 2]>>,
@@ -606,6 +624,11 @@ pub fn realize_wires(
         let key_of = |wi: usize| rank[wi].0 / rank[wi].1.max(1) as f64;
         seq.sort_by(|&a, &b| key_of(a).total_cmp(&key_of(b)).then(a.cmp(&b)));
         let mut placed = vec![false; wires.len()];
+        let starts = paths.clone();
+        let bad0: Vec<std::collections::BTreeMap<String, f64>> = (0..wires.len())
+            .map(|wi| bad(sess.as_ref().unwrap(), &wires[wi], &paths[wi]))
+            .collect();
+        let start_pos = pos.clone();
         let (mut seq_won, mut seq_kept) = (0usize, 0usize);
         for wi in seq {
             let w = &wires[wi];
@@ -717,9 +740,19 @@ pub fn realize_wires(
                     .collect();
             let (cand, cr) = build(wi, &ivs);
             let cand = round_bends(&cand, &wraps);
-            // exact gate on the full board (every other wire where it is now)
-            let s = sess.as_mut().unwrap();
-            if try_swap(s, &mut spans, &mut paths, wi, &cand, false) {
+            // gate against fixed copper + the wires already placed only (an
+            // unplaced wire's provisional slot is not copper yet); the
+            // commit's exact oracle still gates every connection
+            let score = |m: &std::collections::BTreeMap<String, f64>| {
+                (
+                    m.len(),
+                    m.values().map(|d| (w.clearance - d).max(0.0)).sum::<f64>(),
+                )
+            };
+            let (nc, ns) = score(&bad(&s2, w, &cand));
+            let (oc, os) = score(&bad(&s2, w, &paths[wi]));
+            if nc < oc || (nc == oc && ns <= os + 1e-9) {
+                paths[wi] = cand;
                 for (q, c) in pos[wi].iter_mut().zip(cr) {
                     *q = c;
                 }
@@ -727,6 +760,12 @@ pub fn realize_wires(
             } else {
                 seq_kept += 1;
             }
+            let s = sess.as_mut().unwrap();
+            for id in spans[wi].drain(..) {
+                s.remove(id);
+            }
+            let p = paths[wi].clone();
+            spans[wi] = commit(s, w, &p);
             let p = paths[wi].clone();
             commit(&mut s2, w, &p);
             placed[wi] = true;
@@ -734,6 +773,36 @@ pub fn realize_wires(
         log::info!(
             "realize: sequential placement took {seq_won} paths, kept {seq_kept} relaxed starts"
         );
+        // Back on the full board, a wire whose start is now strictly better
+        // than its placed path (it met wires placed after it) reverts.
+        let mut reverted = 0usize;
+        for _ in 0..8 {
+            let mut any = false;
+            for wi in 0..wires.len() {
+                if paths[wi] == starts[wi] {
+                    continue;
+                }
+                let s = sess.as_mut().unwrap();
+                let now = bad(s, &wires[wi], &paths[wi]);
+                let worse = now
+                    .iter()
+                    .any(|(n, d)| bad0[wi].get(n).is_none_or(|o| *d < o - 1e-6));
+                if worse {
+                    for id in spans[wi].drain(..) {
+                        s.remove(id);
+                    }
+                    paths[wi] = starts[wi].clone();
+                    spans[wi] = commit(s, &wires[wi], &starts[wi]);
+                    pos[wi] = start_pos[wi].clone();
+                    reverted += 1;
+                    any = true;
+                }
+            }
+            if !any {
+                break;
+            }
+        }
+        log::info!("realize: {reverted} placed paths reverted to their start");
     }
     for _ in 0..sweeps {
         for wi in 0..wires.len() {
@@ -931,6 +1000,7 @@ mod tests {
             lead: None,
             tail: None,
             neck: None,
+            area: None,
             twin: None,
             start: [3.0, y],
             end: [17.0, y],

@@ -336,7 +336,6 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
     // the default rules against it.
     let mut rules = calibrate_rules_from_copper(rules, &traces, &vias);
     infer_via_floors(root, &mut rules, &vias, &ctx);
-    infer_neck(&mut rules, &traces, &ctx);
 
     let pcb = Pcb {
         outline,
@@ -369,6 +368,9 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
         pcb.rules
             .inferred_floors
             .push("allowStackedMicrovias".into());
+    }
+    for line in infer_rule_areas(&mut pcb) {
+        ctx.warn(line);
     }
     Ok((pcb, ctx.finish()))
 }
@@ -412,42 +414,150 @@ fn infer_via_floors(root: &SExpr<'_>, rules: &mut DesignRules, vias: &[Via], ctx
     }
 }
 
-/// Neck rule when the board authors none: a routed board whose tracks run
-/// narrower than its trace width is necking down at pad entries (BGA and
-/// fine-pitch escapes). The neck width is the most common such narrower
-/// width among the board's own tracks (at least 10 of them); the neck length
-/// stays the default region from the land. Logged loudly and recorded in
-/// `rules.inferred_floors` ("neckWidth") so the DRC says it was inferred.
-/// An authored neck (default or any class) wins.
-fn infer_neck(rules: &mut DesignRules, traces: &[Trace], ctx: &Ctx<'_>) {
-    if rules.default_rules.neck_width.is_some()
-        || rules.class_rules.iter().any(|c| c.neck_width.is_some())
-    {
-        return;
+/// Reduced-width rule areas when the board authors none. A routed board whose
+/// tracks run narrower than its trace width does so in its dense pin fields
+/// (BGA / fine-pitch escapes): the reduced width is the most common narrower
+/// width among its own tracks (at least 10), and each dense footprint (>= 16
+/// pads at a median nearest-pad pitch <= 0.65 mm) gets an area — its pad
+/// field's bounding box grown by a margin taken from where those narrow
+/// tracks actually lie (the p90 of each track's farther end's distance to the
+/// nearest pad field, rounded up to 0.25 mm, capped at 10 mm). Areas are
+/// recorded as inferred with provenance ("ruleAreas" in `inferred_floors`);
+/// returns the log lines. Authored areas win.
+pub fn infer_rule_areas(pcb: &mut Pcb) -> Vec<String> {
+    use vcad_ir::ecad::RuleArea;
+    let mut log = Vec::new();
+    if !pcb.rules.rule_areas.is_empty() {
+        return log;
     }
-    let w = rules.default_rules.trace_width;
+    let w = pcb.rules.default_rules.trace_width;
     let mut counts: std::collections::BTreeMap<i64, usize> = std::collections::BTreeMap::new();
-    for t in traces
+    for t in pcb
+        .traces
         .iter()
         .filter(|t| t.width < w - 1e-9 && t.width > 0.0)
     {
         *counts.entry((t.width * 1e4).round() as i64).or_default() += 1;
     }
     let Some((&k, &n)) = counts.iter().max_by_key(|(k, n)| (**n, -**k)) else {
-        return;
+        return log;
     };
     if n < 10 {
-        return;
+        return log;
     }
-    let neck = k as f64 / 1e4;
-    let narrow: usize = counts.values().sum();
-    ctx.warn(format!(
-        "INFERRED neck rule: board authors none; {narrow} of its tracks run narrower than the \
-         {w} mm trace width, most commonly {neck} mm ({n} tracks) — neckWidth = {neck} mm within \
-         the default neck length of a same-net pad"
+    let rw = k as f64 / 1e4;
+    // dense pin fields: bbox of pad centres
+    let mut fields: Vec<(String, [f64; 4], f64)> = Vec::new();
+    for fp in &pcb.footprints {
+        if fp.pads.len() < 16 {
+            continue;
+        }
+        let (sn, cs) = fp.rotation.to_radians().sin_cos();
+        let pts: Vec<(f64, f64)> = fp
+            .pads
+            .iter()
+            .map(|p| {
+                (
+                    fp.position.x + p.position.x * cs - p.position.y * sn,
+                    fp.position.y + p.position.x * sn + p.position.y * cs,
+                )
+            })
+            .collect();
+        let mut nn: Vec<f64> = pts
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                pts.iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .map(|(_, b)| ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt())
+                    .filter(|d| *d > 1e-6)
+                    .fold(f64::INFINITY, f64::min)
+            })
+            .collect();
+        nn.sort_by(|a, b| a.total_cmp(b));
+        let pitch = nn[nn.len() / 2];
+        if pitch > 0.65 {
+            continue;
+        }
+        let bb = pts.iter().fold(
+            [
+                f64::INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::NEG_INFINITY,
+            ],
+            |b, p| [b[0].min(p.0), b[1].min(p.1), b[2].max(p.0), b[3].max(p.1)],
+        );
+        fields.push((fp.reference.clone(), bb, pitch));
+    }
+    if fields.is_empty() {
+        log.push(format!(
+            "rule areas: {n} tracks run at {rw} mm (< {w} mm trace width) but no dense pin field \
+             (>= 16 pads, pitch <= 0.65 mm) was found; none inferred"
+        ));
+        return log;
+    }
+    let dist = |x: f64, y: f64, b: &[f64; 4]| {
+        let dx = (b[0] - x).max(x - b[2]).max(0.0);
+        let dy = (b[1] - y).max(y - b[3]).max(0.0);
+        (dx * dx + dy * dy).sqrt()
+    };
+    let near = |x: f64, y: f64| {
+        fields
+            .iter()
+            .map(|f| dist(x, y, &f.1))
+            .fold(f64::INFINITY, f64::min)
+    };
+    let narrow: Vec<&vcad_ir::ecad::Trace> = pcb
+        .traces
+        .iter()
+        .filter(|t| (t.width - rw).abs() < 1e-6)
+        .collect();
+    let mut far: Vec<f64> = narrow
+        .iter()
+        .map(|t| near(t.start.x, t.start.y).max(near(t.end.x, t.end.y)))
+        .collect();
+    far.sort_by(|a, b| a.total_cmp(b));
+    let p90 = far[((far.len() - 1) as f64 * 0.9) as usize];
+    let margin = ((p90 / 0.25).ceil() * 0.25).clamp(0.25, 10.0);
+    let covered = far.iter().filter(|d| **d <= margin + 1e-9).count();
+    for (name, b, pitch) in &fields {
+        let (x0, y0, x1, y1) = (b[0] - margin, b[1] - margin, b[2] + margin, b[3] + margin);
+        pcb.rules.rule_areas.push(RuleArea {
+            name: name.clone(),
+            outline: vec![
+                Vec2::new(x0, y0),
+                Vec2::new(x1, y0),
+                Vec2::new(x1, y1),
+                Vec2::new(x0, y1),
+            ],
+            layers: Vec::new(),
+            min_trace_width: rw,
+            clearance: None,
+            inferred: true,
+            provenance: format!(
+                "dense pin field {name} (pitch {pitch:.2} mm) grown by {margin} mm, the p90 \
+                 reach of the board's own {rw} mm tracks"
+            ),
+        });
+    }
+    pcb.rules.inferred_floors.push("ruleAreas".into());
+    log.push(format!(
+        "INFERRED rule areas: board authors none; {n} of its tracks run at {rw} mm (< {w} mm \
+         trace width). {} dense pin field(s) [{}] grown by {margin} mm (p90 reach of those \
+         tracks) get minTraceWidth {rw} mm; they cover {covered}/{} ({:.1}%) of the {rw} mm \
+         tracks",
+        fields.len(),
+        fields
+            .iter()
+            .map(|f| f.0.as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+        far.len(),
+        100.0 * covered as f64 / far.len().max(1) as f64
     ));
-    rules.default_rules.neck_width = Some(neck);
-    rules.inferred_floors.push("neckWidth".into());
+    log
 }
 
 /// Calibrate imported design rules against the board's existing copper.
@@ -875,6 +985,7 @@ fn parse_design_rules(root: &SExpr<'_>) -> DesignRules {
     DesignRules {
         allow_stacked_microvias: false,
         inferred_floors: Vec::new(),
+        rule_areas: Vec::new(),
         // KiCad's own defaults when the board omits them (they normally live
         // in the .kicad_pro); `parse_kicad_pcb` logs which were defaulted.
         min_microvia_drill: uvia("uvia_min_drill", vcad_ir::ecad::DEFAULT_MIN_MICROVIA_DRILL),
@@ -1577,37 +1688,56 @@ mod tests {
         assert_eq!(pcb.stackup.layers[3].layer, PcbLayer::BCu);
     }
 
-    /// A board that authors no neck rule but runs many tracks narrower than
-    /// its trace width gets a neck inferred from them (recorded as inferred);
-    /// too few narrow tracks infer nothing.
+    /// A board running many tracks narrower than its trace width around a
+    /// dense pin field gets an inferred rule area there; a board with no
+    /// dense field gets none.
     #[test]
-    fn neck_inferred_from_narrow_tracks() {
+    fn rule_area_inferred_around_dense_field() {
         let seg = |w: f64, n: usize, y: f64| {
             (0..n)
                 .map(|i| {
                     format!(
-                        "(segment (start {i} {y}) (end {} {y}) (width {w}) (layer \"F.Cu\") (net 1))\n",
-                        i + 1
+                        "(segment (start {} {y}) (end {} {y}) (width {w}) (layer \"F.Cu\") (net 1))\n",
+                        i as f64 * 0.1,
+                        i as f64 * 0.1 + 0.1
                     )
                 })
                 .collect::<String>()
         };
-        let board = |narrow: usize| {
+        let pads: String = (0..25)
+            .map(|i| {
+                format!(
+                    "(pad \"{i}\" smd circle (at {} {}) (size 0.25 0.25) (layers \"F.Cu\"))\n",
+                    (i % 5) as f64 * 0.5,
+                    (i / 5) as f64 * 0.5
+                )
+            })
+            .collect();
+        let board = |dense: bool| {
             format!(
                 "(kicad_pcb (version 20221018) (general (thickness 1.0)) \
-                 (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal)) (net 1 \"SIG\")\n{}{}{})",
-                seg(0.1, 30, 0.0),
-                seg(0.06, narrow, 1.0),
-                seg(0.08, 3, 2.0)
+                 (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal)) (net 1 \"SIG\")\n\
+                 {}{}{})",
+                if dense {
+                    format!("(footprint \"BGA\" (layer \"F.Cu\") (at 0 0) (property \"Reference\" \"U1\")\n{pads})\n")
+                } else {
+                    String::new()
+                },
+                seg(0.1, 30, 20.0),
+                seg(0.06, 20, 1.0)
             )
         };
-        let pcb = parse_kicad_pcb(&board(20)).unwrap();
+        let pcb = parse_kicad_pcb(&board(true)).unwrap();
         assert_eq!(pcb.rules.default_rules.trace_width, 0.1);
-        assert_eq!(pcb.rules.default_rules.neck_width, Some(0.06));
-        assert!(pcb.rules.inferred_floors.iter().any(|f| f == "neckWidth"));
-        let pcb = parse_kicad_pcb(&board(5)).unwrap();
-        assert_eq!(pcb.rules.default_rules.neck_width, None);
-        assert!(!pcb.rules.inferred_floors.iter().any(|f| f == "neckWidth"));
+        assert_eq!(pcb.rules.rule_areas.len(), 1, "{:?}", pcb.rules.rule_areas);
+        let a = &pcb.rules.rule_areas[0];
+        assert_eq!(a.min_trace_width, 0.06);
+        assert!(a.inferred);
+        assert!(a.contains(Vec2::new(1.0, 1.0), PcbLayer::FCu));
+        assert!(!a.contains(Vec2::new(1.0, 20.0), PcbLayer::FCu));
+        assert!(pcb.rules.inferred_floors.iter().any(|f| f == "ruleAreas"));
+        let pcb = parse_kicad_pcb(&board(false)).unwrap();
+        assert!(pcb.rules.rule_areas.is_empty());
     }
 
     /// A routed board's own copper calibrates the imported rules: an HDI
