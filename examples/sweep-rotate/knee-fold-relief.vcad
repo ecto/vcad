@@ -1,0 +1,146 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "4": {
+      "id": 4,
+      "name": null,
+      "op": {
+        "type": "SweepRotate",
+        "child": 3,
+        "axis_origin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "axis_dir": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "angle_lo_deg": 0.0,
+        "angle_hi_deg": 120.0,
+        "clearance": 1.0
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": null,
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 24.0,
+          "y": 24.0,
+          "z": 140.0
+        }
+      }
+    },
+    "0": {
+      "id": 0,
+      "name": null,
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60.0,
+          "y": 50.0,
+          "z": 110.0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": -12.0,
+          "y": -12.0,
+          "z": -128.0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -12.0,
+          "y": -12.0,
+          "z": -128.0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": null,
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 24.0,
+          "y": 24.0,
+          "z": 140.0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": null,
+      "op": {
+        "type": "Rotate",
+        "child": 7,
+        "angles": {
+          "x": 45.0,
+          "y": 0.0,
+          "z": 0.0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "thigh-relieved",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 4
+      }
+    },
+    "1": {
+      "id": 1,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {
+          "x": -30.0,
+          "y": -25.0,
+          "z": -30.0
+        }
+      }
+    }
+  },
+  "materials": {
+    "default": {
+      "name": "default",
+      "color": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "aluminum"
+    },
+    {
+      "root": 8,
+      "material": "steel"
+    }
+  ]
+}

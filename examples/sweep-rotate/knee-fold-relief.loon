@@ -1,0 +1,22 @@
+; Knee-fold relief: carve the path the calf swings through out of the
+; thigh's knee housing, natively — no STL relief mesh.
+;
+; Knee axis: +X through the origin. Rotating the calf about +X by a positive
+; angle swings its foot toward +Y (the back of the leg), so 0..120 is a deep
+; fold. The calf is dilated by 1 mm first so the fold keeps a running gap.
+
+; Thigh knee housing: wraps the knee and extends down past the axis.
+[let thigh [pipe [cube 60 50 110]
+                 [translate -30 -25 -30]]]
+
+; Calf link: hangs from the knee, its top inside the housing.
+[let calf [pipe [cube 24 24 140]
+                [translate -12 -12 -128]]]
+
+; Housing minus the swept calf over the fold range.
+[let thigh-relieved
+  [pipe thigh
+        [difference [sweep-rotate-clear 0 0 0  1 0 0  0 120  0 1 calf]]]]
+
+[root thigh-relieved "aluminum"]
+[root [pipe calf [rotate 45 0 0]] "steel"]

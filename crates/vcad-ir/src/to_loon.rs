@@ -388,6 +388,43 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             node_ref(*child, doc)
         )),
 
+        CsgOp::SweepRotate {
+            child,
+            axis_origin,
+            axis_dir,
+            angle_lo_deg,
+            angle_hi_deg,
+            step_deg,
+            clearance,
+        } => {
+            let clearance = clearance.filter(|c| *c != 0.0);
+            let head = match (step_deg, clearance) {
+                (_, Some(_)) => "sweep-rotate-clear",
+                (Some(_), None) => "sweep-rotate-n",
+                (None, None) => "sweep-rotate",
+            };
+            let mut out = format!(
+                "[{} {} {} {} {} {} {} {} {}",
+                head,
+                fmt_f64(axis_origin.x),
+                fmt_f64(axis_origin.y),
+                fmt_f64(axis_origin.z),
+                fmt_f64(axis_dir.x),
+                fmt_f64(axis_dir.y),
+                fmt_f64(axis_dir.z),
+                fmt_f64(*angle_lo_deg),
+                fmt_f64(*angle_hi_deg),
+            );
+            if step_deg.is_some() || clearance.is_some() {
+                out.push_str(&format!(" {}", fmt_f64(step_deg.unwrap_or(0.0))));
+            }
+            if let Some(c) = clearance {
+                out.push_str(&format!(" {}", fmt_f64(c)));
+            }
+            out.push_str(&format!(" {}]", node_ref(*child, doc)));
+            OpResult::Ok(out)
+        }
+
         CsgOp::Sketch2D {
             origin,
             x_dir,
@@ -838,7 +875,8 @@ fn get_child_ids(op: &CsgOp) -> Vec<NodeId> {
         | CsgOp::Chamfer { child, .. }
         | CsgOp::Shell { child, .. }
         | CsgOp::LinearPattern { child, .. }
-        | CsgOp::CircularPattern { child, .. } => vec![*child],
+        | CsgOp::CircularPattern { child, .. }
+        | CsgOp::SweepRotate { child, .. } => vec![*child],
 
         CsgOp::Union { left, right }
         | CsgOp::Difference { left, right }

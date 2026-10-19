@@ -815,6 +815,28 @@ fn evaluate_op_timed(
             }))
         }
 
+        CsgOp::SweepRotate {
+            child,
+            axis_origin,
+            axis_dir,
+            angle_lo_deg,
+            angle_hi_deg,
+            step_deg,
+            clearance,
+        } => {
+            let c = eval_child(*child, cache)?;
+            Ok(c.map(|s| {
+                s.sweep_rotate(
+                    to_point3(axis_origin),
+                    to_vec3(axis_dir),
+                    *angle_lo_deg,
+                    *angle_hi_deg,
+                    *step_deg,
+                    clearance.unwrap_or(0.0).max(0.0),
+                )
+            }))
+        }
+
         CsgOp::Shell { child, thickness } => {
             let c = eval_child(*child, cache)?;
             blend_result(c.map(|s| s.shell(*thickness)), "shell", *child)
@@ -2609,6 +2631,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::Scale { .. } => "Scale",
         CsgOp::LinearPattern { .. } => "LinearPattern",
         CsgOp::CircularPattern { .. } => "CircularPattern",
+        CsgOp::SweepRotate { .. } => "SweepRotate",
         CsgOp::Shell { .. } => "Shell",
         CsgOp::Fillet { .. } => "Fillet",
         CsgOp::Chamfer { .. } => "Chamfer",

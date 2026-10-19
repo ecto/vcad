@@ -2707,6 +2707,10 @@ fn format_op(
             message: "Text2D not supported in VCode format".to_string(),
         }),
 
+        CsgOp::SweepRotate { .. } => Err(VCodeParseError {
+            line: 0,
+            message: "SweepRotate not supported in VCode format".to_string(),
+        }),
         CsgOp::Sweep { .. } => Err(VCodeParseError {
             line: 0,
             message: "Sweep not supported in VCode format".to_string(),

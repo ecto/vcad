@@ -413,6 +413,49 @@ mod tests {
     }
 
     #[test]
+    fn sweep_rotate_forms() {
+        use vcad_ir::CsgOp;
+        let sweep = |src: &str| {
+            let doc = eval_vcad(src, None).unwrap();
+            doc.nodes
+                .values()
+                .find_map(|n| match &n.op {
+                    CsgOp::SweepRotate {
+                        angle_lo_deg,
+                        angle_hi_deg,
+                        step_deg,
+                        clearance,
+                        ..
+                    } => Some((*angle_lo_deg, *angle_hi_deg, *step_deg, *clearance)),
+                    _ => None,
+                })
+                .expect("no SweepRotate node")
+        };
+        assert_eq!(
+            sweep("[sweep-rotate 0 0 0 1 0 0 0 120 [cube 10 10 40]]"),
+            (0.0, 120.0, None, None)
+        );
+        assert_eq!(
+            sweep("[sweep-rotate-n 0 0 0 1 0 0 -10 90 5 [cube 10 10 40]]"),
+            (-10.0, 90.0, Some(5.0), None)
+        );
+        assert_eq!(
+            sweep("[sweep-rotate-clear 0 0 0 1 0 0 0 90 0 1.5 [cube 10 10 40]]"),
+            (0.0, 90.0, None, Some(1.5))
+        );
+        // The clearance-cut idiom round-trips through the subject-last pipe.
+        let doc = eval_vcad(
+            "[pipe [cube 40 40 20] [difference [sweep-rotate 0 0 20 1 0 0 0 90 [cube 10 10 30]]]]",
+            None,
+        )
+        .unwrap();
+        assert!(doc
+            .nodes
+            .values()
+            .any(|n| matches!(n.op, CsgOp::Difference { .. })));
+    }
+
+    #[test]
     fn eval_scene_entry() {
         let doc = eval_vcad("[root [cube 10.0 10.0 10.0] \"steel\"]", None).unwrap();
         assert_eq!(doc.roots.len(), 1);

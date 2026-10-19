@@ -1769,6 +1769,38 @@ impl Solid {
         }
     }
 
+    /// Swept volume: union of this solid rotated about an axis over
+    /// `[deg_lo, deg_hi]`. `step_deg <= 0` picks the step automatically;
+    /// `clearance` (mm) dilates the solid first. Triangle-soup result,
+    /// meant as a clearance-cut tool.
+    #[wasm_bindgen(js_name = sweepRotate)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn sweep_rotate(
+        &self,
+        axis_origin_x: f64,
+        axis_origin_y: f64,
+        axis_origin_z: f64,
+        axis_dir_x: f64,
+        axis_dir_y: f64,
+        axis_dir_z: f64,
+        deg_lo: f64,
+        deg_hi: f64,
+        step_deg: f64,
+        clearance: f64,
+    ) -> Solid {
+        use vcad_kernel::vcad_kernel_math::{Point3, Vec3};
+        Solid {
+            inner: self.inner.sweep_rotate(
+                Point3::new(axis_origin_x, axis_origin_y, axis_origin_z),
+                Vec3::new(axis_dir_x, axis_dir_y, axis_dir_z),
+                deg_lo,
+                deg_hi,
+                (step_deg > 0.0).then_some(step_deg),
+                clearance.max(0.0),
+            ),
+        }
+    }
+
     // =========================================================================
     // Queries
     // =========================================================================
@@ -4966,6 +4998,30 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
                 axis_dir.z,
                 *count,
                 *angle_deg,
+            ))
+        }
+
+        vcad_ir::CsgOp::SweepRotate {
+            child,
+            axis_origin,
+            axis_dir,
+            angle_lo_deg,
+            angle_hi_deg,
+            step_deg,
+            clearance,
+        } => {
+            let c = evaluate_node(doc, *child)?;
+            Ok(c.sweep_rotate(
+                axis_origin.x,
+                axis_origin.y,
+                axis_origin.z,
+                axis_dir.x,
+                axis_dir.y,
+                axis_dir.z,
+                *angle_lo_deg,
+                *angle_hi_deg,
+                step_deg.unwrap_or(0.0),
+                clearance.unwrap_or(0.0),
             ))
         }
 

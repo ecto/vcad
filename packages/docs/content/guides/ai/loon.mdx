@@ -175,6 +175,34 @@ For regular arrays of holes, prefer patterns over manual placement:
 [root result "steel"]
 ```
 
+## Pattern: Clearance Cuts Along a Joint's Swing
+
+A housing that wraps a joint must clear the neighbouring link over its whole
+range of motion — a knee fold, an elbow, a hip. `sweep-rotate` is the swept
+volume of a solid rotated about an axis, so the relief is one subtraction:
+
+```lisp
+; knee axis = +X through the origin; 0..120° folds the calf toward +Y
+[let calf [pipe [cube 24 24 140] [translate -12 -12 -128]]]
+[let thigh [pipe [cube 60 50 110] [translate -30 -25 -30]]]
+[let thigh-relieved
+  [pipe thigh [difference [sweep-rotate-clear 0 0 0  1 0 0  0 120  0 1 calf]]]]
+[root thigh-relieved "aluminum"]
+```
+
+| Form | Meaning |
+|------|---------|
+| `[sweep-rotate ox oy oz ax ay az lo hi s]` | union of `s` rotated about the axis through `(ox,oy,oz)` along `(ax,ay,az)` for every angle in `[lo, hi]` degrees |
+| `[sweep-rotate-n ox oy oz ax ay az lo hi step s]` | same, sampled every `step` degrees |
+| `[sweep-rotate-clear ox oy oz ax ay az lo hi step c s]` | dilate `s` outward by `c` mm first (`step 0` = automatic) |
+
+The automatic step keeps the chord sag of the envelope under 0.25 mm and the
+spacing between copies under 15 mm at the part's furthest point from the axis;
+a moving part thinner than that needs an explicit `-n` step or the copies
+leave wedge gaps. The sweep evaluates as a single flat mesh union of rotated
+copies, so it is triangle soup — use it as the *tool* of a difference, not as
+a part you will fillet or export to STEP.
+
 ## Pattern: Modules — Shared Vocabulary in Its Own File
 
 When several files (or several hundred roots) share the same helpers —

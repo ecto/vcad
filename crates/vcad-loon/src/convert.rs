@@ -1035,6 +1035,7 @@ fn is_solid_tag(tag: &str) -> bool {
             | "Chamfer"
             | "LinearPattern"
             | "CircularPattern"
+            | "SweepRotate"
             | "SweepLine"
             | "SweepHelix"
             | "Sweep"
@@ -2162,6 +2163,29 @@ impl ConvertCtx {
                     axis_dir: self.vec3(fields, 4)?,
                     count: self.u32_val(&fields[7])?,
                     angle_deg: self.f64_val(&fields[8])?,
+                }
+            }
+
+            "SweepRotate" => {
+                // [SweepRotate solid ox oy oz ax ay az lo hi step clearance]
+                // step 0 = automatic, clearance 0 = none.
+                assert_fields(tag, fields, 11)?;
+                let child = self.convert_solid(&fields[0])?;
+                let step = self.f64_val(&fields[9])?;
+                let clearance = self.f64_val(&fields[10])?;
+                if step < 0.0 || clearance < 0.0 {
+                    return Err(format!(
+                        "sweep-rotate: step ({step}) and clearance ({clearance}) must be >= 0"
+                    ));
+                }
+                CsgOp::SweepRotate {
+                    child,
+                    axis_origin: self.vec3(fields, 1)?,
+                    axis_dir: self.vec3(fields, 4)?,
+                    angle_lo_deg: self.f64_val(&fields[7])?,
+                    angle_hi_deg: self.f64_val(&fields[8])?,
+                    step_deg: (step > 0.0).then_some(step),
+                    clearance: (clearance > 0.0).then_some(clearance),
                 }
             }
 

@@ -1049,7 +1049,36 @@ count: number,
 /**
  * Total angle span in degrees.
  */
-angle_deg: number, } | { "type": "Shell", 
+angle_deg: number, } | { "type": "SweepRotate", 
+/**
+ * Child node to sweep.
+ */
+child: number, 
+/**
+ * A point on the rotation axis.
+ */
+axis_origin: Vec3, 
+/**
+ * Direction of the rotation axis (right-hand rule).
+ */
+axis_dir: Vec3, 
+/**
+ * Start angle in degrees.
+ */
+angle_lo_deg: number, 
+/**
+ * End angle in degrees.
+ */
+angle_hi_deg: number, 
+/**
+ * Sample step in degrees. Omitted = automatic (≤0.25 mm chord sag
+ * and ≤15 mm copy spacing at the furthest point).
+ */
+step_deg?: number, 
+/**
+ * Outward dilation (mm) applied to the child before sweeping.
+ */
+clearance?: number, } | { "type": "Shell", 
 /**
  * Child node to shell.
  */
