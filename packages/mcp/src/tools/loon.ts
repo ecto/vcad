@@ -10,6 +10,8 @@ import type { Document } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
 import { hydrateMacros, macroPrelude, type InlineLoon } from "./loon-macros.js";
 import { documents, getSession, recordTriangles } from "./session-core.js";
+import { assetNote, resolveLoonAssets } from "./loon-assets.js";
+import { isRemoteDeployment } from "./remote.js";
 import { attachLoonSource } from "./source-provenance.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
@@ -68,10 +70,24 @@ export const createCadLoonSchema = {
     base_dir: {
       type: "string" as const,
       description:
-        "Server-side directory that `[use <name>]` resolves against — the " +
-        "server reads <base_dir>/<name>.loon (dots are path separators) and " +
-        "hands the sources to the kernel, following nested imports. Reads " +
-        "are confined to this directory. Explicit `modules` entries win.",
+        "LOCAL servers only (stdio / running on your machine): the project " +
+        "directory. `[use <name>]` reads <base_dir>/<name>.loon (dots are " +
+        "path separators, nested imports followed) and relative " +
+        "`[import-mesh …]` / `[import-step …]` paths read from it too; reads " +
+        "are confined to it. Explicit `modules` / `files` entries win. A " +
+        "hosted server cannot see your disk — there, pass `modules` and " +
+        "`files` by value instead.",
+    },
+    files: {
+      type: "object" as const,
+      description:
+        "Binary assets by value, for `[import-mesh \"<path>\"]` (STL) and " +
+        "`[import-step \"<path>\"]`: a { \"<path exactly as the program " +
+        "names it>\": \"<base64 file contents>\" } map. Works on every " +
+        "deployment, hosted included — the way to load a multi-file project " +
+        "with meshes when the server can't read your filesystem. STL is " +
+        "read in metres → mm, like the CLI.",
+      additionalProperties: { type: "string" as const },
     },
     format: {
       type: "string" as const,
@@ -89,6 +105,7 @@ interface CreateLoonInput {
   loons?: InlineLoon[];
   modules?: Record<string, string>;
   base_dir?: string;
+  files?: Record<string, string>;
   format?: "vcode" | "json";
 }
 
@@ -157,7 +174,12 @@ export function composeLoonModules(input: unknown): Record<string, string> {
   for (const m of loons ?? []) map[m.name] = m.source;
   Object.assign(map, modules ?? {});
 
-  const dirs = [...(base_dir ? [base_dir] : []), ...loonLibDirs()];
+  // A hosted server's disk is not the caller's: base_dir there would read
+  // the wrong machine, so only the local lib path applies.
+  const dirs = [
+    ...(base_dir && !isRemoteDeployment() ? [base_dir] : []),
+    ...loonLibDirs(),
+  ];
   if (dirs.length) {
     const pending = [
       ...importedNames(source),
@@ -181,16 +203,59 @@ export function composeLoonModules(input: unknown): Record<string, string> {
   return map;
 }
 
+/**
+ * Imported module names the server could not supply. The kernel would fall
+ * through to its own filesystem lookup for these — which in WASM fails with
+ * an opaque "operation not supported on this platform".
+ */
+function missingModules(source: string, modules: Record<string, string>): string[] {
+  const all = [source, ...Object.values(modules)].flatMap(importedNames);
+  return [...new Set(all)].filter((n) => !(n in modules));
+}
+
+/** Rewrite a kernel module-read failure into what the caller should do. */
+function explainEvalError(e: unknown, input: CreateLoonInput, missing: string[]): Error {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (!missing.length || !/cannot read module|not supported on this platform/.test(msg)) {
+    return e instanceof Error ? e : new Error(msg);
+  }
+  const why = isRemoteDeployment()
+    ? "this hosted server cannot read your filesystem"
+    : input.base_dir
+      ? `not found under base_dir ${input.base_dir}`
+      : "no `base_dir` was given";
+  return new Error(
+    `${msg}\nModule(s) not supplied: ${missing.join(", ")} (${why}). Pass their ` +
+      `sources by value in \`modules\` ({ "<name>": "<loon source>" })` +
+      (isRemoteDeployment() ? "." : ", or set `base_dir` to the project directory."),
+  );
+}
+
 /** Evaluate loon source and return a CAD document. */
 export function createCadLoon(
   input: unknown,
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const { format = "vcode", base_dir } = input as CreateLoonInput;
+  return evalCadLoon(input, engine).result;
+}
+
+/** {@link createCadLoon}, also returning the evaluated (asset-resolved)
+ *  document so the handler need not evaluate — and parse meshes — twice. */
+export function evalCadLoon(
+  input: unknown,
+  engine: Engine,
+): { result: { content: Array<{ type: "text"; text: string }> }; doc: Document | null } {
+  const parsed = input as CreateLoonInput;
+  const { format = "vcode", base_dir, files } = parsed;
   const source = composeLoonProgram(input);
 
   const modules = composeLoonModules(input);
-  const doc = engine.evalVcadSourceWithModules(source, modules);
+  let doc: Document | null;
+  try {
+    doc = engine.evalVcadSourceWithModules(source, modules);
+  } catch (e) {
+    throw explainEvalError(e, parsed, missingModules(source, modules));
+  }
   // Record what made this document. The COMPOSED program is stored rather
   // than the bare `source` argument: it inlines the macro prelude, so the
   // stored text re-evaluates to the same geometry with no dependency on a
@@ -203,8 +268,9 @@ export function createCadLoon(
       ? "Error: this kernel build cannot resolve loon modules ([use ...]) — " +
         "update the kernel, or inline the modules into `source`"
       : "Error: Loon evaluation not supported by this engine build";
-    return { content: [{ type: "text", text }] };
+    return { result: { content: [{ type: "text", text }] }, doc: null };
   }
+  const assets = resolveLoonAssets(doc, { files, base_dir }, engine);
 
   const { text, fellBack } = serializeDocument(doc, format);
   const content: Array<{ type: "text"; text: string }> = [{ type: "text", text }];
@@ -220,8 +286,10 @@ export function createCadLoon(
 
   const note = parametricNote(source, modules, engine, doc);
   if (note) content.push({ type: "text", text: note });
+  const imports = assetNote(assets);
+  if (imports) content.push({ type: "text", text: imports });
 
-  return { content };
+  return { result: { content }, doc };
 }
 
 /**
@@ -334,7 +402,8 @@ export const toolDefs: ToolDef[] = [
       "Datums — named reference geometry, so two parts cannot each hold their own copy of a shared plane: [datum-plane \"femur_inner\" y 131.0], [datum-axis \"pitch\" x 0 0 310], [datum-point \"hip\" 0 0 310], read back with [datum \"femur_inner\"], [datum+ \"femur_inner\" 3.0] (3 mm outboard), [datum-x/-y/-z \"pitch\"]\n" +
       "Stacks — declarative packing, where each running clearance is a named value instead of an arbitrary number: [stack y \"leg\" 131.0 [lane \"femur_inner\" 5.0] [gap \"idler_run\" 1.0] [lane \"idler_boss\" 3.0]] declares datum planes leg_femur_inner_lo/_hi, leg_idler_boss_lo/_hi and leg_end; widening leg_idler_run slides everything outboard of it\n" +
       "Scene: [root solid \"material-name\"], with [material name r g b metallic roughness] to define one\n" +
-      "Modules: [use bracket] then [bracket.plate] — multi-file projects work here, with sources passed in `modules` (or read from `base_dir`); [use bracket :as b] aliases, [use bracket [plate]] imports selectively, and `pub` in a module picks what it exports",
+      "Modules: [use bracket] then [bracket.plate] — multi-file projects work here, with sources passed in `modules` (or read from `base_dir` on a LOCAL server; a hosted one can't see your disk)\n" +
+      "Vendor geometry: [import-mesh \"meshes/arm.stl\"] / [import-step \"vendor/x.step\"] — pass the bytes as base64 in `files` keyed by that exact path (works hosted), or read them from `base_dir` locally; [use bracket :as b] aliases, [use bracket [plate]] imports selectively, and `pub` in a module picks what it exports",
     inputSchema: createCadLoonSchema,
     handler: async (args, ctx) => {
       // Hydrate any by-name macros from the durable per-user store before
@@ -345,7 +414,8 @@ export const toolDefs: ToolDef[] = [
       if (useLoons?.length) {
         await hydrateMacros(ctx.user, useLoons).catch(() => {});
       }
-      const result = createCadLoon(args, ctx.engine) as ToolResult;
+      const { result: raw, doc } = evalCadLoon(args, ctx.engine);
+      const result = raw as ToolResult;
       // Session-targeted authoring: write the evaluated document into the
       // caller's open session instead of minting a fresh one, so
       // open_document → create_cad_loon stays on one document_id. Validated
@@ -357,16 +427,7 @@ export const toolDefs: ToolDef[] = [
       // authoring a whole document. The loon evaluation is cheap relative to
       // the mesh evaluation computeIntegrity runs anyway.
       try {
-        const composed = composeLoonProgram(args);
-        const modules = composeLoonModules(args);
-        const doc = ctx.engine.evalVcadSourceWithModules(composed, modules);
         if (doc) {
-          attachLoonSource(doc, {
-            text: composed,
-            modules,
-            base_dir:
-              typeof args.base_dir === "string" ? args.base_dir : undefined,
-          });
           if (targetId) documents.set(targetId, doc);
           const integrity = computeIntegrity(doc, ctx.engine);
           if (integrity) {

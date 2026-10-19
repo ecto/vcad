@@ -38,6 +38,7 @@ import {
   runDocumentEnterHooks,
 } from "./session-core.js";
 import { attachLoonSource, sourceStatus } from "./source-provenance.js";
+import { assetNote, resolveLoonAssets } from "./loon-assets.js";
 
 // The browser-safe core of the session layer (document cache, ids, undo
 // snapshots, resolveDocInput) lives in session-core.ts so pure-compute tool
@@ -704,6 +705,7 @@ async function loadDocumentFromPath(
     return fail(`Loon evaluation of ${abs} failed: ${(e as Error).message}`);
   }
   if (!doc) return fail(`Loon evaluation of ${abs} produced no document.`);
+  const imports = assetNote(resolveLoonAssets(doc, { base_dir: baseDir }, engine));
 
   attachLoonSource(doc, {
     text: raw,
@@ -726,6 +728,7 @@ async function loadDocumentFromPath(
             "`source_stale` once it diverges, and save_document rewrites the " +
             "loon alongside the .vcad.",
           ...(durabilityWarning() ? { durability: durabilityWarning() } : {}),
+          ...(imports ? { imports } : {}),
         }),
       },
     ],
