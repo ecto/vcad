@@ -31,7 +31,8 @@ final class IrysLib: @unchecked Sendable {
     typealias FromMeshes = @convention(c) (OpaquePointer?, UnsafePointer<IrysMeshDesc>?, Int,
                                           UnsafePointer<IrysMaterialDesc>?, Int,
                                           UnsafePointer<UInt32>?, UnsafePointer<Float>?, Int,
-                                          UInt32, UInt32, UInt32) -> OpaquePointer?
+                                          UInt32, UInt32, UInt32, UnsafePointer<IrysLighting>?) -> OpaquePointer?
+    typealias SetRenderOptions = @convention(c) (OpaquePointer?, UInt32, Float, UInt32) -> Int32
     typealias SetTransforms = @convention(c) (OpaquePointer?, UnsafePointer<Float>?, Int) -> Int32
     typealias SetLookAt = @convention(c) (OpaquePointer?, UnsafePointer<Double>?, UnsafePointer<Double>?,
                                          UnsafePointer<Double>?, Double) -> Int32
@@ -47,6 +48,7 @@ final class IrysLib: @unchecked Sendable {
     let accumulate: Accumulate
     let sampleCount: SampleCount
     let destroy: Destroy
+    let setRenderOptions: SetRenderOptions
     let path: String
 
     /// Where the dylib is looked for: $IRYS_FFI, the app bundle's Frameworks,
@@ -79,12 +81,14 @@ final class IrysLib: @unchecked Sendable {
                   let e = sym("irys_scene_set_look_at", SetLookAt.self),
                   let f = sym("irys_scene_accumulate_iosurface", Accumulate.self),
                   let g = sym("irys_scene_sample_count", SampleCount.self),
-                  let k = sym("irys_scene_destroy", Destroy.self) else {
-                tried.append("\(p): too old (no mesh-ingest entry points)")
+                  let k = sym("irys_scene_destroy", Destroy.self),
+                  let o = sym("irys_scene_set_render_options", SetRenderOptions.self) else {
+                tried.append("\(p): too old (no mesh-ingest / render-option entry points)")
                 continue
             }
             return .success(IrysLib(contextCreate: a, lastErrorFn: b, fromMeshes: c, setTransforms: d,
-                                    setLookAt: e, accumulate: f, sampleCount: g, destroy: k, path: p))
+                                    setLookAt: e, accumulate: f, sampleCount: g, destroy: k,
+                                    setRenderOptions: o, path: p))
         }
         let detail = tried.isEmpty ? "libirys_ffi.dylib not found (set IRYS_FFI or build ~/Developer/irys: cargo build --release -p irys-ffi)"
                                    : tried.joined(separator: "; ")
@@ -93,10 +97,11 @@ final class IrysLib: @unchecked Sendable {
 
     private init(contextCreate: ContextCreate, lastErrorFn: LastError, fromMeshes: FromMeshes,
                  setTransforms: SetTransforms, setLookAt: SetLookAt, accumulate: Accumulate,
-                 sampleCount: SampleCount, destroy: Destroy, path: String) {
+                 sampleCount: SampleCount, destroy: Destroy, setRenderOptions: SetRenderOptions, path: String) {
         self.contextCreate = contextCreate; self.lastErrorFn = lastErrorFn; self.fromMeshes = fromMeshes
         self.setTransforms = setTransforms; self.setLookAt = setLookAt; self.accumulate = accumulate
-        self.sampleCount = sampleCount; self.destroy = destroy; self.path = path
+        self.sampleCount = sampleCount; self.destroy = destroy; self.setRenderOptions = setRenderOptions
+        self.path = path
     }
 
     func lastError() -> String { lastErrorFn().map { String(cString: $0) } ?? "unknown irys error" }
@@ -149,8 +154,8 @@ final class PathTracer {
     private var building = false
     /// Samples per call: adapted so one call costs about a display frame.
     private var sppPerCall: UInt32 = 2
-    /// Stop refining here; the GPU idles until something changes.
-    static let maxSamples: UInt32 = 4096
+    private var builtWith: RendererSettings.Build?
+    private var appliedRender: RendererSettings.Render?
 
     /// Samples per pixel in the current image.
     private(set) var samples: UInt32 = 0
@@ -164,18 +169,24 @@ final class PathTracer {
     /// Advance one step: rebuild if the geometry or size changed, apply view
     /// and pose changes, then add samples. Cheap to call every display frame;
     /// it drops calls while the queue is busy.
-    func step(model: EditorModel, view: PathTraceView) throws {
+    /// `build` / `render` come from `RendererSettings`; `maxSamples` is where
+    /// refinement stops and the GPU idles until something changes.
+    func step(model: EditorModel, view: PathTraceView, build: RendererSettings.Build,
+              render: RendererSettings.Render, maxSamples: UInt32) throws {
         guard !busy, !building else { return }
         let lib = try IrysLib.shared.get()
         let generation = model.sceneGeneration
-        if generation != builtGeneration || sceneSize != (view.width, view.height) || scene == nil {
+        if generation != builtGeneration || sceneSize != (view.width, view.height) || scene == nil
+            || builtWith != build {
             guard let g = model.pathTraceGeometry() else {
                 throw PathTraceError(message: "Nothing to path trace yet.")
             }
-            rebuild(lib: lib, geometry: g, generation: generation, view: view,
+            rebuild(lib: lib, geometry: g, generation: generation, view: view, build: build,
                     transforms: model.instanceTransforms, poseTick: model.poseTick)
             return
         }
+        let newRender: RendererSettings.Render? = appliedRender != render ? render : nil
+        if newRender != nil { appliedRender = render }
         let newView: PathTraceView? = appliedView != view ? view : nil
         if newView != nil { appliedView = view }
         var pending: [Float]? = nil
@@ -184,8 +195,8 @@ final class PathTracer {
             appliedPoseTick = model.poseTick
         }
         let newTransforms = pending
-        let changed = newView != nil || newTransforms != nil
-        if !changed && samples >= Self.maxSamples { return }
+        let changed = newView != nil || newTransforms != nil || newRender != nil
+        if !changed && samples >= maxSamples { return }
         if changed { samples = 0 }
         busy = true
         let spp = sppPerCall
@@ -193,6 +204,9 @@ final class PathTracer {
             var err: String?
             if let t = newTransforms, lib.setTransforms(scene, t, t.count / 12) != 0 { err = lib.lastError() }
             if let v = newView, !Self.lookAt(lib, scene, v) { err = lib.lastError() }
+            if let r = newRender, lib.setRenderOptions(scene, r.transparent ? 1 : 0, r.exposure, r.bounces) != 0 {
+                err = lib.lastError()
+            }
             let t0 = Date()
             if err == nil, let s = surface,
                lib.accumulate(scene, Unmanaged.passUnretained(s).toOpaque(), spp) != 0 { err = lib.lastError() }
@@ -213,7 +227,8 @@ final class PathTracer {
     }
 
     private func rebuild(lib: IrysLib, geometry g: PathTraceGeometry, generation: Int,
-                         view: PathTraceView, transforms: [float4x4], poseTick: Int) {
+                         view: PathTraceView, build: RendererSettings.Build,
+                         transforms: [float4x4], poseTick: Int) {
         building = true
         geometry = g
         let flat = Self.flatTransforms(g, transforms)
@@ -230,7 +245,7 @@ final class PathTracer {
                 if newSurface == nil { err = "could not make a \(w)×\(h) IOSurface" }
             }
             if err == nil {
-                scene = Self.makeScene(lib, context, g, flat, w, h)
+                scene = Self.makeScene(lib, context, g, flat, w, h, build)
                 if scene == nil { err = lib.lastError() }
             }
             if err == nil, !Self.lookAt(lib, scene, view) { err = lib.lastError() }
@@ -240,8 +255,11 @@ final class PathTracer {
                     if let err {
                         statusSink?("irys: \(err)")
                         builtGeneration = generation      // don't retry in a tight loop
+                        builtWith = build
                         return
                     }
+                    builtWith = build
+                    appliedRender = nil                    // re-send to the new scene
                     surface = newSurface
                     sceneSize = (w, h)
                     builtGeneration = generation
@@ -275,6 +293,8 @@ final class PathTracer {
         surface = nil
         geometry = nil
         builtGeneration = -1
+        builtWith = nil
+        appliedRender = nil
         appliedView = nil
         samples = 0
     }
@@ -290,7 +310,8 @@ final class PathTracer {
     }
 
     nonisolated private static func makeScene(_ lib: IrysLib, _ ctx: OpaquePointer?, _ g: PathTraceGeometry,
-                                              _ xf: [Float], _ w: Int, _ h: Int) -> OpaquePointer? {
+                                              _ xf: [Float], _ w: Int, _ h: Int,
+                                              _ build: RendererSettings.Build) -> OpaquePointer? {
         // One contiguous buffer per attribute, so every descriptor points
         // into memory that is valid for the whole call.
         var pos: [Float] = [], nrm: [Float] = [], idx: [UInt32] = []
@@ -315,8 +336,10 @@ final class PathTracer {
                                      indices: ip.baseAddress! + s.i, index_count: s.ni,
                                      material: UInt32(k))
                     }
+                    var light = build.lighting
                     return lib.fromMeshes(ctx, descs, descs.count, &mats, mats.count, instMesh, xf,
-                                          instMesh.count, UInt32(w), UInt32(h), UInt32(IRYS_FLOOR))
+                                          instMesh.count, UInt32(w), UInt32(h),
+                                          build.floor ? UInt32(IRYS_FLOOR) : 0, &light)
                 }
             }
         }
@@ -478,7 +501,10 @@ final class PathTraceNSView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.contentsGravity = .resize
-        layer?.backgroundColor = NSColor.black.cgColor
+        // Clear, not black: with a transparent background the frame's alpha
+        // is coverage and the desktop shows through around the model.
+        layer?.isOpaque = false
+        layer?.backgroundColor = NSColor.clear.cgColor
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -515,13 +541,21 @@ final class PathTraceNSView: NSView {
     @objc private func tick() {
         do {
             guard let m = model, m.pathTraceEnabled else { return }
-            // Trace at point resolution (not Retina): 4× fewer rays, and the
-            // noise is what limits sharpness anyway.
+            // Trace at the view's points × the resolution setting (Retina is
+            // 4× the rays; noise usually limits sharpness first).
             let size = bounds.size
             if size != lastSize { lastSize = size; sizeStable = Date() }
             guard Date().timeIntervalSince(sizeStable) > 0.25 else { return }   // mid-resize
-            guard let view = m.pathTraceView(width: Int(size.width), height: Int(size.height)) else { return }
-            do { try m.pathTracer.step(model: m, view: view) }
+            let settings = RendererSettings.shared
+            let scale = settings.values.resolution
+            guard let view = m.pathTraceView(width: Int(size.width * scale), height: Int(size.height * scale))
+            else { return }
+            let released = !m.isWindowed
+            do {
+                try m.pathTracer.step(model: m, view: view, build: settings.build(released: released),
+                                      render: settings.render(released: released),
+                                      maxSamples: UInt32(max(16, settings.values.maxSamples)))
+            }
             catch let e as PathTraceError { if m.pathTraceStatus != e.message { m.pathTraceStatus = e.message } }
             catch {}
         }

@@ -46,12 +46,27 @@ typedef struct IrysMaterialDesc {
   float transmission;
 } IrysMaterialDesc;
 #define IRYS_FLOOR 1u
+/* Studio lighting (NULL = defaults: sky 1, sun 1 at az 50.7 / el 44.4,
+ * size 3.4 deg, floor albedo 0.31). */
+typedef struct IrysLighting {
+  float sky;               /* sky brightness multiplier */
+  float sun;               /* sun irradiance multiplier, 0 = no sun */
+  float sun_azimuth_deg;   /* CCW from +X */
+  float sun_elevation_deg; /* above the horizon */
+  float sun_size_deg;      /* angular radius: shadow softness */
+  float floor_albedo;
+} IrysLighting;
 IrysScene *irys_scene_from_meshes(const IrysContext *c,
                                   const IrysMeshDesc *meshes, size_t n_meshes,
                                   const IrysMaterialDesc *materials, size_t n_materials,
                                   const uint32_t *instance_mesh, const float *instance_xf,
                                   size_t n_instances, uint32_t width, uint32_t height,
-                                  uint32_t flags);
+                                  uint32_t flags, const IrysLighting *lighting);
+/* transparent: camera rays that miss show nothing and the presented alpha is
+ * coverage (premultiplied), for compositing; exposure multiplies the image;
+ * max_bounces caps path length (0 = keep). Restarts accumulation. */
+int irys_scene_set_render_options(IrysScene *s, uint32_t transparent, float exposure,
+                                  uint32_t max_bounces);
 /* Move the instances (n = the count given at creation, 12 floats each).
  * TLAS only; restarts progressive accumulation. */
 int irys_scene_set_transforms(IrysScene *s, const float *xf, size_t n);

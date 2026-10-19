@@ -353,6 +353,7 @@ extension EditorModel {
 struct PoseStudioWindow: View {
     @Bindable var model: EditorModel
     @State private var filter = ""
+    @State private var showsRenderer = false
 
     private var groups: [(String, [DocJoint])] {
         let js = model.drivenJoints.filter {
@@ -405,15 +406,20 @@ struct PoseStudioWindow: View {
             }
             .frame(maxHeight: 300)
             Divider()
-            Toggle(isOn: Binding(get: { model.pathTraceEnabled }, set: { model.setPathTrace($0) })) {
-                HStack(spacing: 4) {
-                    Text("Path traced").font(.callout)
-                    if model.pathTraceEnabled {
-                        Text("\(model.pathTraceSamples) spp").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                    }
+            HStack(spacing: Theme.Space.s) {
+                Text("Path traced").font(.callout)
+                if model.pathTraceEnabled {
+                    Text("\(model.pathTraceSamples) spp").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
+                Spacer(minLength: 0)
+                Button { showsRenderer.toggle() } label: { Image(systemName: "slider.horizontal.3") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Renderer settings")
+                    .popover(isPresented: $showsRenderer, arrowEdge: .trailing) {
+                        Form { RendererSettingsForm() }.formStyle(.grouped).frame(width: 340, height: 520)
+                    }
+                Toggle("Path traced", isOn: Binding(get: { model.pathTraceEnabled }, set: { model.setPathTrace($0) }))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.mini)
             }
-            .toggleStyle(.switch).controlSize(.mini)
             if let s = model.pathTraceStatus {
                 Text(s).font(.caption).foregroundStyle(.secondary).lineLimit(3)
             }
