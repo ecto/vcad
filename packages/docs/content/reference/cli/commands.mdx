@@ -103,11 +103,14 @@ vcad-render --eval-json <file> # .vcad only
 
 ```json
 {
-  "parts_total": 122, "parts_ok": 122, "parts_failed": 0, "eval_ms": 8123.4,
+  "parts_total": 122, "parts_ok": 108, "parts_failed": 14, "eval_ms": 2290531.7,
   "parts": [
-    { "name": "cover-hip_ll", "id": "inst_0", "kind": "instance", "ok": true,
-      "bbox": [[-50.0, 9.1, -137.0], [40.0, 99.1, -41.0]],
-      "volume": 191284.2, "triangles": 3072, "eval_ms": 41.7 }
+    { "name": "cover-hip_ll_i", "id": "cover-hip_ll_i", "kind": "instance", "ok": false,
+      "reason": "part definition 'cover-hip_ll': fillet of node 1 did not apply: blend geometry diverged …",
+      "triangles": 0 },
+    { "name": "thigh-inner_ll_i", "id": "thigh-inner_ll_i", "kind": "instance", "ok": true,
+      "bbox": [[-48.13, 65.93, -331.64], [43.87, 69.13, -213.90]],
+      "volume": 27149.5, "triangles": 3776, "eval_ms": 8075.5 }
   ]
 }
 ```
