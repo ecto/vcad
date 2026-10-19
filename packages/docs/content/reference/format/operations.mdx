@@ -144,7 +144,7 @@ Moves a shape by offset.
 ```
 </TypeDef>
 
-Rotates a shape. Angles in degrees.
+Rotates a shape about the origin. Angles in degrees. The three rotations compose as `R = Rx · Ry · Rz` applied to column vectors: the shape is rotated about the **world Z axis first, then world Y, then world X** (equivalently, intrinsic X → Y′ → Z″). Loon's `[rotate rx ry rz s]` is this operation, so `[rotate 0 90 90 s]` turns the shape 90° about Z and *then* 90° about Y — not the other way round. When the order matters, nest single-axis rotations instead: `[rotate 90 0 0 [rotate 0 0 45 s]]` is unambiguous.
 
 <TypeDef name="Scale">
 ```typescript

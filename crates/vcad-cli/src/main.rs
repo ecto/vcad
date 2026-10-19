@@ -40,6 +40,11 @@ struct Cli {
     /// bypasses it regardless.
     #[arg(long, global = true)]
     no_cache: bool,
+
+    /// Print every boolean fallback as it happens instead of one summary
+    /// line at the end (same as `VCAD_BOOLEAN_VERBOSE=1`).
+    #[arg(long, short = 'v', global = true)]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
@@ -297,6 +302,14 @@ enum Commands {
 
     /// Display information about a .vcad (or .loon source) file
     Info {
+        /// Path to the .vcad or .loon file
+        file: PathBuf,
+    },
+
+    /// Evaluate a .vcad or .loon file without rendering and print a per-part
+    /// JSON report: name, ok/failed + reason, posed bbox, volume, triangle
+    /// count, eval time. Exits non-zero when any part failed.
+    EvalJson {
         /// Path to the .vcad or .loon file
         file: PathBuf,
     },
@@ -613,6 +626,15 @@ fn main() -> Result<()> {
         std::env::set_var("VCAD_CACHE", "0");
     }
 
+    vcad_kernel::vcad_kernel_booleans::recut_log::set_verbose(cli.verbose);
+    let result = run_command(cli);
+    if let Some(line) = vcad_kernel::vcad_kernel_booleans::recut_log::take_summary() {
+        eprintln!("{line}");
+    }
+    result
+}
+
+fn run_command(cli: Cli) -> Result<()> {
     match cli.command {
         Some(Commands::Tui { file }) => {
             app::run_tui(file)?;
@@ -754,6 +776,9 @@ fn main() -> Result<()> {
         }
         Some(Commands::Info { file }) => {
             show_info(&file)?;
+        }
+        Some(Commands::EvalJson { file }) => {
+            run_eval_json(&file)?;
         }
         Some(Commands::Kit { spec, output }) => {
             kit::run(&kit::KitArgs { spec, output })?;
@@ -988,6 +1013,23 @@ fn is_loon(path: &std::path::Path) -> bool {
 /// imports against the file's own directory.
 fn eval_loon(path: &std::path::Path) -> Result<vcad_ir::Document> {
     vcad_loon::eval_vcad_file(path).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// `vcad eval-json`: the same report as `vcad-render --eval-json`, with
+/// `.loon` source evaluated first.
+fn run_eval_json(path: &std::path::Path) -> Result<()> {
+    let doc = load_doc(path)?;
+    let raw = serde_json::to_string(&doc)?;
+    let report = vcad_render::report::eval_report(&raw).map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if report.parts_failed > 0 {
+        anyhow::bail!(
+            "{} of {} part(s) failed to evaluate",
+            report.parts_failed,
+            report.parts_total
+        );
+    }
+    Ok(())
 }
 
 fn load_doc(path: &std::path::Path) -> Result<vcad_ir::Document> {

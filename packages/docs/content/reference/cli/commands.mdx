@@ -90,6 +90,41 @@ Mesh stats:
   Total vertices: 642
 ```
 
+## vcad eval-json
+
+Evaluate a document **without rendering** and print one JSON record per part
+— every visible scene root and every assembly instance, including the ones
+that failed.
+
+```bash
+vcad eval-json <file>          # .vcad or .loon
+vcad-render --eval-json <file> # .vcad only
+```
+
+```json
+{
+  "parts_total": 122, "parts_ok": 122, "parts_failed": 0, "eval_ms": 8123.4,
+  "parts": [
+    { "name": "cover-hip_ll", "id": "inst_0", "kind": "instance", "ok": true,
+      "bbox": [[-50.0, 9.1, -137.0], [40.0, 99.1, -41.0]],
+      "volume": 191284.2, "triangles": 3072, "eval_ms": 41.7 }
+  ]
+}
+```
+
+A failed part has `"ok": false` and a `reason` (the evaluator's error, or the
+missing part-definition id). The command exits non-zero when any part failed,
+so it can gate a build. `bbox` is world space as posed by the joints; for
+instances that share a part definition, only the first carries `eval_ms`.
+
+Every render path also reports dropped parts on stderr — `N of M part(s)
+produced no geometry and are omitted:` followed by one line per part — so a
+part can no longer vanish from a render silently.
+
+Boolean fallbacks (a Difference that removed nothing and was re-cut with the
+mesh boolean) collapse into one summary line at exit; pass `-v`/`--verbose`
+or set `VCAD_BOOLEAN_VERBOSE=1` to see each one.
+
 ## vcad export
 
 Export a `.vcad` file to a mesh or CAD interchange format. The output format is determined by the file extension.

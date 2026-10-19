@@ -23,6 +23,7 @@ mod freeze;
 pub mod mesh;
 mod no_crossing;
 mod pipeline;
+pub mod recut_log;
 mod repair;
 pub mod sew;
 pub mod split;
