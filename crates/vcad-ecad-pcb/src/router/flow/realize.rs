@@ -172,6 +172,39 @@ fn d2(a: [f64; 2], b: [f64; 2]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
 }
 
+/// The point of copper `g` nearest to `p`.
+fn nearest_point(g: &CopperGeom, p: [f64; 2]) -> [f64; 2] {
+    let toward = |c: [f64; 2], r: f64| {
+        let d = d2(c, p);
+        if d < 1e-12 {
+            c
+        } else {
+            [c[0] + (p[0] - c[0]) * r / d, c[1] + (p[1] - c[1]) * r / d]
+        }
+    };
+    match *g {
+        CopperGeom::Disc { center, r } => toward([center.x, center.y], r),
+        CopperGeom::Segment { a, b, half_w } => {
+            let ab = [b.x - a.x, b.y - a.y];
+            let l2 = (ab[0] * ab[0] + ab[1] * ab[1]).max(1e-18);
+            let t = (((p[0] - a.x) * ab[0] + (p[1] - a.y) * ab[1]) / l2).clamp(0.0, 1.0);
+            toward([a.x + t * ab[0], a.y + t * ab[1]], half_w)
+        }
+        CopperGeom::Rect {
+            center,
+            half_w,
+            half_h,
+            rot,
+        } => {
+            let (sn, cs) = rot.sin_cos();
+            let (dx, dy) = (p[0] - center.x, p[1] - center.y);
+            let lx = (dx * cs + dy * sn).clamp(-half_w, half_w);
+            let ly = (-dx * sn + dy * cs).clamp(-half_h, half_h);
+            [center.x + lx * cs - ly * sn, center.y + lx * sn + ly * cs]
+        }
+    }
+}
+
 fn seg_dist(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     let ab = [b[0] - a[0], b[1] - a[1]];
     let l2 = ab[0] * ab[0] + ab[1] * ab[1];
@@ -551,6 +584,157 @@ pub fn realize_wires(
         }
         ok
     };
+    // Sequential thick-path placement against committed copper: wires go in
+    // the embedding's left-to-right order; each one's corridor on every cut
+    // is the part of its sleeve clear of fixed copper and of the wires
+    // already placed, both inflated by its own half-width + clearance, and
+    // inside the room its placed neighbours leave. The funnel runs on that
+    // inflated geometry; the oracle keeps the placed path only if it offends
+    // no more than its current path.
+    if let (Some(s0), true) = (oracle, sess.is_some()) {
+        let mut s2 = s0.clone();
+        let mut rank = vec![(0.0f64, 0usize); wires.len()];
+        for key in &keys {
+            let g = &members[key];
+            let n = g.len().max(2) - 1;
+            for (i, &(wi, _)) in g.iter().enumerate() {
+                rank[wi].0 += i as f64 / n as f64;
+                rank[wi].1 += 1;
+            }
+        }
+        let mut seq: Vec<usize> = (0..wires.len()).collect();
+        let key_of = |wi: usize| rank[wi].0 / rank[wi].1.max(1) as f64;
+        seq.sort_by(|&a, &b| key_of(a).total_cmp(&key_of(b)).then(a.cmp(&b)));
+        let mut placed = vec![false; wires.len()];
+        let (mut seq_won, mut seq_kept) = (0usize, 0usize);
+        for wi in seq {
+            let w = &wires[wi];
+            let lg = &cg.layers[w.layer];
+            let mut wraps: Vec<([f64; 2], [f64; 2], f64)> = Vec::new();
+            let ivs: Vec<(f64, f64)> =
+                w.xs.iter()
+                    .enumerate()
+                    .map(|(xi, x)| {
+                        let (mut lo, mut hi) = x.span();
+                        let (l, r) = nbr[wi][xi];
+                        if let Some((lw, lx)) = l.filter(|o| placed[o.0]) {
+                            let p = pos[lw][lx];
+                            lo = lo.max(
+                                p.0 + need(
+                                    &wires[lw],
+                                    wires[lw].xs[lx].w,
+                                    w,
+                                    x.w,
+                                    p.1.min(pos[wi][xi].1),
+                                ),
+                            );
+                        }
+                        if let Some((rw, rx)) = r.filter(|o| placed[o.0]) {
+                            let p = pos[rw][rx];
+                            hi = hi.min(
+                                p.0 - need(
+                                    &wires[rw],
+                                    wires[rw].xs[rx].w,
+                                    w,
+                                    x.w,
+                                    p.1.min(pos[wi][xi].1),
+                                ),
+                            );
+                        }
+                        let cur = pos[wi][xi].0;
+                        if lo > hi {
+                            return (cur, cur);
+                        }
+                        let c = &lg.cuts[x.cut as usize];
+                        let (a, b) = (lg.vpos(c.a), lg.vpos(c.b));
+                        let at = |t: f64| {
+                            let u = (t / c.len.max(1e-12)).clamp(0.0, 1.0);
+                            [a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1])]
+                        };
+                        let (pa, pb) = (at(lo), at(hi));
+                        let m = x.w / 2.0 + w.clearance + 0.5;
+                        let bl = [pa[0].min(pb[0]) - m, pa[1].min(pb[1]) - m];
+                        let bh = [pa[0].max(pb[0]) + m, pa[1].max(pb[1]) + m];
+                        let mut obs: Vec<(CopperGeom, f64)> = Vec::new();
+                        s2.for_each_blocking(layer_of(w), &w.net_name, bl, bh, |og, _, _, req| {
+                            obs.push((*og, req.max(w.clearance)));
+                        });
+                        let clear = |t: f64| {
+                            let q = at(t);
+                            let d = CopperGeom::Disc {
+                                center: Vec2::new(q[0], q[1]),
+                                r: x.w / 2.0,
+                            };
+                            obs.iter()
+                                .all(|(o, req)| d.distance_to(o) >= req + MARGIN / 2.0)
+                        };
+                        let n = (((hi - lo) / 0.005).ceil() as usize).clamp(1, 4000);
+                        let mut runs: Vec<(f64, f64)> = Vec::new();
+                        let mut open: Option<f64> = None;
+                        for k in 0..=n {
+                            let t = lo + (hi - lo) * k as f64 / n as f64;
+                            match (clear(t), open) {
+                                (true, None) => open = Some(t),
+                                (false, Some(t0)) => {
+                                    runs.push((t0, lo + (hi - lo) * (k - 1) as f64 / n as f64));
+                                    open = None;
+                                }
+                                _ => {}
+                            }
+                        }
+                        if let Some(t0) = open {
+                            runs.push((t0, hi));
+                        }
+                        let Some(run) = runs.into_iter().min_by(|p, q| {
+                            let dp = (cur.max(p.0).min(p.1.max(p.0)) - cur).abs();
+                            let dq = (cur.max(q.0).min(q.1.max(q.0)) - cur).abs();
+                            dp.total_cmp(&dq)
+                        }) else {
+                            return (lo, hi);
+                        };
+                        // an obstacle-bounded end: wrap the obstacle's
+                        // nearest copper at the distance the bound keeps
+                        let step = (hi - lo) / n as f64;
+                        for (t, inside) in [(run.0, run.0 - step), (run.1, run.1 + step)] {
+                            if inside < lo - 1e-12 || inside > hi + 1e-12 {
+                                continue;
+                            }
+                            let q = at(t);
+                            let qi = at(inside);
+                            let near = obs
+                                .iter()
+                                .map(|(o, req)| {
+                                    let c = nearest_point(o, qi);
+                                    (c, req + x.w / 2.0 + MARGIN / 2.0, d2(c, qi))
+                                })
+                                .min_by(|a, b| a.2.total_cmp(&b.2));
+                            if let Some((c, r, _)) = near {
+                                wraps.push((q, c, r.max(d2(q, c))));
+                            }
+                        }
+                        run
+                    })
+                    .collect();
+            let (cand, cr) = build(wi, &ivs);
+            let cand = round_bends(&cand, &wraps);
+            // exact gate on the full board (every other wire where it is now)
+            let s = sess.as_mut().unwrap();
+            if try_swap(s, &mut spans, &mut paths, wi, &cand, false) {
+                for (q, c) in pos[wi].iter_mut().zip(cr) {
+                    *q = c;
+                }
+                seq_won += 1;
+            } else {
+                seq_kept += 1;
+            }
+            let p = paths[wi].clone();
+            commit(&mut s2, w, &p);
+            placed[wi] = true;
+        }
+        log::info!(
+            "realize: sequential placement took {seq_won} paths, kept {seq_kept} relaxed starts"
+        );
+    }
     for _ in 0..sweeps {
         for wi in 0..wires.len() {
             let ivs = channel(&pos, wi);
