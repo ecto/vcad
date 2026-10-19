@@ -605,6 +605,15 @@ export class Solid {
      */
     horizontalSection(z: number, hatch_spacing?: number | null, hatch_angle?: number | null, segments?: number | null): any;
     /**
+     * Convex hull of a flat `[x, y, z, ...]` point cloud.
+     */
+    static hullPoints(points: Float64Array): Solid;
+    /**
+     * Convex hull of this solid together with `other`. Hull is associative,
+     * so an n-ary hull folds pairwise.
+     */
+    hullWith(other: Solid): Solid;
+    /**
      * Boolean intersection (self ∩ other).
      *
      * Returns a JS error (instead of trapping the WASM instance) when the
@@ -720,6 +729,13 @@ export class Solid {
      * Takes a sketch profile and path endpoints.
      */
     static sweepLine(profile_json: string, start: Float64Array, end: Float64Array, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, orientation?: number | null): Solid;
+    /**
+     * Swept volume: union of this solid rotated about an axis over
+     * `[deg_lo, deg_hi]`. `step_deg <= 0` picks the step automatically;
+     * `clearance` (mm) dilates the solid first. Triangle-soup result,
+     * meant as a clearance-cut tool.
+     */
+    sweepRotate(axis_origin_x: number, axis_origin_y: number, axis_origin_z: number, axis_dir_x: number, axis_dir_y: number, axis_dir_z: number, deg_lo: number, deg_hi: number, step_deg: number, clearance: number): Solid;
     /**
      * Create a solid by extruding text as 2D profiles.
      *
@@ -3880,6 +3896,8 @@ export interface InitOutput {
     readonly solid_fromRegisteredStep: (a: number, b: number, c: number) => [number, number, number];
     readonly solid_getMesh: (a: number, b: number) => any;
     readonly solid_horizontalSection: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+    readonly solid_hullPoints: (a: number, b: number) => [number, number, number];
+    readonly solid_hullWith: (a: number, b: number) => [number, number, number];
     readonly solid_intersection: (a: number, b: number) => [number, number, number];
     readonly solid_isEmpty: (a: number) => number;
     readonly solid_linearPattern: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
@@ -3898,6 +3916,7 @@ export interface InitOutput {
     readonly solid_surfaceArea: (a: number) => number;
     readonly solid_sweepHelix: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number];
     readonly solid_sweepLine: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
+    readonly solid_sweepRotate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => number;
     readonly solid_textExtrude: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number) => [number, number, number];
     readonly solid_toStepBuffer: (a: number) => [number, number, number, number];
     readonly solid_torus: (a: number, b: number, c: number) => number;
@@ -3998,8 +4017,8 @@ export interface InitOutput {
     readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___js_sys_7c82484d4a1d6091___Function_fn_wasm_bindgen_d8ba3021eaa32f54___JsValue_____wasm_bindgen_d8ba3021eaa32f54___sys__Undefined___js_sys_7c82484d4a1d6091___Function_fn_wasm_bindgen_d8ba3021eaa32f54___JsValue_____wasm_bindgen_d8ba3021eaa32f54___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wasm_bindgen_d8ba3021eaa32f54___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_d8ba3021eaa32f54___JsError___true_: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wasm_bindgen_d8ba3021eaa32f54___sys__JsNullable_wgpu_f894171a91484cea___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_d8ba3021eaa32f54___JsError___true_: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wasm_bindgen_d8ba3021eaa32f54___sys__JsNullable_wgpu_f894171a91484cea___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_d8ba3021eaa32f54___JsError___true__440: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wasm_bindgen_d8ba3021eaa32f54___sys__JsNullable_wgpu_f894171a91484cea___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_d8ba3021eaa32f54___JsError___true__441: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wasm_bindgen_d8ba3021eaa32f54___sys__JsNullable_wgpu_f894171a91484cea___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_d8ba3021eaa32f54___JsError___true__443: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wasm_bindgen_d8ba3021eaa32f54___sys__JsNullable_wgpu_f894171a91484cea___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_d8ba3021eaa32f54___JsError___true__444: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wgpu_f894171a91484cea___backend__webgpu__webgpu_sys__gen_GpuDeviceLostInfo__GpuDeviceLostInfo______true_: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
