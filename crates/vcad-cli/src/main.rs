@@ -87,8 +87,18 @@ enum Commands {
     Export {
         /// Input .vcad or .loon file
         input: PathBuf,
-        /// Output file (format determined by extension: .stl, .glb, .step, .stp, .urdf, .kicad_sch)
+        /// Output file (format determined by extension: .stl, .glb, .step, .stp, .urdf, .kicad_sch,
+        /// .vcad — the evaluated document, assemblies included)
         output: PathBuf,
+        /// Pose a jointed assembly first: `name=deg[,name=deg...]` (joint id
+        /// or name; degrees, mm for sliders). Out-of-limit states are clamped
+        /// with a warning; an unknown joint is an error. Repeatable.
+        #[arg(long, value_name = "NAME=DEG,...")]
+        pose: Vec<String>,
+        /// Pose from JSON: `{"joint": deg, ...}` or a keyframe file (first
+        /// key per track). Applied before `--pose`.
+        #[arg(long, value_name = "POSE.json")]
+        pose_file: Option<PathBuf>,
         /// Refuse to write a STEP that contains tessellated (triangle-soup)
         /// faces. Without this flag such a fallback is a stderr warning
         /// naming the node and the reason; with it, it is an error.
@@ -228,6 +238,15 @@ enum Commands {
         /// World up axis: z (kernel/CAD convention, default) or y
         #[arg(long, value_enum, default_value = "z")]
         up: UpAxisArg,
+        /// Pose a jointed assembly first: `name=deg[,name=deg...]` (joint id
+        /// or name; degrees, mm for sliders). Out-of-limit states are clamped
+        /// with a warning; an unknown joint is an error. Repeatable.
+        #[arg(long, value_name = "NAME=DEG,...")]
+        pose: Vec<String>,
+        /// Pose from JSON: `{"joint": deg, ...}` or a keyframe file (first
+        /// key per track). Applied before `--pose`.
+        #[arg(long, value_name = "POSE.json")]
+        pose_file: Option<PathBuf>,
     },
 
     /// Apply boolean operation
@@ -680,8 +699,11 @@ fn run_command(cli: Cli) -> Result<()> {
             input,
             output,
             strict_brep,
+            pose,
+            pose_file,
         }) => {
-            export_file(&input, &output, strict_brep)?;
+            let pose = cli_pose(&pose, pose_file.as_deref())?;
+            export_file(&input, &output, strict_brep, &pose)?;
         }
         Some(Commands::Route {
             input,
@@ -755,7 +777,10 @@ fn run_command(cli: Cli) -> Result<()> {
             distance,
             background,
             up,
+            pose,
+            pose_file,
         }) => {
+            let pose = cli_pose(&pose, pose_file.as_deref())?;
             render_to_image(
                 &input,
                 &output,
@@ -766,6 +791,7 @@ fn run_command(cli: Cli) -> Result<()> {
                 distance,
                 &background,
                 up.into(),
+                &pose,
             )?;
         }
         Some(Commands::Boolean {
@@ -1163,12 +1189,53 @@ fn run_merge(
     }
 }
 
-fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<()> {
+/// `--pose-file` then `--pose`, in order — later entries win. Same parsing
+/// as vcad-render's flags of the same names.
+fn cli_pose(specs: &[String], file: Option<&std::path::Path>) -> Result<Vec<(String, f64)>> {
+    let mut pose = Vec::new();
+    if let Some(path) = file {
+        let json = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
+        pose.extend(
+            vcad_render::pose::parse_pose_json(&json)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?,
+        );
+    }
+    for spec in specs {
+        pose.extend(vcad_render::pose::parse_pose_spec(spec).map_err(|e| anyhow::anyhow!(e))?);
+    }
+    Ok(pose)
+}
+
+/// Load a document and apply a pose to its joints (no-op for an empty pose).
+fn load_posed_document(input: &PathBuf, pose: &[(String, f64)]) -> Result<vcad_ir::Document> {
+    let mut doc = load_vcad_document(input)?;
+    if !pose.is_empty() {
+        for w in vcad_render::pose::pose_document(&mut doc, pose).map_err(|e| anyhow::anyhow!(e))? {
+            eprintln!("warning: {w}");
+        }
+    }
+    Ok(doc)
+}
+
+fn export_file(
+    input: &PathBuf,
+    output: &PathBuf,
+    strict_brep: bool,
+    pose: &[(String, f64)],
+) -> Result<()> {
     use std::fs;
 
-    let doc = load_vcad_document(input)?;
+    let doc = load_posed_document(input, pose)?;
 
     let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("");
+    // The evaluated document itself: what `vcad-render` (which does not read
+    // `.loon`) and the app consume. Assemblies, joints and a `--pose` survive.
+    if ext.eq_ignore_ascii_case("vcad") {
+        fs::write(output, doc.to_json()?)?;
+        println!("Exported document to {}", output.display());
+        return Ok(());
+    }
     if ext.eq_ignore_ascii_case("loon") {
         return export_loon(&doc, output);
     }
@@ -2360,6 +2427,34 @@ fn write_glb(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
             name,
             positions: [pos_off, part.mesh.positions.len()],
             indices: [idx_off, part.mesh.indices.len()],
+            normals,
+            color: [0.71, 0.71, 0.75],
+            metallic: 0.1,
+            roughness: 0.7,
+            emissive: None,
+            emissive_strength: None,
+            clearcoat: None,
+            clearcoat_roughness: None,
+            alpha: None,
+            transform: None,
+            mesh_key: None,
+        });
+    }
+    // Assembly instances, placed in world space at the document's pose.
+    for (name, mesh) in crate::app::placed_instance_meshes(doc, &scene) {
+        let pos_off = f32_data.len();
+        f32_data.extend_from_slice(&mesh.positions);
+        let normals = mesh.normals.as_ref().map(|n| {
+            let off = f32_data.len();
+            f32_data.extend_from_slice(n);
+            [off, n.len()]
+        });
+        let idx_off = u32_data.len();
+        u32_data.extend_from_slice(&mesh.indices);
+        meshes.push(GlbMeshSpec {
+            name,
+            positions: [pos_off, mesh.positions.len()],
+            indices: [idx_off, mesh.indices.len()],
             normals,
             color: [0.71, 0.71, 0.75],
             metallic: 0.1,
@@ -3597,11 +3692,12 @@ fn render_to_image(
     distance: Option<f64>,
     background: &str,
     up_axis: crate::render::UpAxis,
+    pose: &[(String, f64)],
 ) -> Result<()> {
     use crate::render::{Camera, GraphicsOutput, RenderBuffer};
 
     // Load and evaluate document (`.loon` source is evaluated on the way in)
-    let doc = load_vcad_document(input)?;
+    let doc = load_posed_document(input, pose)?;
     let meshes = crate::app::evaluate_document(&doc)?;
 
     if meshes.is_empty() {
@@ -3924,6 +4020,66 @@ fn parse_vec3(s: &str) -> Result<vcad_ir::Vec3> {
 mod tests {
     use super::*;
     use vcad_ir::{CsgOp, Document, Node, SceneEntry, Vec3};
+
+    const ARM_LOON: &str = r#"
+[assembly
+  #[[part "base" [cube 10.0 10.0 10.0] "steel"]
+    [part "arm" [cube 80.0 10.0 10.0] "aluminum"]]
+  #[[instance "base-inst" "base" 0.0 0.0 0.0]
+    [instance "arm-inst" "arm" 0.0 0.0 10.0]]
+  #[[revolute-joint "shoulder" 0.0 1.0 0.0 -90.0 90.0
+      "base-inst" 0.0 0.0 10.0
+      "arm-inst" 0.0 0.0 0.0]]
+  "base-inst"]
+"#;
+
+    fn z_extent(m: &crate::app::EvaluatedMesh) -> f32 {
+        let zs = m.vertices.chunks_exact(3).map(|v| v[2]);
+        let (lo, hi) = zs.fold((f32::MAX, f32::MIN), |(lo, hi), z| (lo.min(z), hi.max(z)));
+        hi - lo
+    }
+
+    /// A `.loon` assembly has no roots; render/STL must still see its
+    /// instances, placed by FK, and `--pose` must move them.
+    #[test]
+    fn loon_assembly_evaluates_and_poses() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("arm.loon");
+        std::fs::write(&src, ARM_LOON).unwrap();
+
+        let rest = crate::app::evaluate_document(&load_posed_document(&src, &[]).unwrap()).unwrap();
+        assert_eq!(rest.len(), 2, "both instances become meshes");
+        assert!(
+            (z_extent(&rest[1]) - 10.0).abs() < 1e-3,
+            "arm lies flat at rest"
+        );
+
+        let pose = cli_pose(&["shoulder=90".into()], None).unwrap();
+        let posed =
+            crate::app::evaluate_document(&load_posed_document(&src, &pose).unwrap()).unwrap();
+        assert!(
+            (z_extent(&posed[1]) - 80.0).abs() < 1e-3,
+            "arm stands up at 90°"
+        );
+
+        assert!(cli_pose(&["shoulder".into()], None).is_err());
+        assert!(load_posed_document(&src, &[("elbow".into(), 1.0)]).is_err());
+    }
+
+    /// `export x.loon x.vcad` writes the evaluated document, assembly and
+    /// pose included, so vcad-render can take it from there.
+    #[test]
+    fn loon_assembly_exports_vcad() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("arm.loon");
+        let out = dir.path().join("arm.vcad");
+        std::fs::write(&src, ARM_LOON).unwrap();
+        export_file(&src, &out, false, &[("shoulder".into(), 45.0)]).unwrap();
+        let doc = Document::from_json(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!(doc.instances.as_ref().map(Vec::len), Some(2));
+        let joint = &doc.joints.as_ref().unwrap()[0];
+        assert_eq!(joint.state, 45.0);
+    }
 
     fn cube_doc() -> Document {
         let mut doc = Document::new();

@@ -3,7 +3,7 @@
 //!
 //! The input is IR JSON: a `.vcad` document. `.loon` source is not evaluated
 //! here — the loon interpreter ships with the `vcad` CLI, so build the
-//! document there (`vcad build`) and render the result.
+//! document there (`vcad export x.loon x.vcad`) and render the result.
 //!
 //! Usage:
 //!   vcad-render <path.vcad> [--view iso|front|side|top|hero|orbit:AZ,EL] [--scale <px-per-mm>] [--transparent]
@@ -1042,7 +1042,7 @@ fn cli_pose(cli: &Cli) -> Result<Vec<(String, f64)>, String> {
 fn read_document_unposed(input: &Path) -> Result<String, String> {
     if is_loon(input) {
         return Err(format!(
-            "{}: `.loon` source needs the vcad CLI — run `vcad build` and \
+            "{}: `.loon` source needs the vcad CLI — run `vcad export <in>.loon <out>.vcad` and \
              render the exported `.vcad` document instead",
             input.display()
         ));
