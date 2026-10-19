@@ -254,6 +254,40 @@ fn main() {
                 pcb.plane_layers()
             );
             let still: BTreeSet<&String> = fb.unrouted_nets.iter().collect();
+            // Cause table: why each net is still open after flow + fallback.
+            {
+                let planes: BTreeSet<String> =
+                    vcad_ecad_pcb::router::flow::access::plane_poured(&pcb)
+                        .keys()
+                        .map(|s| s.to_string())
+                        .collect();
+                let mut table: BTreeMap<String, usize> = BTreeMap::new();
+                for n in &still {
+                    let c = if planes.contains(*n) {
+                        match rep.access_unsited.get(*n) {
+                            Some(k) => format!("plane net: {k} pad(s) without an access site, fallback stitch failed"),
+                            None => "plane net: fallback stitch failed".to_string(),
+                        }
+                    } else {
+                        format!(
+                            "{} -> fallback failed",
+                            rep.net_causes
+                                .get(*n)
+                                .map(|s| s.as_str())
+                                .unwrap_or("flow routed it (legalize demoted)")
+                        )
+                    };
+                    *table.entry(c).or_default() += 1;
+                }
+                println!(
+                    "cause table ({} unrouted nets after fallback):",
+                    still.len()
+                );
+                for (c, k) in &table {
+                    println!("  {k:>4}  {c}");
+                }
+                println!("flow open connections by cause: {:?}", rep.causes);
+            }
             let mut routed: Vec<String> = r
                 .routed_nets
                 .iter()

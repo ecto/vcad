@@ -83,8 +83,11 @@ pub struct ViaSite {
 /// Tuning of the price loop.
 #[derive(Debug, Clone)]
 pub struct FlowParams {
-    /// Max iterations.
+    /// Hard iteration budget.
     pub iters: usize,
+    /// Iterations without a better (overflow, conflicts) score that count as
+    /// a stall.
+    pub stall: usize,
     /// Subgradient step scale (mm per unit of overflow).
     pub alpha: f64,
     /// Initial present-congestion factor (mm per unit of excess).
@@ -102,7 +105,8 @@ pub struct FlowParams {
 impl Default for FlowParams {
     fn default() -> Self {
         Self {
-            iters: 40,
+            iters: 300,
+            stall: 25,
             alpha: 0.5,
             pres0: 0.5,
             pres_growth: 1.3,
@@ -1061,11 +1065,16 @@ impl<'g> FlowGraph<'g> {
         let mut paths: Vec<Option<FlowPath>> = vec![None; ks.len()];
         let mut stats = Vec::new();
         let mut best: Option<(f64, f64, Vec<Option<FlowPath>>)> = None;
+        // Run to feasibility (overflow 0, no site conflict) or a provable
+        // stall: `stall` iterations without a better (overflow, conflicts)
+        // score. `iters` is the hard work budget.
+        let mut since_best = 0usize;
+        let mut best_score = f64::INFINITY;
         for it in 0..params.iters {
             let pres = if it == 0 {
                 0.0
             } else {
-                params.pres0 * params.pres_growth.powi(it as i32 - 1)
+                (params.pres0 * params.pres_growth.powi(it as i32 - 1)).min(1e4)
             };
             for (i, k) in ks.iter().enumerate() {
                 if let Some(p) = paths[i].take() {
@@ -1125,6 +1134,17 @@ impl<'g> FlowGraph<'g> {
             }
             if ovf <= 1e-9 && conflicts == 0 {
                 break;
+            }
+            let sc = ovf + conflicts as f64;
+            if sc < best_score - 1e-9 {
+                best_score = sc;
+                since_best = 0;
+            } else {
+                since_best += 1;
+                if since_best >= params.stall {
+                    log::info!("flow market: stalled at overflow {ovf:.2} after {it} iterations");
+                    break;
+                }
             }
             // Price step: projected subgradient, diminishing step.
             let a = params.alpha / ((it + 1) as f64).sqrt();

@@ -161,6 +161,11 @@ fn main() {
         }
     }
     println!("drc delta (after - before, by rule): {delta:?}");
+    println!("open connections by cause: {:?}", rep.causes);
+    println!(
+        "plane pads without an access site: {:?}",
+        rep.access_unsited
+    );
     println!(
         "time: {secs:.1} s (graph {:.0} ms, market {:.0} ms, realize+oracle {:.0} ms, legalize {:.0} ms)",
         rep.ms[0], rep.ms[1], rep.ms[2], rep.ms[3]

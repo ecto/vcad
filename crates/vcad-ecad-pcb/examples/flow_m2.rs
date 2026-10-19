@@ -257,6 +257,7 @@ fn main() {
                     lo,
                     hi,
                     pad,
+                    pad_hi: pad,
                 }
             })
             .collect();
@@ -267,6 +268,8 @@ fn main() {
             net: nid,
             net_name: ch.net.clone(),
             start_path: Some(ch.pts.clone()),
+            lead: None,
+            tail: None,
             twin: None,
             start: ch.pts[0],
             end: *ch.pts.last().unwrap(),

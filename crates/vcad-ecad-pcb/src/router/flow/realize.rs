@@ -96,16 +96,19 @@ pub struct Wx {
     pub lo: f64,
     /// Upper end of the extent.
     pub hi: f64,
-    /// Room the wire keeps from the extent's ends (its extra half-width over
-    /// the design width, plus margin). The ends are obstacle corners, so a
-    /// bend there wraps the corner at this radius.
+    /// Room the wire keeps from the extent's low end (its extra half-width
+    /// over the design width plus margin; a via barrel's radius when the end
+    /// is a used via site). The end is an obstacle corner, so a bend there
+    /// wraps the corner at this radius.
     pub pad: f64,
+    /// Room kept from the high end.
+    pub pad_hi: f64,
 }
 
 impl Wx {
     /// Usable interval: the extent less `pad` at both ends.
     pub fn span(&self) -> (f64, f64) {
-        let (a, b) = (self.lo + self.pad, self.hi - self.pad);
+        let (a, b) = (self.lo + self.pad, self.hi - self.pad_hi);
         if a <= b {
             (a, b)
         } else {
@@ -128,6 +131,12 @@ pub struct Wire {
     pub net: u32,
     /// Net name (for the oracle).
     pub net_name: String,
+    /// Fixed first / last interior point (a pad's interior face centroid):
+    /// the wire runs start → lead → funnel → tail → end, and the gate checks
+    /// the legs too.
+    pub lead: Option<[f64; 2]>,
+    /// See `lead`.
+    pub tail: Option<[f64; 2]>,
     /// A known-good starting polyline (the human's), used as the feasible
     /// start instead of the funnel through the starting crossing points.
     pub start_path: Option<Vec<[f64; 2]>>,
@@ -250,7 +259,7 @@ pub fn realize_wires(
                     portal(cg, w, x, a, b)
                 })
                 .collect();
-        let path = funnel(w.start, w.end, &free);
+        let path = funnel(w.lead.unwrap_or(w.start), w.tail.unwrap_or(w.end), &free);
         let mut v = crossings(cg, w, &free, &path);
         if let Some(init) = init {
             for (p, s) in v.iter_mut().zip(&init[wi]) {
@@ -418,7 +427,14 @@ pub fn realize_wires(
                 .map(|(x, p)| portal(cg, w, x, p.0, p.0))
                 .collect();
         let mut p = vec![w.start];
-        p.extend(funnel(w.start, w.end, &ps));
+        p.extend(funnel(
+            w.lead.unwrap_or(w.start),
+            w.tail.unwrap_or(w.end),
+            &ps,
+        ));
+        if w.tail.is_some() {
+            p.push(w.end);
+        }
         p.dedup_by(|a, b| d2(*a, *b) < 1e-9);
         if let Some(sp) = &w.start_path {
             p = sp.clone();
@@ -428,66 +444,192 @@ pub fn realize_wires(
         }
         paths.push(p);
     }
+    // One candidate for wire `wi` inside intervals `ivs`: funnel, then wrap
+    // the obstacle corners it bends at.
+    let build = |wi: usize, ivs: &[(f64, f64)]| -> (Vec<[f64; 2]>, Vec<(f64, f64)>) {
+        let w = &wires[wi];
+        let ps: Vec<Portal> =
+            w.xs.iter()
+                .zip(ivs)
+                .map(|(x, &(lo, hi))| portal(cg, w, x, lo, hi))
+                .collect();
+        let path = funnel(w.lead.unwrap_or(w.start), w.tail.unwrap_or(w.end), &ps);
+        let cr = crossings(cg, w, &ps, &path);
+        let mut p = vec![w.start];
+        p.extend(path);
+        if w.tail.is_some() {
+            p.push(w.end);
+        }
+        p.dedup_by(|a, b| d2(*a, *b) < 1e-9);
+        let mut corners: Vec<([f64; 2], [f64; 2], f64)> = Vec::new();
+        for (x, &(lo, hi)) in w.xs.iter().zip(ivs) {
+            if x.hi - x.lo < x.pad + x.pad_hi {
+                continue;
+            }
+            let lg = &cg.layers[w.layer];
+            let c = &lg.cuts[x.cut as usize];
+            let at = |s: f64| {
+                let (a, b) = (lg.vpos(c.a), lg.vpos(c.b));
+                let u = (s / c.len.max(1e-12)).clamp(0.0, 1.0);
+                [a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1])]
+            };
+            let (el, eh) = x.span();
+            if x.pad > 0.0 && (lo - el).abs() < 1e-9 {
+                corners.push((at(lo), at(x.lo), x.pad));
+            }
+            if x.pad_hi > 0.0 && (hi - eh).abs() < 1e-9 {
+                corners.push((at(hi), at(x.hi), x.pad_hi));
+            }
+        }
+        (round_bends(&p, &corners), cr)
+    };
+    // Gate: swap in `cand` if it gains no offending net and gets no closer
+    // to an old one (`strict`: also strictly fewer offending nets).
+    let try_swap = |s: &mut RouteSession,
+                    spans: &mut Vec<Vec<SpanId>>,
+                    paths: &mut Vec<Vec<[f64; 2]>>,
+                    wi: usize,
+                    cand: &[[f64; 2]],
+                    strict: bool|
+     -> bool {
+        let w = &wires[wi];
+        for id in spans[wi].drain(..) {
+            s.remove(id);
+        }
+        let new = bad(s, w, cand);
+        let old = bad(s, w, &paths[wi]);
+        let mut ok = new
+            .iter()
+            .all(|(n, d)| old.get(n).is_some_and(|o| *d >= o - 1e-6));
+        if strict {
+            let sum = |m: &std::collections::BTreeMap<String, f64>| {
+                m.values().map(|d| (w.clearance - d).max(0.0)).sum::<f64>()
+            };
+            ok = ok && (new.len() < old.len() || sum(&new) < sum(&old) - 1e-6);
+        }
+        if ok {
+            spans[wi] = commit(s, w, cand);
+            paths[wi] = cand.to_vec();
+        } else {
+            let keep = paths[wi].clone();
+            spans[wi] = commit(s, w, &keep);
+        }
+        ok
+    };
     for _ in 0..sweeps {
         for wi in 0..wires.len() {
-            let w = &wires[wi];
             let ivs = channel(&pos, wi);
-            let ps: Vec<Portal> =
-                w.xs.iter()
-                    .zip(&ivs)
-                    .map(|(x, &(lo, hi))| portal(cg, w, x, lo, hi))
-                    .collect();
-            let path = funnel(w.start, w.end, &ps);
-            let cr = crossings(cg, w, &ps, &path);
-            let mut p = vec![w.start];
-            p.extend(path);
-            p.dedup_by(|a, b| d2(*a, *b) < 1e-9);
-            // thick path: a bend at an obstacle-bounded portal end wraps the
-            // obstacle corner at the wire's pad radius (a bend at a
-            // neighbour's slot or a pinned point is not a corner)
-            let mut corners: Vec<([f64; 2], [f64; 2], f64)> = Vec::new();
-            for (x, &(lo, hi)) in w.xs.iter().zip(&ivs) {
-                if x.pad <= 0.0 || x.hi - x.lo < 2.0 * x.pad {
-                    continue;
-                }
-                let lg = &cg.layers[w.layer];
-                let c = &lg.cuts[x.cut as usize];
-                let at = |s: f64| {
-                    let (a, b) = (lg.vpos(c.a), lg.vpos(c.b));
-                    let u = (s / c.len.max(1e-12)).clamp(0.0, 1.0);
-                    [a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1])]
-                };
-                let (el, eh) = x.span();
-                if (lo - el).abs() < 1e-9 {
-                    corners.push((at(lo), at(x.lo), x.pad));
-                }
-                if (hi - eh).abs() < 1e-9 {
-                    corners.push((at(hi), at(x.hi), x.pad));
-                }
-            }
-            let cand = round_bends(&p, &corners);
+            let (cand, cr) = build(wi, &ivs);
             let accept = match sess.as_mut() {
-                None => true,
-                Some(s) => {
-                    for id in spans[wi].drain(..) {
-                        s.remove(id);
-                    }
-                    let new = bad(s, w, &cand);
-                    let old = bad(s, w, &paths[wi]);
-                    // never a new offending net, never closer to an old one
-                    let ok = new
-                        .iter()
-                        .all(|(n, d)| old.get(n).is_some_and(|o| *d >= o - 1e-6));
-                    let keep = if ok { &cand } else { &paths[wi] };
-                    spans[wi] = commit(s, w, keep);
-                    ok
+                None => {
+                    paths[wi] = cand;
+                    true
                 }
+                Some(s) => try_swap(s, &mut spans, &mut paths, wi, &cand, false),
             };
             if accept {
                 for (q, c) in pos[wi].iter_mut().zip(cr) {
                     *q = c;
                 }
-                paths[wi] = cand;
+            }
+        }
+    }
+    // Repair: a wire still offending something moves its crossings next to
+    // the offence away from the offending copper by the shortfall, and keeps
+    // the move only if it strictly helps.
+    if let Some(s) = sess.as_mut() {
+        for wi in 0..wires.len() {
+            let w = &wires[wi];
+            let lg = &cg.layers[w.layer];
+            let mut ivs = channel(&pos, wi);
+            for _ in 0..6 {
+                let mut moved = false;
+                for q in paths[wi].clone().windows(2) {
+                    if d2(q[0], q[1]) < 1e-9 {
+                        continue;
+                    }
+                    let g = seg(q[0], q[1], w);
+                    let lo = [q[0][0].min(q[1][0]) - 0.5, q[0][1].min(q[1][1]) - 0.5];
+                    let hi = [q[0][0].max(q[1][0]) + 0.5, q[0][1].max(q[1][1]) + 0.5];
+                    // the closest offending copper and how short we fall
+                    let mut worst: Option<([f64; 2], f64)> = None;
+                    s.for_each_blocking(layer_of(w), &w.net_name, lo, hi, |og, _, _, req| {
+                        let d = g.distance_to(og);
+                        let need = req.max(w.clearance) + 0.004;
+                        if d < need {
+                            let c = match *og {
+                                CopperGeom::Disc { center, .. } => [center.x, center.y],
+                                CopperGeom::Rect { center, .. } => [center.x, center.y],
+                                CopperGeom::Segment { a, b, .. } => {
+                                    let m = [(q[0][0] + q[1][0]) / 2.0, (q[0][1] + q[1][1]) / 2.0];
+                                    let ab = [b.x - a.x, b.y - a.y];
+                                    let l2 = (ab[0] * ab[0] + ab[1] * ab[1]).max(1e-18);
+                                    let t = (((m[0] - a.x) * ab[0] + (m[1] - a.y) * ab[1]) / l2)
+                                        .clamp(0.0, 1.0);
+                                    [a.x + t * ab[0], a.y + t * ab[1]]
+                                }
+                            };
+                            if worst.is_none_or(|w0| need - d > w0.1) {
+                                worst = Some((c, need - d));
+                            }
+                        }
+                    });
+                    let Some((c, short)) = worst else { continue };
+                    for (xi, x) in w.xs.iter().enumerate() {
+                        let cut = &lg.cuts[x.cut as usize];
+                        let (a, b) = (lg.vpos(cut.a), lg.vpos(cut.b));
+                        let sx = pos[wi][xi].0;
+                        let at = |t: f64| {
+                            let u = (t / cut.len.max(1e-12)).clamp(0.0, 1.0);
+                            [a[0] + u * (b[0] - a[0]), a[1] + u * (b[1] - a[1])]
+                        };
+                        if seg_dist(at(sx), q[0], q[1]) > 1e-6 {
+                            continue;
+                        }
+                        let step = short / pos[wi][xi].1.max(0.2);
+                        let (lo_i, hi_i) = ivs[xi];
+                        if d2(at(sx + 1e-3), c) > d2(at(sx - 1e-3), c) {
+                            ivs[xi].0 = (sx + step).min(hi_i);
+                        } else {
+                            ivs[xi].1 = (sx - step).max(lo_i);
+                        }
+                        moved = true;
+                    }
+                }
+                if !moved {
+                    break;
+                }
+                let (cand, cr) = build(wi, &ivs);
+                if try_swap(s, &mut spans, &mut paths, wi, &cand, true) {
+                    for (q, c) in pos[wi].iter_mut().zip(cr) {
+                        *q = c;
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+    if let Some(s) = sess.as_ref() {
+        let dirty = (0..wires.len())
+            .filter(|&wi| !bad(s, &wires[wi], &paths[wi]).is_empty())
+            .count();
+        log::info!(
+            "realize: {dirty}/{} wires still offend after relax + repair",
+            wires.len()
+        );
+        if log::log_enabled!(log::Level::Debug) {
+            for wi in 0..wires.len() {
+                let b = bad(s, &wires[wi], &paths[wi]);
+                if !b.is_empty() {
+                    log::debug!(
+                        "realize dirty {} (w {}, {} pts): {:?}",
+                        wires[wi].net_name,
+                        wires[wi].width,
+                        paths[wi].len(),
+                        b
+                    );
+                }
             }
         }
     }
@@ -552,6 +694,7 @@ mod tests {
                         lo: q[0],
                         hi: q[1],
                         pad: 0.0,
+                        pad_hi: 0.0,
                     };
                     from = x.into;
                     w
@@ -565,6 +708,8 @@ mod tests {
             net,
             net_name: format!("N{net}"),
             start_path: None,
+            lead: None,
+            tail: None,
             twin: None,
             start: [3.0, y],
             end: [17.0, y],

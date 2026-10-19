@@ -24,7 +24,7 @@ use super::flow::{
 };
 use super::realize::{realize_wires, Wire, Wx};
 use crate::router::{RouteAllResult, RoutedTrace, RoutedVia};
-use crate::session::RouteSession;
+use crate::session::{RouteSession, SpanId};
 use crate::spatial::{CopperElement, CopperGeom};
 
 /// Options of [`route_flow`].
@@ -40,7 +40,7 @@ impl Default for FlowOptions {
     fn default() -> Self {
         Self {
             params: FlowParams::default(),
-            rounds: 6,
+            rounds: 10,
         }
     }
 }
@@ -79,6 +79,12 @@ pub struct FlowReport {
     pub access: [usize; 3],
     /// Final duality gap of the access auction.
     pub access_gap: Option<f64>,
+    /// Open connections at the end, by cause.
+    pub causes: BTreeMap<String, usize>,
+    /// Per net with an open connection: the cause of its first one.
+    pub net_causes: BTreeMap<String, String>,
+    /// Plane nets with a pad that has no legal access site.
+    pub access_unsited: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -97,6 +103,7 @@ struct Px {
     lo: f64,
     hi: f64,
     pad: f64,
+    pad_hi: f64,
 }
 
 /// One per-layer run of a realized route.
@@ -252,10 +259,24 @@ fn runs_of(g: &FlowGraph, emb: &Embedding, k: &Commodity, p: &EPath, eps: f64) -
                 let lg = &g.cg.layers[layer as usize];
                 let c = &lg.cuts[cut as usize];
                 let (pa, pb) = (lg.vpos(c.a), lg.vpos(c.b));
-                let (s0, s1, pad) = match part {
+                let (s0, s1, pad, pad_hi) = match part {
                     Some(pt) => {
+                        // a used via site at a cut end is a corner too: the
+                        // extent runs to the site vertex and the wire keeps
+                        // the barrel's radius from it
+                        let raw = c.parts[pt as usize];
                         let q = emb.bounds(layer, cut, pt);
-                        (q[0], q[1], eps)
+                        let (lo, pl) = if q[0] > raw[0] + 1e-9 {
+                            (0.0, q[0] + eps)
+                        } else {
+                            (raw[0], eps)
+                        };
+                        let (hi, ph) = if q[1] < raw[1] - 1e-9 {
+                            (c.len, c.len - q[1] + eps)
+                        } else {
+                            (raw[1], eps)
+                        };
+                        (lo, hi, pl, ph)
                     }
                     None => {
                         // Own-copper crossing: keep the wire inside the raw
@@ -281,9 +302,11 @@ fn runs_of(g: &FlowGraph, emb: &Embedding, k: &Commodity, p: &EPath, eps: f64) -
                             .max_by(|x, y| (x[1] - x[0]).total_cmp(&(y[1] - y[0])))
                             .map(|x| [x[0] * c.len, x[1] * c.len]);
                         match best {
-                            Some(x) if x[1] - x[0] > 2.0 * eps => (x[0] + eps, x[1] - eps, 0.0),
-                            Some(x) => ((x[0] + x[1]) / 2.0, (x[0] + x[1]) / 2.0, 0.0),
-                            None => (c.len / 2.0, c.len / 2.0, 0.0),
+                            Some(x) if x[1] - x[0] > 2.0 * eps => {
+                                (x[0] + eps, x[1] - eps, 0.0, 0.0)
+                            }
+                            Some(x) => ((x[0] + x[1]) / 2.0, (x[0] + x[1]) / 2.0, 0.0, 0.0),
+                            None => (c.len / 2.0, c.len / 2.0, 0.0, 0.0),
                         }
                     }
                 };
@@ -294,6 +317,7 @@ fn runs_of(g: &FlowGraph, emb: &Embedding, k: &Commodity, p: &EPath, eps: f64) -
                     lo: s0,
                     hi: s1,
                     pad,
+                    pad_hi,
                 });
             }
             EStep::Via { site, to, .. } => {
@@ -404,6 +428,14 @@ fn realize(
             let near = plan[ki].as_ref().map(corridor);
             emb.route(ki as u32, k, params, near.as_ref(), 40_000)
                 .or_else(|| emb.route(ki as u32, k, params, None, 150_000))
+                .or_else(|| {
+                    // Last resort: the plan's promises to later commodities
+                    // are soft — take promised room rather than drop this one.
+                    let held = std::mem::take(&mut emb.reserved);
+                    let r = emb.route(ki as u32, k, params, None, 150_000);
+                    emb.reserved = held;
+                    r
+                })
         })
         .collect();
     log::info!(
@@ -436,8 +468,10 @@ fn realize(
                 net_name: k.net.clone(),
                 start_path: None,
                 twin: twin_of(&k.net, session, &g.net_id),
-                start: r.pre.unwrap_or(r.start),
-                end: r.post.unwrap_or(r.end),
+                start: r.start,
+                end: r.end,
+                lead: r.pre,
+                tail: r.post,
                 xs: r
                     .px
                     .iter()
@@ -447,6 +481,7 @@ fn realize(
                         lo: x.lo,
                         hi: x.hi,
                         pad: x.pad,
+                        pad_hi: x.pad_hi,
                     })
                     .collect(),
             });
@@ -478,7 +513,40 @@ fn realize(
             }
         }
     }
-    let polys = realize_wires(cg, &wires, &order, None, 3, Some(session));
+    // The gate sees the planned vias too: a wire must not hug a barrel the
+    // embedding placed for another net.
+    let mut gate = session.clone();
+    {
+        let sizing = session.via_sizing().clone();
+        for (k, p) in ks.iter().zip(&epaths) {
+            for st in p.iter().flat_map(|p| p.steps.iter()) {
+                if let EStep::Via { site, span, .. } = *st {
+                    let sp = &g.sites[site as usize].spans[span as usize];
+                    let pos =
+                        Vec2::new(g.sites[site as usize].pos[0], g.sites[site as usize].pos[1]);
+                    for &(a, b) in &sp.stack {
+                        let spec = sizing.spec(&k.net, a, b);
+                        let r = spec.r();
+                        for l in
+                            g.cg.layers
+                                .iter()
+                                .map(|l| l.layer)
+                                .filter(|l| l.spanned_by(a, b))
+                        {
+                            gate.commit(CopperElement {
+                                min: [pos.x - r, pos.y - r],
+                                max: [pos.x + r, pos.y + r],
+                                net: k.net.clone(),
+                                layer: l,
+                                geom: CopperGeom::Disc { center: pos, r },
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let polys = realize_wires(cg, &wires, &order, None, 3, Some(&gate));
     let sizing = session.via_sizing();
     ks.iter()
         .zip(&epaths)
@@ -557,7 +625,8 @@ fn try_commit(
     net: &str,
     segs: &[RoutedTrace],
     vs: &mut Vec<RoutedVia>,
-) -> bool {
+    base_len: usize,
+) -> Result<Vec<SpanId>, String> {
     let clr = session.clearance_for(net);
     // the same via already standing (same net, same span): reuse it
     vs.retain(|v| {
@@ -604,6 +673,62 @@ fn try_commit(
     };
     let legal = segs.iter().all(|t| seg_ok(session, t)) && vs.iter().all(|v| via_ok(session, v));
     if !legal {
+        // cause: the first offending piece
+        let mut why = String::from("rejected: via");
+        if let Some(v) = vs.iter().find(|v| !via_ok(session, v)) {
+            why = if !stacks_on(v) && placed_vias.contains_key(&via_key(v.position)) {
+                "rejected: via site held by another net".into()
+            } else if !stacks_on(v)
+                && !session
+                    .probe_via_span(v.position, net, v.start_layer, v.end_layer)
+                    .legal
+            {
+                "rejected: via hole-to-hole".into()
+            } else {
+                let routed = spanned(pcb, v).into_iter().any(|l| {
+                    session
+                        .probe(
+                            &CopperGeom::Disc {
+                                center: v.position,
+                                r: v.diameter / 2.0,
+                            },
+                            l,
+                            net,
+                            clr,
+                        )
+                        .blockers
+                        .iter()
+                        .any(|b| b.span >= base_len)
+                });
+                format!(
+                    "rejected: via barrel vs {} copper",
+                    if routed { "routed" } else { "fixed" }
+                )
+            };
+        }
+        for t in segs {
+            let pr = session.probe(
+                &CopperGeom::Segment {
+                    a: t.start,
+                    b: t.end,
+                    half_w: t.width / 2.0,
+                },
+                t.layer,
+                net,
+                clr,
+            );
+            if let Some(b) = pr.blockers.first() {
+                why = format!(
+                    "rejected: trace vs {} copper",
+                    if b.span >= base_len {
+                        "routed"
+                    } else {
+                        "fixed"
+                    }
+                );
+                break;
+            }
+        }
         if log::log_enabled!(log::Level::Debug) {
             for t in segs {
                 let pr = session.probe(
@@ -632,11 +757,12 @@ fn try_commit(
                 log::debug!("flow reject {net} via {:?}", v.position);
             }
         }
-        return false;
+        return Err(why);
     }
+    let mut ids = Vec::new();
     for t in segs {
         let hw = t.width / 2.0;
-        session.commit(CopperElement {
+        ids.push(session.commit(CopperElement {
             min: [t.start.x.min(t.end.x) - hw, t.start.y.min(t.end.y) - hw],
             max: [t.start.x.max(t.end.x) + hw, t.start.y.max(t.end.y) + hw],
             net: t.net.clone(),
@@ -646,17 +772,17 @@ fn try_commit(
                 b: t.end,
                 half_w: hw,
             },
-        });
+        }));
     }
     for v in vs.iter() {
         let r = v.diameter / 2.0;
-        session.commit_drill(v.position, v.drill);
+        ids.push(session.commit_drill(v.position, v.drill));
         let e = placed_vias
             .entry(via_key(v.position))
             .or_insert_with(|| (net.to_string(), Vec::new()));
         e.1.push((v.start_layer, v.end_layer));
         for l in spanned(pcb, v) {
-            session.commit(CopperElement {
+            ids.push(session.commit(CopperElement {
                 min: [v.position.x - r, v.position.y - r],
                 max: [v.position.x + r, v.position.y + r],
                 net: v.net.clone(),
@@ -665,10 +791,27 @@ fn try_commit(
                     center: v.position,
                     r,
                 },
-            });
+            }));
         }
     }
-    true
+    Ok(ids)
+}
+
+/// A committed connection: its copper and its spans in the session.
+struct Committed {
+    segs: Vec<RoutedTrace>,
+    vs: Vec<RoutedVia>,
+    ids: Vec<SpanId>,
+}
+
+fn seg_cross(p: [f64; 2], q: [f64; 2], a: [f64; 2], b: [f64; 2]) -> bool {
+    let (d1, d2, d3, d4) = (
+        orient(p, q, a),
+        orient(p, q, b),
+        orient(a, b, p),
+        orient(a, b, q),
+    );
+    d1 * d2 < 0.0 && d3 * d4 < 0.0
 }
 
 fn conn_key(k: &Commodity) -> (String, [i64; 4]) {
@@ -708,6 +851,8 @@ pub fn route_flow(
         .collect();
     rep.plane_nets = plane_nets.len();
     let mut session = RouteSession::from_pcb(pcb);
+    let base_len = session.len();
+    let mut causes: BTreeMap<(String, [i64; 4]), String> = BTreeMap::new();
     log::debug!("flow: base session spans {}", session.len());
     let mut board = pcb.clone();
     let mut traces: Vec<RoutedTrace> = Vec::new();
@@ -748,7 +893,10 @@ pub fn route_flow(
                 &pad.net,
                 &segs,
                 &mut vs,
-            ) {
+                base_len,
+            )
+            .is_ok()
+            {
                 ok += 1;
                 for t in &segs {
                     board.traces.push(vcad_ir::ecad::Trace {
@@ -774,6 +922,11 @@ pub fn route_flow(
             ok,
         ];
         rep.access_gap = last.map(|s| s.gap);
+        for (p, o) in mk.pads.iter().zip(&mk.options) {
+            if o.is_empty() {
+                *rep.access_unsited.entry(p.net.clone()).or_default() += 1;
+            }
+        }
         log::info!(
             "flow access: {} pads need a plane via, {} without a legal site, {ok} committed; \
              auction {} iterations, gap {:?}, {:.0} ms",
@@ -784,6 +937,11 @@ pub fn route_flow(
             sw.ms()
         );
     }
+    // board copper that never moves: the base + plane access
+    let fixed_board = board.clone();
+    let mut committed_map: BTreeMap<(String, [i64; 4]), Committed> = BTreeMap::new();
+    let mut ripped: BTreeMap<(String, [i64; 4]), usize> = BTreeMap::new();
+    let mut first: BTreeSet<(String, [i64; 4])> = BTreeSet::new();
     let mut done: BTreeSet<(String, [i64; 4])> = BTreeSet::new();
     let mut all: BTreeSet<(String, [i64; 4])> = BTreeSet::new();
     let mut net_of_conn: BTreeMap<(String, [i64; 4]), String> = BTreeMap::new();
@@ -798,10 +956,13 @@ pub fn route_flow(
         let cg = CutGraph::build_with(&board, params, CopperFilter::All, &pts);
         let mut g = FlowGraph::build(&cg, &specs, &params);
         rep.ms[0] += sw.ms();
-        let ks: Vec<Commodity> = commodities(pcb, &g, &session, width, nets_filter, &plane_nets)
-            .into_iter()
-            .filter(|k| !done.contains(&conn_key(k)))
-            .collect();
+        let mut ks: Vec<Commodity> =
+            commodities(pcb, &g, &session, width, nets_filter, &plane_nets)
+                .into_iter()
+                .filter(|k| !done.contains(&conn_key(k)))
+                .collect();
+        // connections that failed or were ripped up go first
+        ks.sort_by_key(|k| !first.contains(&conn_key(k)));
         if round == 0 {
             rep.graph = cg.layers.iter().fold([0; 3], |a, l| {
                 [
@@ -821,7 +982,14 @@ pub fn route_flow(
             break;
         }
         let sw = crate::router::Stopwatch::start();
-        let (paths, mut stats) = g.negotiate(&ks, &opts.params);
+        // Round 0 runs the market to feasibility or a stall; later rounds
+        // re-plan a residue on a mostly fixed board with a tighter budget.
+        let mut mp = opts.params.clone();
+        if round > 0 {
+            mp.iters = mp.iters.min(60);
+            mp.stall = mp.stall.min(10);
+        }
+        let (paths, mut stats) = g.negotiate(&ks, &mp);
         rep.ms[1] += sw.ms();
         if round == 0 {
             rep.planned = paths.iter().filter(|p| p.is_some()).count();
@@ -848,32 +1016,46 @@ pub fn route_flow(
         let mut committed = 0usize;
         let mut rejected = 0usize;
         let mut unembedded = 0usize;
-        for (k, (segs, mut vs)) in ks.iter().zip(geo) {
+        let mut round_why: BTreeMap<String, usize> = BTreeMap::new();
+        for (ki, (k, (segs, mut vs))) in ks.iter().zip(geo).enumerate() {
             if segs.is_empty() && vs.is_empty() {
-                unembedded += 1;
+                if paths[ki].is_none() {
+                    causes.insert(conn_key(k), "no plan (market: no path)".into());
+                    log::debug!(
+                        "flow round {round}: no plan for {} {:?}->{:?} (src {} nodes, dst {} nodes)",
+                        k.net,
+                        k.src.point,
+                        k.dst.point,
+                        k.src.nodes.len(),
+                        k.dst.nodes.len()
+                    );
+                } else {
+                    unembedded += 1;
+                    causes.insert(conn_key(k), "no planar embedding".into());
+                }
                 continue;
             }
 
-            if try_commit(pcb, &mut session, &mut placed_vias, &k.net, &segs, &mut vs) {
-                done.insert(conn_key(k));
-                committed += 1;
-                for t in &segs {
-                    board.traces.push(vcad_ir::ecad::Trace {
-                        start: t.start,
-                        end: t.end,
-                        width: t.width,
-                        layer: t.layer,
-                        net: t.net.clone(),
-                        source: None,
-                    });
+            let res = try_commit(
+                pcb,
+                &mut session,
+                &mut placed_vias,
+                &k.net,
+                &segs,
+                &mut vs,
+                base_len,
+            );
+            if let Err(why) = &res {
+                causes.insert(conn_key(k), why.clone());
+                *round_why.entry(why.clone()).or_default() += 1;
+            }
+            match res {
+                Ok(ids) => {
+                    done.insert(conn_key(k));
+                    committed += 1;
+                    committed_map.insert(conn_key(k), Committed { segs, vs, ids });
                 }
-                for v in &vs {
-                    board.vias.push(v.to_board_via(pcb, None));
-                }
-                traces.extend(segs);
-                vias.extend(vs);
-            } else {
-                rejected += 1;
+                Err(_) => rejected += 1,
             }
         }
         rep.ms[2] += sw.ms();
@@ -883,15 +1065,109 @@ pub fn route_flow(
             ks.len(),
             paths.iter().filter(|p| p.is_some()).count(),
         );
+        log::info!("flow round {round} rejections: {round_why:?}");
         rep.rounds.push([ks.len(), committed, rejected]);
         if round == 0 {
             rep.rejected = rejected;
         }
-        if committed == 0 {
+        // Rip-up: an open connection the board has walled off is planned on
+        // the board without routed copper; committed connections whose wires
+        // cross that plan's cuts are ripped up (each at most twice) and both
+        // go first next round.
+        let open: Vec<&Commodity> = ks.iter().filter(|k| !done.contains(&conn_key(k))).collect();
+        for k in &open {
+            first.insert(conn_key(k));
+        }
+        let mut rips = 0usize;
+        if round + 1 < opts.rounds.max(1) && !open.is_empty() && !committed_map.is_empty() {
+            let free_cg0 = CutGraph::build(&fixed_board, params, CopperFilter::All);
+            let fspecs = choose_sites(&fixed_board, &free_cg0, &opts.params);
+            drop(free_cg0);
+            let fpts: Vec<[f64; 2]> = fspecs.iter().map(|s| s.pos).collect();
+            let fcg = CutGraph::build_with(&fixed_board, params, CopperFilter::All, &fpts);
+            let fg = FlowGraph::build(&fcg, &fspecs, &params);
+            let fks = commodities(pcb, &fg, &session, width, nets_filter, &plane_nets);
+            let want: BTreeSet<(String, [i64; 4])> = open.iter().map(|k| conn_key(k)).collect();
+            let mut victims: BTreeSet<(String, [i64; 4])> = BTreeSet::new();
+            for fk in fks.iter().filter(|k| want.contains(&conn_key(k))) {
+                let Some((p, _)) = fg.shortest(fk, 0.0, &opts.params) else {
+                    continue;
+                };
+                for st in &p.steps {
+                    let Step::Cross { layer, cut, .. } = *st else {
+                        continue;
+                    };
+                    let lg = &fcg.layers[layer as usize];
+                    let c = &lg.cuts[cut as usize];
+                    let (a, b) = (lg.vpos(c.a), lg.vpos(c.b));
+                    for (key, cm) in &committed_map {
+                        if key.0 == fk.net || ripped.get(key).copied().unwrap_or(0) >= 2 {
+                            continue;
+                        }
+                        if cm.segs.iter().any(|t| {
+                            t.layer == lg.layer
+                                && seg_cross(a, b, [t.start.x, t.start.y], [t.end.x, t.end.y])
+                        }) {
+                            victims.insert(key.clone());
+                        }
+                    }
+                }
+            }
+            for key in victims {
+                if let Some(cm) = committed_map.remove(&key) {
+                    for id in cm.ids {
+                        session.remove(id);
+                    }
+                    for v in &cm.vs {
+                        if let Some(e) = placed_vias.get_mut(&via_key(v.position)) {
+                            e.1.retain(|s| *s != (v.start_layer, v.end_layer));
+                            if e.1.is_empty() {
+                                placed_vias.remove(&via_key(v.position));
+                            }
+                        }
+                    }
+                    done.remove(&key);
+                    *ripped.entry(key.clone()).or_default() += 1;
+                    first.insert(key);
+                    rips += 1;
+                }
+            }
+            log::info!("flow round {round}: ripped up {rips} connections blocking open ones");
+        }
+        // the next round's board: fixed copper + everything committed
+        board = fixed_board.clone();
+        for cm in committed_map.values() {
+            for t in &cm.segs {
+                board.traces.push(vcad_ir::ecad::Trace {
+                    start: t.start,
+                    end: t.end,
+                    width: t.width,
+                    layer: t.layer,
+                    net: t.net.clone(),
+                    source: None,
+                });
+            }
+            for v in &cm.vs {
+                board.vias.push(v.to_board_via(pcb, None));
+            }
+        }
+        if committed == 0 && rips == 0 {
             break;
         }
     }
+    for cm in committed_map.into_values() {
+        traces.extend(cm.segs);
+        vias.extend(cm.vs);
+    }
     rep.committed = done.len();
+    for key in all.iter().filter(|k| !done.contains(*k)) {
+        let c = causes
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| "no plan (market: no path)".into());
+        *rep.causes.entry(c.clone()).or_default() += 1;
+        rep.net_causes.entry(key.0.clone()).or_insert(c);
+    }
 
     let sw = crate::router::Stopwatch::start();
     let legal = crate::router::legalize::legalize(pcb, &mut traces, &mut vias, &[], true, false);
@@ -971,6 +1247,7 @@ mod tests {
         assert_eq!(rep.commodities, 3);
         assert_eq!(r.unrouted_nets, Vec::<String>::new(), "report {rep:?}");
         assert!(!r.vias.is_empty(), "the crossing nets need a layer change");
+        assert!(rep.causes.is_empty(), "nothing left open: {:?}", rep.causes);
         // The market reached a capacity-feasible plan and certified it.
         assert!(
             rep.gap.is_some_and(|g| (0.0..0.5).contains(&g)),
