@@ -316,14 +316,14 @@ fn mesh_stats(solid: &vcad_kernel::Solid) -> MeshStats {
     };
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
-    for p in mesh.vertices.chunks_exact(3) {
+    for p in mesh.vertices.as_chunks::<3>().0 {
         for k in 0..3 {
             lo[k] = lo[k].min(p[k] as f64);
             hi[k] = hi[k].max(p[k] as f64);
         }
     }
     let mut six_v = 0.0;
-    for t in mesh.indices.chunks_exact(3) {
+    for t in mesh.indices.as_chunks::<3>().0 {
         let (a, b, c) = (v(t[0]), v(t[1]), v(t[2]));
         six_v += a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
             + a[2] * (b[0] * c[1] - b[1] * c[0]);

@@ -412,12 +412,14 @@ impl Solid {
     /// `[x, y, z, ...]`). Curved operands are tessellated at their own
     /// segment count first, so the hull is faceted (planar triangle faces). `None` when the inputs don't span a volume.
     pub fn hull(solids: &[&Solid], points: &[f64]) -> Option<Self> {
-        let mut cloud: Vec<[f64; 3]> = points.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+        let mut cloud: Vec<[f64; 3]> = points.as_chunks::<3>().0.to_vec();
         for s in solids {
             let mesh = s.to_mesh(s.segments);
             cloud.extend(
                 mesh.vertices
-                    .chunks_exact(3)
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
                     .map(|c| [c[0] as f64, c[1] as f64, c[2] as f64]),
             );
         }

@@ -1361,7 +1361,7 @@ fn place_mesh(mesh: &mut vcad_eval::EvaluatedMesh, t: &vcad_ir::Transform3D) {
         ]
     };
     let (s, tr) = (t.scale, t.translation);
-    for p in mesh.positions.chunks_exact_mut(3) {
+    for p in mesh.positions.as_chunks_mut::<3>().0 {
         let v = rot([p[0] as f64 * s.x, p[1] as f64 * s.y, p[2] as f64 * s.z]);
         p[0] = (v[0] + tr.x) as f32;
         p[1] = (v[1] + tr.y) as f32;
@@ -1369,7 +1369,7 @@ fn place_mesh(mesh: &mut vcad_eval::EvaluatedMesh, t: &vcad_ir::Transform3D) {
     }
     if let Some(normals) = mesh.normals.as_mut() {
         // Inverse-transpose of R·S is R·S⁻¹; renormalise afterwards.
-        for n in normals.chunks_exact_mut(3) {
+        for n in normals.as_chunks_mut::<3>().0 {
             let v = rot([n[0] as f64 / s.x, n[1] as f64 / s.y, n[2] as f64 / s.z]);
             let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-12);
             n[0] = (v[0] / len) as f32;

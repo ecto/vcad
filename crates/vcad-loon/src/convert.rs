@@ -2586,7 +2586,7 @@ impl ConvertCtx {
 /// closing point (last == first) is dropped rather than emitted as a
 /// zero-length edge.
 fn polyline_loop(flat: &[f64], what: &str) -> Result<Vec<SketchSegment2D>, String> {
-    if flat.len() % 2 != 0 {
+    if !flat.len().is_multiple_of(2) {
         return Err(format!(
             "{what}: expected a flat #[x y ...] list, got an odd count ({})",
             flat.len()
