@@ -718,6 +718,13 @@ struct ReleasedOverlayView: View {
                           lookAt: model.panOffset,
                           geometryKey: geometryKey)
                 .ignoresSafeArea()
+            // Live irys path tracing over the raster view (the raster view
+            // keeps running underneath, so picking and the gizmo still work).
+            if model.pathTraceEnabled {
+                PathTracedViewport(model: model)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
             // ARView consumes mouse events — capture orbit/zoom on a clear
             // layer above it instead.
             Color.clear

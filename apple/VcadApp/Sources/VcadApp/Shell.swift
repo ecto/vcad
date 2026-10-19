@@ -255,6 +255,11 @@ struct DocumentCommands: Commands {
                 set: { model.setRaytrace($0) }))
                 .keyboardShortcut("r", modifiers: [.command, .option])
                 .disabled(!model.usesDocumentTree)
+            Toggle("Path-Traced View", isOn: Binding(
+                get: { model.pathTraceEnabled },
+                set: { model.setPathTrace($0) }))
+                .keyboardShortcut("p", modifiers: [.command, .option])
+                .disabled(!model.usesDocumentTree && model.assemblyInstanceCount == 0)
             Divider()
             Button(model.isWindowed ? "Release to Desktop" : "Open in Window") {
                 ReleaseWindowController.shared.setWindowed(!model.isWindowed)
