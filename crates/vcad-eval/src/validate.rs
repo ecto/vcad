@@ -50,6 +50,7 @@ fn validate_op(doc: &Document, node_id: NodeId, op: &CsgOp) -> Result<(), EvalEr
         | CsgOp::Mirror { child, .. }
         | CsgOp::LinearPattern { child, .. }
         | CsgOp::CircularPattern { child, .. }
+        | CsgOp::SweepRotate { child, .. }
         | CsgOp::Shell { child, .. }
         | CsgOp::Fillet { child, .. }
         | CsgOp::Chamfer { child, .. }
@@ -133,6 +134,7 @@ fn csg_op_name(op: &CsgOp) -> &'static str {
         CsgOp::Scale { .. } => "Scale",
         CsgOp::LinearPattern { .. } => "LinearPattern",
         CsgOp::CircularPattern { .. } => "CircularPattern",
+        CsgOp::SweepRotate { .. } => "SweepRotate",
         CsgOp::Shell { .. } => "Shell",
         CsgOp::Fillet { .. } => "Fillet",
         CsgOp::Chamfer { .. } => "Chamfer",

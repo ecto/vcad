@@ -174,6 +174,27 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
                 )
             })
         }
+        CsgOp::SweepRotate {
+            child,
+            axis_origin,
+            axis_dir,
+            angle_lo_deg,
+            angle_hi_deg,
+            step_deg,
+            clearance,
+        } => {
+            let c = evaluate_node(doc, *child)?;
+            c.map(|s| {
+                s.sweep_rotate(
+                    vcad_kernel_math::Point3::new(axis_origin.x, axis_origin.y, axis_origin.z),
+                    vcad_kernel_math::Vec3::new(axis_dir.x, axis_dir.y, axis_dir.z),
+                    *angle_lo_deg,
+                    *angle_hi_deg,
+                    *step_deg,
+                    clearance.unwrap_or(0.0).max(0.0),
+                )
+            })
+        }
         // Blends are fail-closed: the kernel would hand back the
         // *unmodified* solid, so a document asking for radii would
         // silently evaluate to square edges. Surface it instead.

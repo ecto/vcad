@@ -47,6 +47,7 @@ use vcad_kernel_tessellate::TriangleMesh;
 
 use crate::api::BooleanOp;
 use crate::mesh::MeshRayIndex;
+use rayon::prelude::*;
 
 /// Plane-side classification tolerance (mm) for splitting.
 const EPS: f64 = 1e-5;
@@ -841,6 +842,64 @@ pub fn manifold_csg(mesh_a: &TriangleMesh, mesh_b: &TriangleMesh, op: BooleanOp)
     make_manifold(&out, DEFAULT_WELD_EPS)
 }
 
+/// Union of many closed meshes in one pass.
+///
+/// Folding [`mesh_csg`] over N heavily overlapping operands (the rotated
+/// copies of a swept volume) compounds: every level re-splits the previous
+/// level's fragments by the next operand's planes, so near-coincident
+/// surfaces shatter into slivers and the cost grows far faster than N (a
+/// 16-copy cylinder sweep took over a minute). Here each operand's
+/// *original* polygons are split only by the other operands' original
+/// polygons, and a fragment survives iff it lies outside every other
+/// operand — coplanar same-facing overlaps are kept from the lowest index
+/// only, so shared faces appear once.
+pub fn mesh_union_all(meshes: &[TriangleMesh]) -> TriangleMesh {
+    match meshes.len() {
+        0 => return TriangleMesh::default(),
+        1 => return meshes[0].clone(),
+        _ => {}
+    }
+    let polys: Vec<Vec<Polygon>> = meshes.iter().map(mesh_polygons).collect();
+    let boxes: Vec<Aabb> = polys
+        .iter()
+        .map(|p| {
+            let verts: Vec<Point3> = p.iter().flat_map(|q| q.verts.iter().copied()).collect();
+            Aabb::of(&verts)
+        })
+        .collect();
+    let members: Vec<Membership> = meshes.iter().map(Membership::new).collect();
+    let indices: Vec<[MeshRayIndex<'_>; 3]> = members.iter().map(Membership::index).collect();
+    let pad = 10.0 * EPS;
+    // Operands are independent until the final stitch: each one's kept
+    // fragments depend only on the (read-only) others.
+    let out: Vec<Polygon> = (0..meshes.len())
+        .into_par_iter()
+        .flat_map_iter(|i| {
+            let others: Vec<usize> = (0..meshes.len())
+                .filter(|&j| j != i && !polys[j].is_empty() && boxes[i].overlaps(&boxes[j], pad))
+                .collect();
+            let mut frags = polys[i].clone();
+            for &j in &others {
+                frags = split_by_other(frags, &polys[j]);
+            }
+            let indices = &indices;
+            let boxes = &boxes;
+            frags.into_iter().filter(move |f| {
+                let fb = Aabb::of(&f.verts);
+                others.iter().all(|&j| {
+                    !fb.overlaps(&boxes[j], pad)
+                        || match classify(f, &indices[j]) {
+                            Class::Out => true,
+                            Class::OnAligned => j > i,
+                            Class::In | Class::OnOpposed => false,
+                        }
+                })
+            })
+        })
+        .collect();
+    make_manifold(&orient_outward(polygons_to_mesh(&out)), DEFAULT_WELD_EPS)
+}
+
 /// Pin the global orientation: a bounded solid — outer shells minus any
 /// enclosed voids — always has positive signed volume, so a negative total
 /// means every fragment is wound inside-out and flipping all of them is the
@@ -940,6 +999,19 @@ mod tests {
             (inter - 500.0).abs() < 1.0,
             "intersection: expected 500, got {inter}"
         );
+    }
+
+    #[test]
+    fn union_all_of_overlapping_and_coincident_cubes() {
+        // Four cubes stepped 5 mm along X span 25 mm (2500); a fifth,
+        // identical to the first, must not double its faces.
+        let cube = tessellate_brep(&make_cube(10.0, 10.0, 10.0), 16);
+        let mut meshes: Vec<TriangleMesh> = (0..4)
+            .map(|k| shifted(&cube, [5.0 * k as f32, 0.0, 0.0]))
+            .collect();
+        meshes.push(cube.clone());
+        let uni = volume(&mesh_union_all(&meshes));
+        assert!((uni - 2500.0).abs() < 1.0, "expected 2500, got {uni}");
     }
 
     #[test]

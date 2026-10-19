@@ -578,6 +578,7 @@ fn op_type_name(op: &CsgOp) -> &'static str {
         CsgOp::Shell { .. } => "shell",
         CsgOp::LinearPattern { .. } => "linear pattern",
         CsgOp::CircularPattern { .. } => "circular pattern",
+        CsgOp::SweepRotate { .. } => "swept rotation",
         CsgOp::Sketch2D { .. } => "sketch",
         CsgOp::Extrude { .. } => "extrude",
         CsgOp::Revolve { .. } => "revolve",

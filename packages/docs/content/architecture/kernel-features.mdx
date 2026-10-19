@@ -126,6 +126,25 @@ Assemblies mirror too, and that is where the sign rules actually bite — a join
 
 `crates/vcad-eval/tests/assembly_symmetry.rs` drives both hips to the same state and asserts the whole assembly's centre of mass stays on the plane — with a deliberately chiral leg, so a copy that is translated but not reflected fails too.
 
+### Swept Rotation (Joint Clearance)
+
+`SweepRotate` is the volume a solid occupies while it rotates about an axis over an angle range — the region a neighbouring link swings through. Subtracting it carves a joint relief (knee fold, elbow, hip) natively instead of importing a relief mesh. `[sweep-rotate ox oy oz ax ay az lo hi s]` picks the sampling automatically (envelope chord sag ≤ 0.25 mm, copy spacing ≤ 15 mm at the furthest point), `[sweep-rotate-n … lo hi step s]` fixes it, and `[sweep-rotate-clear … lo hi step c s]` dilates the moving part by `c` mm first so the fold keeps a running gap:
+
+```lisp
+[let thigh [pipe [cube 60 50 110] [translate -30 -25 -30]]]
+[let calf  [pipe [cube 24 24 140] [translate -12 -12 -128]]]
+[let thigh-relieved
+  [pipe thigh [difference [sweep-rotate-clear 0 0 0  1 0 0  0 120  0 1 calf]]]]
+[root thigh-relieved "aluminum"]
+[root [pipe calf [rotate 45 0 0]] "steel"]
+```
+
+![Thigh housing relieved by the calf's 0–120° fold](/assets/kernel/sweep-rotate.jpg)
+
+Rendered with `--azimuth 130 --elevation=-20` so the relief in the back wall faces the camera; the calf is posed mid-fold at 45°.
+
+The kernel tessellates the child once, rotates copies, and unions them in one flat pass — each copy is split only by the other copies' original faces and a fragment survives iff it lies outside every other copy, so fragments never compound the way a pairwise fold does. The result is triangle soup recorded as a boolean fallback in the solid's provenance — correct geometry for a cutting tool, not a surface to fillet or export as analytic STEP.
+
 ### Sketches and Constraints
 
 `vcad-kernel-sketch` models 2D profiles (lines, arcs) on arbitrary planes, and `vcad-kernel-constraints` solves geometric constraints — coincident, horizontal/vertical, parallel, perpendicular, tangent, distance, length, radius, angle, equal-length, fixed — with a Levenberg-Marquardt solver using adaptive damping. Sketches feed every profile-based operation below.

@@ -91,6 +91,7 @@
   ; Patterns
   [LinearPattern Solid f64 f64 f64 Int f64]
   [CircularPattern Solid f64 f64 f64 f64 f64 f64 Int f64]
+  [SweepRotate Solid f64 f64 f64 f64 f64 f64 f64 f64 f64 f64]
   ; Fasteners — catalog-backed hardware, oriented by its own axis.
   ; [Fastener spec style fx fy fz tx ty tz stack]
   [Fastener Str Str f64 f64 f64 f64 f64 f64 (Vec Str)]
@@ -442,6 +443,20 @@
   [LinearPattern s dx dy dz count spacing]]]
 [let circular-pattern [fn [ox oy oz ax ay az count angle s]
   [CircularPattern s ox oy oz ax ay az count angle]]]
+
+; Swept rotation — the union of s rotated about the axis through (ox oy oz)
+; along (ax ay az) over [lo, hi] degrees (inclusive). A clearance-cut tool:
+;   [pipe shell [difference [sweep-rotate 0 0 0  1 0 0  0 120 calf]]]
+; carves the path the calf swings through over a 0..120° knee fold.
+; Auto step keeps chord sag <= 0.25 mm and copy spacing <= 15 mm at the
+; furthest point; -n fixes the step; -clear also dilates s outward by c mm
+; first (step 0 = auto). The result is triangle soup — a tool, not a part.
+[let sweep-rotate [fn [ox oy oz ax ay az lo hi s]
+  [SweepRotate s ox oy oz ax ay az lo hi 0 0]]]
+[let sweep-rotate-n [fn [ox oy oz ax ay az lo hi step s]
+  [SweepRotate s ox oy oz ax ay az lo hi step 0]]]
+[let sweep-rotate-clear [fn [ox oy oz ax ay az lo hi step c s]
+  [SweepRotate s ox oy oz ax ay az lo hi step c]]]
 
 ; ---------------------------------------------------------------------------
 ; Fasteners — one form per fastener, oriented by its axis.

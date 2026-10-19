@@ -62,6 +62,9 @@ pub use cam_verify::verify_toolpaths;
 pub mod sheet_fold;
 pub use sheet_fold::folded_sheet_solid;
 
+mod sweep_rotate;
+pub use sweep_rotate::{DEFAULT_COVER_MM, DEFAULT_SAG_MM, MAX_SWEEP_SAMPLES};
+
 pub mod provenance;
 pub use provenance::{DegradeEvent, LossKind, SolidFidelity};
 

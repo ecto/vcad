@@ -892,6 +892,22 @@ function evaluateOp(
       );
     }
 
+    case "SweepRotate": {
+      const child = evaluateNode(op.child, nodes, Solid, cache, depth + 1);
+      return child.sweepRotate(
+        op.axis_origin.x,
+        op.axis_origin.y,
+        op.axis_origin.z,
+        op.axis_dir.x,
+        op.axis_dir.y,
+        op.axis_dir.z,
+        op.angle_lo_deg,
+        op.angle_hi_deg,
+        op.step_deg ?? 0,
+        op.clearance ?? 0,
+      );
+    }
+
     case "Shell": {
       const child = evaluateNode(op.child, nodes, Solid, cache, depth + 1);
       return child.shell(op.thickness);
@@ -1189,6 +1205,7 @@ function remapNodeIds(node: Node, idMap: Map<number, number>): Node {
     case "Scale":
     case "LinearPattern":
     case "CircularPattern":
+    case "SweepRotate":
     case "Shell":
     case "Fillet":
     case "Chamfer":

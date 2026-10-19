@@ -81,6 +81,16 @@ The `pipe` form passes the result of each expression as the last argument to the
 }
 ```
 
+### Knee-Fold Relief (swept clearance cut)
+
+```json
+{
+  "source": "[let calf [pipe [cylinder 14 160] [translate 0 0 -150]]]\n[let thigh [pipe [cube 56 44 150] [translate -28 -22 -30]]]\n[let relieved [pipe thigh [difference [sweep-rotate-clear 0 0 0 1 0 0 0 120 0 1 calf]]]]\n[root relieved \"aluminum\"]"
+}
+```
+
+`[sweep-rotate ox oy oz ax ay az lo hi s]` is the union of `s` rotated about an axis over `[lo, hi]` degrees; `-n` adds an explicit step, `-clear` a step (0 = auto) and an outward dilation in mm. Subtract it to carve the path a neighbouring link swings through.
+
 ### Multi-Part Scene
 
 ```json

@@ -389,6 +389,7 @@ impl<'a> UrdfWriter<'a> {
             }
             CsgOp::LinearPattern { child, .. }
             | CsgOp::CircularPattern { child, .. }
+            | CsgOp::SweepRotate { child, .. }
             | CsgOp::Shell { child, .. }
             | CsgOp::Fillet { child, .. }
             | CsgOp::Chamfer { child, .. }
