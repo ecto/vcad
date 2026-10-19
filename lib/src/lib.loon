@@ -150,7 +150,11 @@
 
 [type SketchSeg
   [SLine f64 f64 f64 f64]
-  [SArc f64 f64 f64 f64 f64 f64 Bool]]
+  [SArc f64 f64 f64 f64 f64 f64 Bool]
+  ; A closed polygon: flat #[x0 y0 x1 y1 ...] outer loop plus a list of
+  ; hole loops (flat points, or #[cx cy r] for a circle). Expands to the
+  ; sketch's outer profile + interior holes.
+  [SPoly (Vec f64) (Vec (Vec f64))]]
 
 [type Sketch
   [Sketch f64 f64 f64 f64 f64 f64 f64 f64 f64 (Vec SketchSeg)]
@@ -338,6 +342,18 @@
   [Sketch ox oy oz xx xy xz yx yy yz segs]]]
 [let line [fn [x1 y1 x2 y2] [SLine x1 y1 x2 y2]]]
 [let arc [fn [x1 y1 x2 y2 cx cy ccw] [SArc x1 y1 x2 y2 cx cy ccw]]]
+; [polygon #[x0 y0 x1 y1 ...]] — a closed polyline as ONE sketch segment.
+; [polygon #[outer...] #[#[hole1...] #[hole2...]]] — plus interior holes,
+; which extrude cuts as walls directly (no boolean Difference). Winding is
+; free; holes must lie strictly inside the outer loop and not touch each
+; other. A hole given as exactly three numbers #[cx cy r] is a true circle
+; (two arcs, not a faceted n-gon) — the bolt-hole case. A sketch holding a
+; polygon must hold nothing else. Revolve/loft/sweep refuse holes; a
+; hole-free polygon works everywhere a sketch does.
+;   [extrude 0 0 3.2 [sketch 0 0 0 1 0 0 0 1 0
+;     #[[polygon #[0 0 80 0 80 40 0 40] #[#[10 20 1.6] #[70 20 1.6]]]]]]
+[let polygon [fn [pts & holes]
+  [SPoly pts [if [empty? holes] #[] [first holes]]]]]
 
 ; Extrude/Revolve (subject-last: sketch is the subject)
 [let extrude [fn [dx dy dz sk] [Extrude sk dx dy dz]]]

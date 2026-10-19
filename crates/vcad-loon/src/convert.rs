@@ -2268,14 +2268,14 @@ impl ConvertCtx {
                 let origin = self.vec3(fields, 0)?;
                 let x_dir = self.vec3(fields, 3)?;
                 let y_dir = self.vec3(fields, 6)?;
-                let segments = self.convert_sketch_segments(&fields[9])?;
+                let (segments, holes) = self.convert_sketch_body(&fields[9])?;
 
                 Ok(self.insert_node(CsgOp::Sketch2D {
                     origin,
                     x_dir,
                     y_dir,
                     segments,
-                    holes: None,
+                    holes,
                 }))
             }
             // [SketchPoly #[x0 y0 x1 y1 ...]] — a closed polyline profile.
@@ -2384,6 +2384,57 @@ impl ConvertCtx {
         }
     }
 
+    /// A sketch's segment list. A lone `[SPoly outer holes]` expands to the
+    /// outer polyline plus interior hole loops; otherwise every entry is an
+    /// ordinary `SLine`/`SArc` and there are no holes.
+    #[allow(clippy::type_complexity)]
+    fn convert_sketch_body(
+        &self,
+        value: &Value,
+    ) -> Result<(Vec<SketchSegment2D>, Option<Vec<Vec<SketchSegment2D>>>), String> {
+        let items = match value {
+            Value::Vec(v) => v,
+            _ => return Err(format!("expected Vec of SketchSeg, got {value}")),
+        };
+        let is_poly = |v: &Value| matches!(v, Value::Adt(t, _) if t == "SPoly");
+        if !items.iter().any(is_poly) {
+            return Ok((self.convert_sketch_segments(value)?, None));
+        }
+        if items.len() != 1 {
+            return Err(format!(
+                "a sketch holding a [polygon] must hold nothing else, got {} segments \
+                 (put every outline point in the one polygon and every cutout in its holes)",
+                items.len()
+            ));
+        }
+        let Value::Adt(_, fields) = &items[0] else {
+            unreachable!()
+        };
+        assert_fields("SPoly", fields, 2)?;
+        let outer = polyline_loop(&self.f64_list(&fields[0], "polygon point")?, "polygon")?;
+        let hole_vals = match &fields[1] {
+            Value::Vec(v) => v,
+            other => {
+                return Err(format!(
+                    "polygon: expected a list of hole loops, got {other}"
+                ))
+            }
+        };
+        let holes = hole_vals
+            .iter()
+            .enumerate()
+            .map(|(k, h)| {
+                let flat = self.f64_list(h, "polygon hole point")?;
+                if flat.len() == 3 {
+                    return circle_loop(flat[0], flat[1], flat[2])
+                        .map_err(|e| format!("polygon hole {k}: {e}"));
+                }
+                polyline_loop(&flat, &format!("polygon hole {k}"))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok((outer, (!holes.is_empty()).then_some(holes)))
+    }
+
     fn convert_sketch_segments(&self, value: &Value) -> Result<Vec<SketchSegment2D>, String> {
         let items = match value {
             Value::Vec(v) => v,
@@ -2424,6 +2475,64 @@ impl ConvertCtx {
             _ => Err(format!("unknown SketchSeg variant: {tag}")),
         }
     }
+}
+
+/// A closed polyline from a flat `[x0 y0 x1 y1 ...]` list. A repeated
+/// closing point (last == first) is dropped rather than emitted as a
+/// zero-length edge.
+fn polyline_loop(flat: &[f64], what: &str) -> Result<Vec<SketchSegment2D>, String> {
+    if flat.len() % 2 != 0 {
+        return Err(format!(
+            "{what}: expected a flat #[x y ...] list, got an odd count ({})",
+            flat.len()
+        ));
+    }
+    let mut pts: Vec<Vec2> = flat
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| Vec2::new(c[0], c[1]))
+        .collect();
+    if pts.len() > 1 && pts[0] == pts[pts.len() - 1] {
+        pts.pop();
+    }
+    if pts.len() < 3 {
+        return Err(format!(
+            "{what}: a closed loop needs at least three distinct points, got {}",
+            pts.len()
+        ));
+    }
+    let n = pts.len();
+    Ok((0..n)
+        .map(|i| SketchSegment2D::Line {
+            start: pts[i],
+            end: pts[(i + 1) % n],
+        })
+        .collect())
+}
+
+/// A true circle `#[cx cy r]` as two half arcs.
+fn circle_loop(cx: f64, cy: f64, r: f64) -> Result<Vec<SketchSegment2D>, String> {
+    if !(r > 0.0 && r.is_finite()) {
+        return Err(format!("circle radius must be positive, got {r}"));
+    }
+    let center = Vec2::new(cx, cy);
+    let a = Vec2::new(cx + r, cy);
+    let b = Vec2::new(cx - r, cy);
+    Ok(vec![
+        SketchSegment2D::Arc {
+            start: a,
+            end: b,
+            center,
+            ccw: true,
+        },
+        SketchSegment2D::Arc {
+            start: b,
+            end: a,
+            center,
+            ccw: true,
+        },
+    ])
 }
 
 fn assert_fields(tag: &str, fields: &[Value], expected: usize) -> Result<(), String> {
