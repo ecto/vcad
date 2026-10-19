@@ -76,6 +76,12 @@ fn main() {
     {
         opts.params.iters = n;
     }
+    if let Some(n) = std::env::var("VCAD_FLOW_ROUNDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        opts.rounds = n;
+    }
     let before = rule_counts(&pcb);
     let width = pcb.rules.default_rules.trace_width;
     let t0 = Instant::now();

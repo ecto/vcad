@@ -498,7 +498,11 @@ impl<'a, 'g> Embedding<'a, 'g> {
             for kk in 0..3 {
                 let c = lg.tri_cut[face as usize][kk];
                 let nb = lg.tri_nbr[face as usize][kk];
-                if c == entry_cut || nb == NONE || !g.face_ok(l, nb, net) || !inside(l, nb) {
+                if c == entry_cut
+                    || nb == NONE
+                    || (!g.face_ok(l, nb, net) && !dst.contains(&g.node(l, nb)))
+                    || !inside(l, nb)
+                {
                     continue;
                 }
                 let len = g.arc_len[l][c as usize];

@@ -861,7 +861,12 @@ impl<'g> FlowGraph<'g> {
                     for kk in 0..3 {
                         let c = lg.tri_cut[f as usize][kk];
                         let nb = lg.tri_nbr[f as usize][kk];
-                        if nb == NONE || !self.face_ok(l, nb, k.net_id) {
+                        // a blocked face is still enterable when it is the
+                        // destination pad's own face (small pads)
+                        if nb == NONE
+                            || (!self.face_ok(l, nb, k.net_id)
+                                && !dst_set.contains(&self.node(l, nb)))
+                        {
                             continue;
                         }
                         let mode = self.cross(l, c, k.net_id);
