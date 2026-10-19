@@ -48,6 +48,40 @@ pub fn is_triangle_soup(solid: &BRepSolid) -> bool {
         .all(|(_, f)| f.inner_loops.is_empty() && topo.loop_len(f.outer_loop) == 3)
 }
 
+/// Is this solid a dense *faceted* polyhedron: hundreds of faces, every one
+/// planar with no holes and at most four edges, apart from a handful of
+/// polygonal caps? This is what a ruled loft of dense polyline sections
+/// builds (one quad per segment per section pair, plus two n-gon caps).
+///
+/// Like [`is_triangle_soup`], such an operand gains nothing from the B-rep
+/// pipeline — there are no analytic surfaces to keep — while its face-pair
+/// stages (SSI trimming, point-in-face) scale with the face count. A
+/// helmet cut from a 25-section x 56-segment loft spent ~10 minutes there
+/// and the result was then rejected and re-cut with the mesh boolean anyway.
+pub fn is_dense_faceted(solid: &BRepSolid) -> bool {
+    let topo = &solid.topology;
+    if topo.faces.len() < 256 {
+        return false;
+    }
+    let mut caps = 0usize;
+    for (_, f) in topo.faces.iter() {
+        if !f.inner_loops.is_empty() {
+            return false;
+        }
+        let surface = &solid.geometry.surfaces[f.surface_index];
+        if surface.surface_type() != vcad_kernel_geom::SurfaceKind::Plane {
+            return false;
+        }
+        if topo.loop_len(f.outer_loop) > 4 {
+            caps += 1;
+            if caps > 2 {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Build a B-rep from a triangle mesh by emitting one planar face per
 /// triangle and pairing twin half-edges across shared edges.
 ///

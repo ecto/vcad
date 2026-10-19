@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-19-dense-loft-boolean-perf",
+  "version": "undefined",
+  "date": "2026-10-19",
+  "category": "perf",
+  "title": "Booleans against dense lofts take seconds, not minutes",
+  "summary": "Booleans with a dense faceted operand (e.g. a loft of 50-segment polyline sections) skip the B-rep face-pair stages and use the mesh boolean directly.",
+  "features": ["loft", "booleans"]
+}
