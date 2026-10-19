@@ -102,6 +102,7 @@ final class ReleaseWindowController {
     private var pointerOverScene = false
 
     func show(model: EditorModel, intent: IntentEngine) {
+        AgentBridge.shared.start(model: model)
         guard window == nil else { return }
         self.model = model
         model.evaluatesOffMainThread = true
@@ -475,7 +476,8 @@ final class ReleaseWindowController {
         (model?.highlightedParts.contains(i) ?? false) ? .selected : .none
     }
     private func liftForInstance(_ i: Int) -> Lift {
-        (model?.selectedInstances.contains(i) ?? false) ? .selected : .none
+        guard let model else { return .none }
+        return model.selectedInstances.contains(i) || model.agentHighlights.contains(i) ? .selected : .none
     }
 
     /// The three states a body can be in. Selection is brand orange; hover on
@@ -849,6 +851,10 @@ struct ReleasedOverlayView: View {
                 DesignViewportTools(model: model).padding(Theme.Space.l)
                     .modifier(ChromeRegion(key: "designViewportTools"))
             }
+        }
+        .overlay {
+            // Labels an agent pinned over the MCP bridge (AgentBridge.swift).
+            AgentAnnotationOverlay(model: model)
         }
         .overlay(alignment: .bottomLeading) {
             // Orientation triad: which way X, Y and Z point right now.

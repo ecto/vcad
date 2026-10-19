@@ -423,6 +423,11 @@ final class EditorModel {
     /// tree row lights every instance drawn from that row's part def, because
     /// the row *is* the definition — one row, four elbows on a quadruped.
     var hoveredInstances: Set<Int> = []
+    /// Instances an agent (over the app's MCP bridge) is pointing at — painted
+    /// like a selection so the user sees what the agent means.
+    var agentHighlights: Set<Int> = []
+    /// Labels an agent pinned to instances, drawn in the viewport overlay.
+    var agentAnnotations: [AgentAnnotation] = []
     /// The tree row that is hot, whichever side the pointer is on. Hovering
     /// geometry highlights its row; hovering a row highlights its geometry.
     var hoveredFeatureID: String?

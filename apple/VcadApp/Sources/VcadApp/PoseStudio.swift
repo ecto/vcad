@@ -273,15 +273,15 @@ extension EditorModel {
     #if os(macOS)
     /// Path-trace the current pose/explode from the current camera direction
     /// and open the result. Runs `vcad-render --photoreal` off the main actor.
-    func photorealSnapshot(spp: Int = 96) {
-        guard !photorealBusy else { return }
+    func photorealSnapshot(spp: Int = 96, completion: (@MainActor @Sendable (_ path: String?, _ error: String?) -> Void)? = nil) {
+        guard !photorealBusy else { completion?(nil, "A photoreal render is already running."); return }
         guard let bin = Self.vcadRenderBinary() else {
             photorealStatus = "vcad-render not found (build it: cargo build --release -p vcad-render, or set VCAD_RENDER)"
-            return
+            completion?(nil, photorealStatus); return
         }
         guard let posed = posedDocumentJSON() else {
             photorealStatus = "Nothing posed to render yet."
-            return
+            completion?(nil, photorealStatus); return
         }
         // Camera direction, kernel frame: azimuth CCW from +X, elevation above XY.
         var az = 35.0, el = 20.0
@@ -302,7 +302,7 @@ extension EditorModel {
         let outURL = dir.appendingPathComponent("\(base).png")
         do { try posed.write(to: docURL) } catch {
             photorealStatus = "Could not stage the posed document: \(error.localizedDescription)"
-            return
+            completion?(nil, photorealStatus); return
         }
         photorealBusy = true
         photorealStatus = "Path tracing…"
@@ -334,6 +334,7 @@ extension EditorModel {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.photorealBusy = false
+                completion?(failure == nil ? outURL.path : nil, failure)
                 if let failure {
                     self.photorealStatus = failure
                 } else {
