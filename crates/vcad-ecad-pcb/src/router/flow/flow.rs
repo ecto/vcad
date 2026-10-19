@@ -94,6 +94,8 @@ pub struct FlowParams {
     pub pres0: f64,
     /// Present factor growth per iteration.
     pub pres_growth: f64,
+    /// Present factor ceiling (damping: past it, prices do the work).
+    pub pres_max: f64,
     /// Cost of a drilled (non-micro) via (mm-equivalent).
     pub via_cost: f64,
     /// Cost of a single-pair (micro) via.
@@ -110,6 +112,7 @@ impl Default for FlowParams {
             alpha: 0.5,
             pres0: 0.5,
             pres_growth: 1.3,
+            pres_max: 20.0,
             via_cost: 2.0,
             micro_cost: 1.0,
             via_block: 5.0,
@@ -262,6 +265,10 @@ pub struct FlowGraph<'g> {
     pub site_lambda: Vec<f64>,
     /// Users of each site this iteration (net ids, with multiplicity).
     site_users: Vec<Vec<u32>>,
+    /// Feasibility probe: route as if alone, never over a cut's capacity.
+    alone: std::cell::Cell<bool>,
+    /// Per (layer, cut, net): how many of the net's connections cross it.
+    net_use: std::cell::RefCell<HashMap<(u8, u32, u32), u32>>,
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -663,6 +670,8 @@ impl<'g> FlowGraph<'g> {
             n_nodes,
             site_lambda: vec![0.0; sites.len()],
             site_users: vec![Vec::new(); sites.len()],
+            alone: std::cell::Cell::new(false),
+            net_use: std::cell::RefCell::new(HashMap::new()),
             sites,
             face_sites,
             site_faces,
@@ -873,12 +882,24 @@ impl<'g> FlowGraph<'g> {
                         if mode == Cross::Blocked {
                             continue;
                         }
+                        if self.alone.get()
+                            && mode == Cross::Consumes
+                            && self.cap[l][c as usize] < k.units - 1e-9
+                        {
+                            continue;
+                        }
                         let len = self.arc_len[l][c as usize];
                         if !len.is_finite() {
                             continue;
                         }
                         let mut w = len;
-                        if mode == Cross::Consumes {
+                        let shared = mode == Cross::Consumes
+                            && self
+                                .net_use
+                                .borrow()
+                                .get(&(l as u8, c, k.net_id))
+                                .is_some_and(|&n| n > 0);
+                        if mode == Cross::Consumes && !shared {
                             let ci = c as usize;
                             w += k.units * self.lambda[l][ci];
                             let excess = (self.load[l][ci] + k.units - self.cap[l][ci]).max(0.0);
@@ -1015,7 +1036,26 @@ impl<'g> FlowGraph<'g> {
                     cut,
                     consumes: true,
                     ..
-                } => self.load[layer as usize][cut as usize] += sign * k.units,
+                } => {
+                    // one net's wires share copper: a cut carries a net once
+                    // (the MST connections of a net form a Steiner tree)
+                    let e = *self
+                        .net_use
+                        .borrow_mut()
+                        .entry((layer, cut, k.net_id))
+                        .or_insert(0);
+                    let after = if sign > 0.0 {
+                        e + 1
+                    } else {
+                        e.saturating_sub(1)
+                    };
+                    self.net_use
+                        .borrow_mut()
+                        .insert((layer, cut, k.net_id), after);
+                    if (e == 0 && after == 1) || (e == 1 && after == 0) {
+                        self.load[layer as usize][cut as usize] += sign * k.units;
+                    }
+                }
                 Step::Via { site, span, .. } => {
                     let sp = &self.sites[site as usize].spans[span as usize];
                     for &(cl, cc, units) in &sp.cuts {
@@ -1069,19 +1109,40 @@ impl<'g> FlowGraph<'g> {
     ) -> (Vec<Option<FlowPath>>, Vec<IterStat>) {
         let mut paths: Vec<Option<FlowPath>> = vec![None; ks.len()];
         let mut stats = Vec::new();
+        // A connection that cannot be routed even alone without exceeding a
+        // cut's capacity makes the whole problem infeasible: the bound then
+        // grows without limit and overflow never clears. Keep such ones out
+        // of the market (they are reported as having no plan).
+        self.alone.set(true);
+        let feasible: Vec<bool> = ks
+            .iter()
+            .map(|k| self.shortest(k, 0.0, params).is_some())
+            .collect();
+        self.alone.set(false);
+        let infeasible = feasible.iter().filter(|f| !**f).count();
+        if infeasible > 0 {
+            log::info!("flow market: {infeasible} connection(s) infeasible even alone, left out");
+        }
         let mut best: Option<(f64, f64, Vec<Option<FlowPath>>)> = None;
         // Run to feasibility (overflow 0, no site conflict) or a provable
         // stall: `stall` iterations without a better (overflow, conflicts)
         // score. `iters` is the hard work budget.
         let mut since_best = 0usize;
         let mut best_score = f64::INFINITY;
+        let mut theta = 1.0f64;
+        let mut best_lb = f64::NEG_INFINITY;
+        let mut lb_since = 0usize;
+        let mut min_cost = f64::INFINITY;
         for it in 0..params.iters {
             let pres = if it == 0 {
                 0.0
             } else {
-                (params.pres0 * params.pres_growth.powi(it as i32 - 1)).min(1e4)
+                (params.pres0 * params.pres_growth.powi(it as i32 - 1)).min(params.pres_max)
             };
             for (i, k) in ks.iter().enumerate() {
+                if !feasible[i] {
+                    continue;
+                }
                 if let Some(p) = paths[i].take() {
                     self.apply(k, &p, -1.0);
                 }
@@ -1094,7 +1155,7 @@ impl<'g> FlowGraph<'g> {
             let cost: f64 = paths.iter().flatten().map(|p| p.cost).sum();
             // Lagrangian bound at the current prices alone.
             let mut lb: f64 = 0.0;
-            for k in ks {
+            for (k, _) in ks.iter().zip(&feasible).filter(|(_, f)| **f) {
                 if let Some((_, c)) = self.shortest(k, 0.0, params) {
                     lb += c;
                 }
@@ -1151,8 +1212,36 @@ impl<'g> FlowGraph<'g> {
                     break;
                 }
             }
-            // Price step: projected subgradient, diminishing step.
-            let a = params.alpha / ((it + 1) as f64).sqrt();
+            // Price step: projected subgradient with a Polyak step toward a
+            // target cost (the best cost seen, lifted 2 % above the best
+            // bound), θ halved whenever the bound stalls 5 iterations — a
+            // fixed or 1/√k step makes overflow cycle while the bound creeps.
+            if lb > best_lb + 1e-6 {
+                best_lb = lb;
+                lb_since = 0;
+            } else {
+                lb_since += 1;
+                if lb_since >= 5 {
+                    theta *= 0.5;
+                    lb_since = 0;
+                }
+            }
+            min_cost = min_cost.min(cost);
+            let target = min_cost.max(best_lb * 1.02).max(best_lb + 1e-3);
+            let mut g2 = 0.0;
+            for (l, ls) in self.lambda.iter().enumerate() {
+                for (c, lam) in ls.iter().enumerate() {
+                    let g = self.load[l][c] - self.cap[l][c];
+                    if g > 0.0 || *lam > 0.0 {
+                        g2 += g * g;
+                    }
+                }
+            }
+            let a = if g2 > 1e-12 {
+                (theta * (target - lb) / g2).clamp(0.0, 10.0 * params.alpha)
+            } else {
+                params.alpha / ((it + 1) as f64).sqrt()
+            };
             for (l, ls) in self.lambda.iter_mut().enumerate() {
                 for (c, lam) in ls.iter_mut().enumerate() {
                     *lam = (*lam + a * (self.load[l][c] - self.cap[l][c])).max(0.0);
