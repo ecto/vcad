@@ -811,9 +811,11 @@ fn check_pad_clearance(
     }
 }
 
-/// Report every trace on a plane / split-plane layer (stackup role). The
-/// plane's own net is not exempt: a trace on a plane layer is a cut either way
-/// — pour copper belongs in the zone, not in traces.
+/// Report every trace on a plane / split-plane layer (stackup role). One
+/// exemption: a plane stub — a same-net trace no longer than
+/// [`crate::router::flow::access::PLANE_STUB_MAX`] with an end inside its
+/// own net's pour on that layer (a via landing just outside its pour). Any
+/// other trace on a plane, including a longer own-net one, is reported.
 fn check_plane_layer_signal(
     pcb: &Pcb,
     region: Option<&DrcRegion>,
@@ -823,7 +825,24 @@ fn check_plane_layer_signal(
     if planes.is_empty() {
         return;
     }
+    let own_pour = |t: &vcad_ir::ecad::Trace, p: Vec2| {
+        pcb.zones.iter().any(|z| {
+            z.net == t.net
+                && z.layer == t.layer
+                && z.outline.len() >= 3
+                && crate::spatial::point_in_polygon(p, &z.outline)
+                && !z
+                    .holes
+                    .iter()
+                    .any(|h| h.len() >= 3 && crate::spatial::point_in_polygon(p, h))
+        })
+    };
     for t in pcb.traces.iter().filter(|t| planes.contains(&t.layer)) {
+        if (t.end - t.start).length() <= crate::router::flow::access::PLANE_STUB_MAX + 1e-9
+            && (own_pour(t, t.start) || own_pour(t, t.end))
+        {
+            continue;
+        }
         if !in_scope(region, |r| r.hits_segment(t.start, t.end, t.width / 2.0)) {
             continue;
         }
@@ -5301,6 +5320,50 @@ mod tests {
         assert!(judge(0.08, (0.0, 20.0), (0.0, 21.0)));
         // Below the neck minimum even at the pad: fails.
         assert!(judge(0.06, (0.0, 0.0), (0.0, 0.8)));
+    }
+
+    /// A short own-net stub ending in its pour on a plane layer is exempt
+    /// from PlaneLayerSignal; a long one, or another net's trace, is not.
+    #[test]
+    fn plane_stub_exempt_only_short_own_net() {
+        let judge = |net: &str, len: f64| {
+            let mut pcb = clean_pcb();
+            pcb.stackup.layers[1].role =
+                Some(vcad_ir::ecad::LayerRole::Plane { net: "GND".into() });
+            let bl = pcb.stackup.layers[1].layer;
+            pcb.zones.push(Zone {
+                outline: vec![
+                    Vec2::new(10.0, 10.0),
+                    Vec2::new(30.0, 10.0),
+                    Vec2::new(30.0, 30.0),
+                    Vec2::new(10.0, 30.0),
+                ],
+                holes: vec![],
+                net: "GND".to_string(),
+                layer: bl,
+                clearance: 0.2,
+                min_area: 0.0,
+                fill_type: ZoneFillType::Solid,
+                thermal_relief: ThermalReliefStyle::Relief,
+                thermal_gap: Some(0.5),
+                thermal_spoke_width: Some(0.5),
+                priority: 0,
+            });
+            pcb.traces.push(vcad_ir::ecad::Trace {
+                start: Vec2::new(10.0 - len / 2.0, 20.0),
+                end: Vec2::new(10.0 + len / 2.0, 20.0),
+                width: 0.1,
+                layer: bl,
+                net: net.into(),
+                source: None,
+            });
+            check_drc(&pcb)
+                .iter()
+                .any(|v| v.rule == DrcRuleType::PlaneLayerSignal)
+        };
+        assert!(!judge("GND", 0.6), "short own-net stub is exempt");
+        assert!(judge("GND", 3.0), "long own-net trace is reported");
+        assert!(judge("SIG", 0.6), "other net is reported");
     }
 
     /// An inferred neck on the default rules covers unclassed nets, and the

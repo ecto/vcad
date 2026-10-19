@@ -68,6 +68,9 @@ pub struct AccessOption {
     pub span: Span,
     /// Stub length + via cost (mm-equivalent).
     pub cost: f64,
+    /// A plane stub: the via lands outside its pour on this plane layer and
+    /// a short same-net trace runs from the via to this point in the pour.
+    pub stub: Option<(PcbLayer, [f64; 2])>,
 }
 
 /// Per-iteration statistics.
@@ -98,6 +101,10 @@ pub struct AccessMarket {
     pub options: Vec<Vec<AccessOption>>,
     /// Pads already served by their own pour.
     pub served_by_pour: usize,
+    /// For pads left without an option: how far their best candidate got
+    /// (`[no span reaches a pour, via span illegal, via disc illegal, stub
+    /// illegal]`, counted once per pad at its furthest stage).
+    pub unsited_stage: [usize; 4],
 }
 
 /// A chosen access via.
@@ -109,7 +116,14 @@ pub struct AccessVia {
     pub pos: [f64; 2],
     /// Span.
     pub span: Span,
+    /// Plane stub (layer, end point in the pour), if any.
+    pub stub: Option<(PcbLayer, [f64; 2])>,
 }
+
+/// Longest same-net stub allowed on a net's own plane layer, from the via to
+/// its pour (mm): the p95 length of the CM5 human's 485 plane-layer segments
+/// (0.849 mm). The DRC exempts such stubs from `PlaneLayerSignal`.
+pub const PLANE_STUB_MAX: f64 = 0.85;
 
 /// Nets with a pour on a plane-role layer → those layers. These nets are
 /// carried by their planes: their pads get access vias, not traces.
@@ -143,6 +157,39 @@ fn zone_covers(pcb: &Pcb, net: &str, layer: PcbLayer, p: [f64; 2]) -> bool {
     })
 }
 
+/// The nearest point of `net`'s pour on plane `pl` reachable from `p` by a
+/// legal same-net stub no longer than [`PLANE_STUB_MAX`].
+fn plane_stub(
+    pcb: &Pcb,
+    session: &RouteSession,
+    net: &str,
+    pl: PcbLayer,
+    p: [f64; 2],
+) -> Option<[f64; 2]> {
+    let w = session.width_for(net, 0.1);
+    let clr = session.clearance_for(net);
+    let mut r = 0.1;
+    while r <= PLANE_STUB_MAX + 1e-9 {
+        for k in 0..16 {
+            let a = std::f64::consts::TAU * k as f64 / 16.0;
+            let q = [p[0] + r * a.cos(), p[1] + r * a.sin()];
+            if !zone_covers(pcb, net, pl, q) {
+                continue;
+            }
+            let seg = CopperGeom::Segment {
+                a: Vec2::new(p[0], p[1]),
+                b: Vec2::new(q[0], q[1]),
+                half_w: w / 2.0,
+            };
+            if session.probe(&seg, pl, net, clr).legal {
+                return Some(q);
+            }
+        }
+        r += 0.15;
+    }
+    None
+}
+
 impl AccessMarket {
     /// Build the market for every poured net of `pcb`.
     pub fn build(pcb: &Pcb, micro_cost: f64, via_cost: f64) -> Self {
@@ -166,7 +213,16 @@ impl AccessMarket {
             m
         };
         let mut mk = Self::default();
-        let mut site_ix: HashMap<(i64, i64), usize> = HashMap::new();
+        // A site is a (position, span): its via's size and layer range decide
+        // which other sites it excludes.
+        let mut site_ix: HashMap<(i64, i64, PcbLayer, PcbLayer), usize> = HashMap::new();
+        let mut site_env: Vec<(usize, usize, f64, f64)> = Vec::new();
+        let stack_ix = |l: PcbLayer| {
+            PcbLayer::COPPER_STACK
+                .iter()
+                .position(|&x| x == l)
+                .unwrap_or(0)
+        };
         let clr = pcb.rules.default_rules.clearance;
         let h2h = pcb.rules.hole_to_hole;
         for fp in &pcb.footprints {
@@ -203,23 +259,37 @@ impl AccessMarket {
                     }
                 }
                 let mut opts = Vec::new();
+                let mut stage = 0usize;
                 for p in pts {
                     let pv = Vec2::new(p[0], p[1]);
                     for &(a, b) in &spans {
                         if !layer.spanned_by(a, b) || (layer != a && layer != b) {
                             continue;
                         }
-                        // lands in a pour of its net on some spanned layer
+                        // lands in a pour of its net on some spanned layer —
+                        // or next to one, joined by a short plane stub
                         let reach = poured[net]
                             .iter()
                             .any(|&pl| pl.spanned_by(a, b) && zone_covers(pcb, net, pl, p));
-                        if !reach {
+                        let stub_to = if reach {
+                            None
+                        } else {
+                            poured[net]
+                                .iter()
+                                .filter(|&&pl| pl.spanned_by(a, b))
+                                .find_map(|&pl| {
+                                    plane_stub(pcb, &session, net, pl, p).map(|q| (pl, q))
+                                })
+                        };
+                        if !reach && stub_to.is_none() {
                             continue;
                         }
+                        stage = stage.max(1);
                         let spec = sizing.spec(net, a, b);
                         if !session.probe_via_span(pv, net, a, b).legal {
                             continue;
                         }
+                        stage = stage.max(2);
                         let ok = pcb
                             .stackup
                             .layers
@@ -253,21 +323,33 @@ impl AccessMarket {
                                     clr,
                                 )
                                 .legal;
+                        if ok {
+                            stage = stage.max(3);
+                        }
                         if !ok || !stub_ok {
                             continue;
                         }
                         let key = ((p[0] * 1e4).round() as i64, (p[1] * 1e4).round() as i64);
-                        let site = *site_ix.entry(key).or_insert_with(|| {
+                        let site = *site_ix.entry((key.0, key.1, a, b)).or_insert_with(|| {
                             mk.sites.push(p);
+                            let (i, j) = (stack_ix(a), stack_ix(b));
+                            site_env.push((i.min(j), i.max(j), spec.diameter, spec.drill));
                             mk.sites.len() - 1
                         });
                         let micro = sizing.is_micro_span(a, b);
+                        let plane_len = stub_to.map_or(0.0, |(_, q)| {
+                            ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2)).sqrt()
+                        });
                         opts.push(AccessOption {
                             site,
                             span: (a, b),
-                            cost: stub + if micro { micro_cost } else { via_cost },
+                            cost: stub + plane_len + if micro { micro_cost } else { via_cost },
+                            stub: stub_to,
                         });
                     }
+                }
+                if opts.is_empty() {
+                    mk.unsited_stage[stage] += 1;
                 }
                 mk.options.push(opts);
                 let _ = pi;
@@ -308,22 +390,53 @@ impl AccessMarket {
         let mut keep = vec![false; mk.sites.len()];
         let mut grid: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
         let cell = |p: [f64; 2]| ((p[0] / pitch).floor() as i64, (p[1] / pitch).floor() as i64);
-        for s in order {
+        let clash = |grid: &HashMap<(i64, i64), Vec<usize>>, s: usize| {
             let p = mk.sites[s];
+            let (lo, hi, d, dr) = site_env[s];
             let k = cell(p);
-            let clash = (-1..=1).any(|dx| {
+            (-1..=1).any(|dx| {
                 (-1..=1).any(|dy| {
                     grid.get(&(k.0 + dx, k.1 + dy)).is_some_and(|v| {
                         v.iter().any(|&o| {
                             let q = mk.sites[o];
-                            ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)).sqrt() < pitch
+                            let (lo2, hi2, d2, dr2) = site_env[o];
+                            let overlap = lo <= hi2 && lo2 <= hi;
+                            let need = ((d + d2) / 2.0 + clr).max((dr + dr2) / 2.0 + h2h);
+                            overlap
+                                && ((p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2)).sqrt()
+                                    < need - 1e-9
                         })
                     })
                 })
-            });
-            if !clash {
+            })
+        };
+        // Coverage first: the most constrained pads (fewest options) each
+        // keep their cheapest compatible site, so the thinning never strands
+        // a pad another pad's spare site could have spared; then the rest in
+        // the usual order.
+        let mut by_need: Vec<usize> = (0..mk.pads.len())
+            .filter(|&i| !mk.options[i].is_empty())
+            .collect();
+        by_need.sort_by_key(|&i| (mk.options[i].len(), i));
+        for i in by_need {
+            if mk.options[i].iter().any(|o| keep[o.site]) {
+                continue;
+            }
+            let mut cand: Vec<&AccessOption> = mk.options[i].iter().collect();
+            cand.sort_by(|a, b| a.cost.total_cmp(&b.cost).then(a.site.cmp(&b.site)));
+            if let Some(o) = cand.into_iter().find(|o| !clash(&grid, o.site)) {
+                keep[o.site] = true;
+                grid.entry(cell(mk.sites[o.site])).or_default().push(o.site);
+            }
+        }
+        for s in order {
+            if keep[s] {
+                continue;
+            }
+            let p = mk.sites[s];
+            if !clash(&grid, s) {
                 keep[s] = true;
-                grid.entry(k).or_default().push(s);
+                grid.entry(cell(p)).or_default().push(s);
             }
         }
         for opts in mk.options.iter_mut() {
@@ -435,6 +548,7 @@ impl AccessMarket {
                     pad: i,
                     pos: self.sites[o.site],
                     span: o.span,
+                    stub: o.stub,
                 })
             })
             .collect()
@@ -494,6 +608,54 @@ mod tests {
             );
             let c = mk.pads[v.pad].center;
             assert!((c[0] - v.pos[0]).abs() < 1e-9 && (c[1] - v.pos[1]).abs() < 1e-9);
+        }
+    }
+
+    /// A pad just outside its pour gets a via plus a short plane stub into
+    /// the pour; one farther than the stub bound stays unsited.
+    #[test]
+    fn plane_stub_reaches_a_nearby_pour_only() {
+        let mut pcb =
+            crate::router::flow::test_board(20.0, 20.0, &["FCu", "In1Cu", "In2Cu", "BCu"]);
+        pcb.stackup.layers[1].role = Some(vcad_ir::ecad::LayerRole::Plane { net: "GND".into() });
+        pcb.rules.min_microvia_diameter = 0.2;
+        pcb.rules.min_microvia_drill = 0.1;
+        pcb.rules.default_rules.via_diameter = 0.3;
+        pcb.rules.default_rules.via_drill = 0.15;
+        pcb.rules.min_drill = 0.1;
+        pcb.zones.push(
+            serde_json::from_value(serde_json::json!({
+                "outline": [{"x":6.4,"y":0.5},{"x":19.5,"y":0.5},{"x":19.5,"y":19.5},{"x":6.4,"y":19.5}],
+                "net": "GND", "layer": "In1Cu", "clearance": 0.2, "minArea": 0.0,
+                "fillType": "Solid", "thermalRelief": "Relief", "priority": 0
+            }))
+            .unwrap(),
+        );
+        let pad = |num: &str, x: f64| {
+            serde_json::json!({"number": num, "padType": "SMD",
+                "shape": {"type": "Rect", "width": 0.6, "height": 0.6},
+                "position": {"x": x, "y": 10.0}, "rotation": 0.0,
+                "net": "GND", "layers": ["FCu"]})
+        };
+        let fp: vcad_ir::ecad::Footprint = serde_json::from_value(serde_json::json!({
+            "ref": "U1", "value": "", "footprintName": "T", "position": {"x": 0.0, "y": 0.0},
+            "rotation": 0.0, "front": true, "graphics": [],
+            "pads": [pad("1", 5.0), pad("2", 2.0)]
+        }))
+        .unwrap();
+        pcb.footprints.push(fp);
+        let mk = AccessMarket::build(&pcb, 1.0, 2.0);
+        assert_eq!(mk.pads.len(), 2);
+        assert!(mk.options[0].iter().all(|o| o.stub.is_some()));
+        assert!(!mk.options[0].is_empty(), "near pad reaches by stub");
+        assert!(mk.options[1].is_empty(), "far pad stays unsited");
+        for o in &mk.options[0] {
+            let (pl, q) = o.stub.unwrap();
+            let p = mk.sites[o.site];
+            assert_eq!(pl, PcbLayer::In1Cu);
+            assert!(
+                ((q[0] - p[0]).powi(2) + (q[1] - p[1]).powi(2)).sqrt() <= PLANE_STUB_MAX + 1e-9
+            );
         }
     }
 }

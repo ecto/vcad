@@ -904,7 +904,7 @@ pub fn route_flow(
             }
             let pos = Vec2::new(av.pos[0], av.pos[1]);
             let c = Vec2::new(pad.center[0], pad.center[1]);
-            let segs: Vec<RoutedTrace> = if (pos.x - c.x).abs() + (pos.y - c.y).abs() > 1e-9 {
+            let mut segs: Vec<RoutedTrace> = if (pos.x - c.x).abs() + (pos.y - c.y).abs() > 1e-9 {
                 vec![RoutedTrace {
                     start: c,
                     end: pos,
@@ -915,6 +915,15 @@ pub fn route_flow(
             } else {
                 Vec::new()
             };
+            if let Some((pl, q)) = av.stub {
+                segs.push(RoutedTrace {
+                    start: pos,
+                    end: Vec2::new(q[0], q[1]),
+                    width: session.width_for(&pad.net, width),
+                    layer: pl,
+                    net: pad.net.clone(),
+                });
+            }
             let mut v = RoutedVia::new(pos, &pad.net, av.span.0, av.span.1);
             v.size_with(&sizing);
             let mut vs = vec![v];

@@ -37,6 +37,10 @@ fn main() {
         no_opt,
         mk.sites.len()
     );
+    println!(
+        "unsited by furthest stage [no pour reach, span illegal, disc illegal, stub illegal]: {:?}",
+        mk.unsited_stage
+    );
     let t1 = Instant::now();
     let (choice, stats) = mk.solve(200, 2.0);
     println!("iter  conflicts    cost_mm      LB_mm      UB_mm     gap");
