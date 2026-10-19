@@ -91,6 +91,9 @@ pub struct Wx {
     pub cut: u32,
     /// Face the wire leaves.
     pub from: u32,
+    /// Track width where the wire crosses this cut (its neck width near
+    /// its own pads, else its class width).
+    pub w: f64,
     /// Free extent on the cut (centerline space of the graph's design
     /// width), mm from the cut's `a` vertex; `lo == hi` pins the crossing.
     pub lo: f64,
@@ -103,6 +106,17 @@ pub struct Wx {
     pub pad: f64,
     /// Room kept from the high end.
     pub pad_hi: f64,
+}
+
+impl Wire {
+    /// Width of the segment `a`–`b`: the neck width when both ends lie in
+    /// one pad's neck region, else the class width.
+    pub fn seg_width(&self, a: [f64; 2], b: [f64; 2]) -> f64 {
+        match &self.neck {
+            Some((nw, r, cs)) if cs.iter().any(|c| d2(*c, a) <= *r && d2(*c, b) <= *r) => *nw,
+            _ => self.width,
+        }
+    }
 }
 
 impl Wx {
@@ -137,6 +151,9 @@ pub struct Wire {
     pub lead: Option<[f64; 2]>,
     /// See `lead`.
     pub tail: Option<[f64; 2]>,
+    /// Neck: (width, radius, pad centres) — a segment with both ends within
+    /// the radius of one of the centres is drawn at the neck width.
+    pub neck: Option<(f64, f64, Vec<[f64; 2]>)>,
     /// A known-good starting polyline (the human's), used as the feasible
     /// start instead of the funnel through the starting crossing points.
     pub start_path: Option<Vec<[f64; 2]>>,
@@ -237,7 +254,7 @@ pub fn realize_wires(
     sweeps: usize,
     oracle: Option<&RouteSession>,
 ) -> Vec<Vec<[f64; 2]>> {
-    let need = |a: &Wire, b: &Wire, sin: f64| -> f64 {
+    let need = |a: &Wire, wa: f64, b: &Wire, wb: f64, sin: f64| -> f64 {
         if a.net == b.net {
             0.0
         } else {
@@ -246,7 +263,7 @@ pub fn realize_wires(
                 (_, Some((t, g))) if t == a.net => g,
                 _ => a.clearance.max(b.clearance),
             };
-            (a.width / 2.0 + gap + b.width / 2.0 + MARGIN) / sin.max(0.2)
+            (wa / 2.0 + gap + wb / 2.0 + MARGIN) / sin.max(0.2)
         }
     };
     // Current crossing positions and angles.
@@ -305,7 +322,9 @@ pub fn realize_wires(
                 let (a, b) = (g[i], g[i + 1]);
                 need(
                     &wires[a.0],
+                    wires[a.0].xs[a.1].w,
                     &wires[b.0],
+                    wires[b.0].xs[b.1].w,
                     pos[a.0][a.1].1.min(pos[b.0][b.1].1),
                 )
             };
@@ -362,11 +381,27 @@ pub fn realize_wires(
                 let (mut lo, mut hi) = x.span();
                 if let Some((lw, lx)) = l {
                     let p = pos[lw][lx];
-                    lo = lo.max(p.0 + need(&wires[lw], w, p.1.min(pos[wi][xi].1)));
+                    lo = lo.max(
+                        p.0 + need(
+                            &wires[lw],
+                            wires[lw].xs[lx].w,
+                            w,
+                            x.w,
+                            p.1.min(pos[wi][xi].1),
+                        ),
+                    );
                 }
                 if let Some((rw, rx)) = r {
                     let p = pos[rw][rx];
-                    hi = hi.min(p.0 - need(&wires[rw], w, p.1.min(pos[wi][xi].1)));
+                    hi = hi.min(
+                        p.0 - need(
+                            &wires[rw],
+                            wires[rw].xs[rx].w,
+                            w,
+                            x.w,
+                            p.1.min(pos[wi][xi].1),
+                        ),
+                    );
                 }
                 if lo > hi {
                     // squeezed: stay where the (feasible) start put it
@@ -387,7 +422,7 @@ pub fn realize_wires(
     let seg = |a: [f64; 2], b: [f64; 2], w: &Wire| CopperGeom::Segment {
         a: Vec2::new(a[0], a[1]),
         b: Vec2::new(b[0], b[1]),
-        half_w: w.width / 2.0,
+        half_w: w.seg_width(a, b) / 2.0,
     };
     // the nets a polyline violates clearance to, and how many segments do
     // per offending net, the closest approach of a polyline
@@ -408,7 +443,7 @@ pub fn realize_wires(
         p.windows(2)
             .filter(|q| d2(q[0], q[1]) > 1e-9)
             .map(|q| {
-                let hw = w.width / 2.0;
+                let hw = w.seg_width(q[0], q[1]) / 2.0;
                 s.commit(CopperElement {
                     min: [q[0][0].min(q[1][0]) - hw, q[0][1].min(q[1][1]) - hw],
                     max: [q[0][0].max(q[1][0]) + hw, q[0][1].max(q[1][1]) + hw],
@@ -691,6 +726,7 @@ mod tests {
                     let w = Wx {
                         cut: x.cut,
                         from,
+                        w: 0.2,
                         lo: q[0],
                         hi: q[1],
                         pad: 0.0,
@@ -710,6 +746,7 @@ mod tests {
             start_path: None,
             lead: None,
             tail: None,
+            neck: None,
             twin: None,
             start: [3.0, y],
             end: [17.0, y],

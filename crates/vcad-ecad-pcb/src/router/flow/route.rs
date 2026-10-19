@@ -118,6 +118,26 @@ struct Run {
     px: Vec<Px>,
 }
 
+/// The neck rule `(width, length)` governing `net` (its class, else the
+/// default rules — where an inferred neck lives).
+fn neck_rule(pcb: &Pcb, net: &str) -> Option<(f64, f64)> {
+    let class = pcb
+        .rules
+        .net_class_assignments
+        .iter()
+        .find(|(_, nets)| nets.iter().any(|n| n == net))
+        .and_then(|(name, _)| pcb.rules.class_rules.iter().find(|c| &c.name == name))
+        .unwrap_or(&pcb.rules.default_rules);
+    class.neck_width.map(|w| {
+        (
+            w,
+            class
+                .neck_length
+                .unwrap_or(vcad_ir::ecad::DEFAULT_NECK_LENGTH),
+        )
+    })
+}
+
 fn d2(a: [f64; 2], b: [f64; 2]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
 }
@@ -177,6 +197,9 @@ pub(super) fn commodities(
         let w = session.width_for(&net, width);
         let s = session.clearance_for(&net);
         let units = (w + s) / (w0 + s0);
+        let neck = neck_rule(pcb, &net)
+            .filter(|&(nw, _)| nw < w - 1e-9)
+            .map(|(nw, len)| (nw, (nw + s) / (w0 + s0), len));
         for _ in 1..n {
             let (j, _) = (0..n)
                 .filter(|&j| !inn[j])
@@ -202,6 +225,7 @@ pub(super) fn commodities(
                     net_id: nid,
                     width: w,
                     units,
+                    neck,
                     src: a,
                     dst: b,
                 });
@@ -230,7 +254,8 @@ pub(super) fn commodities(
 fn runs_of(g: &FlowGraph, emb: &Embedding, k: &Commodity, p: &EPath, eps: f64) -> Vec<Run> {
     // A wire wider than the graph's design width needs the extra half-width
     // clear on both sides of its portal.
-    let eps = eps + ((k.width - g.cg.params.width) / 2.0).max(0.0);
+    // (Per crossing: the neck width in the wire's own pad neck regions.)
+    let eps0 = eps;
     let (l0, f0) = g.split(p.start);
     let (le, fe) = g.split(p.end);
     let contains = |l: usize, f: u32, q: [f64; 2]| {
@@ -259,6 +284,9 @@ fn runs_of(g: &FlowGraph, emb: &Embedding, k: &Commodity, p: &EPath, eps: f64) -
                 let lg = &g.cg.layers[layer as usize];
                 let c = &lg.cuts[cut as usize];
                 let (pa, pb) = (lg.vpos(c.a), lg.vpos(c.b));
+                let eps = eps0
+                    + ((k.width_at(g.cut_mid(layer as usize, cut)) - g.cg.params.width) / 2.0)
+                        .max(0.0);
                 let (s0, s1, pad, pad_hi) = match part {
                     Some(pt) => {
                         // a used via site at a cut end is a corner too: the
@@ -472,10 +500,14 @@ fn realize(
                 end: r.end,
                 lead: r.pre,
                 tail: r.post,
+                neck: k
+                    .neck
+                    .map(|(nw, _, rad)| (nw, rad, vec![k.src.point, k.dst.point])),
                 xs: r
                     .px
                     .iter()
                     .map(|x| Wx {
+                        w: k.width_at(g.cut_mid(r.layer, x.cut)),
                         cut: x.cut,
                         from: x.from,
                         lo: x.lo,
@@ -946,7 +978,15 @@ pub fn route_flow(
     let mut all: BTreeSet<(String, [i64; 4])> = BTreeSet::new();
     let mut net_of_conn: BTreeMap<(String, [i64; 4]), String> = BTreeMap::new();
     let mut params = CutParams::from_pcb(pcb);
-    params.width = width;
+    // One graph at the narrowest width any wire may run (a neck), so the
+    // neck regions' cuts count their extra wires.
+    params.width = pcb
+        .rules
+        .class_rules
+        .iter()
+        .chain(std::iter::once(&pcb.rules.default_rules))
+        .filter_map(|c| c.neck_width)
+        .fold(width, f64::min);
     for round in 0..opts.rounds.max(1) {
         let sw = crate::router::Stopwatch::start();
         let cg0 = CutGraph::build(&board, params, CopperFilter::All);

@@ -144,6 +144,30 @@ pub struct Commodity {
     pub src: Terminal,
     /// Destination pad.
     pub dst: Terminal,
+    /// Neck rule `(width, units, radius)`: within `radius` of either pad
+    /// centre the wire may run at the neck width, consuming `units`.
+    pub neck: Option<(f64, f64, f64)>,
+}
+
+impl Commodity {
+    /// Track width at `p` (the neck width in its pads' neck regions).
+    pub fn width_at(&self, p: [f64; 2]) -> f64 {
+        match self.neck {
+            Some((w, _, _)) if self.units_at(p) < self.units => w,
+            _ => self.width,
+        }
+    }
+
+    /// Capacity units this wire consumes crossing a cut at `p`: the neck
+    /// units in its own pads' neck region, else the class units.
+    pub fn units_at(&self, p: [f64; 2]) -> f64 {
+        match self.neck {
+            Some((_, u, r)) if dist(p, self.src.point) <= r || dist(p, self.dst.point) <= r => {
+                u.min(self.units)
+            }
+            _ => self.units,
+        }
+    }
 }
 
 /// A step of a routed path.
@@ -488,6 +512,14 @@ pub fn signal_stacks(
 }
 
 impl<'g> FlowGraph<'g> {
+    /// Midpoint of cut `c` on graph layer `l`.
+    pub fn cut_mid(&self, l: usize, c: u32) -> [f64; 2] {
+        let lg = &self.cg.layers[l];
+        let cut = &lg.cuts[c as usize];
+        let (a, b) = (lg.vpos(cut.a), lg.vpos(cut.b));
+        [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0]
+    }
+
     /// Build the routing graph over `cg`, whose Steiner vertices are the
     /// positions of `specs` (in order).
     pub fn build(cg: &'g CutGraph, specs: &[SiteSpec], cp: &CutParams) -> Self {
@@ -884,7 +916,7 @@ impl<'g> FlowGraph<'g> {
                         }
                         if self.alone.get()
                             && mode == Cross::Consumes
-                            && self.cap[l][c as usize] < k.units - 1e-9
+                            && self.cap[l][c as usize] < k.units_at(self.cut_mid(l, c)) - 1e-9
                         {
                             continue;
                         }
@@ -901,8 +933,9 @@ impl<'g> FlowGraph<'g> {
                                 .is_some_and(|&n| n > 0);
                         if mode == Cross::Consumes && !shared {
                             let ci = c as usize;
-                            w += k.units * self.lambda[l][ci];
-                            let excess = (self.load[l][ci] + k.units - self.cap[l][ci]).max(0.0);
+                            let u = k.units_at(self.cut_mid(l, c));
+                            w += u * self.lambda[l][ci];
+                            let excess = (self.load[l][ci] + u - self.cap[l][ci]).max(0.0);
                             w += pres * excess * len.max(0.1);
                         }
                         let st = Step::Cross {
@@ -1053,7 +1086,8 @@ impl<'g> FlowGraph<'g> {
                         .borrow_mut()
                         .insert((layer, cut, k.net_id), after);
                     if (e == 0 && after == 1) || (e == 1 && after == 0) {
-                        self.load[layer as usize][cut as usize] += sign * k.units;
+                        self.load[layer as usize][cut as usize] +=
+                            sign * k.units_at(self.cut_mid(layer as usize, cut));
                     }
                 }
                 Step::Via { site, span, .. } => {
@@ -1316,6 +1350,29 @@ mod tests {
     /// One layer; nets A and B both want the single-wire gap between the two
     /// X pads. The market must clear (one of them goes around) and its
     /// Lagrangian bound must stay below the primal cost.
+    /// A necked wire consumes neck units only near its own pads.
+    #[test]
+    fn neck_units_only_near_own_pads() {
+        let term = |x: f64| Terminal {
+            point: [x, 0.0],
+            nodes: vec![],
+        };
+        let k = Commodity {
+            net: "A".into(),
+            net_id: 0,
+            width: 0.1,
+            units: 2.0,
+            src: term(0.0),
+            dst: term(10.0),
+            neck: Some((0.06, 1.0, 1.5)),
+        };
+        assert_eq!(k.units_at([1.0, 0.5]), 1.0);
+        assert_eq!(k.units_at([9.5, 0.0]), 1.0);
+        assert_eq!(k.units_at([5.0, 0.0]), 2.0);
+        assert_eq!(k.width_at([0.2, 0.0]), 0.06);
+        assert_eq!(k.width_at([5.0, 0.0]), 0.1);
+    }
+
     #[test]
     fn market_clears_a_one_wire_gap() {
         let mut pcb = crate::router::flow::test_board(20.0, 20.0, &["FCu"]);

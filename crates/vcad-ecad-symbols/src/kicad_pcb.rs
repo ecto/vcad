@@ -336,6 +336,7 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<(Pcb, Vec<String>), ParseError> {
     // the default rules against it.
     let mut rules = calibrate_rules_from_copper(rules, &traces, &vias);
     infer_via_floors(root, &mut rules, &vias, &ctx);
+    infer_neck(&mut rules, &traces, &ctx);
 
     let pcb = Pcb {
         outline,
@@ -409,6 +410,44 @@ fn infer_via_floors(root: &SExpr<'_>, rules: &mut DesignRules, vias: &[Via], ctx
         rules.min_annular_ring = min;
         rules.inferred_floors.push("minAnnularRing".into());
     }
+}
+
+/// Neck rule when the board authors none: a routed board whose tracks run
+/// narrower than its trace width is necking down at pad entries (BGA and
+/// fine-pitch escapes). The neck width is the most common such narrower
+/// width among the board's own tracks (at least 10 of them); the neck length
+/// stays the default region from the land. Logged loudly and recorded in
+/// `rules.inferred_floors` ("neckWidth") so the DRC says it was inferred.
+/// An authored neck (default or any class) wins.
+fn infer_neck(rules: &mut DesignRules, traces: &[Trace], ctx: &Ctx<'_>) {
+    if rules.default_rules.neck_width.is_some()
+        || rules.class_rules.iter().any(|c| c.neck_width.is_some())
+    {
+        return;
+    }
+    let w = rules.default_rules.trace_width;
+    let mut counts: std::collections::BTreeMap<i64, usize> = std::collections::BTreeMap::new();
+    for t in traces
+        .iter()
+        .filter(|t| t.width < w - 1e-9 && t.width > 0.0)
+    {
+        *counts.entry((t.width * 1e4).round() as i64).or_default() += 1;
+    }
+    let Some((&k, &n)) = counts.iter().max_by_key(|(k, n)| (**n, -**k)) else {
+        return;
+    };
+    if n < 10 {
+        return;
+    }
+    let neck = k as f64 / 1e4;
+    let narrow: usize = counts.values().sum();
+    ctx.warn(format!(
+        "INFERRED neck rule: board authors none; {narrow} of its tracks run narrower than the \
+         {w} mm trace width, most commonly {neck} mm ({n} tracks) — neckWidth = {neck} mm within \
+         the default neck length of a same-net pad"
+    ));
+    rules.default_rules.neck_width = Some(neck);
+    rules.inferred_floors.push("neckWidth".into());
 }
 
 /// Calibrate imported design rules against the board's existing copper.
@@ -1536,6 +1575,39 @@ mod tests {
         assert_eq!(pcb.stackup.layers[1].layer, PcbLayer::In1Cu);
         assert_eq!(pcb.stackup.layers[2].layer, PcbLayer::In2Cu);
         assert_eq!(pcb.stackup.layers[3].layer, PcbLayer::BCu);
+    }
+
+    /// A board that authors no neck rule but runs many tracks narrower than
+    /// its trace width gets a neck inferred from them (recorded as inferred);
+    /// too few narrow tracks infer nothing.
+    #[test]
+    fn neck_inferred_from_narrow_tracks() {
+        let seg = |w: f64, n: usize, y: f64| {
+            (0..n)
+                .map(|i| {
+                    format!(
+                        "(segment (start {i} {y}) (end {} {y}) (width {w}) (layer \"F.Cu\") (net 1))\n",
+                        i + 1
+                    )
+                })
+                .collect::<String>()
+        };
+        let board = |narrow: usize| {
+            format!(
+                "(kicad_pcb (version 20221018) (general (thickness 1.0)) \
+                 (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal)) (net 1 \"SIG\")\n{}{}{})",
+                seg(0.1, 30, 0.0),
+                seg(0.06, narrow, 1.0),
+                seg(0.08, 3, 2.0)
+            )
+        };
+        let pcb = parse_kicad_pcb(&board(20)).unwrap();
+        assert_eq!(pcb.rules.default_rules.trace_width, 0.1);
+        assert_eq!(pcb.rules.default_rules.neck_width, Some(0.06));
+        assert!(pcb.rules.inferred_floors.iter().any(|f| f == "neckWidth"));
+        let pcb = parse_kicad_pcb(&board(5)).unwrap();
+        assert_eq!(pcb.rules.default_rules.neck_width, None);
+        assert!(!pcb.rules.inferred_floors.iter().any(|f| f == "neckWidth"));
     }
 
     /// A routed board's own copper calibrates the imported rules: an HDI

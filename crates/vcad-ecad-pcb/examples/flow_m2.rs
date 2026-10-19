@@ -252,6 +252,7 @@ fn main() {
                 };
                 let _ = x.sin;
                 Wx {
+                    w: ch.width,
                     cut: x.cut,
                     from: x.from,
                     lo,
@@ -270,6 +271,7 @@ fn main() {
             start_path: Some(ch.pts.clone()),
             lead: None,
             tail: None,
+            neck: None,
             twin: None,
             start: ch.pts[0],
             end: *ch.pts.last().unwrap(),

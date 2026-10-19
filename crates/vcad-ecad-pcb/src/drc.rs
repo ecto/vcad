@@ -881,8 +881,16 @@ fn check_min_trace_width(
                     (trace.start.y + trace.end.y) / 2.0,
                 ),
                 message: format!(
-                    "Trace width {:.3}mm below minimum {:.3}mm for net '{}'",
-                    trace.width, min_width, trace.net
+                    "Trace width {:.3}mm below minimum {:.3}mm for net '{}'{}",
+                    trace.width,
+                    min_width,
+                    trace.net,
+                    if pcb.rules.inferred_floors.iter().any(|f| f == "neckWidth") {
+                        " (outside the neck region; neck width inferred from the board's own \
+                         pad-entry tracks)"
+                    } else {
+                        ""
+                    }
                 ),
                 actual: trace.width,
                 required: min_width,
@@ -3430,9 +3438,9 @@ pub(crate) fn net_class<'a>(pcb: &'a Pcb, net: &str) -> Option<&'a vcad_ir::ecad
 /// width applies. (The pad-entry neck of KiCad custom rules / Altium's
 /// neck-down: a bounded length from the land, not a blanket width waiver.)
 pub(crate) fn neck_allows_segment(pcb: &Pcb, net: &str, a: Vec2, b: Vec2, width: f64) -> bool {
-    let Some(class) = net_class(pcb, net) else {
-        return false;
-    };
+    // unclassed nets fall back to the default rules (an inferred neck lives
+    // there)
+    let class = net_class(pcb, net).unwrap_or(&pcb.rules.default_rules);
     let Some(neck_w) = class.neck_width else {
         return false;
     };
@@ -5293,6 +5301,38 @@ mod tests {
         assert!(judge(0.08, (0.0, 20.0), (0.0, 21.0)));
         // Below the neck minimum even at the pad: fails.
         assert!(judge(0.06, (0.0, 0.0), (0.0, 0.8)));
+    }
+
+    /// An inferred neck on the default rules covers unclassed nets, and the
+    /// finding outside its region says the neck was inferred.
+    #[test]
+    fn inferred_default_neck_covers_unclassed_nets() {
+        let judge = |a: (f64, f64), b: (f64, f64)| {
+            let mut pcb = clean_pcb();
+            pcb.footprints.push(footprint(
+                "U1",
+                (50.0, 40.0),
+                0.0,
+                vec![smd_pad("1", (0.0, 0.0), "NK")],
+            ));
+            pcb.rules.default_rules.trace_width = 0.1;
+            pcb.rules.default_rules.neck_width = Some(0.06);
+            pcb.rules.inferred_floors.push("neckWidth".into());
+            pcb.traces.push(vcad_ir::ecad::Trace {
+                start: Vec2::new(50.0 + a.0, 40.0 + a.1),
+                end: Vec2::new(50.0 + b.0, 40.0 + b.1),
+                width: 0.06,
+                layer: PcbLayer::FCu,
+                net: "NK".into(),
+                source: None,
+            });
+            check_drc(&pcb)
+                .into_iter()
+                .find(|v| v.rule == DrcRuleType::MinTraceWidth)
+        };
+        assert!(judge((0.0, 0.0), (0.0, 0.8)).is_none());
+        let far = judge((0.0, 20.0), (0.0, 21.0)).expect("outside the neck region");
+        assert!(far.message.contains("inferred"), "{}", far.message);
     }
 
     /// Microvias are judged by the microvia minimums (KiCad uvia_min_drill /

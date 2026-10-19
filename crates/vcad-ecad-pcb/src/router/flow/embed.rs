@@ -532,7 +532,7 @@ impl<'a, 'g> Embedding<'a, 'g> {
                         }
                     }
                     Cross::Consumes => {
-                        let w = len + k.units * g.lambda[l][c as usize];
+                        let w = len + k.units_at(g.cut_mid(l, c)) * g.lambda[l][c as usize];
                         let np = lg.cuts[c as usize].parts.len();
                         let in_cut: u32 = (0..np as u16)
                             .map(|pt| self.part_wires(layer, c, pt).len() as u32)
