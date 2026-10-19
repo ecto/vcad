@@ -330,6 +330,18 @@ them, so a model and its vendor files move together. `import-step-body` picks
 one body out of a multi-body STEP; `import-mesh` and `import-mesh-scaled`
 place an STL.
 
+STL has no unit field, and `import-mesh` reads its coordinates as **metres**
+(the URDF convention — Unitree/ROS meshes are metres) and converts to mm. A
+millimetre STL therefore comes in 1000x too big unless it says so:
+
+```clojure
+[import-mesh "vendor/bracket.stl" :units "mm"]   ; also "cm", "m" (default), "in"
+[import-mesh-scaled 1.0 1.0 2.0 "b.stl" :units "mm"]  ; extra scale on top
+```
+
+The loader prints a `WARNING MeshImport` line (path, raw STL bbox, applied
+scale) when an import lands over 10 m or under 1 mm.
+
 Substituting "a cylinder of about the right size" for a purchased part means
 fit checks only ever test the envelope you invented — and real parts have
 connector bosses and cable exits that project past the body their datasheet

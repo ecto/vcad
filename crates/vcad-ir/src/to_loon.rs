@@ -582,6 +582,10 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
         }),
 
         CsgOp::MeshImport { path, scale } => OpResult::Ok(match scale {
+            // The loader assumes metres; a uniform 0.001 is a mm STL.
+            Some(s) if s.x == 0.001 && s.y == 0.001 && s.z == 0.001 => {
+                format!("[import-mesh {:?} :units \"mm\"]", path)
+            }
             Some(s) => format!(
                 "[import-mesh-scaled {} {} {} {:?}]",
                 fmt_f64(s.x),
