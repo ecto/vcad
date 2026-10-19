@@ -17,25 +17,36 @@
 
 use std::path::Path;
 
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_acoustics;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_antenna;
 pub use vcad_kernel_booleans;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_calibration;
 pub use vcad_kernel_cam;
 pub use vcad_kernel_constraints;
 pub use vcad_kernel_cost;
 pub use vcad_kernel_dfm;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_em;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_enclosure;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_fea;
 pub use vcad_kernel_fillet;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_flow;
 pub use vcad_kernel_geom;
 pub use vcad_kernel_math;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_neutronics;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_particle;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_photonics;
 pub use vcad_kernel_primitives;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_qcd;
 pub use vcad_kernel_sheet;
 pub use vcad_kernel_shell;
@@ -45,9 +56,12 @@ pub use vcad_kernel_stocksim;
 pub use vcad_kernel_sweep;
 pub use vcad_kernel_tessellate;
 pub use vcad_kernel_text;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_thermal;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_tolerance;
 pub use vcad_kernel_topo;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_topopt;
 
 pub mod faces;
@@ -1609,6 +1623,7 @@ impl Solid {
     /// optimized organic structure as a mesh-backed solid together with
     /// the run diagnostics (compliance history, achieved volume fraction,
     /// grid size).
+    #[cfg(feature = "analysis")]
     pub fn topology_optimize(
         &self,
         spec: &vcad_kernel_topopt::TopoOptSpec,
