@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-19-loon-convex-hull",
+  "version": "undefined",
+  "date": "2026-10-19",
+  "category": "feat",
+  "title": "Convex hull op: [hull ...] and [hull-points ...]",
+  "summary": "New Hull IR op with loon forms [hull s1 s2 ...] and [hull-points #[x y z ...]]: quickhull over tessellated vertices, emitted as a planar B-rep that booleans cut.",
+  "features": ["loon", "kernel", "hull"],
+  "mcpTools": ["create_cad_loon"]
+}

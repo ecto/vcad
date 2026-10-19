@@ -974,6 +974,32 @@ function evaluateOp(
       return Solid.loft(JSON.stringify(profiles), op.closed);
     }
 
+    case "Hull": {
+      // Hull is associative: fold the operands (and the point cloud, as one
+      // more operand) pairwise through the kernel.
+      const K = Solid as unknown as {
+        hullPoints?: (points: Float64Array) => Solid;
+      };
+      const parts = op.children.map((id) =>
+        evaluateNode(id, nodes, Solid, cache, depth + 1),
+      );
+      const points = op.points;
+      if (points.length > 0) {
+        if (typeof K.hullPoints !== "function") {
+          throw new Error("Hull needs a kernel build with Solid.hullPoints — rebuild the WASM kernel");
+        }
+        parts.push(K.hullPoints(new Float64Array(points)));
+      }
+      if (parts.length === 0) throw new Error("Hull has no operands");
+      return parts.reduce((acc, s) => {
+        const hullWith = (acc as unknown as { hullWith?: (o: Solid) => Solid }).hullWith;
+        if (typeof hullWith !== "function") {
+          throw new Error("Hull needs a kernel build with Solid.hullWith — rebuild the WASM kernel");
+        }
+        return hullWith.call(acc, s);
+      });
+    }
+
     case "ImportedMesh":
       return Solid.empty();
 
@@ -1176,6 +1202,9 @@ function remapNodeIds(node: Node, idMap: Map<number, number>): Node {
       break;
     case "Loft":
       newOp = { ...op, sketches: op.sketches.map(m) };
+      break;
+    case "Hull":
+      newOp = { ...op, children: op.children.map(m) };
       break;
     default:
       newOp = op;

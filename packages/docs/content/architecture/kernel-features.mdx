@@ -205,6 +205,18 @@ Loft interpolates a solid through a sequence of cross-sections:
 
 ![Lofted transition through three rectangular sections](/assets/kernel/loft.jpg)
 
+Convex hull wraps the smallest convex solid around its inputs: `[hull a b ...]`
+hulls the solids together, `[hull-points #[x0 y0 z0 ...]]` hulls a point cloud
+(at least 4 non-coplanar points). Quickhull runs over the operands' tessellated
+vertices, so curved inputs come out faceted. The result is a planar-faced B-rep,
+so later booleans cut it properly:
+
+```lisp
+[root [hull [translate 0 0 0 [cylinder 10 5]] [translate 50 0 0 [sphere 8]]] "aluminum"]
+```
+
+![Convex hull of a cylinder and a sphere](/assets/kernel/hull.jpg)
+
 ### Text and Sheet Metal
 
 `vcad-kernel-text` converts text to sketch geometry for embossing and engraving. `vcad-kernel-sheet` models sheet-metal parts — flanges, bends — with lossless unfolding to a flat pattern.

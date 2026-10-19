@@ -1040,6 +1040,7 @@ fn is_solid_tag(tag: &str) -> bool {
             | "Sweep"
             | "Loft"
             | "LoftClosed"
+            | "Hull"
             | "Fastener"
             | "BoltCircle"
             | "ClearanceHole"
@@ -2293,6 +2294,32 @@ impl ConvertCtx {
                     sketches,
                     closed: Some(true),
                 }
+            }
+
+            // Convex hull of solids' vertices plus loose points.
+            "Hull" => {
+                assert_fields(tag, fields, 2)?;
+                let items = match &fields[0] {
+                    Value::Vec(v) => v.clone(),
+                    other => return Err(format!("hull: expected Vec of Solid, got {other}")),
+                };
+                let children = items
+                    .iter()
+                    .map(|item| self.convert_solid(item))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let points = self.f64_list(&fields[1], "hull points")?;
+                if points.len() % 3 != 0 {
+                    return Err(format!(
+                        "hull-points: expected a flat #[x y z ...] list, got {} numbers (not a multiple of 3)",
+                        points.len()
+                    ));
+                }
+                if children.is_empty() && points.len() < 12 {
+                    return Err(
+                        "hull: needs at least one solid or 4 points to enclose a volume".into(),
+                    );
+                }
+                CsgOp::Hull { children, points }
             }
 
             _ => return Err(format!("unknown Solid variant: {tag}")),

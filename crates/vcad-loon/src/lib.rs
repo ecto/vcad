@@ -404,6 +404,7 @@ pub fn eval_vcad_file(path: &Path) -> Result<Document, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vcad_ir::CsgOp;
 
     #[test]
     fn eval_simple_cube() {
@@ -944,6 +945,44 @@ mod tests {
 "#;
         let doc = eval_vcad(source, None).unwrap();
         assert_eq!(doc.nodes.len(), 3); // 2 sketches + loft
+    }
+
+    #[test]
+    fn eval_hull_of_solids() {
+        let source = "[hull [translate 0 0 0 [cylinder 10 5]] [translate 50 0 0 [sphere 8]]]";
+        let doc = eval_vcad(source, None).unwrap();
+        let hull = doc
+            .nodes
+            .values()
+            .find_map(|n| match &n.op {
+                CsgOp::Hull { children, points } => Some((children.clone(), points.clone())),
+                _ => None,
+            })
+            .expect("a Hull node");
+        assert_eq!(hull.0.len(), 2);
+        assert!(hull.1.is_empty());
+        // Round-trips through the loon emitter as the same op.
+        let again = eval_vcad(&vcad_ir::to_loon::document_to_loon(&doc), None).unwrap();
+        assert!(again
+            .nodes
+            .values()
+            .any(|n| matches!(n.op, CsgOp::Hull { .. })));
+    }
+
+    #[test]
+    fn eval_hull_points() {
+        let source = "[hull-points #[0 0 0  10 0 0  0 10 0  0 0 10  2 2 2]]";
+        let doc = eval_vcad(source, None).unwrap();
+        assert_eq!(doc.nodes.len(), 1);
+        match &doc.nodes.values().next().unwrap().op {
+            CsgOp::Hull { children, points } => {
+                assert!(children.is_empty());
+                assert_eq!(points.len(), 15);
+            }
+            other => panic!("expected Hull, got {other:?}"),
+        }
+        assert!(eval_vcad("[hull-points #[0 0 0 1 0 0 0 1 0]]", None).is_err());
+        assert!(eval_vcad("[hull-points #[0 0 0 1 0]]", None).is_err());
     }
 
     #[test]

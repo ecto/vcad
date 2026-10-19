@@ -1161,7 +1161,15 @@ sketches: number[],
 /**
  * Connect last profile to first (creates tube).
  */
-closed?: boolean, } | { "type": "ImportedMesh", 
+closed?: boolean, } | { "type": "Hull", 
+/**
+ * Solid operands whose (tessellated) vertices join the hull.
+ */
+children: number[], 
+/**
+ * Extra points, flat `[x0, y0, z0, x1, y1, z1, ...]`.
+ */
+points: Array<number>, } | { "type": "ImportedMesh", 
 /**
  * Flat array of vertex positions (x, y, z, x, y, z, ...).
  */

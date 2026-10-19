@@ -1136,6 +1136,19 @@ pub enum CsgOp {
         closed: Option<bool>,
     },
     #[tool(hidden)]
+    /// Convex hull of the union of the operands' vertices plus any loose
+    /// points. Mesh-backed: operands are tessellated and the hull is built
+    /// over their vertices, so the result is exact only for faceted inputs.
+    Hull {
+        /// Solid operands whose (tessellated) vertices join the hull.
+        #[serde(default)]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number[]"))]
+        children: Vec<NodeId>,
+        /// Extra points, flat `[x0, y0, z0, x1, y1, z1, ...]`.
+        #[serde(default)]
+        points: Vec<f64>,
+    },
+    #[tool(hidden)]
     /// Imported pre-tessellated mesh (e.g. from drag-drop STL/GLB).
     ImportedMesh {
         /// Flat array of vertex positions (x, y, z, x, y, z, ...).
@@ -1401,6 +1414,7 @@ impl CsgOp {
             | CsgOp::Revolve { sketch, .. }
             | CsgOp::Sweep { sketch, .. } => vec![*sketch],
             CsgOp::Loft { sketches, .. } => sketches.clone(),
+            CsgOp::Hull { children, .. } => children.clone(),
             CsgOp::SheetMetalEdgeFlange { parent, .. }
             | CsgOp::SheetMetalJog { parent, .. }
             | CsgOp::SheetMetalHem { parent, .. }
@@ -1449,6 +1463,7 @@ impl CsgOp {
             | CsgOp::Revolve { sketch, .. }
             | CsgOp::Sweep { sketch, .. } => vec![sketch],
             CsgOp::Loft { sketches, .. } => sketches.iter_mut().collect(),
+            CsgOp::Hull { children, .. } => children.iter_mut().collect(),
             CsgOp::SheetMetalEdgeFlange { parent, .. }
             | CsgOp::SheetMetalJog { parent, .. }
             | CsgOp::SheetMetalHem { parent, .. }
@@ -1514,6 +1529,7 @@ impl CsgOp {
             | CsgOp::EdgeBlend { .. }
             | CsgOp::Sweep { .. }
             | CsgOp::Loft { .. }
+            | CsgOp::Hull { .. }
             | CsgOp::ImportedMesh { .. }
             | CsgOp::PcbBoard { .. }
             | CsgOp::EmbroideryPattern { .. }

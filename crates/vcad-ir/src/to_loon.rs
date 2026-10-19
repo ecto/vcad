@@ -546,6 +546,19 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             }
         }
 
+        CsgOp::Hull { children, points } => {
+            let mut parts: Vec<String> = children.iter().map(|id| node_ref(*id, doc)).collect();
+            if !points.is_empty() {
+                let flat: Vec<String> = points.iter().map(|v| fmt_f64(*v)).collect();
+                let pts = format!("[hull-points #[{}]]", flat.join(" "));
+                if parts.is_empty() {
+                    return OpResult::Ok(pts);
+                }
+                parts.push(pts);
+            }
+            OpResult::Ok(format!("[hull {}]", parts.join(" ")))
+        }
+
         CsgOp::Text2D { text, height, .. } => OpResult::Unsupported(
             "Text2D".to_string(),
             format!(
@@ -853,6 +866,7 @@ fn get_child_ids(op: &CsgOp) -> Vec<NodeId> {
         | CsgOp::Sweep { sketch, .. } => vec![*sketch],
 
         CsgOp::Loft { sketches, .. } => sketches.clone(),
+        CsgOp::Hull { children, .. } => children.clone(),
 
         // A sheet-metal chain is a parent chain like any other: the base
         // flange has to be emitted before the flange that folds off it.

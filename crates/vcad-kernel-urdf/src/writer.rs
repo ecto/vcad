@@ -402,6 +402,7 @@ impl<'a> UrdfWriter<'a> {
             | CsgOp::Revolve { .. }
             | CsgOp::Sweep { .. }
             | CsgOp::Loft { .. }
+            | CsgOp::Hull { .. }
             | CsgOp::ImportedMesh { .. }
             | CsgOp::PcbBoard { .. }
             | CsgOp::EmbroideryPattern { .. }
