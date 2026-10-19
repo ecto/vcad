@@ -75,7 +75,7 @@ vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 | `--transparent` | off | Transparent SVG background. |
 | `--sheet` | off | Multi-view drawing sheet instead of a single view (see below). |
 | `--exact-edges` | off | Emit BRep-exact linework where available (SVG; see below). |
-| `--section x=N\|y=N\|z=N` | off | Section (cutaway) view: the half of the model on the camera's side of the plane is boolean-subtracted before rendering (you always look into the cut), and the exposed cut faces are drawn with a 45° drafting hatch. Composes with `--view` and raster output. A solid whose section boolean fails is rendered uncut (noted on stderr) — the render never fails outright. |
+| `--section x=N\|y=N\|z=N` | off | Section (cutaway) view: the half of the model on the camera's side of the plane is boolean-subtracted before rendering (you always look into the cut), and the exposed cut faces are drawn with a 45° drafting hatch. Composes with `--view` and raster output. A solid whose section boolean fails is rendered uncut (noted on stderr, by part name) — the render never fails outright. Mesh-only parts (imported STL/GLB/OBJ, `[import-mesh ...]`, frozen topology-optimization results) have no boolean, so they are clipped triangle-by-triangle at the plane instead: the cut is left open (no hatched cap), since a triangle soup has no inside to fill. |
 | `--axes` | off | Overlay an X/Y/Z origin gizmo (kernel is Z-up). See below. |
 | `--labels` | off | Label each top-level part with its name. See below. |
 | `--dims` | off | Overlay overall W×D×H bounding-box dimensions in mm. See below. |
@@ -91,6 +91,8 @@ vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 | `--fill <F>` | `0.6` | Fraction of canvas the part's long axis fills (raster). |
 | `--quality <Q>` | `92` | JPEG quality, 1–100 (ignored for PNG). |
 | `--aa <N>` | auto | Supersampling factor, 1–4, for the tessellated raster path (see below). |
+| `--eval-json` | off | Evaluate only — no render. Prints a per-part JSON report to stdout (`name`, `id`, `kind`, `ok`, `reason`, posed `bbox`, `volume`, `triangles`, `eval_ms`) and exits non-zero if any part failed. `vcad eval-json` does the same for `.loon` source. |
+| `-v`, `--verbose` | off | Print each boolean fallback (a Difference re-cut with the mesh boolean) as it happens; by default they collapse into one summary line at exit. Same as `VCAD_BOOLEAN_VERBOSE=1`. |
 
 ### Anti-aliasing (`--aa`)
 

@@ -521,6 +521,19 @@ struct Cli {
     #[arg(long, value_name = "POSE.json", conflicts_with = "animate")]
     pose_file: Option<PathBuf>,
 
+    /// Evaluate the document and print a per-part JSON report to stdout —
+    /// name, ok/failed with reason, posed bbox, volume, triangle count,
+    /// eval time — without rendering anything. Exits non-zero when any part
+    /// failed. For `.loon` source, `vcad eval-json` does the same.
+    #[arg(long)]
+    eval_json: bool,
+
+    /// Print every boolean fallback (a Difference re-cut with the mesh
+    /// boolean) as it happens instead of one summary line at the end.
+    /// `VCAD_BOOLEAN_VERBOSE=1` does the same.
+    #[arg(long, short = 'v')]
+    verbose: bool,
+
     /// Render only the first N frames of the animation (`--animate`).
     #[arg(long, requires = "animate")]
     frames: Option<usize>,
@@ -1370,6 +1383,9 @@ fn run(cli: &Cli) -> Result<(), String> {
     }
 
     let input = &inputs[0];
+    if cli.eval_json {
+        return run_eval_json(input);
+    }
     if cli.animate.is_some() {
         #[cfg(feature = "raytrace")]
         {
@@ -1391,9 +1407,29 @@ fn run(cli: &Cli) -> Result<(), String> {
     }
 }
 
+/// `--eval-json`: evaluate, report per part on stdout, never render.
+fn run_eval_json(input: &Path) -> Result<(), String> {
+    let raw = read_document(input)?;
+    let report = vcad_render::report::eval_report(&raw)?;
+    let json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+    println!("{json}");
+    if report.parts_failed > 0 {
+        return Err(format!(
+            "{} of {} part(s) failed to evaluate",
+            report.parts_failed, report.parts_total
+        ));
+    }
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    match run(&cli) {
+    vcad_kernel::vcad_kernel_booleans::recut_log::set_verbose(cli.verbose);
+    let result = run(&cli);
+    if let Some(line) = vcad_kernel::vcad_kernel_booleans::recut_log::take_summary() {
+        eprintln!("{line}");
+    }
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{}", e);

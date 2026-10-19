@@ -54,6 +54,7 @@ pub mod photoreal;
 #[cfg(feature = "photoreal-gpu")]
 pub mod photoreal_gpu;
 pub mod pose;
+pub mod report;
 pub mod web;
 
 /// First PCB in a raw `.vcad` document, if any: `PcbBoard` nodes are
@@ -546,6 +547,15 @@ fn section_solid(
     if kept_extent <= 0.0 {
         return Ok(None); // wholly on the removed side
     }
+    // A mesh-only solid (imported STL/GLB/OBJ, frozen topology-optimization
+    // result) has no boolean: the kernel's mesh "difference" concatenates
+    // its operands, which would draw the cutter box *into* the cutaway.
+    // Clip its triangles against the plane instead. The cut is left open —
+    // a triangle soup has no inside to cap — so it reads as a shell with no
+    // hatched face.
+    if solid.brep().is_none() {
+        return Ok(clip_mesh_solid(solid, plane, remove_positive));
+    }
     // Cutter: a box overhanging the solid's bbox on every open side, with
     // one face on the section axis sitting exactly at the plane — so the
     // cut faces the boolean leaves behind are planar at `coord`.
@@ -570,6 +580,115 @@ fn section_solid(
     Ok(Some(cut))
 }
 
+/// Clip a mesh-only solid's triangles to the kept side of `plane`,
+/// splitting the ones that straddle it. `None` when nothing survives.
+fn clip_mesh_solid(solid: &Solid, plane: SectionPlane, remove_positive: bool) -> Option<Solid> {
+    let mesh = solid.to_mesh(TESSELLATION_SEGMENTS);
+    let ax = plane.axis.index();
+    // Signed distance into the kept side: >= 0 is kept.
+    let keep = |p: &[f64; 3]| {
+        let d = p[ax] - plane.coord;
+        if remove_positive {
+            -d
+        } else {
+            d
+        }
+    };
+    let vert = |i: u32| {
+        let i = i as usize * 3;
+        [
+            mesh.vertices[i] as f64,
+            mesh.vertices[i + 1] as f64,
+            mesh.vertices[i + 2] as f64,
+        ]
+    };
+    let mut vertices: Vec<f32> = Vec::new();
+    let mut indices: Vec<u32> = Vec::new();
+    for t in mesh.indices.chunks_exact(3) {
+        let tri = [vert(t[0]), vert(t[1]), vert(t[2])];
+        // Sutherland–Hodgman against one plane: at most a quad comes out.
+        let mut poly: Vec<[f64; 3]> = Vec::with_capacity(4);
+        for k in 0..3 {
+            let (a, b) = (tri[k], tri[(k + 1) % 3]);
+            let (da, db) = (keep(&a), keep(&b));
+            if da >= 0.0 {
+                poly.push(a);
+            }
+            if (da >= 0.0) != (db >= 0.0) {
+                let u = da / (da - db);
+                poly.push([
+                    a[0] + u * (b[0] - a[0]),
+                    a[1] + u * (b[1] - a[1]),
+                    a[2] + u * (b[2] - a[2]),
+                ]);
+            }
+        }
+        if poly.len() < 3 {
+            continue;
+        }
+        let base = (vertices.len() / 3) as u32;
+        for p in &poly {
+            vertices.extend(p.iter().map(|&c| c as f32));
+        }
+        for k in 1..poly.len() as u32 - 1 {
+            indices.extend([base, base + k, base + k + 1]);
+        }
+    }
+    if indices.is_empty() {
+        return None;
+    }
+    Some(Solid::from_mesh(
+        vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
+            vertices,
+            indices,
+            normals: Vec::new(),
+            face_kinds: Vec::new(),
+            face_ids: Vec::new(),
+        },
+    ))
+}
+
+#[cfg(test)]
+mod mesh_section_tests {
+    use super::*;
+
+    /// A mesh-only cube 0..10 cut at z = 4 keeps only z <= 4 — and in
+    /// particular gains no cutter-box geometry (the kernel's mesh
+    /// "difference" would have concatenated a box overhanging the cube).
+    #[test]
+    fn section_clips_a_mesh_only_solid() {
+        let mesh = Solid::cube(10.0, 10.0, 10.0).to_mesh(TESSELLATION_SEGMENTS);
+        let soup = Solid::from_mesh(mesh);
+        assert!(soup.brep().is_none());
+        let plane = SectionPlane {
+            axis: Axis::Z,
+            coord: 4.0,
+        };
+        let cut = section_solid(&soup, plane, true)
+            .expect("mesh section")
+            .expect("half survives");
+        let (lo, hi) = cut.bounding_box();
+        assert!(
+            (hi[2] - 4.0).abs() < 1e-5,
+            "kept side ends at the plane: {hi:?}"
+        );
+        assert!(
+            lo[0] >= -1e-5 && hi[0] <= 10.0 + 1e-5,
+            "no cutter overhang: {lo:?}..{hi:?}"
+        );
+        // Wholly on the removed side → gone.
+        let gone = section_solid(
+            &soup,
+            SectionPlane {
+                axis: Axis::Z,
+                coord: -1.0,
+            },
+            true,
+        );
+        assert!(matches!(gone, Ok(None)));
+    }
+}
+
 /// Apply a section plane to every scene solid, removing the half of each
 /// on the camera's side of the plane (see [`section_removes_positive_side`]).
 /// A solid whose boolean fails is kept uncut (never fail the whole render),
@@ -585,7 +704,8 @@ fn apply_section(scene: Vec<SceneSolid>, plane: SectionPlane, view: View) -> Vec
             }
             Ok(None) => {}
             Err(e) => {
-                eprintln!("vcad-render: section: solid {i} left uncut ({e})");
+                let who = s.name.clone().unwrap_or_else(|| format!("solid {i}"));
+                eprintln!("vcad-render: section: {who} left uncut ({e})");
                 out.push(s);
             }
         }
@@ -824,6 +944,10 @@ struct EvaluatedDocument {
     doc: vcad_ir::Document,
     statics: Vec<SceneSolid>,
     parts: Vec<ArticulatedPart>,
+    /// One entry per authored part (visible scene root or assembly
+    /// instance), including the ones that produced nothing — the record
+    /// that keeps a part from vanishing without a word.
+    log: Vec<report::PartLog>,
 }
 
 /// Forward kinematics for an assembly document — the same solver the app's
@@ -899,6 +1023,15 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
 }
 
 fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
+    let ev = evaluate_vcad_document_inner(raw_vcad, false)?;
+    report::warn_dropped(&ev.log);
+    Ok(ev)
+}
+
+/// [`evaluate_vcad_document`] without the stderr summary, optionally timing
+/// each part (`timed` stamps every root as it lands; it is off on the render
+/// path so wasm32, where `Instant::now` panics, never reaches it).
+fn evaluate_vcad_document_inner(raw_vcad: &str, timed: bool) -> Result<EvaluatedDocument, String> {
     DOCUMENT_EVALS.with(|c| c.set(c.get() + 1));
     let parsed = parse_vcad_file(raw_vcad).map_err(|e| format!("parse: {}", e))?;
     let (root_cache, mesh_segments) = ROOT_CACHE
@@ -913,6 +1046,7 @@ fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
     // A static renderer never displays clash meshes, and clash detection
     // is O(n²) pairwise booleans across scene roots — fatal for many-root
     // documents (an imported chip die has ~90k roots).
+    let stamps = report::Stamps::new(timed);
     let scene = catch_unwind(AssertUnwindSafe(|| {
         evaluate_document_with_sheet_metal(
             &parsed.document,
@@ -920,6 +1054,7 @@ fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
                 skip_clash_detection: true,
                 root_cache,
                 mesh_segments,
+                on_root: stamps.on_root(),
                 ..Default::default()
             },
         )
@@ -1005,11 +1140,20 @@ fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
     // definition once and hand back a local copy per instance. Without
     // this, an assembly-only document (no scene roots) rendered as
     // "no solids produced" despite being perfectly valid.
-    let parts = evaluate_assembly_instances(&parsed.document, &scene)?;
+    let root_ms = stamps.deltas_ms();
+    let mut log = report::root_log(
+        &parsed.document,
+        &visible_roots,
+        &proto_roots,
+        &scene,
+        &root_ms,
+    );
+    let parts = evaluate_assembly_instances(&parsed.document, &scene, timed, &mut log)?;
     Ok(EvaluatedDocument {
         doc: parsed.document,
         statics: solids,
         parts,
+        log,
     })
 }
 
@@ -1020,6 +1164,8 @@ fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
 fn evaluate_assembly_instances(
     doc: &vcad_ir::Document,
     scene: &vcad_eval::EvaluatedScene,
+    timed: bool,
+    log: &mut Vec<report::PartLog>,
 ) -> Result<Vec<ArticulatedPart>, String> {
     let (Some(part_defs), Some(instances)) = (&doc.part_defs, &doc.instances) else {
         return Ok(Vec::new());
@@ -1029,44 +1175,93 @@ fn evaluate_assembly_instances(
     }
 
     let mut cache: HashMap<vcad_ir::NodeId, Option<Solid>> = HashMap::new();
-    let mut def_solids: HashMap<&str, Option<Solid>> = HashMap::new();
+    // Per part definition: the solid (or why there is none) and what it cost.
+    let mut def_solids: HashMap<&str, (Result<Solid, String>, Option<f64>)> = HashMap::new();
     let mut out = Vec::new();
 
     for inst in instances {
+        let inst_name = inst.name.clone().unwrap_or_else(|| inst.id.clone());
         let Some(def) = part_defs.get(&inst.part_def_id) else {
+            log.push(report::PartLog::failed(
+                report::PartKind::Instance,
+                inst.id.clone(),
+                inst_name,
+                format!(
+                    "instance names unknown part definition '{}'",
+                    inst.part_def_id
+                ),
+            ));
             continue;
         };
-        let solid = def_solids
+        let (solid, eval_ms) = def_solids
             .entry(inst.part_def_id.as_str())
             .or_insert_with(|| {
-                catch_unwind(AssertUnwindSafe(|| {
+                let t0 = report::now(timed);
+                let brep = catch_unwind(AssertUnwindSafe(|| {
                     vcad_eval::evaluate_node(def.root, &doc.nodes, &mut cache)
-                        .ok()
-                        .flatten()
+                        .map_err(|e| e.to_string())
                 }))
-                .unwrap_or(None)
-                // No BRep (mesh-imported part, e.g. a URDF link's STL):
-                // wrap the evaluated triangle mesh, same as the roots path.
-                .or_else(|| {
-                    scene
-                        .part_defs
-                        .as_ref()?
-                        .iter()
-                        .find(|pd| pd.id == inst.part_def_id)
-                        .filter(|pd| !pd.mesh.indices.is_empty())
-                        .map(|pd| {
-                            Solid::from_mesh(vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
-                                vertices: pd.mesh.positions.clone(),
-                                indices: pd.mesh.indices.clone(),
-                                normals: pd.mesh.normals.clone().unwrap_or_default(),
-                                face_kinds: pd.mesh.face_kinds.clone().unwrap_or_default(),
-                                face_ids: pd.mesh.face_ids.clone().unwrap_or_default(),
+                .unwrap_or_else(|_| Err("evaluation panicked".to_string()));
+                let brep_err = match &brep {
+                    Ok(Some(_)) => None,
+                    Ok(None) => Some("evaluated to no B-rep solid".to_string()),
+                    Err(e) => Some(e.clone()),
+                };
+                let solid = brep
+                    .ok()
+                    .flatten()
+                    // No BRep (mesh-imported part, e.g. a URDF link's STL):
+                    // wrap the evaluated triangle mesh, same as the roots path.
+                    .or_else(|| {
+                        scene
+                            .part_defs
+                            .as_ref()?
+                            .iter()
+                            .find(|pd| pd.id == inst.part_def_id)
+                            .filter(|pd| !pd.mesh.indices.is_empty())
+                            .map(|pd| {
+                                Solid::from_mesh(
+                                    vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
+                                        vertices: pd.mesh.positions.clone(),
+                                        indices: pd.mesh.indices.clone(),
+                                        normals: pd.mesh.normals.clone().unwrap_or_default(),
+                                        face_kinds: pd.mesh.face_kinds.clone().unwrap_or_default(),
+                                        face_ids: pd.mesh.face_ids.clone().unwrap_or_default(),
+                                    },
+                                )
                             })
-                        })
-                })
+                    });
+                let solid = solid.ok_or_else(|| {
+                    let mesh_why = scene
+                        .failures
+                        .iter()
+                        .find(|f| f.scope == format!("partDef[{}]", inst.part_def_id))
+                        .map(|f| f.error.clone());
+                    mesh_why
+                        .or(brep_err)
+                        .unwrap_or_else(|| "produced no geometry".to_string())
+                });
+                (solid, report::elapsed_ms(t0))
             })
             .clone();
-        let Some(solid) = solid else { continue };
+        let solid = match solid {
+            Ok(s) => s,
+            Err(why) => {
+                log.push(report::PartLog::failed(
+                    report::PartKind::Instance,
+                    inst.id.clone(),
+                    inst_name,
+                    format!("part definition '{}': {why}", inst.part_def_id),
+                ));
+                continue;
+            }
+        };
+        log.push(report::PartLog::ok(
+            report::PartKind::Instance,
+            inst.id.clone(),
+            inst_name,
+            eval_ms,
+        ));
 
         let material = inst
             .material

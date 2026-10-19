@@ -516,11 +516,7 @@ pub fn boolean_op_reported(
     if !broken && op == BooleanOp::Difference {
         if let Some((mesh_a, mesh_b)) = &operands {
             if crate::validate::difference_removed_nothing(&result_mesh, mesh_a, mesh_b) {
-                eprintln!(
-                    "vcad boolean: Difference removed no volume from a subtrahend that \
-                     overlaps the minuend — rejecting the B-rep result and re-cutting \
-                     with the mesh boolean"
-                );
+                crate::recut_log::difference_recut();
                 broken = true;
                 broken_reason = Some(DegradeReason::DifferenceRemovedNothing);
             }
