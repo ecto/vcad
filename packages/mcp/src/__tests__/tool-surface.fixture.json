@@ -1670,6 +1670,64 @@
     }
   },
   {
+    "name": "check_joint_range",
+    "title": "Check Joint Range",
+    "description": "Joint range-of-motion clearance sweep for a jointed assembly. For each revolute joint (or the named `joints`), drives it from 0 toward each declared limit in `step_deg` steps with every other joint at 0, and reports the first angle each direction where the moving subtree's overlap with the rest of the assembly grows past its zero-pose overlap by more than `threshold_mm3` — plus `hits`, the part pairs that collide there. The zero-pose overlap is the baseline, so deliberate nested/coaxial overlaps don't count. `scope: \"chain\"` ignores other limbs (geometry moved by joints that aren't this joint's ancestors). Read-only: the session is not modified. Use `render_view` with `joint_state` to look at a reported pose, and `measure` with `sweep` for a two-part distance curve.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id of the jointed assembly."
+        },
+        "joints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Joint ids or names to sweep. Default: every revolute joint."
+        },
+        "step_deg": {
+          "type": "number",
+          "description": "Sweep increment in degrees (default 5)."
+        },
+        "threshold_mm3": {
+          "type": "number",
+          "description": "New overlap past the zero pose that counts as a collision, mm³ (default 200)."
+        },
+        "resolution_mm": {
+          "type": "number",
+          "description": "Overlap-measurement column pitch in mm (default 1). Smaller is more accurate and slower."
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "all",
+            "chain"
+          ],
+          "description": "What the moving subtree is checked against. `all` (default): every instance the joint does not move. `chain`: only geometry moved by no joint or only by this joint's ancestors — other limbs are posture, not design."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "joint_range": {
+          "type": "object"
+        },
+        "document_id": {
+          "type": "string"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "inspect_faces",
     "title": "Inspect Faces",
     "description": "List a part's B-rep faces: stable face id, surface type, area, bbox, centroid, plus the exact surface parameters — a cylinder's radius/diameter, axis direction, point on axis and axial extent (and whether it's a bore or a shaft); a plane's outward normal and a point on it. This is the tool for mechanical reasoning an agent can't do from a bounding box: find the mounting face, read a bore diameter, get a shaft axis. Filter with `surface_type` / `radius_mm` / `min_area_mm2`, page with `limit`/`offset`, or start with `summary_only` to get grouped tallies ('17 cylindrical faces at radius 2.1 mm') instead of hundreds of records. Radii, axes and normals are analytic; areas, bboxes and centroids are tessellation-bound. Complements `inspect_cad` and `measure`, which see only the triangle mesh. Requires B-rep geometry — mesh-only parts are refused by name, not guessed at.",

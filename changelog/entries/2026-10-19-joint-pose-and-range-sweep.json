@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-19-joint-pose-and-range-sweep",
+  "version": "0.10.0",
+  "date": "2026-10-19",
+  "category": "feat",
+  "title": "Pose renders with --pose; sweep joint range of motion",
+  "summary": "vcad-render --pose/--pose-file poses a jointed assembly for any still style; vcad check-joint-range and check_joint_range sweep each revolute joint and report where it first collides.",
+  "features": ["assembly", "joints", "render", "clearance"],
+  "mcpTools": ["check_joint_range"]
+}

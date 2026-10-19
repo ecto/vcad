@@ -157,6 +157,14 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
       document_id: { type: "string" },
     }),
   },
+  check_joint_range: {
+    title: "Check Joint Range",
+    annotations: RO,
+    outputSchema: objectOut({
+      joint_range: { type: "object" },
+      document_id: { type: "string" },
+    }),
+  },
 
   // ── Parametric parameters + differentiable seam ────────────────────────
   list_parameters: { title: "List Parameters", annotations: RO },
