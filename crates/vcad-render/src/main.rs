@@ -1384,7 +1384,7 @@ fn run(cli: &Cli) -> Result<(), String> {
 
     let input = &inputs[0];
     if cli.eval_json {
-        return run_eval_json(input);
+        return run_eval_json(input, &cli);
     }
     if cli.animate.is_some() {
         #[cfg(feature = "raytrace")]
@@ -1408,8 +1408,8 @@ fn run(cli: &Cli) -> Result<(), String> {
 }
 
 /// `--eval-json`: evaluate, report per part on stdout, never render.
-fn run_eval_json(input: &Path) -> Result<(), String> {
-    let raw = read_document(input)?;
+fn run_eval_json(input: &Path, cli: &Cli) -> Result<(), String> {
+    let raw = read_document(input, cli)?; // honours --pose
     let report = vcad_render::report::eval_report(&raw)?;
     let json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
     println!("{json}");
