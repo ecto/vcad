@@ -317,6 +317,27 @@ high-fidelity previews. For vector output, `--exact-edges` delivers
 resolution-independent linework straight from the BRep; and SVG remains the
 right pick for the leaderboard's drafting aesthetic.
 
+## Posing a still (`--pose`)
+
+A jointed assembly renders at its stored joint states. `--pose` sets them
+for one still, in any style — line art, raster, `--raytrace`, `--photoreal`:
+
+```bash
+vcad-render robot.vcad --pose l_hip_pitch=-45,l_knee_pitch=70 -o crouch.png
+vcad-render robot.vcad --pose-file pose.json --view front -o pose.svg
+```
+
+Joints are named by id or authored name, in degrees (mm for sliders);
+unlisted joints keep their stored state. `--pose` is repeatable and wins
+over `--pose-file`. A pose file is `{"joint": deg, ...}`, or an `--animate`
+keyframe file, whose first key per joint track is used — so a one-frame
+timeline written for `--photoreal --animate` poses a still directly. A state
+beyond a joint's limits is clamped with a warning; an unknown joint is an
+error listing the movable ones.
+
+To find how far each joint *can* go before the geometry collides, see
+`vcad check-joint-range` in the `vcad` CLI.
+
 ## Animation mode (`--animate`)
 
 A jointed assembly posed over time is, geometrically, the *same* parts in

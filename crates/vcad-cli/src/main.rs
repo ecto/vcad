@@ -523,6 +523,37 @@ enum Commands {
         quiet: bool,
     },
 
+    /// Sweep each revolute joint over its limits (others at zero) and report
+    /// the first angle each way where the moving subtree's overlap with the
+    /// rest of the assembly grows past its zero-pose overlap, plus which
+    /// part pairs collide. Exits 1 when any swept side collides before its
+    /// limit.
+    CheckJointRange {
+        /// Input .vcad or .loon assembly
+        input: PathBuf,
+        /// Joints to sweep (id or name, comma-separated); default: every
+        /// revolute joint
+        #[arg(long, value_delimiter = ',')]
+        joints: Vec<String>,
+        /// Sweep increment, degrees
+        #[arg(long, default_value = "5")]
+        step: f64,
+        /// New overlap past the zero pose that counts as a collision, mm³
+        #[arg(long, default_value = "200")]
+        threshold: f64,
+        /// Overlap-measurement column pitch, mm
+        #[arg(long, default_value = "1")]
+        resolution: f64,
+        /// Check only against the joint's own kinematic chain (geometry
+        /// moved by no joint or only by this joint's ancestors), ignoring
+        /// other limbs
+        #[arg(long)]
+        chain: bool,
+        /// Emit the report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Sign in so the chat panel uses your account's quota instead of
     /// the anonymous limit. Without `--token` this opens a browser
     /// and polls for the device-code flow to complete.
@@ -851,6 +882,44 @@ fn main() -> Result<()> {
             json,
         }) => {
             run_dfm_ruleset(&input, &ruleset, pack.as_deref(), json)?;
+        }
+        Some(Commands::CheckJointRange {
+            input,
+            joints,
+            step,
+            threshold,
+            resolution,
+            chain,
+            json,
+        }) => {
+            let doc = load_doc(&input)?;
+            let opts = vcad_kernel_assembly::JointRangeOptions {
+                step_deg: step,
+                threshold_mm3: threshold,
+                resolution_mm: resolution,
+                joints,
+                scope: if chain {
+                    vcad_kernel_assembly::RangeScope::Chain
+                } else {
+                    vcad_kernel_assembly::RangeScope::All
+                },
+                ..Default::default()
+            };
+            let ranges = vcad_kernel_assembly::check_joint_range(&doc, &opts)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&ranges)?);
+            } else {
+                for r in &ranges {
+                    println!("{}", r.summary());
+                }
+            }
+            if ranges
+                .iter()
+                .any(|r| !r.negative.is_free() || !r.positive.is_free())
+            {
+                std::process::exit(1);
+            }
         }
         Some(Commands::Check {
             input,
