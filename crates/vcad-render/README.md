@@ -75,7 +75,7 @@ vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 | `--transparent` | off | Transparent SVG background. |
 | `--sheet` | off | Multi-view drawing sheet instead of a single view (see below). |
 | `--exact-edges` | off | Emit BRep-exact linework where available (SVG; see below). |
-| `--section x=N\|y=N\|z=N` | off | Section (cutaway) view: the half of the model on the camera's side of the plane is boolean-subtracted before rendering (you always look into the cut), and the exposed cut faces are drawn with a 45° drafting hatch. Composes with `--view` and raster output. A solid whose section boolean fails is rendered uncut (noted on stderr) — the render never fails outright. |
+| `--section x=N\|y=N\|z=N` | off | Section (cutaway) view: the half of the model on the camera's side of the plane is boolean-subtracted before rendering (you always look into the cut), and the exposed cut faces are drawn with a 45° drafting hatch. Composes with `--view` and raster output. A solid whose section boolean fails is rendered uncut (noted on stderr, by part name) — the render never fails outright. Mesh-only parts (imported STL/GLB/OBJ, `[import-mesh ...]`, frozen topology-optimization results) have no boolean, so they are clipped triangle-by-triangle at the plane instead: the cut is left open (no hatched cap), since a triangle soup has no inside to fill. |
 | `--axes` | off | Overlay an X/Y/Z origin gizmo (kernel is Z-up). See below. |
 | `--labels` | off | Label each top-level part with its name. See below. |
 | `--dims` | off | Overlay overall W×D×H bounding-box dimensions in mm. See below. |
@@ -91,6 +91,8 @@ vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 | `--fill <F>` | `0.6` | Fraction of canvas the part's long axis fills (raster). |
 | `--quality <Q>` | `92` | JPEG quality, 1–100 (ignored for PNG). |
 | `--aa <N>` | auto | Supersampling factor, 1–4, for the tessellated raster path (see below). |
+| `--eval-json` | off | Evaluate only — no render. Prints a per-part JSON report to stdout (`name`, `id`, `kind`, `ok`, `reason`, posed `bbox`, `volume`, `triangles`, `eval_ms`) and exits non-zero if any part failed. `vcad eval-json` does the same for `.loon` source. |
+| `-v`, `--verbose` | off | Print each boolean fallback (a Difference re-cut with the mesh boolean) as it happens; by default they collapse into one summary line at exit. Same as `VCAD_BOOLEAN_VERBOSE=1`. |
 
 ### Anti-aliasing (`--aa`)
 
@@ -316,6 +318,27 @@ build so it doesn't grow. Use it for marketing screenshots and
 high-fidelity previews. For vector output, `--exact-edges` delivers
 resolution-independent linework straight from the BRep; and SVG remains the
 right pick for the leaderboard's drafting aesthetic.
+
+## Posing a still (`--pose`)
+
+A jointed assembly renders at its stored joint states. `--pose` sets them
+for one still, in any style — line art, raster, `--raytrace`, `--photoreal`:
+
+```bash
+vcad-render robot.vcad --pose l_hip_pitch=-45,l_knee_pitch=70 -o crouch.png
+vcad-render robot.vcad --pose-file pose.json --view front -o pose.svg
+```
+
+Joints are named by id or authored name, in degrees (mm for sliders);
+unlisted joints keep their stored state. `--pose` is repeatable and wins
+over `--pose-file`. A pose file is `{"joint": deg, ...}`, or an `--animate`
+keyframe file, whose first key per joint track is used — so a one-frame
+timeline written for `--photoreal --animate` poses a still directly. A state
+beyond a joint's limits is clamped with a warning; an unknown joint is an
+error listing the movable ones.
+
+To find how far each joint *can* go before the geometry collides, see
+`vcad check-joint-range` in the `vcad` CLI.
 
 ## Animation mode (`--animate`)
 

@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-19-loon-sweep-rotate",
+  "version": "0.10.0",
+  "date": "2026-10-19",
+  "category": "feat",
+  "title": "Swept-rotation clearance cuts (sweep-rotate)",
+  "summary": "New SweepRotate op and loon sweep-rotate forms: the volume a part sweeps rotating about an axis, with optional dilation, for native knee/elbow/hip relief cuts.",
+  "features": ["loon", "ir", "kernel", "booleans"],
+  "mcpTools": ["create_cad_loon"]
+}

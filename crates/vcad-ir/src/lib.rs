@@ -1000,6 +1000,35 @@ pub enum CsgOp {
         angle_deg: f64,
     },
     #[tool(
+        category = "pattern",
+        ai_hint = "Swept volume of the child rotated about an axis over [angle_lo_deg, angle_hi_deg]. Use as the TOOL of a difference to carve the path a neighbouring link swings through (knee fold, elbow, hip relief)."
+    )]
+    /// Swept volume — union of the child rotated about an axis over an
+    /// angle range (inclusive). Evaluates as a mesh union of sampled copies;
+    /// the result is triangle soup, meant as a clearance-cut tool.
+    SweepRotate {
+        /// Child node to sweep.
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
+        child: NodeId,
+        /// A point on the rotation axis.
+        axis_origin: Vec3,
+        /// Direction of the rotation axis (right-hand rule).
+        axis_dir: Vec3,
+        /// Start angle in degrees.
+        angle_lo_deg: f64,
+        /// End angle in degrees.
+        angle_hi_deg: f64,
+        /// Sample step in degrees. Omitted = automatic (≤0.25 mm chord sag
+        /// and ≤15 mm copy spacing at the furthest point).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        step_deg: Option<f64>,
+        /// Outward dilation (mm) applied to the child before sweeping.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        clearance: Option<f64>,
+    },
+    #[tool(
         category = "modifier",
         ai_hint = "Hollow out a solid. Use parent_part_id. Great for enclosures, cups, containers."
     )]
@@ -1134,6 +1163,19 @@ pub enum CsgOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "ts-rs", ts(optional))]
         closed: Option<bool>,
+    },
+    #[tool(hidden)]
+    /// Convex hull of the union of the operands' vertices plus any loose
+    /// points. Mesh-backed: operands are tessellated and the hull is built
+    /// over their vertices, so the result is exact only for faceted inputs.
+    Hull {
+        /// Solid operands whose (tessellated) vertices join the hull.
+        #[serde(default)]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number[]"))]
+        children: Vec<NodeId>,
+        /// Extra points, flat `[x0, y0, z0, x1, y1, z1, ...]`.
+        #[serde(default)]
+        points: Vec<f64>,
     },
     #[tool(hidden)]
     /// Imported pre-tessellated mesh (e.g. from drag-drop STL/GLB).
@@ -1393,6 +1435,7 @@ impl CsgOp {
             | CsgOp::Mirror { child, .. }
             | CsgOp::LinearPattern { child, .. }
             | CsgOp::CircularPattern { child, .. }
+            | CsgOp::SweepRotate { child, .. }
             | CsgOp::Shell { child, .. }
             | CsgOp::Fillet { child, .. }
             | CsgOp::Chamfer { child, .. }
@@ -1401,6 +1444,7 @@ impl CsgOp {
             | CsgOp::Revolve { sketch, .. }
             | CsgOp::Sweep { sketch, .. } => vec![*sketch],
             CsgOp::Loft { sketches, .. } => sketches.clone(),
+            CsgOp::Hull { children, .. } => children.clone(),
             CsgOp::SheetMetalEdgeFlange { parent, .. }
             | CsgOp::SheetMetalJog { parent, .. }
             | CsgOp::SheetMetalHem { parent, .. }
@@ -1441,6 +1485,7 @@ impl CsgOp {
             | CsgOp::Mirror { child, .. }
             | CsgOp::LinearPattern { child, .. }
             | CsgOp::CircularPattern { child, .. }
+            | CsgOp::SweepRotate { child, .. }
             | CsgOp::Shell { child, .. }
             | CsgOp::Fillet { child, .. }
             | CsgOp::Chamfer { child, .. }
@@ -1449,6 +1494,7 @@ impl CsgOp {
             | CsgOp::Revolve { sketch, .. }
             | CsgOp::Sweep { sketch, .. } => vec![sketch],
             CsgOp::Loft { sketches, .. } => sketches.iter_mut().collect(),
+            CsgOp::Hull { children, .. } => children.iter_mut().collect(),
             CsgOp::SheetMetalEdgeFlange { parent, .. }
             | CsgOp::SheetMetalJog { parent, .. }
             | CsgOp::SheetMetalHem { parent, .. }
@@ -1508,12 +1554,14 @@ impl CsgOp {
             | CsgOp::Revolve { .. }
             | CsgOp::LinearPattern { .. }
             | CsgOp::CircularPattern { .. }
+            | CsgOp::SweepRotate { .. }
             | CsgOp::Shell { .. }
             | CsgOp::Fillet { .. }
             | CsgOp::Chamfer { .. }
             | CsgOp::EdgeBlend { .. }
             | CsgOp::Sweep { .. }
             | CsgOp::Loft { .. }
+            | CsgOp::Hull { .. }
             | CsgOp::ImportedMesh { .. }
             | CsgOp::PcbBoard { .. }
             | CsgOp::EmbroideryPattern { .. }

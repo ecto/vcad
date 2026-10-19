@@ -892,6 +892,22 @@ function evaluateOp(
       );
     }
 
+    case "SweepRotate": {
+      const child = evaluateNode(op.child, nodes, Solid, cache, depth + 1);
+      return child.sweepRotate(
+        op.axis_origin.x,
+        op.axis_origin.y,
+        op.axis_origin.z,
+        op.axis_dir.x,
+        op.axis_dir.y,
+        op.axis_dir.z,
+        op.angle_lo_deg,
+        op.angle_hi_deg,
+        op.step_deg ?? 0,
+        op.clearance ?? 0,
+      );
+    }
+
     case "Shell": {
       const child = evaluateNode(op.child, nodes, Solid, cache, depth + 1);
       return child.shell(op.thickness);
@@ -972,6 +988,32 @@ function evaluateOp(
         return convertSketchToProfile(sketchNode.op);
       });
       return Solid.loft(JSON.stringify(profiles), op.closed);
+    }
+
+    case "Hull": {
+      // Hull is associative: fold the operands (and the point cloud, as one
+      // more operand) pairwise through the kernel.
+      const K = Solid as unknown as {
+        hullPoints?: (points: Float64Array) => Solid;
+      };
+      const parts = op.children.map((id) =>
+        evaluateNode(id, nodes, Solid, cache, depth + 1),
+      );
+      const points = op.points;
+      if (points.length > 0) {
+        if (typeof K.hullPoints !== "function") {
+          throw new Error("Hull needs a kernel build with Solid.hullPoints — rebuild the WASM kernel");
+        }
+        parts.push(K.hullPoints(new Float64Array(points)));
+      }
+      if (parts.length === 0) throw new Error("Hull has no operands");
+      return parts.reduce((acc, s) => {
+        const hullWith = (acc as unknown as { hullWith?: (o: Solid) => Solid }).hullWith;
+        if (typeof hullWith !== "function") {
+          throw new Error("Hull needs a kernel build with Solid.hullWith — rebuild the WASM kernel");
+        }
+        return hullWith.call(acc, s);
+      });
     }
 
     case "ImportedMesh":
@@ -1163,6 +1205,7 @@ function remapNodeIds(node: Node, idMap: Map<number, number>): Node {
     case "Scale":
     case "LinearPattern":
     case "CircularPattern":
+    case "SweepRotate":
     case "Shell":
     case "Fillet":
     case "Chamfer":
@@ -1176,6 +1219,9 @@ function remapNodeIds(node: Node, idMap: Map<number, number>): Node {
       break;
     case "Loft":
       newOp = { ...op, sketches: op.sketches.map(m) };
+      break;
+    case "Hull":
+      newOp = { ...op, children: op.children.map(m) };
       break;
     default:
       newOp = op;

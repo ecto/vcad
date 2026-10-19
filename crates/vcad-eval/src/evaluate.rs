@@ -815,6 +815,28 @@ fn evaluate_op_timed(
             }))
         }
 
+        CsgOp::SweepRotate {
+            child,
+            axis_origin,
+            axis_dir,
+            angle_lo_deg,
+            angle_hi_deg,
+            step_deg,
+            clearance,
+        } => {
+            let c = eval_child(*child, cache)?;
+            Ok(c.map(|s| {
+                s.sweep_rotate(
+                    to_point3(axis_origin),
+                    to_vec3(axis_dir),
+                    *angle_lo_deg,
+                    *angle_hi_deg,
+                    *step_deg,
+                    clearance.unwrap_or(0.0).max(0.0),
+                )
+            }))
+        }
+
         CsgOp::Shell { child, thickness } => {
             let c = eval_child(*child, cache)?;
             blend_result(c.map(|s| s.shell(*thickness)), "shell", *child)
@@ -1017,6 +1039,17 @@ fn evaluate_op_timed(
             };
 
             Ok(Some(solid))
+        }
+
+        CsgOp::Hull { children, points } => {
+            let mut solids = Vec::with_capacity(children.len());
+            for id in children {
+                if let Some(s) = eval_child(*id, cache)? {
+                    solids.push(s);
+                }
+            }
+            let refs: Vec<&Solid> = solids.iter().collect();
+            Ok(Solid::hull(&refs, points))
         }
 
         CsgOp::Loft { sketches, closed } => {
@@ -1910,6 +1943,10 @@ fn load_mesh_import(path: &str, urdf_scale: Option<&vcad_ir::Vec3>) -> Option<Lo
         positions.push(v[2] as f64 * sz);
     }
 
+    if let Some(w) = mesh_import_scale_warning(path, &stl.vertices, [sx, sy, sz]) {
+        eprintln!("{w}");
+    }
+
     let n_verts = stl.vertices.len();
     let mut indices = Vec::with_capacity(stl.faces.len() * 3);
     let mut normals = vec![0.0_f64; n_verts * 3];
@@ -1932,6 +1969,56 @@ fn load_mesh_import(path: &str, urdf_scale: Option<&vcad_ir::Vec3>) -> Option<Lo
     }
 
     Some((positions, indices, Some(normals)))
+}
+
+/// Largest extent (mm) an imported mesh may have before we suspect a unit
+/// mix-up — a 10 m part is almost always a millimetre STL read as metres.
+#[cfg(not(target_arch = "wasm32"))]
+const MESH_IMPORT_MAX_MM: f64 = 10_000.0;
+/// Smallest plausible extent (mm) — under 1 mm is usually metres read as mm.
+#[cfg(not(target_arch = "wasm32"))]
+const MESH_IMPORT_MIN_MM: f64 = 1.0;
+
+/// A loud warning when an imported STL's scaled bounding box is implausibly
+/// large or small. STL has no unit field and `MeshImport` assumes metres,
+/// so a millimetre STL silently lands 1000x too big — this is the only
+/// signal a reader gets. `None` when the size looks sane (or the mesh is
+/// empty).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn mesh_import_scale_warning(
+    path: &str,
+    vertices: &[stl_io::Vector<f32>],
+    scale: [f64; 3],
+) -> Option<String> {
+    let first = vertices.first()?;
+    let mut lo = [first[0] as f64, first[1] as f64, first[2] as f64];
+    let mut hi = lo;
+    for v in vertices {
+        for k in 0..3 {
+            lo[k] = lo[k].min(v[k] as f64);
+            hi[k] = hi[k].max(v[k] as f64);
+        }
+    }
+    let raw = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
+    let scaled = [
+        raw[0] * scale[0].abs(),
+        raw[1] * scale[1].abs(),
+        raw[2] * scale[2].abs(),
+    ];
+    let max = scaled.iter().cloned().fold(0.0_f64, f64::max);
+    let hint = if max > MESH_IMPORT_MAX_MM {
+        "over 10 m — is this STL in millimetres? use [import-mesh \"...\" :units \"mm\"]"
+    } else if max < MESH_IMPORT_MIN_MM {
+        "under 1 mm — is this STL in metres being scaled down twice? check :units"
+    } else {
+        return None;
+    };
+    Some(format!(
+        "WARNING MeshImport {path}: imported size {:.1} x {:.1} x {:.1} mm is {hint} \
+         (raw STL bbox {:.4} x {:.4} x {:.4}, applied scale {} {} {}; STL coords are read as \
+         metres and x1000 unless :units says otherwise)",
+        scaled[0], scaled[1], scaled[2], raw[0], raw[1], raw[2], scale[0], scale[1], scale[2]
+    ))
 }
 
 /// Apply transform to imported mesh positions and normals.
@@ -2609,6 +2696,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::Scale { .. } => "Scale",
         CsgOp::LinearPattern { .. } => "LinearPattern",
         CsgOp::CircularPattern { .. } => "CircularPattern",
+        CsgOp::SweepRotate { .. } => "SweepRotate",
         CsgOp::Shell { .. } => "Shell",
         CsgOp::Fillet { .. } => "Fillet",
         CsgOp::Chamfer { .. } => "Chamfer",
@@ -2619,6 +2707,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::Revolve { .. } => "Revolve",
         CsgOp::Sweep { .. } => "Sweep",
         CsgOp::Loft { .. } => "Loft",
+        CsgOp::Hull { .. } => "Hull",
         CsgOp::ImportedMesh { .. } => "ImportedMesh",
         CsgOp::StepImport { .. } => "StepImport",
         CsgOp::MeshImport { .. } => "MeshImport",
@@ -3307,6 +3396,65 @@ mod tests {
         id + 100
     }
 
+    /// Hull of two separated cubes is the slab spanning them, and it is a
+    /// B-rep that a downstream difference actually cuts.
+    #[test]
+    fn hull_of_solids_and_points() {
+        let mut nodes: HashMap<NodeId, vcad_ir::Node> = HashMap::new();
+        let a = cube_at(1, 0.0, &mut nodes);
+        let b = cube_at(2, 30.0, &mut nodes);
+        let node = |id: NodeId, op: CsgOp| vcad_ir::Node { id, name: None, op };
+        nodes.insert(
+            10,
+            node(
+                10,
+                CsgOp::Hull {
+                    children: vec![a, b],
+                    points: Vec::new(),
+                },
+            ),
+        );
+        let mut cache = HashMap::new();
+        let hull = evaluate_node(10, &nodes, &mut cache).unwrap().unwrap();
+        assert!(hull.as_brep().is_some());
+        assert!((hull.volume() - 40.0 * 10.0 * 10.0).abs() < 1e-3);
+
+        // Point-cloud form: a tetrahedron (interior point ignored).
+        nodes.insert(
+            11,
+            node(
+                11,
+                CsgOp::Hull {
+                    children: Vec::new(),
+                    points: vec![
+                        0.0, 0.0, 0.0, 6.0, 0.0, 0.0, 0.0, 6.0, 0.0, 0.0, 0.0, 6.0, 1.0, 1.0, 1.0,
+                    ],
+                },
+            ),
+        );
+        let tet = evaluate_node(11, &nodes, &mut cache).unwrap().unwrap();
+        assert!((tet.volume() - 36.0).abs() < 1e-6);
+
+        // Downstream boolean: cut a 10 mm cube out of the middle of the slab.
+        let tool = cube_at(3, 15.0, &mut nodes);
+        nodes.insert(
+            12,
+            node(
+                12,
+                CsgOp::Difference {
+                    left: 10,
+                    right: tool,
+                },
+            ),
+        );
+        let cut = evaluate_node(12, &nodes, &mut cache).unwrap().unwrap();
+        assert!(
+            (cut.volume() - 3000.0).abs() < 1.0,
+            "difference on a hull should remove the tool, got {}",
+            cut.volume()
+        );
+    }
+
     /// A left-leaning union chain fuses as a balanced tree with the same
     /// geometry the authored one-at-a-time chain produces.
     #[test]
@@ -3831,5 +3979,39 @@ mod tests {
         };
         let vol_rev = signed_volume(&trace_arc_to_mesh(&rev, &pcb));
         assert!((vol - vol_rev).abs() < 1e-9);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn mesh_import_warns_on_implausible_size() {
+        // A 485 mm torso STL authored in mm, read as metres: 485 m.
+        let torso = [
+            stl_io::Vector::new([0.0, 0.0, 0.0]),
+            stl_io::Vector::new([200.0, 150.0, 485.0]),
+        ];
+        let w = mesh_import_scale_warning("torso.stl", &torso, [1000.0; 3])
+            .expect("485 m import must warn");
+        assert!(w.contains("torso.stl") && w.contains("over 10 m"), "{w}");
+        assert!(
+            w.contains("raw STL bbox 200.0000 x 150.0000 x 485.0000"),
+            "{w}"
+        );
+        assert!(w.contains("applied scale 1000 1000 1000"), "{w}");
+
+        // Same file with :units "mm" (scale 0.001 x 1000 = 1): silent.
+        assert!(mesh_import_scale_warning("torso.stl", &torso, [1.0; 3]).is_none());
+
+        // A metre STL (Unitree link, 0.3 m) at the default: silent.
+        let link = [
+            stl_io::Vector::new([-0.05, -0.05, 0.0]),
+            stl_io::Vector::new([0.05, 0.05, 0.3]),
+        ];
+        assert!(mesh_import_scale_warning("link.stl", &link, [1000.0; 3]).is_none());
+
+        // That metre STL wrongly marked mm: 0.3 mm — too small, warns.
+        let w = mesh_import_scale_warning("link.stl", &link, [1.0; 3]).unwrap();
+        assert!(w.contains("under 1 mm"), "{w}");
+
+        assert!(mesh_import_scale_warning("empty.stl", &[], [1000.0; 3]).is_none());
     }
 }

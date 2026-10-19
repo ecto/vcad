@@ -101,7 +101,7 @@ export const importUrdfSchema = {
 };
 
 /** Minimal mesh payload swapped into the document for a resolved reference. */
-interface LoadedMesh {
+export interface LoadedMesh {
   positions: number[];
   indices: number[];
 }
@@ -111,7 +111,7 @@ interface LoadedMesh {
  * meters (the ROS convention) and are converted to mm here, matching the
  * kernel's ×1000 on URDF primitive dimensions and the browser mesh loader.
  */
-function parseStl(buf: Buffer): LoadedMesh {
+export function parseStl(buf: Buffer): LoadedMesh {
   const positions: number[] = [];
   // Binary layout: 80-byte header, uint32 triangle count, 50 bytes/triangle.
   const looksBinary =

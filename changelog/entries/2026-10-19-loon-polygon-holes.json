@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-19-loon-polygon-holes",
+  "version": "0.10.0",
+  "date": "2026-10-19",
+  "category": "feat",
+  "title": "loon [polygon] sketch segment with holes",
+  "summary": "Author a plate outline plus bolt holes as one [polygon #[pts] #[holes]] in a sketch; holes (point loops or #[cx cy r] circles) are cut by extrude directly, no boolean cutters.",
+  "features": ["loon", "sketch", "extrude"],
+  "mcpTools": ["create_cad_loon"]
+}

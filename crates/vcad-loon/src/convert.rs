@@ -1035,11 +1035,13 @@ fn is_solid_tag(tag: &str) -> bool {
             | "Chamfer"
             | "LinearPattern"
             | "CircularPattern"
+            | "SweepRotate"
             | "SweepLine"
             | "SweepHelix"
             | "Sweep"
             | "Loft"
             | "LoftClosed"
+            | "Hull"
             | "Fastener"
             | "BoltCircle"
             | "ClearanceHole"
@@ -1225,6 +1227,50 @@ impl ConvertCtx {
             ));
         }
         Ok(n)
+    }
+
+    /// Parse the `& opts` tail of `import-mesh` — `:units "mm"` is the only
+    /// option. Returns the unit name, `"m"` when absent.
+    fn mesh_import_units(&self, opts: &Value) -> Result<String, String> {
+        let items: Vec<Value> = match opts {
+            Value::Vec(items) => items.iter().cloned().collect(),
+            Value::Unit => Vec::new(),
+            other => return Err(format!("import-mesh: bad options {other}")),
+        };
+        let mut units = "m".to_string();
+        let mut i = 0;
+        while i < items.len() {
+            let Value::Keyword(k) = &items[i] else {
+                return Err(format!(
+                    "import-mesh: expected a keyword option like :units, got {}",
+                    items[i]
+                ));
+            };
+            let key = k.trim_start_matches(':');
+            let val = items
+                .get(i + 1)
+                .ok_or_else(|| format!("import-mesh: :{key} needs a value"))?;
+            match key {
+                "units" => {
+                    let u = match val {
+                        Value::Str(s) => s.to_string(),
+                        Value::Keyword(s) => s.trim_start_matches(':').to_string(),
+                        _ => {
+                            return Err(format!("import-mesh: :units expects a string, got {val}"))
+                        }
+                    };
+                    if MESH_UNITS.iter().all(|(name, _)| *name != u) {
+                        return Err(format!(
+                            "import-mesh: unknown :units {u:?} — use \"mm\", \"cm\", \"m\" or \"in\""
+                        ));
+                    }
+                    units = u;
+                }
+                _ => return Err(format!("import-mesh: unknown option :{key} (only :units)")),
+            }
+            i += 2;
+        }
+        Ok(units)
     }
 
     /// Resolve an import path against the source file's directory, so a model
@@ -1998,9 +2044,19 @@ impl ConvertCtx {
             }
 
             // Imported vendor geometry.
+            // The IR loader reads STL coordinates as METRES (the URDF
+            // convention) and multiplies by 1000. An optional 5th field
+            // carries `:units "mm"|"cm"|"m"|"in"` from the loon call so a
+            // millimetre STL can say so instead of hand-scaling by 0.001.
             "MeshImport" => {
-                assert_fields(tag, fields, 4)?;
-                let scale = self.vec3(fields, 1)?;
+                if fields.len() != 4 && fields.len() != 5 {
+                    assert_fields(tag, fields, 4)?;
+                }
+                let mut scale = self.vec3(fields, 1)?;
+                if let Some(opts) = fields.get(4) {
+                    let k = mesh_units_to_metres(&self.mesh_import_units(opts)?);
+                    scale = Vec3::new(scale.x * k, scale.y * k, scale.z * k);
+                }
                 CsgOp::MeshImport {
                     path: self.import_path(tag, &fields[0])?,
                     scale: (scale.x != 1.0 || scale.y != 1.0 || scale.z != 1.0).then_some(scale),
@@ -2165,6 +2221,29 @@ impl ConvertCtx {
                 }
             }
 
+            "SweepRotate" => {
+                // [SweepRotate solid ox oy oz ax ay az lo hi step clearance]
+                // step 0 = automatic, clearance 0 = none.
+                assert_fields(tag, fields, 11)?;
+                let child = self.convert_solid(&fields[0])?;
+                let step = self.f64_val(&fields[9])?;
+                let clearance = self.f64_val(&fields[10])?;
+                if step < 0.0 || clearance < 0.0 {
+                    return Err(format!(
+                        "sweep-rotate: step ({step}) and clearance ({clearance}) must be >= 0"
+                    ));
+                }
+                CsgOp::SweepRotate {
+                    child,
+                    axis_origin: self.vec3(fields, 1)?,
+                    axis_dir: self.vec3(fields, 4)?,
+                    angle_lo_deg: self.f64_val(&fields[7])?,
+                    angle_hi_deg: self.f64_val(&fields[8])?,
+                    step_deg: (step > 0.0).then_some(step),
+                    clearance: (clearance > 0.0).then_some(clearance),
+                }
+            }
+
             // Sweep along a line path
             // [SweepLine sketch sx sy sz ex ey ez]
             "SweepLine" => {
@@ -2241,6 +2320,32 @@ impl ConvertCtx {
                 }
             }
 
+            // Convex hull of solids' vertices plus loose points.
+            "Hull" => {
+                assert_fields(tag, fields, 2)?;
+                let items = match &fields[0] {
+                    Value::Vec(v) => v.clone(),
+                    other => return Err(format!("hull: expected Vec of Solid, got {other}")),
+                };
+                let children = items
+                    .iter()
+                    .map(|item| self.convert_solid(item))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let points = self.f64_list(&fields[1], "hull points")?;
+                if points.len() % 3 != 0 {
+                    return Err(format!(
+                        "hull-points: expected a flat #[x y z ...] list, got {} numbers (not a multiple of 3)",
+                        points.len()
+                    ));
+                }
+                if children.is_empty() && points.len() < 12 {
+                    return Err(
+                        "hull: needs at least one solid or 4 points to enclose a volume".into(),
+                    );
+                }
+                CsgOp::Hull { children, points }
+            }
+
             _ => return Err(format!("unknown Solid variant: {tag}")),
         };
 
@@ -2268,14 +2373,14 @@ impl ConvertCtx {
                 let origin = self.vec3(fields, 0)?;
                 let x_dir = self.vec3(fields, 3)?;
                 let y_dir = self.vec3(fields, 6)?;
-                let segments = self.convert_sketch_segments(&fields[9])?;
+                let (segments, holes) = self.convert_sketch_body(&fields[9])?;
 
                 Ok(self.insert_node(CsgOp::Sketch2D {
                     origin,
                     x_dir,
                     y_dir,
                     segments,
-                    holes: None,
+                    holes,
                 }))
             }
             // [SketchPoly #[x0 y0 x1 y1 ...]] — a closed polyline profile.
@@ -2384,6 +2489,57 @@ impl ConvertCtx {
         }
     }
 
+    /// A sketch's segment list. A lone `[SPoly outer holes]` expands to the
+    /// outer polyline plus interior hole loops; otherwise every entry is an
+    /// ordinary `SLine`/`SArc` and there are no holes.
+    #[allow(clippy::type_complexity)]
+    fn convert_sketch_body(
+        &self,
+        value: &Value,
+    ) -> Result<(Vec<SketchSegment2D>, Option<Vec<Vec<SketchSegment2D>>>), String> {
+        let items = match value {
+            Value::Vec(v) => v,
+            _ => return Err(format!("expected Vec of SketchSeg, got {value}")),
+        };
+        let is_poly = |v: &Value| matches!(v, Value::Adt(t, _) if t == "SPoly");
+        if !items.iter().any(is_poly) {
+            return Ok((self.convert_sketch_segments(value)?, None));
+        }
+        if items.len() != 1 {
+            return Err(format!(
+                "a sketch holding a [polygon] must hold nothing else, got {} segments \
+                 (put every outline point in the one polygon and every cutout in its holes)",
+                items.len()
+            ));
+        }
+        let Value::Adt(_, fields) = &items[0] else {
+            unreachable!()
+        };
+        assert_fields("SPoly", fields, 2)?;
+        let outer = polyline_loop(&self.f64_list(&fields[0], "polygon point")?, "polygon")?;
+        let hole_vals = match &fields[1] {
+            Value::Vec(v) => v,
+            other => {
+                return Err(format!(
+                    "polygon: expected a list of hole loops, got {other}"
+                ))
+            }
+        };
+        let holes = hole_vals
+            .iter()
+            .enumerate()
+            .map(|(k, h)| {
+                let flat = self.f64_list(h, "polygon hole point")?;
+                if flat.len() == 3 {
+                    return circle_loop(flat[0], flat[1], flat[2])
+                        .map_err(|e| format!("polygon hole {k}: {e}"));
+                }
+                polyline_loop(&flat, &format!("polygon hole {k}"))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        Ok((outer, (!holes.is_empty()).then_some(holes)))
+    }
+
     fn convert_sketch_segments(&self, value: &Value) -> Result<Vec<SketchSegment2D>, String> {
         let items = match value {
             Value::Vec(v) => v,
@@ -2424,6 +2580,75 @@ impl ConvertCtx {
             _ => Err(format!("unknown SketchSeg variant: {tag}")),
         }
     }
+}
+
+/// A closed polyline from a flat `[x0 y0 x1 y1 ...]` list. A repeated
+/// closing point (last == first) is dropped rather than emitted as a
+/// zero-length edge.
+fn polyline_loop(flat: &[f64], what: &str) -> Result<Vec<SketchSegment2D>, String> {
+    if flat.len() % 2 != 0 {
+        return Err(format!(
+            "{what}: expected a flat #[x y ...] list, got an odd count ({})",
+            flat.len()
+        ));
+    }
+    let mut pts: Vec<Vec2> = flat
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| Vec2::new(c[0], c[1]))
+        .collect();
+    if pts.len() > 1 && pts[0] == pts[pts.len() - 1] {
+        pts.pop();
+    }
+    if pts.len() < 3 {
+        return Err(format!(
+            "{what}: a closed loop needs at least three distinct points, got {}",
+            pts.len()
+        ));
+    }
+    let n = pts.len();
+    Ok((0..n)
+        .map(|i| SketchSegment2D::Line {
+            start: pts[i],
+            end: pts[(i + 1) % n],
+        })
+        .collect())
+}
+
+/// A true circle `#[cx cy r]` as two half arcs.
+fn circle_loop(cx: f64, cy: f64, r: f64) -> Result<Vec<SketchSegment2D>, String> {
+    if !(r > 0.0 && r.is_finite()) {
+        return Err(format!("circle radius must be positive, got {r}"));
+    }
+    let center = Vec2::new(cx, cy);
+    let a = Vec2::new(cx + r, cy);
+    let b = Vec2::new(cx - r, cy);
+    Ok(vec![
+        SketchSegment2D::Arc {
+            start: a,
+            end: b,
+            center,
+            ccw: true,
+        },
+        SketchSegment2D::Arc {
+            start: b,
+            end: a,
+            center,
+            ccw: true,
+        },
+    ])
+}
+
+/// STL unit names accepted by `import-mesh :units`, with their length in metres.
+const MESH_UNITS: [(&str, f64); 4] = [("mm", 0.001), ("cm", 0.01), ("m", 1.0), ("in", 0.0254)];
+
+/// Metres per unit — the factor that cancels the IR loader's metres→mm ×1000.
+fn mesh_units_to_metres(units: &str) -> f64 {
+    MESH_UNITS
+        .iter()
+        .find(|(name, _)| *name == units)
+        .map_or(1.0, |(_, k)| *k)
 }
 
 fn assert_fields(tag: &str, fields: &[Value], expected: usize) -> Result<(), String> {

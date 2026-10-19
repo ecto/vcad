@@ -31,6 +31,7 @@ vcad-kernel-cam = { path = "../vcad-kernel-cam", version = "0.10.0" }
 vcad-kernel-raytrace = { path = "../vcad-kernel-raytrace", version = "0.10.0" }
 vcad-kernel-features = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
+vcad-kernel-assembly = { workspace = true }
 vcad-kernel-export = { workspace = true }
 vcad-ecad-fabprep = { workspace = true }
 vcad-ecad-symbols = { workspace = true }

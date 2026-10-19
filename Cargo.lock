@@ -7382,6 +7382,7 @@ dependencies = [
  "vcad-i18n",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-assembly",
  "vcad-kernel-cam",
  "vcad-kernel-constraints",
  "vcad-kernel-export",

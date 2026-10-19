@@ -38,6 +38,20 @@ Scrub each joint from its minimum limit to its maximum limit while clash detecti
 
 For thorough coverage of multi-DOF mechanisms, test each joint individually at its extremes, then test combinations. A two-joint arm might have no clashes at (0, 0), (90, 0), or (0, 90), but clash at (90, 90) when both joints are at their limits simultaneously.
 
+### Joint range sweep
+
+`vcad check-joint-range` (CLI) and the `check_joint_range` MCP tool automate the single-joint pass. Each revolute joint is driven from 0 toward each limit in steps (default 5°) with every other joint at 0, and the tool reports the first angle each way where the moving subtree's overlap with the rest of the assembly grows past its overlap at the zero pose — by more than a threshold, default 200 mm³ — along with the part pairs that collide:
+
+```bash
+vcad check-joint-range robot.loon                      # every revolute joint
+vcad check-joint-range robot.loon --joints l_knee_pitch --step 2 --json
+vcad check-joint-range robot.loon --chain              # ignore other limbs
+```
+
+The zero-pose overlap is the baseline because real mechanisms overlap there on purpose — nested coaxial drums, a motor can seated in its bore — and those are design, not collisions. `--chain` (`scope: "chain"`) checks only against geometry moved by no joint or by this joint's ancestors, so an arm hanging where a leg swings counts as posture rather than a design limit. Overlap is measured on a lattice of vertical ray columns (`--resolution`, default 1 mm): exact along each column, sampled across them. The CLI exits 1 when any side collides before its limit.
+
+Render the pose it reports with `vcad-render robot.vcad --pose l_knee_pitch=125 -o knee.png`.
+
 <Callout type="tip" title="Automated sweep">
 For mechanisms with many DOF, manually scrubbing every combination is impractical. Use the physics simulation to sweep the joint space: apply random torques over many timesteps and check for collision events. The physics engine reports contact points at each timestep, giving you comprehensive coverage.
 </Callout>

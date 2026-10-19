@@ -38,6 +38,9 @@
 //!   flip and clocking the poses apply.
 //! - [`check_interference`] — mesh-mesh overlap over the posed assembly, with
 //!   an explicit tolerance for deliberate modelling overlaps.
+//! - [`check_joint_range`] — sweep each revolute joint over its limits (the
+//!   rest at zero) and report where its subtree first collides, measured as
+//!   overlap growth past the zero pose.
 //!
 //! ## Why `pattern-phase` exists
 //!
@@ -55,17 +58,23 @@
 //!
 //! ## Not in scope
 //!
-//! **Kinematic degrees of freedom.** A mate never moves a part and knows
-//! nothing about joints. Articulation stays with [`vcad_ir::Joint`] and
+//! **Kinematic degrees of freedom in mates.** A mate never moves a part and
+//! knows nothing about joints ([`check_joint_range`] drives joints one at a
+//! time, but solves nothing). Articulation stays with [`vcad_ir::Joint`] and
 //! [`vcad_eval::solve_forward_kinematics`], whose results this crate consumes
 //! when a document has a joint graph. "Backdrive the train and check it still
 //! clears" needs a DOF model on top of these checks; it is deliberately left
 //! for follow-up work.
 
 pub mod interference;
+pub mod joint_range;
 pub mod mate_check;
 pub mod pose;
 
 pub use interference::{check_interference, Interference, InterferenceOptions, InterferenceReport};
+pub use joint_range::{
+    check_joint_range, CollidingPair, JointRange, JointRangeError, JointRangeOptions, RangeScope,
+    RangeSide,
+};
 pub use mate_check::{check_mate, check_mates, MateCheck, MateError};
 pub use pose::{mesh_bounds, pose_document, Affine, PoseError, PosedAssembly, PosedPart};

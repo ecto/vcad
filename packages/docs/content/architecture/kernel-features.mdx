@@ -126,6 +126,25 @@ Assemblies mirror too, and that is where the sign rules actually bite — a join
 
 `crates/vcad-eval/tests/assembly_symmetry.rs` drives both hips to the same state and asserts the whole assembly's centre of mass stays on the plane — with a deliberately chiral leg, so a copy that is translated but not reflected fails too.
 
+### Swept Rotation (Joint Clearance)
+
+`SweepRotate` is the volume a solid occupies while it rotates about an axis over an angle range — the region a neighbouring link swings through. Subtracting it carves a joint relief (knee fold, elbow, hip) natively instead of importing a relief mesh. `[sweep-rotate ox oy oz ax ay az lo hi s]` picks the sampling automatically (envelope chord sag ≤ 0.25 mm, copy spacing ≤ 15 mm at the furthest point), `[sweep-rotate-n … lo hi step s]` fixes it, and `[sweep-rotate-clear … lo hi step c s]` dilates the moving part by `c` mm first so the fold keeps a running gap:
+
+```lisp
+[let thigh [pipe [cube 60 50 110] [translate -30 -25 -30]]]
+[let calf  [pipe [cube 24 24 140] [translate -12 -12 -128]]]
+[let thigh-relieved
+  [pipe thigh [difference [sweep-rotate-clear 0 0 0  1 0 0  0 120  0 1 calf]]]]
+[root thigh-relieved "aluminum"]
+[root [pipe calf [rotate 45 0 0]] "steel"]
+```
+
+![Thigh housing relieved by the calf's 0–120° fold](/assets/kernel/sweep-rotate.jpg)
+
+Rendered with `--azimuth 130 --elevation=-20` so the relief in the back wall faces the camera; the calf is posed mid-fold at 45°.
+
+The kernel tessellates the child once, rotates copies, and unions them in one flat pass — each copy is split only by the other copies' original faces and a fragment survives iff it lies outside every other copy, so fragments never compound the way a pairwise fold does. The result is triangle soup recorded as a boolean fallback in the solid's provenance — correct geometry for a cutting tool, not a surface to fillet or export as analytic STEP.
+
 ### Sketches and Constraints
 
 `vcad-kernel-sketch` models 2D profiles (lines, arcs) on arbitrary planes, and `vcad-kernel-constraints` solves geometric constraints — coincident, horizontal/vertical, parallel, perpendicular, tangent, distance, length, radius, angle, equal-length, fixed — with a Levenberg-Marquardt solver using adaptive damping. Sketches feed every profile-based operation below.
@@ -204,6 +223,18 @@ Loft interpolates a solid through a sequence of cross-sections:
 ```
 
 ![Lofted transition through three rectangular sections](/assets/kernel/loft.jpg)
+
+Convex hull wraps the smallest convex solid around its inputs: `[hull a b ...]`
+hulls the solids together, `[hull-points #[x0 y0 z0 ...]]` hulls a point cloud
+(at least 4 non-coplanar points). Quickhull runs over the operands' tessellated
+vertices, so curved inputs come out faceted. The result is a planar-faced B-rep,
+so later booleans cut it properly:
+
+```lisp
+[root [hull [translate 0 0 0 [cylinder 10 5]] [translate 50 0 0 [sphere 8]]] "aluminum"]
+```
+
+![Convex hull of a cylinder and a sphere](/assets/kernel/hull.jpg)
 
 ### Text and Sheet Metal
 
@@ -314,7 +345,9 @@ Honesty: the luminance edge-stopping weight is scaled by the estimator's own var
 
 `check_interference` sweeps the posed assembly: an AABB broad phase, then `mesh_clearance`'s triangle-BVH branch-and-bound on the survivors, reporting each overlapping pair with an approximate depth and a witness point. The tolerance is part of the design, not a fudge: real models carry deliberate sub-tenth-millimetre overlaps so unions print without a hairline seam, so `InterferenceOptions::tolerance_mm` is the depth below which an overlap is modelling slop rather than a clash, and `ignore_pairs` excuses a press fit that is *supposed* to interfere.
 
-Honesty: **kinematic degrees of freedom are out of scope.** A mate never moves anything and knows nothing about joints; articulation stays with `Joint` and `solve_forward_kinematics`, whose poses this crate consumes when a document has a joint graph. "Backdrive the train and check it still clears" wants a DOF model layered on top of these checks. Mates also do not yet mirror: `mirror-group-*` handles translation-only instances, so a posed instance passes through a mirrored group unchanged.
+`check_joint_range` is the one check that does move joints: each revolute joint is swept from zero toward each limit, every other joint at zero, and the first angle where the moving subtree's overlap with the rest grows past its zero-pose overlap (default 200 mm³) is reported with the colliding pairs. Volumes come from vertical ray columns on a fixed world lattice — crossings accumulate a winding number, so inside intervals are exact along z and each side is unioned per column before intersecting. Stationary columns are cast once; only the moving subtree re-casts per step. `RangeScope::Chain` drops geometry hung off other limbs. Exposed as `vcad check-joint-range` and the `check_joint_range` MCP tool.
+
+Honesty: **kinematic degrees of freedom are out of scope for mates.** A mate never moves anything and knows nothing about joints; articulation stays with `Joint` and `solve_forward_kinematics`, whose poses this crate consumes when a document has a joint graph. "Backdrive the train and check it still clears" wants a DOF model layered on top of these checks. Mates also do not yet mirror: `mirror-group-*` handles translation-only instances, so a posed instance passes through a mirrored group unchanged.
 
 ### Physics
 

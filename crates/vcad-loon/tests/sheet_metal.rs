@@ -399,6 +399,39 @@ fn imports_are_reachable_and_paths_resolve_relatively() {
 }
 
 #[test]
+fn import_mesh_units_cancel_the_metre_assumption() {
+    // The IR loader reads STL coordinates as metres and x1000. `:units`
+    // folds the inverse into the node's scale so a millimetre STL lands
+    // at its authored size.
+    let scale_of = |src: &str| match ops(&doc(src))[0] {
+        CsgOp::MeshImport { scale, .. } => scale.map(|s| (s.x, s.y, s.z)),
+        other => panic!("expected a mesh import, got {other:?}"),
+    };
+    assert_eq!(
+        scale_of(r#"[import-mesh "a.stl"]"#),
+        None,
+        "default stays metres"
+    );
+    assert_eq!(scale_of(r#"[import-mesh "a.stl" :units "m"]"#), None);
+    assert_eq!(
+        scale_of(r#"[import-mesh "a.stl" :units "mm"]"#),
+        Some((0.001, 0.001, 0.001))
+    );
+    assert_eq!(
+        scale_of(r#"[import-mesh "a.stl" :units "in"]"#),
+        Some((0.0254, 0.0254, 0.0254))
+    );
+    // Composes with an explicit scale.
+    assert_eq!(
+        scale_of(r#"[import-mesh-scaled 2.0 1.0 1.0 "a.stl" :units "mm"]"#),
+        Some((0.002, 0.001, 0.001))
+    );
+
+    assert!(err(r#"[import-mesh "a.stl" :units "ft"]"#).contains("unknown :units"));
+    assert!(err(r#"[import-mesh "a.stl" :scale 2.0]"#).contains("unknown option"));
+}
+
+#[test]
 fn an_import_composes_with_booleans_like_any_other_solid() {
     // The whole reason to reach for an import is fit-checking against the
     // real envelope, which means it has to take part in booleans.
@@ -431,6 +464,7 @@ fn faceting_and_imports_survive_a_round_trip() {
     let original = doc(r#"#[[root [cylinder-n 10.0 20.0 128] "default"]
              [root [import-step-body "a.step" 3] "default"]
              [root [import-mesh-scaled 25.4 25.4 25.4 "b.stl"] "default"]
+             [root [import-mesh "c.stl" :units "mm"] "default"]
              [root [torus-n 20.0 4.0 96] "default"]]"#);
     let (source, unsupported) = vcad_ir::to_loon::document_to_loon_checked(&original);
     assert!(unsupported.is_empty(), "{unsupported:?}");

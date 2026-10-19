@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-19-cli-loon-assembly-render",
+  "version": "0.10.0",
+  "date": "2026-10-19",
+  "category": "feat",
+  "title": "vcad CLI renders and exports .loon assemblies",
+  "summary": "`vcad render` and `vcad export` (.stl/.glb) place assembly instances by joint FK and take --pose/--pose-file; `vcad export x.loon x.vcad` writes the evaluated document.",
+  "features": ["cli", "assembly", "loon", "render"]
+}

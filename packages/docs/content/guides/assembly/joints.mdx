@@ -52,9 +52,55 @@ For revolute joints, place the anchor at the center of the physical pivot. For p
 
 In the app, set anchor coordinates in the property panel or click a vertex or face center in the viewport to snap the anchor there. The anchor fields show X, Y, Z coordinates in the respective instance's local frame.
 
+Precisely, forward kinematics places a jointed child at
+
+```
+child_world = parent_world · T(parent_anchor) · R(axis, state) · T(−child_anchor)
+```
+
+so the child's anchor point lands on the parent's anchor point, and the joint rotates (or slides) the child about that shared point. Two consequences that are easy to trip over:
+
+- **A jointed child's own instance position is ignored.** The joint fully places the child; `[instance "arm" "arm-part" x y z]` only matters for root instances (those that are no joint's child). Put the pivot in the anchors, not in the instance.
+- **Anchors are in each part's own local frame** — the frame the part's geometry was authored in, before any placement. If a body is authored about its pivot (pivot at the part origin), its anchor is `0 0 0`.
+
+## Loon Syntax
+
+Joints are the third vector of an `[assembly parts instances joints ground]` form. The argument order is fixed and positional:
+
+```lisp
+[revolute-joint  name ax ay az lo hi  parent px py pz  child cx cy cz]
+[prismatic-joint name ax ay az lo hi  parent px py pz  child cx cy cz]
+[fixed-joint     name                 parent px py pz  child cx cy cz]
+[ball-joint      name                 parent px py pz  child cx cy cz]
+```
+
+| Argument | Meaning |
+|----------|---------|
+| `name` | Joint name; animation tracks and `gym_step` can address the joint by it. |
+| `ax ay az` | Axis, in the parent's frame (normalized). |
+| `lo hi` | Limits — degrees for revolute, millimeters for prismatic. |
+| `parent` | Parent **instance** name (not the part name). |
+| `px py pz` | Pivot in the parent part's local frame, mm. |
+| `child` | Child **instance** name. |
+| `cx cy cz` | The same pivot in the child part's local frame, mm. |
+
+The joint state starts at 0. A revolute joint at 0° with both anchors at `0 0 0` simply stacks the child's origin on the parent's origin; a fixed joint is the same placement with no motion.
+
+```lisp
+[assembly
+  #[[part "base" [cube 40 40 10] "aluminum"]
+    [part "arm"  [translate -5 -5 0 [cube 10 10 60]] "aluminum"]]
+  #[[instance "base-i" "base" 0 0 0]
+    [instance "arm-i"  "arm"  0 0 0]]          ; position ignored — the joint places it
+  #[[revolute-joint "shoulder" 0 1 0 -90 90
+      "base-i" 20 20 10                       ; top center of the base
+      "arm-i"   0  0  0]]                     ; bottom center of the arm
+  "base-i"]
+```
+
 ## Joint Axis
 
-Revolute, prismatic, and cylindrical joints require an axis vector. The axis defines the direction of rotation or translation. It is a unit vector in world space. Common choices:
+Revolute, prismatic, and cylindrical joints require an axis vector. The axis defines the direction of rotation or translation. It is expressed in the **parent instance's frame** (which is world space when the parent is the ground or an unrotated root) and is normalized for you. Common choices:
 
 (0, 0, 1) -- rotation/translation along Z (horizontal pivot, vertical slide in Z-up)
 (0, 1, 0) -- rotation/translation along Y
