@@ -1227,6 +1227,50 @@ impl ConvertCtx {
         Ok(n)
     }
 
+    /// Parse the `& opts` tail of `import-mesh` — `:units "mm"` is the only
+    /// option. Returns the unit name, `"m"` when absent.
+    fn mesh_import_units(&self, opts: &Value) -> Result<String, String> {
+        let items: Vec<Value> = match opts {
+            Value::Vec(items) => items.iter().cloned().collect(),
+            Value::Unit => Vec::new(),
+            other => return Err(format!("import-mesh: bad options {other}")),
+        };
+        let mut units = "m".to_string();
+        let mut i = 0;
+        while i < items.len() {
+            let Value::Keyword(k) = &items[i] else {
+                return Err(format!(
+                    "import-mesh: expected a keyword option like :units, got {}",
+                    items[i]
+                ));
+            };
+            let key = k.trim_start_matches(':');
+            let val = items
+                .get(i + 1)
+                .ok_or_else(|| format!("import-mesh: :{key} needs a value"))?;
+            match key {
+                "units" => {
+                    let u = match val {
+                        Value::Str(s) => s.to_string(),
+                        Value::Keyword(s) => s.trim_start_matches(':').to_string(),
+                        _ => {
+                            return Err(format!("import-mesh: :units expects a string, got {val}"))
+                        }
+                    };
+                    if MESH_UNITS.iter().all(|(name, _)| *name != u) {
+                        return Err(format!(
+                            "import-mesh: unknown :units {u:?} — use \"mm\", \"cm\", \"m\" or \"in\""
+                        ));
+                    }
+                    units = u;
+                }
+                _ => return Err(format!("import-mesh: unknown option :{key} (only :units)")),
+            }
+            i += 2;
+        }
+        Ok(units)
+    }
+
     /// Resolve an import path against the source file's directory, so a model
     /// can name its vendor geometry relative to itself.
     fn import_path(&self, tag: &str, v: &Value) -> Result<String, String> {
@@ -1998,9 +2042,19 @@ impl ConvertCtx {
             }
 
             // Imported vendor geometry.
+            // The IR loader reads STL coordinates as METRES (the URDF
+            // convention) and multiplies by 1000. An optional 5th field
+            // carries `:units "mm"|"cm"|"m"|"in"` from the loon call so a
+            // millimetre STL can say so instead of hand-scaling by 0.001.
             "MeshImport" => {
-                assert_fields(tag, fields, 4)?;
-                let scale = self.vec3(fields, 1)?;
+                if fields.len() != 4 && fields.len() != 5 {
+                    assert_fields(tag, fields, 4)?;
+                }
+                let mut scale = self.vec3(fields, 1)?;
+                if let Some(opts) = fields.get(4) {
+                    let k = mesh_units_to_metres(&self.mesh_import_units(opts)?);
+                    scale = Vec3::new(scale.x * k, scale.y * k, scale.z * k);
+                }
                 CsgOp::MeshImport {
                     path: self.import_path(tag, &fields[0])?,
                     scale: (scale.x != 1.0 || scale.y != 1.0 || scale.z != 1.0).then_some(scale),
@@ -2533,6 +2587,17 @@ fn circle_loop(cx: f64, cy: f64, r: f64) -> Result<Vec<SketchSegment2D>, String>
             ccw: true,
         },
     ])
+}
+
+/// STL unit names accepted by `import-mesh :units`, with their length in metres.
+const MESH_UNITS: [(&str, f64); 4] = [("mm", 0.001), ("cm", 0.01), ("m", 1.0), ("in", 0.0254)];
+
+/// Metres per unit — the factor that cancels the IR loader's metres→mm ×1000.
+fn mesh_units_to_metres(units: &str) -> f64 {
+    MESH_UNITS
+        .iter()
+        .find(|(name, _)| *name == units)
+        .map_or(1.0, |(_, k)| *k)
 }
 
 fn assert_fields(tag: &str, fields: &[Value], expected: usize) -> Result<(), String> {

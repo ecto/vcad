@@ -106,8 +106,8 @@
   [ConeN f64 f64 f64 Int]
   [TorusN f64 f64 Int]
   ; Imported geometry — a vendor part placed as-is, not re-modelled.
-  ; [MeshImport path sx sy sz]  (STL; scale 1 1 1 for none)
-  [MeshImport Str f64 f64 f64]
+  ; [MeshImport path sx sy sz opts]  (STL; scale 1 1 1 for none; opts = [:units "mm"] or [])
+  [MeshImport Str f64 f64 f64 (Vec a)]
   ; [StepImport path solid-index]
   [StepImport Str Int]
   ; Sheet metal — a bend graph, NOT a CSG solid. A chain starts at a base
@@ -298,9 +298,15 @@
 [let import-step [fn [path] [StepImport path 0]]]
 ; Pick a specific body out of a multi-body STEP (0-based).
 [let import-step-body [fn [path index] [StepImport path index]]]
-[let import-mesh [fn [path] [MeshImport path 1.0 1.0 1.0]]]
-; Scaled import — for an STL authored in metres or inches.
-[let import-mesh-scaled [fn [sx sy sz path] [MeshImport path sx sy sz]]]
+;
+; UNITS: STL carries no unit. `import-mesh` reads coordinates as METRES
+; (the URDF convention — Unitree/ROS meshes) and converts to mm, so a
+; millimetre STL comes in 1000x too big unless it says so:
+;   [import-mesh "vendor/bracket.stl" :units "mm"]   ; also "cm", "m", "in"
+; The loader warns when an import lands over 10 m or under 1 mm.
+[let import-mesh [fn [path & opts] [MeshImport path 1.0 1.0 1.0 opts]]]
+; Scaled import — extra non-uniform scale on top of :units (default "m").
+[let import-mesh-scaled [fn [sx sy sz path & opts] [MeshImport path sx sy sz opts]]]
 
 ; Booleans (subject-last: [pipe body [difference tool]] → subtract tool from body)
 [let union [fn [other s] [Union s other]]]
