@@ -775,7 +775,13 @@ struct ReleasedOverlayView: View {
                         .modifier(ChromeRegion(key: "tree"))
                 }
                 // Dynamics, as its own panel: one panel per concern.
-                if model.canSimulate {
+                // Posing first: on a jointed assembly it's the main job, and
+                // the column runs out of height before the dojo panel matters.
+                if model.hasPoseStudio {
+                    PoseStudioWindow(model: model)
+                        .modifier(ChromeRegion(key: "pose"))
+                }
+                if model.canSimulate && !model.hasPoseStudio {
                     SimulationWindow(model: model)
                         .modifier(ChromeRegion(key: "sim"))
                 }

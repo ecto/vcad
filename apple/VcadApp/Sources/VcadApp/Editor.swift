@@ -322,6 +322,8 @@ final class EditorModel {
     var source: GeometrySource = .sandbox {
         didSet {
             geometryDirty = true
+            if source.id != oldValue.id { jointPose = [:]; explode = 0 }
+            watchDocumentFile()                   // hot reload on regenerate
             loadDocumentTree()                    // parse the DAG for a .vcad
             if !availableTabs.contains(toolTab) { toolTab = .create }
             selectedFeatureID = defaultSelection()
@@ -475,7 +477,7 @@ final class EditorModel {
 
     /// The resident evaluated assembly scene (owns instance meshes + the
     /// parsed doc the FK solver re-poses). Freed on rebuild / source change.
-    nonisolated(unsafe) private var residentAssemblyScene: OpaquePointer?
+    nonisolated(unsafe) var residentAssemblyScene: OpaquePointer?
 
     // MARK: dynamics (physics simulation)
     //
@@ -558,6 +560,30 @@ final class EditorModel {
     /// simulation's output for bodies physics doesn't own.
     @ObservationIgnored var authoredInstanceTransforms: [float4x4] = []
     var playbackDirty = false
+
+    // MARK: pose studio (interactive joints + explode + hot reload)
+    // Implemented in PoseStudio.swift; the stored state lives here because an
+    // extension can't hold it.
+
+    /// Interactive joint values, keyed by joint NAME (falling back to id) so a
+    /// pose survives the file being regenerated with renumbered joint ids.
+    var jointPose: [String: Double] = [:]
+    /// Explode amount, 0 (assembled) … 1 (fully exploded).
+    var explode: Double = 0
+    /// Instance ids + part-local AABB centres, scene order — what explode
+    /// reasons about. Filled when an assembly scene is adopted.
+    @ObservationIgnored var assemblyInstanceIDs: [String] = []
+    @ObservationIgnored var assemblyLocalCenters: [SIMD3<Float>] = []
+    /// Watches the open document's file; a regenerate reloads it in place.
+    @ObservationIgnored var fileWatch: DispatchSourceFileSystemObject?
+    @ObservationIgnored var fileWatchPath: String?
+    @ObservationIgnored var reloadPending: DispatchWorkItem?
+    /// When the open document last reloaded from disk (shown in the pose panel).
+    var lastReload: Date?
+    /// Photoreal snapshot state.
+    var photorealBusy = false
+    var photorealStatus: String?
+
     var isPlaying = false
     /// Current playback time in seconds (drives the scrubber).
     var playbackTime: Double = 0
@@ -660,7 +686,7 @@ final class EditorModel {
     /// (Z-up, mm). Display world = zUpRot(kernel − displayCenter) · displayScale,
     /// so kernel = zUpRotInv(world / displayScale) + displayCenter, where
     /// zUpRotInv maps (x, y, z)world → (x, −z, y)kernel.
-    private func kernelCamera() -> (cam: SIMD3<Double>, target: SIMD3<Double>)? {
+    func kernelCamera() -> (cam: SIMD3<Double>, target: SIMD3<Double>)? {
         guard displayScale > 1e-9 else { return nil }
         func toKernel(_ w: SIMD3<Float>) -> SIMD3<Double> {
             let u = w / displayScale
@@ -678,7 +704,7 @@ final class EditorModel {
         guard usesDocumentTree, let (cam, target) = kernelCamera() else { return nil }
         let data: Data?
         if let json = documentJSON { data = DocEdit.serialize(json) }
-        else if case let .document(path, _) = source { data = try? Data(contentsOf: URL(fileURLWithPath: path)) }
+        else if case let .document(path, _) = source { data = Self.documentBytes(path: path) }
         else if case let .generated(loon, _) = source { data = Data(loon.utf8) }
         else { data = nil }
         guard let data else { return nil }
@@ -758,7 +784,7 @@ final class EditorModel {
         documentDirty = false
         savedSnapshot = nil
         if case let .document(path, _) = source,
-           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+           let data = Self.documentBytes(path: path),
            let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
            let g = DocumentGraph.parse(dict) {
             documentJSON = dict
@@ -1448,6 +1474,13 @@ final class EditorModel {
             #endif
             return
         }
+        if isLoonDocument {
+            // Never overwrite generated loon source with compiled JSON.
+            #if os(macOS)
+            saveAsPanel(self)
+            #endif
+            return
+        }
         guard case let .document(path, _) = source,
               let json = documentJSON, let data = DocEdit.serializePretty(json) else { return }
         // Atomic: the file on disk is never half-written if the app dies mid-save.
@@ -1724,7 +1757,7 @@ final class EditorModel {
         case .document, .generated:
             let data: Data?
             if let json = documentJSON { data = DocEdit.serialize(json) }
-            else if case let .document(path, _) = source { data = try? Data(contentsOf: URL(fileURLWithPath: path)) }
+            else if case let .document(path, _) = source { data = Self.documentBytes(path: path) }
             else if case let .generated(loon, _) = source { data = Data(loon.utf8) }
             else { data = nil }
             guard let data else { return [] }
@@ -2265,11 +2298,18 @@ final class EditorModel {
         // A loon program opens the way the intent bar's output does: compiled
         // by the kernel, shown as generated geometry. It has no node DAG to
         // edit, so it is not a `.document`.
-        if url.pathExtension.lowercased() == "loon",
-           let text = try? String(contentsOf: url, encoding: .utf8) {
-            if applyGenerated(loon: text, label: label) == nil {
-                loadError = "\(label).loon did not evaluate to geometry."
+        //
+        // A loon FILE opens as a document: the kernel compiles it to `.vcad`
+        // JSON with its `[use]` modules and relative mesh imports resolved
+        // against its own directory, so a generated assembly gets the full
+        // document path — progressive solve, materials, joints, posing — and
+        // is watched for regeneration. It is read-only: Save goes to Save As.
+        if url.pathExtension.lowercased() == "loon" {
+            guard Self.documentBytes(path: url.path) != nil else {
+                loadError = "\(label).loon did not compile: \(SimError.pending() ?? "unknown error")"
+                return
             }
+            source = .document(path: url.path, label: label)
             rememberRecent(url)
             return
         }
@@ -2742,7 +2782,7 @@ final class EditorModel {
         let plan = documentInstancingPlan()
         let data: Data?
         if documentJSON != nil { data = evalData(applying: plan) }
-        else { data = try? Data(contentsOf: URL(fileURLWithPath: path)) }
+        else { data = Self.documentBytes(path: path) }
         guard let data, !data.isEmpty else { return .empty }
         // Resolve the document's relative mesh references against its own
         // directory. A robot document ships its meshes alongside itself; with
@@ -2821,6 +2861,7 @@ final class EditorModel {
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
         var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var tris = 0
+        var centers = [SIMD3<Float>](repeating: .zero, count: count)
         for i in 0..<count {
             var m16 = [Double](repeating: 0, count: 16)
             _ = vcad_scene_instance_transform(scene, i, &m16)
@@ -2829,6 +2870,7 @@ final class EditorModel {
 
             let km = KernelMesh.fromView(vcad_scene_instance_mesh(scene, i))
             guard !km.isEmpty else { continue }
+            centers[i] = (km.minBound + km.maxBound) / 2
             tris += km.triangleCount
             // World bounds: transform the local AABB's 8 corners.
             for cx in [km.minBound.x, km.maxBound.x] {
@@ -2872,8 +2914,12 @@ final class EditorModel {
         let size = Self.extent(lo, hi)
         displayCenter = center
         displayScale = 0.6 / max(size, 0.0001)
+        assemblyInstanceIDs = (0..<count).map { instString(vcad_scene_instance_id, $0) }
+        assemblyLocalCenters = centers
         // Land on the authored pose at t=0 when a timeline exists.
         if timeline != nil { applyPlaybackPose() }
+        // A reload keeps the pose you were looking at.
+        if timeline == nil, !jointPose.isEmpty || explode > 0 { applyStudioPose() }
         return RenderScene(meshes: [], center: center, size: size,
                            triangleCount: tris, partCount: instances.count,
                            instances: instances)
