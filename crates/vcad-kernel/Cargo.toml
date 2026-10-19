@@ -11,7 +11,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-vcad-kernel-acoustics = { workspace = true }
+vcad-kernel-acoustics = { workspace = true, optional = true }
 vcad-kernel-math = { workspace = true }
 vcad-kernel-topo = { workspace = true }
 vcad-kernel-geom = { workspace = true }
@@ -31,25 +31,45 @@ vcad-kernel-cost = { workspace = true }
 vcad-kernel-dfm = { workspace = true }
 vcad-kernel-cam = { workspace = true }
 vcad-kernel-stocksim = { workspace = true }
-vcad-kernel-topopt = { workspace = true }
-vcad-kernel-particle = { workspace = true }
-vcad-kernel-antenna = { workspace = true }
-vcad-kernel-em = { workspace = true }
-vcad-kernel-enclosure = { workspace = true }
-vcad-kernel-neutronics = { workspace = true }
-vcad-kernel-qcd = { workspace = true }
-vcad-kernel-photonics = { workspace = true }
-vcad-kernel-thermal = { workspace = true }
-vcad-kernel-flow = { workspace = true }
-vcad-kernel-fea = { workspace = true }
-vcad-kernel-tolerance = { workspace = true }
-vcad-kernel-calibration = { workspace = true }
+vcad-kernel-topopt = { workspace = true, optional = true }
+vcad-kernel-particle = { workspace = true, optional = true }
+vcad-kernel-antenna = { workspace = true, optional = true }
+vcad-kernel-em = { workspace = true, optional = true }
+vcad-kernel-enclosure = { workspace = true, optional = true }
+vcad-kernel-neutronics = { workspace = true, optional = true }
+vcad-kernel-qcd = { workspace = true, optional = true }
+vcad-kernel-photonics = { workspace = true, optional = true }
+vcad-kernel-thermal = { workspace = true, optional = true }
+vcad-kernel-flow = { workspace = true, optional = true }
+vcad-kernel-fea = { workspace = true, optional = true }
+vcad-kernel-tolerance = { workspace = true, optional = true }
+vcad-kernel-calibration = { workspace = true, optional = true }
 serde = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
 
 [features]
+default = ["analysis"]
+# The analysis solvers re-exported below (FEA, EM, thermal, photonics, …).
+# Pure modeling consumers — vcad-render, vcad-eval — turn default features off
+# so a geometry-only build doesn't compile ~14 solver crates it never calls.
+analysis = [
+    "dep:vcad-kernel-acoustics",
+    "dep:vcad-kernel-antenna",
+    "dep:vcad-kernel-calibration",
+    "dep:vcad-kernel-em",
+    "dep:vcad-kernel-enclosure",
+    "dep:vcad-kernel-fea",
+    "dep:vcad-kernel-flow",
+    "dep:vcad-kernel-neutronics",
+    "dep:vcad-kernel-particle",
+    "dep:vcad-kernel-photonics",
+    "dep:vcad-kernel-qcd",
+    "dep:vcad-kernel-thermal",
+    "dep:vcad-kernel-tolerance",
+    "dep:vcad-kernel-topopt",
+]
 # Forwards the `no-builtin-font` flag from vcad-kernel-text so downstream
 # crates (e.g. vcad-kernel-wasm) can disable the compile-time font embed
 # without reaching into a transitive dependency.
