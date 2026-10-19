@@ -132,6 +132,11 @@ const BACKFACE_DOT_MIN: f64 = -0.04;
 /// same vertex twice via separate facets.
 const VERT_DEDUP_MM: f64 = 1e-3;
 
+/// Adjacent triangles whose normals are this close to exactly opposite are
+/// a zero-thickness fold (a flat flap in mesh-boolean soup) and draw no
+/// edge. Tight — cos(~2.5°) — so genuine knife edges still show.
+const FOLD_DOT_MIN: f64 = 0.999;
+
 /// Light direction in kernel space (Z-up).
 const LIGHT: [f64; 3] = [-0.6, -0.7, 0.8];
 
@@ -1499,7 +1504,15 @@ fn build_artifacts(
                         && (dot(normals[t0], cam) >= 0.0) != (dot(normals[t1], cam) >= 0.0);
                     let cosang = dot(normals[t0], normals[t1]).abs();
                     let coplanar = cosang >= rules.coplanar_dot_tol;
-                    if silhouette {
+                    // Two coplanar, *opposite-facing* triangles sharing an
+                    // edge are a zero-thickness fold — a flap of mesh-boolean
+                    // soup lying flat in a face, not a model edge. Without
+                    // this the facing flip reads as a silhouette and strokes
+                    // a jagged line across the flat face.
+                    let folded = dot(normals[t0], normals[t1]) <= -FOLD_DOT_MIN;
+                    if folded {
+                        None
+                    } else if silhouette {
                         // A silhouette between near-coplanar facets is the
                         // smooth outline of a curved surface; between
                         // distinct faces it's a hard model edge.
@@ -5780,6 +5793,65 @@ mod tests {
             svg.contains(&format!(r#"stroke-width="{STROKE_CREASE_PX}""#)),
             "expected a fine crease stroke group"
         );
+    }
+
+    /// Mesh-boolean soup can leave zero-thickness flaps folded flat into a
+    /// face: two coplanar triangles sharing an edge but facing opposite
+    /// ways. The facing flip used to read as a silhouette and stroke a
+    /// jagged line across the flat face; the fold must draw no edge, while
+    /// a genuine crease on the same mesh still does.
+    #[test]
+    fn folded_flap_in_soup_draws_no_edge() {
+        // 0-1-2 faces +z; 1-0-3 folds back onto the same plane (faces -z);
+        // 1-4-2 is tilted 45° off 0-1-2 about edge 1-2 → a real crease.
+        let vertices: Vec<f32> = vec![
+            0.0, 0.0, 0.0, // 0
+            10.0, 0.0, 0.0, // 1
+            0.0, 10.0, 0.0, // 2
+            5.0, 3.0, 0.0, // 3 (flap tip, in-plane)
+            10.0, 10.0, 7.0, // 4
+        ];
+        let mesh = vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
+            vertices,
+            indices: vec![0, 1, 2, 1, 0, 3, 1, 4, 2],
+            normals: Vec::new(),
+            face_kinds: Vec::new(),
+            face_ids: Vec::new(),
+        };
+        let solid = Solid::from_mesh(mesh);
+        let arts = build_artifacts(
+            &[solid],
+            &[None],
+            &[false],
+            normalize([0.3, -0.2, 1.0]),
+            32,
+            &EdgeRules::svg(),
+            None,
+            RenderStyle::Drafting,
+            &Palette::LIGHT,
+        );
+        let art = &arts[0];
+        let find = |p: [f64; 3]| {
+            art.verts
+                .iter()
+                .position(|v| {
+                    (v[0] - p[0]).abs() + (v[1] - p[1]).abs() + (v[2] - p[2]).abs() < 1e-6
+                })
+                .unwrap()
+        };
+        let has = |a: usize, b: usize| {
+            art.edges
+                .iter()
+                .find(|e| (e.0 == a && e.1 == b) || (e.0 == b && e.1 == a))
+                .map(|e| e.2)
+        };
+        let (v0, v1, v2) = (
+            find([0.0, 0.0, 0.0]),
+            find([10.0, 0.0, 0.0]),
+            find([0.0, 10.0, 0.0]),
+        );
+        assert_eq!(has(v0, v1), None, "the flat fold must not be stroked");
+        assert!(has(v1, v2).is_some(), "a real crease must still be stroked");
     }
 
     /// Two named parts: a 20×30×10 bracket plus a small pin inside its

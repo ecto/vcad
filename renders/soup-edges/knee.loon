@@ -1,0 +1,4 @@
+[let thigh [pipe [cube 56 44 150] [translate -28 -22 -30]]]
+[let calf [pipe [cylinder 14 160] [translate 0 0 -150]]]
+[let r [pipe thigh [difference [sweep-rotate-clear 0 0 0  1 0 0  0 120  0 1 calf]]]]
+[root r "aluminum"]
