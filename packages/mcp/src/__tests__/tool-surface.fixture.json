@@ -8261,6 +8261,184 @@
               "type": "string"
             }
           }
+        },
+        "power_flags": {
+          "type": "array",
+          "description": "Power flags (KiCad PWR_FLAG): nets declared as DRIVEN although no PowerOutput pin sits on them — a rail fed through a ferrite, a load-switch FET or a connector. Each is a net name or {net, note}. ERC counts a flagged net as powered; flags are not parts, so they never reach the BOM or board.",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "net": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "net"
+                ]
+              }
+            ]
+          }
+        },
+        "sheets": {
+          "type": "array",
+          "description": "Hierarchical child sheets (definitions). Each is a create_schematic-shaped body (components, nets, labels, wires, power_flags) plus `name`, `ports` and nested `instances`. Inside a sheet a net name is LOCAL to each instance (flattens to `<instance path>/<net>`, e.g. `CAN1/CANH`) unless it is a port (resolved through the instance's `connections`) or global (`global_nets`, or a Global label). The root sheet is this call's own components/nets.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Sheet definition name."
+              },
+              "title": {
+                "type": "string"
+              },
+              "ports": {
+                "type": "array",
+                "description": "Hierarchical ports: names (or {name, direction}) of nets the parent connects, e.g. [\"TXD\", \"RXD\"].",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "direction": {
+                          "type": "string",
+                          "description": "Input, Output, Bidirectional, Passive, PowerInput, PowerOutput"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "components": {
+                "type": "array",
+                "description": "As create_schematic.components.",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "nets": {
+                "type": "object",
+                "description": "As create_schematic.nets, in this sheet's scope.",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "wires": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "power_flags": {
+                "type": "array",
+                "description": "Power flags (KiCad PWR_FLAG): nets declared as DRIVEN although no PowerOutput pin sits on them — a rail fed through a ferrite, a load-switch FET or a connector. Each is a net name or {net, note}. ERC counts a flagged net as powered; flags are not parts, so they never reach the BOM or board.",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "net": {
+                          "type": "string"
+                        },
+                        "note": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "net"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "instances": {
+                "type": "array",
+                "description": "Nested child sheet instances.",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "required": [
+              "name",
+              "components"
+            ]
+          }
+        },
+        "instances": {
+          "type": "array",
+          "description": "Sheet instances placed on the root sheet. Place a sheet several times (CAN ×6) — each instance gets its own local nets and reference designators.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Instance name, e.g. \"CAN1\" (no \"/\")."
+              },
+              "sheet": {
+                "type": "string",
+                "description": "Sheet definition name."
+              },
+              "connections": {
+                "type": "object",
+                "description": "Port → parent-sheet net, e.g. {\"TXD\": \"FDCAN1_TX\"}.",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "ref_offset": {
+                "type": "number",
+                "description": "Renumber refs (U1 + 100 → U101). Default: a sheet placed once keeps its refs; a repeated sheet gets <ref>_<instance> (U1_CAN1)."
+              },
+              "ref_map": {
+                "type": "object",
+                "description": "Explicit local → flat refs, e.g. {\"U1\": \"U31\"}; wins over ref_offset.",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "name",
+              "sheet"
+            ]
+          }
+        },
+        "global_nets": {
+          "type": "array",
+          "description": "Net names shared by every sheet, e.g. [\"GND\", \"+3V3\", \"VBAT\"].",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -8269,6 +8447,246 @@
     },
     "annotations": {
       "readOnlyHint": false
+    }
+  },
+  {
+    "name": "update_schematic",
+    "title": "Update Schematic",
+    "description": "Edit a schematic session in place: replace the root sheet body, add / replace / remove hierarchical sheet definitions and root sheet instances, set the global nets, or set power flags. Returns the re-flattened netlist and any hierarchy issues, like create_schematic.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from create_schematic."
+        },
+        "root": {
+          "type": "object",
+          "description": "Replace the ROOT sheet body (create_schematic-shaped: components, nets, labels, wires, power_flags). The hierarchy is kept."
+        },
+        "sheets": {
+          "type": "array",
+          "description": "Sheet definitions to add, or replace by `name`.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Sheet definition name."
+              },
+              "title": {
+                "type": "string"
+              },
+              "ports": {
+                "type": "array",
+                "description": "Hierarchical ports: names (or {name, direction}) of nets the parent connects, e.g. [\"TXD\", \"RXD\"].",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "direction": {
+                          "type": "string",
+                          "description": "Input, Output, Bidirectional, Passive, PowerInput, PowerOutput"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "components": {
+                "type": "array",
+                "description": "As create_schematic.components.",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "nets": {
+                "type": "object",
+                "description": "As create_schematic.nets, in this sheet's scope.",
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "labels": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "wires": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "power_flags": {
+                "type": "array",
+                "description": "Power flags (KiCad PWR_FLAG): nets declared as DRIVEN although no PowerOutput pin sits on them — a rail fed through a ferrite, a load-switch FET or a connector. Each is a net name or {net, note}. ERC counts a flagged net as powered; flags are not parts, so they never reach the BOM or board.",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "net": {
+                          "type": "string"
+                        },
+                        "note": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "net"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "instances": {
+                "type": "array",
+                "description": "Nested child sheet instances.",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "required": [
+              "name",
+              "components"
+            ]
+          }
+        },
+        "remove_sheets": {
+          "type": "array",
+          "description": "Sheet definition names to delete.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "instances": {
+          "type": "array",
+          "description": "Root sheet instances to add, or replace by `name`.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Instance name, e.g. \"CAN1\" (no \"/\")."
+              },
+              "sheet": {
+                "type": "string",
+                "description": "Sheet definition name."
+              },
+              "connections": {
+                "type": "object",
+                "description": "Port → parent-sheet net, e.g. {\"TXD\": \"FDCAN1_TX\"}.",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "ref_offset": {
+                "type": "number",
+                "description": "Renumber refs (U1 + 100 → U101). Default: a sheet placed once keeps its refs; a repeated sheet gets <ref>_<instance> (U1_CAN1)."
+              },
+              "ref_map": {
+                "type": "object",
+                "description": "Explicit local → flat refs, e.g. {\"U1\": \"U31\"}; wins over ref_offset.",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "name",
+              "sheet"
+            ]
+          }
+        },
+        "remove_instances": {
+          "type": "array",
+          "description": "Root sheet instance names to delete.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "global_nets": {
+          "type": "array",
+          "description": "Replace the global net list.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "power_flags": {
+          "type": "array",
+          "description": "Replace the ROOT sheet's power flags.",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "net": {
+                    "type": "string"
+                  },
+                  "note": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "net"
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "inspect_schematic",
+    "title": "Inspect Schematic",
+    "description": "Inspect a schematic session: sheet tree, per-instance reference maps, the flattened netlist (optionally one instance's), power flags, hierarchy issues, and a BOM grouping of the flattened parts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from create_schematic."
+        },
+        "instance": {
+          "type": "string",
+          "description": "Limit nets/refs to one sheet instance path (e.g. \"CAN1\" or \"PWR/BUCK2\")."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {

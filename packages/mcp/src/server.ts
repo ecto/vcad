@@ -527,6 +527,8 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "get_changelog",
   // ── ECAD (PCB) ─────────────────────────────────────────────
   "create_schematic",
+  "update_schematic",
+  "inspect_schematic",
   "place_components",
   "route_nets",
   "add_coil",

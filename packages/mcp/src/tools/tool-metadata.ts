@@ -249,6 +249,8 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
 
   // ── ECAD (PCB) ─────────────────────────────────────────────────────────
   create_schematic: { title: "Create Schematic", annotations: RW },
+  update_schematic: { title: "Update Schematic", annotations: RW },
+  inspect_schematic: { title: "Inspect Schematic", annotations: RO },
   place_components: { title: "Place Components", annotations: RW },
   route_nets: { title: "Route Nets", annotations: RW },
   add_coil: { title: "Add Coil", annotations: RW },

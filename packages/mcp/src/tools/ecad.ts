@@ -37,6 +37,13 @@ import type {
   ReceiptStatus,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
+import type {
+  HierarchicalPort,
+  PowerFlag,
+  SheetDefinition,
+  SheetInstance,
+} from "@vcad/ir";
+import { flattenSchematic, type FlattenResult } from "./schematic-hierarchy.js";
 import { RECEIPT_SCHEMA, summarize, unifiedFromPcbReceipt } from "../receipt-unified.js";
 import {
   clearanceReceiptClaims,
@@ -659,6 +666,93 @@ async function deriveNets(sheet: SchematicSheet): Promise<DerivedNets> {
 // Schemas
 // ============================================================================
 
+/** `power_flags`: KiCad PWR_FLAG-equivalent declarations. */
+const powerFlagsSchema = {
+  type: "array" as const,
+  description:
+    "Power flags (KiCad PWR_FLAG): nets declared as DRIVEN although no " +
+    "PowerOutput pin sits on them — a rail fed through a ferrite, a load-switch " +
+    'FET or a connector. Each is a net name or {net, note}. ERC counts a flagged ' +
+    "net as powered; flags are not parts, so they never reach the BOM or board.",
+  items: {
+    anyOf: [
+      { type: "string" as const },
+      {
+        type: "object" as const,
+        properties: {
+          net: { type: "string" as const },
+          note: { type: "string" as const },
+        },
+        required: ["net"],
+      },
+    ],
+  },
+};
+
+/** A sheet instance (tool input). */
+const sheetInstanceSchema = {
+  type: "object" as const,
+  properties: {
+    name: { type: "string" as const, description: 'Instance name, e.g. "CAN1" (no "/").' },
+    sheet: { type: "string" as const, description: "Sheet definition name." },
+    connections: {
+      type: "object" as const,
+      description: 'Port → parent-sheet net, e.g. {"TXD": "FDCAN1_TX"}.',
+      additionalProperties: { type: "string" as const },
+    },
+    ref_offset: {
+      type: "number" as const,
+      description:
+        "Renumber refs (U1 + 100 → U101). Default: a sheet placed once keeps its " +
+        "refs; a repeated sheet gets <ref>_<instance> (U1_CAN1).",
+    },
+    ref_map: {
+      type: "object" as const,
+      description: 'Explicit local → flat refs, e.g. {"U1": "U31"}; wins over ref_offset.',
+      additionalProperties: { type: "string" as const },
+    },
+  },
+  required: ["name", "sheet"],
+};
+
+/** A sheet definition (tool input). */
+const sheetDefinitionSchema = {
+  type: "object" as const,
+  properties: {
+    name: { type: "string" as const, description: "Sheet definition name." },
+    title: { type: "string" as const },
+    ports: {
+      type: "array" as const,
+      description:
+        'Hierarchical ports: names (or {name, direction}) of nets the parent connects, e.g. ["TXD", "RXD"].',
+      items: {
+        anyOf: [
+          { type: "string" as const },
+          {
+            type: "object" as const,
+            properties: {
+              name: { type: "string" as const },
+              direction: { type: "string" as const, description: "Input, Output, Bidirectional, Passive, PowerInput, PowerOutput" },
+            },
+            required: ["name"],
+          },
+        ],
+      },
+    },
+    components: { type: "array" as const, description: "As create_schematic.components.", items: { type: "object" as const } },
+    nets: {
+      type: "object" as const,
+      description: "As create_schematic.nets, in this sheet's scope.",
+      additionalProperties: { type: "array" as const, items: { type: "string" as const } },
+    },
+    labels: { type: "array" as const, items: { type: "object" as const } },
+    wires: { type: "array" as const, items: { type: "object" as const } },
+    power_flags: powerFlagsSchema,
+    instances: { type: "array" as const, description: "Nested child sheet instances.", items: { type: "object" as const } },
+  },
+  required: ["name", "components"],
+};
+
 /** JSON Schema for create_schematic tool. */
 export const createSchematicSchema = {
   type: "object" as const,
@@ -790,8 +884,88 @@ export const createSchematicSchema = {
         items: { type: "string" as const },
       },
     },
+    power_flags: powerFlagsSchema,
+    sheets: {
+      type: "array" as const,
+      description:
+        "Hierarchical child sheets (definitions). Each is a create_schematic-shaped " +
+        "body (components, nets, labels, wires, power_flags) plus `name`, `ports` " +
+        "and nested `instances`. Inside a sheet a net name is LOCAL to each " +
+        "instance (flattens to `<instance path>/<net>`, e.g. `CAN1/CANH`) unless " +
+        "it is a port (resolved through the instance's `connections`) or global " +
+        "(`global_nets`, or a Global label). The root sheet is this call's own " +
+        "components/nets.",
+      items: sheetDefinitionSchema,
+    },
+    instances: {
+      type: "array" as const,
+      description:
+        "Sheet instances placed on the root sheet. Place a sheet several times " +
+        "(CAN ×6) — each instance gets its own local nets and reference designators.",
+      items: sheetInstanceSchema,
+    },
+    global_nets: {
+      type: "array" as const,
+      description: 'Net names shared by every sheet, e.g. ["GND", "+3V3", "VBAT"].',
+      items: { type: "string" as const },
+    },
   },
   required: ["components"],
+};
+
+/** JSON Schema for update_schematic. */
+export const updateSchematicSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: { type: "string" as const, description: "Session id from create_schematic." },
+    root: {
+      type: "object" as const,
+      description:
+        "Replace the ROOT sheet body (create_schematic-shaped: components, nets, " +
+        "labels, wires, power_flags). The hierarchy is kept.",
+    },
+    sheets: {
+      type: "array" as const,
+      description: "Sheet definitions to add, or replace by `name`.",
+      items: sheetDefinitionSchema,
+    },
+    remove_sheets: {
+      type: "array" as const,
+      description: "Sheet definition names to delete.",
+      items: { type: "string" as const },
+    },
+    instances: {
+      type: "array" as const,
+      description: "Root sheet instances to add, or replace by `name`.",
+      items: sheetInstanceSchema,
+    },
+    remove_instances: {
+      type: "array" as const,
+      description: "Root sheet instance names to delete.",
+      items: { type: "string" as const },
+    },
+    global_nets: {
+      type: "array" as const,
+      description: "Replace the global net list.",
+      items: { type: "string" as const },
+    },
+    power_flags: { ...powerFlagsSchema, description: "Replace the ROOT sheet's power flags." },
+  },
+  required: ["document_id"],
+};
+
+/** JSON Schema for inspect_schematic. */
+export const inspectSchematicSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: { type: "string" as const, description: "Session id from create_schematic." },
+    instance: {
+      type: "string" as const,
+      description:
+        'Limit nets/refs to one sheet instance path (e.g. "CAN1" or "PWR/BUCK2").',
+    },
+  },
+  required: ["document_id"],
 };
 
 /** Shared document input properties for session-based ECAD tools. */
@@ -1859,7 +2033,26 @@ function synthesizedPassivePins(): SchematicPin[] {
   ];
 }
 
-export async function createSchematic(args: Record<string, unknown>) {
+/** A sheet body built from create_schematic-shaped input, plus capture notes. */
+interface BuiltSheet {
+  sheet: SchematicSheet;
+  warnings: string[];
+  resolvedParts: Array<{
+    ref: string;
+    part: string;
+    footprint: string;
+    pins: number;
+    datasheet_url?: string;
+    app_notes?: string[];
+  }>;
+}
+
+/**
+ * Build one sheet (root or child) from create_schematic-shaped input:
+ * components (parts DB / explicit pins), wires, labels, explicit nets and
+ * power flags. Throws on malformed input; `where` prefixes child-sheet errors.
+ */
+async function buildSheetBody(args: Record<string, unknown>, where = ""): Promise<BuiltSheet> {
   const title = (args.title as string) || undefined;
   const componentsInput = (args.components as Array<Record<string, unknown>>) || [];
   const wiresInput = (args.wires as Array<Record<string, unknown>>) || [];
@@ -2023,9 +2216,19 @@ export async function createSchematic(args: Record<string, unknown>) {
     ...(netsInput ? { nets: netsInput } : {}),
   };
 
+  const flagsInput = parsePowerFlags(args.power_flags, `${where}power_flags`);
+  if (flagsInput.length > 0) schematic.power_flags = flagsInput;
+
   // Validate the explicit netlist eagerly so bad pin refs fail this call,
   // not place_components three steps later.
-  if (netsInput) validateExplicitNets(schematic, netsInput);
+  if (netsInput) {
+    try {
+      validateExplicitNets(schematic, netsInput);
+    } catch (e) {
+      if (!where) throw e;
+      throw new Error(`${where}${(e as Error).message}`);
+    }
+  }
 
   // A label only joins a net when it sits exactly on a pin or wire endpoint
   // (within tolerance). A label that touches nothing silently names nothing —
@@ -2054,13 +2257,266 @@ export async function createSchematic(args: Record<string, unknown>) {
     }
   }
 
+  return {
+    sheet: schematic,
+    warnings: where ? warnings.map((w) => `${where}${w}`) : warnings,
+    resolvedParts,
+  };
+}
+
+/** Parse `power_flags`: net-name strings or {net, note?, x?, y?} objects. */
+function parsePowerFlags(raw: unknown, where: string): PowerFlag[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new Error(`${where} must be an array`);
+  return raw.map((f, i) => {
+    if (typeof f === "string" && f) return { net: f };
+    const o = (f ?? {}) as Record<string, unknown>;
+    if (typeof o.net !== "string" || !o.net) {
+      throw new Error(`${where}[${i}] must be a net name or {net, note?}`);
+    }
+    return {
+      net: o.net,
+      ...(typeof o.note === "string" ? { note: o.note } : {}),
+      ...(typeof o.x === "number" && typeof o.y === "number"
+        ? { position: { x: o.x, y: o.y } }
+        : {}),
+    };
+  });
+}
+
+/** Parse a sheet instance from tool input. */
+function parseSheetInstance(raw: Record<string, unknown>, where: string): SheetInstance {
+  if (typeof raw.name !== "string" || typeof raw.sheet !== "string") {
+    throw new Error(`${where} needs string \`name\` and \`sheet\``);
+  }
+  const conns = (raw.connections ?? {}) as Record<string, unknown>;
+  const connections: Record<string, string> = {};
+  for (const [port, net] of Object.entries(conns)) {
+    if (typeof net !== "string") throw new Error(`${where}.connections.${port} must be a net name`);
+    connections[port] = net;
+  }
+  return {
+    name: raw.name,
+    sheet: raw.sheet,
+    connections,
+    ...(raw.ref_map ? { ref_map: raw.ref_map as Record<string, string> } : {}),
+    ...(typeof raw.ref_offset === "number" ? { ref_offset: raw.ref_offset } : {}),
+    ...(typeof raw.x === "number" && typeof raw.y === "number"
+      ? { position: { x: raw.x, y: raw.y } }
+      : {}),
+  };
+}
+
+/** Parse a sheet definition (a create_schematic body + ports + instances). */
+async function parseSheetDefinition(raw: Record<string, unknown>, i: number): Promise<{ def: SheetDefinition; built: BuiltSheet }> {
+  if (typeof raw.name !== "string" || !raw.name) throw new Error(`sheets[${i}] needs a \`name\``);
+  const where = `sheet '${raw.name}': `;
+  const built = await buildSheetBody(raw, where);
+  const ports: HierarchicalPort[] = ((raw.ports as unknown[]) ?? []).map((p, j) => {
+    if (typeof p === "string") return { name: p, direction: "Passive" as const };
+    const o = (p ?? {}) as Record<string, unknown>;
+    if (typeof o.name !== "string") throw new Error(`${where}ports[${j}] needs a name`);
+    return {
+      name: o.name,
+      direction: o.direction === undefined ? "Passive" : validatePinType(o.direction, `${where}port ${o.name}`),
+    };
+  });
+  const instances = ((raw.instances as Array<Record<string, unknown>>) ?? []).map((inst, j) =>
+    parseSheetInstance(inst, `${where}instances[${j}]`),
+  );
+  return { def: { name: raw.name, ports, body: built.sheet, instances }, built };
+}
+
+/** Flatten a (possibly hierarchical) sheet with the MCP netlister. */
+async function flattenSheet(sheet: SchematicSheet): Promise<FlattenResult> {
+  return flattenSchematic(sheet, async (s) => (await deriveNets(s)).nets);
+}
+
+/** The document's schematic, flattened (hierarchy elaborated). */
+async function docFlatSchematic(doc: Document): Promise<FlattenResult | null> {
+  const sheet = (doc as Document & { schematic?: SchematicSheet }).schematic;
+  if (!sheet) return null;
+  return flattenSheet(sheet);
+}
+
+/** Nets that carry a power flag in a flattened sheet. */
+function flaggedNets(sheet: SchematicSheet): Set<string> {
+  return new Set((sheet.power_flags ?? []).map((f) => f.net));
+}
+
+export async function createSchematic(args: Record<string, unknown>) {
+  const root = await buildSheetBody(args);
+  const warnings = [...root.warnings];
+  const resolvedParts = [...root.resolvedParts];
+  const schematic = root.sheet;
+
+  const sheetsInput = (args.sheets as Array<Record<string, unknown>>) ?? [];
+  const instancesInput = (args.instances as Array<Record<string, unknown>>) ?? [];
+  if (sheetsInput.length > 0 || instancesInput.length > 0) {
+    const sheets: SheetDefinition[] = [];
+    for (let i = 0; i < sheetsInput.length; i++) {
+      const { def, built } = await parseSheetDefinition(sheetsInput[i], i);
+      warnings.push(...built.warnings);
+      resolvedParts.push(...built.resolvedParts.map((r) => ({ ...r, ref: `${def.name}:${r.ref}` })));
+      sheets.push(def);
+    }
+    schematic.hierarchy = {
+      sheets,
+      instances: instancesInput.map((inst, i) => parseSheetInstance(inst, `instances[${i}]`)),
+      global_nets: ((args.global_nets as string[]) ?? []).map(String),
+    };
+  }
+
   const doc = createDocument();
   doc.schematic = schematic;
   const documentId = registerSession(doc);
+  return schematicSummary(schematic, documentId, warnings, resolvedParts);
+}
+
+/** Edit a schematic session: root body, sheet definitions, instances, globals, flags. */
+export async function updateSchematic(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const doc = ctx.doc as Document & { schematic?: SchematicSheet };
+  if (!doc.schematic) return ecadError("Document has no schematic — create one with create_schematic.");
+  const warnings: string[] = [];
+  const resolvedParts: BuiltSheet["resolvedParts"] = [];
+  let schematic: SchematicSheet = doc.schematic;
+
+  if (args.root && typeof args.root === "object") {
+    const built = await buildSheetBody(args.root as Record<string, unknown>);
+    warnings.push(...built.warnings);
+    resolvedParts.push(...built.resolvedParts);
+    schematic = { ...built.sheet, ...(schematic.hierarchy ? { hierarchy: schematic.hierarchy } : {}) };
+  }
+  if (args.power_flags !== undefined) {
+    const flags = parsePowerFlags(args.power_flags, "power_flags");
+    if (flags.length > 0) schematic.power_flags = flags;
+    else delete schematic.power_flags;
+  }
+
+  const touchesHierarchy = ["sheets", "remove_sheets", "instances", "remove_instances", "global_nets"].some(
+    (k) => args[k] !== undefined,
+  );
+  if (touchesHierarchy) {
+    const h = {
+      sheets: [...(schematic.hierarchy?.sheets ?? [])],
+      instances: [...(schematic.hierarchy?.instances ?? [])],
+      global_nets: [...(schematic.hierarchy?.global_nets ?? [])],
+    };
+    const removeSheets = new Set(((args.remove_sheets as string[]) ?? []).map(String));
+    h.sheets = h.sheets.filter((d) => !removeSheets.has(d.name));
+    const sheetsInput = (args.sheets as Array<Record<string, unknown>>) ?? [];
+    for (let i = 0; i < sheetsInput.length; i++) {
+      const { def, built } = await parseSheetDefinition(sheetsInput[i], i);
+      warnings.push(...built.warnings);
+      resolvedParts.push(...built.resolvedParts.map((r) => ({ ...r, ref: `${def.name}:${r.ref}` })));
+      const at = h.sheets.findIndex((d) => d.name === def.name);
+      if (at >= 0) h.sheets[at] = def;
+      else h.sheets.push(def);
+    }
+    const removeInst = new Set(((args.remove_instances as string[]) ?? []).map(String));
+    h.instances = h.instances.filter((x) => !removeInst.has(x.name));
+    ((args.instances as Array<Record<string, unknown>>) ?? []).forEach((raw, i) => {
+      const inst = parseSheetInstance(raw, `instances[${i}]`);
+      const at = h.instances.findIndex((x) => x.name === inst.name);
+      if (at >= 0) h.instances[at] = inst;
+      else h.instances.push(inst);
+    });
+    if (args.global_nets !== undefined) h.global_nets = ((args.global_nets as string[]) ?? []).map(String);
+    if (h.sheets.length === 0 && h.instances.length === 0) delete schematic.hierarchy;
+    else schematic.hierarchy = h;
+  }
+
+  doc.schematic = schematic;
+  return schematicSummary(schematic, String(args.document_id), warnings, resolvedParts);
+}
+
+/**
+ * Inspect a schematic session: the sheet tree, each instance's reference map,
+ * the flattened netlist, power flags, hierarchy issues, and a BOM grouping of
+ * the flattened parts (power flags are never parts).
+ */
+export async function inspectSchematic(args: Record<string, unknown>) {
+  const { doc } = resolveDocInput(args);
+  const flat = await docFlatSchematic(doc);
+  if (!flat) return ecadError("Document has no schematic — create one with create_schematic.");
+  const sheet = (doc as Document & { schematic?: SchematicSheet }).schematic!;
+  const only = typeof args.instance === "string" ? args.instance : undefined;
+  if (only && !flat.instances.some((i) => i.path === only)) {
+    return ecadError(
+      `No sheet instance '${only}' (have: ${flat.instances.map((i) => i.path).join(", ") || "none — the schematic is flat"})`,
+    );
+  }
+  const derived = await deriveNets(flat.sheet);
+  const inScope = (net: string, pins: string[]) => {
+    if (!only) return true;
+    if (net.startsWith(`${only}/`)) return true;
+    const refs = new Set(Object.values(flat.instances.find((i) => i.path === only)!.refs));
+    return pins.some((p) => refs.has(p.slice(0, p.indexOf("."))));
+  };
+  const nets: Record<string, string[]> = {};
+  for (const [name, pins] of [...derived.nets.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (inScope(name, pins)) nets[name] = pins;
+  }
+
+  // BOM grouping over the flattened design. `#`-prefixed refs are virtual
+  // (legacy emulated power flags, KiCad power symbols) and never bought.
+  const groups = new Map<string, { value: string; footprint: string; part?: string; refs: string[] }>();
+  for (const c of flat.sheet.components) {
+    if (c.ref.startsWith("#")) continue;
+    const part = c.properties?.part;
+    const key = `${c.value}\0${c.footprintId}\0${part ?? ""}`;
+    const g = groups.get(key) ?? { value: c.value, footprint: c.footprintId, ...(part ? { part } : {}), refs: [] };
+    g.refs.push(c.ref);
+    groups.set(key, g);
+  }
+  const bom = [...groups.values()]
+    .map((g) => ({ ...g, qty: g.refs.length, refs: g.refs.sort() }))
+    .sort((a, b) => b.qty - a.qty || a.value.localeCompare(b.value));
+
+  const h = sheet.hierarchy;
+  const payload = {
+    success: true,
+    document_id: args.document_id,
+    hierarchical: !!h,
+    ...(h
+      ? {
+          sheets: (h.sheets ?? []).map((d) => ({
+            name: d.name,
+            ports: (d.ports ?? []).map((p) => ({ name: p.name, direction: p.direction ?? "Passive" })),
+            components: d.body.components.length,
+            instances: (d.instances ?? []).map((i) => ({ name: i.name, sheet: i.sheet })),
+          })),
+          global_nets: h.global_nets ?? [],
+          instances: flat.instances.filter((i) => !only || i.path === only),
+        }
+      : {}),
+    root_components: sheet.components.length,
+    components: flat.sheet.components.length,
+    nets,
+    power_flags: (flat.sheet.power_flags ?? []).map((f) => ({ net: f.net, ...(f.note ? { note: f.note } : {}) })),
+    ...(flat.diagnostics.length > 0 ? { issues: flat.diagnostics } : {}),
+    bom,
+  };
+  return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
+}
+
+/** Flatten, derive connectivity and report — shared by create/update_schematic. */
+async function schematicSummary(
+  schematic: SchematicSheet,
+  documentId: string,
+  warningsIn: string[],
+  resolvedParts: BuiltSheet["resolvedParts"],
+) {
+  const warnings = [...warningsIn];
+  const flat = await flattenSheet(schematic);
+  const components = flat.sheet.components;
+  const wires = schematic.wires;
+  const labels = schematic.labels;
 
   // Resolve connectivity now and echo it back, so a broken netlist is
   // visible immediately instead of after placement.
-  const derived = await deriveNets(schematic);
+  const derived = await deriveNets(flat.sheet);
   warnings.push(...derived.warnings);
   const netsPreview: Record<string, string[]> = {};
   for (const [name, pins] of derived.nets) netsPreview[name] = pins;
@@ -2107,6 +2563,18 @@ export async function createSchematic(args: Record<string, unknown>) {
           nets: netsPreview,
           ...(resolvedParts.length > 0 ? { resolved_parts: resolvedParts } : {}),
           ...(unconnected.length > 0 ? { unconnected_pins: unconnected } : {}),
+          ...(schematic.hierarchy
+            ? {
+                hierarchy: {
+                  sheets: (schematic.hierarchy.sheets ?? []).map((d) => d.name),
+                  instances: flat.instances.map((i) => ({ path: i.path, sheet: i.sheet })),
+                  ...(flat.diagnostics.length > 0 ? { issues: flat.diagnostics } : {}),
+                },
+              }
+            : {}),
+          ...((flat.sheet.power_flags ?? []).length > 0
+            ? { power_flags: (flat.sheet.power_flags ?? []).map((f) => f.net) }
+            : {}),
           ...(warnings.length > 0 ? { warnings } : {}),
         }),
       },
@@ -2351,7 +2819,8 @@ export async function placeComponents(args: Record<string, unknown>) {
   // Derive pad nets from schematic connectivity (wires + junctions + labels
   // + the explicit `nets` map) — see deriveNets. Pin names only serve as net
   // ids as a fallback when there's no connectivity at all.
-  const derived = await deriveNets(doc.schematic);
+  const flatSchematic = (await flattenSheet(doc.schematic)).sheet;
+  const derived = await deriveNets(flatSchematic);
   const netByPin = derived.netByPin;
   const useConnectivity = netByPin.size > 0;
   const warnings: string[] = [...derived.warnings];
@@ -2464,7 +2933,7 @@ export async function placeComponents(args: Record<string, unknown>) {
 
   // Grid placement sized to the outline's bounding box: split the usable
   // area into cells so every component lands inside it regardless of size.
-  const components = doc.schematic.components;
+  const components = flatSchematic.components;
   // Default to the deterministic grid (stable, good for sparse boards).
   // `force_directed` adds net-attraction + size-aware repulsion — better for
   // dense, multi-cluster boards (a power stage + MCU + connectors); `radial`
@@ -5034,7 +5503,11 @@ export async function runErc(args: Record<string, unknown>) {
     };
   }
 
-  const sheet = doc.schematic;
+  // Hierarchical designs are judged as their flattened netlist; the
+  // hierarchy's own findings (unbound ports, scope collisions) lead.
+  const flat = await flattenSheet(doc.schematic);
+  const sheet = flat.sheet;
+  const flagged = flaggedNets(sheet);
 
   // Hard verifiability gate on the RAW sheet. The rules below judge the
   // *derived* connectivity (synthesizeNettedSheet), which keeps only connected
@@ -5053,7 +5526,7 @@ export async function runErc(args: Record<string, unknown>) {
     severity: string;
     message: string;
     position?: Vec2;
-  }> = [];
+  }> = flat.diagnostics.map((d) => ({ severity: d.severity, message: d.message }));
 
   // Check for duplicate reference designators
   const refs = new Map<string, number>();
@@ -5100,6 +5573,11 @@ export async function runErc(args: Record<string, unknown>) {
     verified = true;
     for (const v of kernelOutcome.violations) {
       if (!isPinTypeOrPowerViolation(v.message)) continue;
+      // Power-flagged nets are driven by declaration (KiCad PWR_FLAG). The
+      // kernel honours flags itself; filtering here keeps an older kernel
+      // build from contradicting them.
+      const noSource = /^Power input pin on net '(.*)' has no power source$/.exec(v.message);
+      if (noSource && flagged.has(noSource[1])) continue;
       violations.push({
         severity: v.severity,
         message: v.message,
@@ -5113,6 +5591,18 @@ export async function runErc(args: Record<string, unknown>) {
       "kernel ECAD WASM unavailable — pin-type conflict and floating-power rules were not evaluated";
   } else {
     unverifiedReason = `kernel ERC could not parse the schematic: ${kernelOutcome.message}`;
+  }
+
+  // A flag naming no net waives nothing — say so.
+  if (flagged.size > 0) {
+    for (const net of [...flagged].sort()) {
+      if (!derived.nets.has(net)) {
+        violations.push({
+          severity: "Warning",
+          message: `Power flag on net '${net}', which does not exist`,
+        });
+      }
+    }
   }
 
   // Errors first, then by message — matches the kernel's ordering convention.
@@ -5458,7 +5948,7 @@ export async function exportKicad(args: Record<string, unknown>) {
     if (!name) {
       return ecadError("Project filename must have a basename, e.g. 'board.kicad_pro'.");
     }
-    const sheet = (doc as Document & { schematic?: SchematicSheet }).schematic;
+    const sheet = (await docFlatSchematic(doc))?.sheet;
     if (!sheet) {
       return ecadError(
         "A KiCad project bundle needs a schematic; this document has none. " +
@@ -5485,7 +5975,7 @@ export async function exportKicad(args: Record<string, unknown>) {
 
   if (ext === "kicad_sch") {
     format = "kicad_sch";
-    const sheet = (doc as Document & { schematic?: SchematicSheet }).schematic;
+    const sheet = (await docFlatSchematic(doc))?.sheet;
     if (!sheet) {
       return ecadError(
         "Document has no schematic to export. Create one with create_schematic.",
@@ -14075,6 +14565,29 @@ export const toolDefs: ToolDef[] = [
     inputSchema: createSchematicSchema,
     handler: (a) => createSchematic(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "update_schematic",
+    pack: "ecad",
+    description:
+      "Edit a schematic session in place: replace the root sheet body, add / " +
+      "replace / remove hierarchical sheet definitions and root sheet instances, " +
+      "set the global nets, or set power flags. Returns the re-flattened netlist " +
+      "and any hierarchy issues, like create_schematic.",
+    inputSchema: updateSchematicSchema,
+    handler: (a) => updateSchematic(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "inspect_schematic",
+    pack: "ecad",
+    description:
+      "Inspect a schematic session: sheet tree, per-instance reference maps, the " +
+      "flattened netlist (optionally one instance's), power flags, hierarchy " +
+      "issues, and a BOM grouping of the flattened parts.",
+    inputSchema: inspectSchematicSchema,
+    handler: (a) => inspectSchematic(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
   },
   {
     name: "place_components",
