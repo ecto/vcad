@@ -87,11 +87,10 @@ interface ApiResult {
 /** Minimal interface for WasmDocumentEngine (matches WASM exports) */
 export interface WasmDocumentEngine {
   /** Apply a JSON `DocCommand`; returns the result envelope. Call through
-   *  `applyCommand` (engine-command.ts). Optional until the checked-in
-   *  kernel WASM is refreshed. */
-  apply?(command_json: string): string;
+   *  `applyCommand` (engine-command.ts). */
+  apply(command_json: string): string;
   /** Lower + apply an AI tool call; see `applyToolCall`. */
-  apply_tool?(tool: string, args_json: string): string;
+  apply_tool(tool: string, args_json: string): string;
   // Typed API — returns ApiResult with consumedPartIds
   add_feature(input_json: string): ApiResult;
   update_feature(stable_id: string, input_json: string): ApiResult;
