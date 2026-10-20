@@ -17,6 +17,17 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/vcad"
 
+# irys (the in-process path tracer) is dlopen()ed, not linked: bundle the
+# dylib when one is built, and the app finds it in Contents/Frameworks.
+# IRYS_FFI overrides the location; without it the Path-Traced View says why.
+irys_dylib="${IRYS_FFI:-$HOME/Developer/irys/target/release/libirys_ffi.dylib}"
+if [ -f "$irys_dylib" ]; then
+  mkdir -p "$app/Contents/Frameworks"
+  cp "$irys_dylib" "$app/Contents/Frameworks/libirys_ffi.dylib"
+else
+  echo "(irys not bundled: $irys_dylib missing — Path-Traced View disabled)"
+fi
+
 # App + document icons, drawn by the app's own icon script when missing.
 if [ ! -f "$here/dist/AppIcon.icns" ]; then
   swift "$here/make-icon.swift" "$here/dist" >/dev/null 2>&1 || echo "(icon generation skipped)"

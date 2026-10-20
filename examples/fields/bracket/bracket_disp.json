@@ -1,0 +1,1 @@
+{"field":"displacement","units":"um","source":"vcad-kernel-topopt voxel FEA bracket (60 N tip + thermal strain α(T−40 °C) from the thermal layer, fixed wall)","dims_zyx":[48,64,128],"origin_mm":[0,0,0],"voxel_mm":[0.75,0.75,0.75],"min":0,"max":30.96643,"max_von_mises_mpa":5.8964639787582875,"max_displacement_mm":0.031177801402072814,"relative_residual":9.461769680891132e-9}

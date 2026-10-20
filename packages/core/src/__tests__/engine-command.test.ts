@@ -13,26 +13,16 @@ const state = (extra: Partial<CommandResult> = {}): CommandResult => ({
   ...extra,
 });
 
-function legacyEngine(): CommandEngine {
+function fakeEngine(): CommandEngine {
   return {
-    add_feature: vi.fn(() => state({ createdFeatureId: "1:0" })),
-    delete_feature_by_id: vi.fn(() => state()),
-    set_translation: vi.fn(() => state()),
-    set_rotation: vi.fn(() => state()),
-    set_scale: vi.fn(() => state()),
-    set_material: vi.fn(() => state()),
-    set_visible: vi.fn(() => state()),
-    rename_feature: vi.fn(() => state()),
-    set_joint_state: vi.fn(() => state()),
-    import_ir: vi.fn(() => state()),
-    undo: vi.fn(() => state()),
-    redo: vi.fn(() => state()),
+    apply: vi.fn(() => JSON.stringify({ ok: true, result: state() })),
+    apply_tool: vi.fn(() => JSON.stringify({ ok: true, result: state() })),
   };
 }
 
 describe("applyCommand", () => {
   it("sends the command JSON to engine.apply and unwraps the result", () => {
-    const engine = legacyEngine();
+    const engine = fakeEngine();
     engine.apply = vi.fn(() =>
       JSON.stringify({ ok: true, result: state({ createdFeatureId: "7:1" }) }),
     );
@@ -45,11 +35,10 @@ describe("applyCommand", () => {
       type: "add_feature",
       feature: { type: "Cube", size_x: 1, size_y: 2, size_z: 3 },
     });
-    expect(engine.add_feature).not.toHaveBeenCalled();
   });
 
   it("throws DocCommandError when the engine refuses", () => {
-    const engine = legacyEngine();
+    const engine = fakeEngine();
     engine.apply = () =>
       JSON.stringify({
         ok: false,
@@ -58,18 +47,5 @@ describe("applyCommand", () => {
     const run = () => applyCommand(engine, { type: "delete_feature", id: "9:9" });
     expect(run).toThrow(DocCommandError);
     expect(run).toThrow("delete_feature: no feature with id `9:9`");
-  });
-
-  it("falls back to per-method calls on a pre-apply kernel", () => {
-    const engine = legacyEngine();
-    applyCommand(engine, { type: "set_translation", id: "1:0", offset: [1, 2, 3] });
-    expect(engine.set_translation).toHaveBeenCalledWith("1:0", 1, 2, 3);
-    const named = applyCommand(engine, {
-      type: "add_feature",
-      name: "Plate",
-      feature: { type: "Cube", size_x: 1, size_y: 1, size_z: 1 },
-    });
-    expect(engine.rename_feature).toHaveBeenCalledWith("1:0", "Plate");
-    expect(named.createdFeatureId).toBe("1:0");
   });
 });

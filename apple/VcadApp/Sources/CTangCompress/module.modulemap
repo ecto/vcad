@@ -1,0 +1,5 @@
+module CTangCompress {
+    header "tang_compress.h"
+    link "tang_compress_ffi"
+    export *
+}

@@ -39,6 +39,10 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
             .tabItem { Label("Feedback", systemImage: "speaker.wave.2") }
+
+            Form { RendererSettingsForm() }
+                .formStyle(.grouped)
+                .tabItem { Label("Renderer", systemImage: "camera.aperture") }
         }
         .frame(width: 480)
         .padding(.top, Theme.Space.s)

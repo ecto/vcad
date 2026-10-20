@@ -66,6 +66,17 @@ struct DocJoint: Identifiable {
     let kind: String
     /// Authored driven state (degrees for revolute, mm for slider).
     let state: Double
+    /// Parent instance (nil = attached to the world).
+    var parentInstanceId: String? = nil
+    /// Child instance the joint places.
+    var childInstanceId: String = ""
+    /// Joint origin in the parent instance's local frame (mm).
+    var parentAnchor: SIMD3<Double> = .zero
+    /// Travel limits (degrees / mm), when the document declares them.
+    var limits: ClosedRange<Double>? = nil
+
+    /// A joint you can drive: revolute or slider (fixed joints only weld).
+    var isDriven: Bool { kind == "Revolute" || kind == "Slider" || kind == "Prismatic" }
 }
 
 /// One keyframe of an animation track (port of `vcad_ir::animation::AnimKey`).
@@ -134,7 +145,7 @@ struct DocumentGraph {
     var visibleRoots: [DocRoot] { roots.filter { $0.visible } }
 
     static func load(path: String) -> DocumentGraph? {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+        guard let data = EditorModel.documentBytes(path: path) else { return nil }
         return parse(data)
     }
 
@@ -210,11 +221,24 @@ struct DocumentGraph {
         if let raw = obj["joints"] as? [[String: Any]] {
             for j in raw {
                 guard let id = j["id"] as? String else { continue }
-                let kind = (j["kind"] as? [String: Any])?["type"] as? String ?? "Revolute"
-                joints.append(DocJoint(id: id,
-                                       name: j["name"] as? String,
-                                       kind: kind,
-                                       state: (j["state"] as? NSNumber)?.doubleValue ?? 0))
+                let kindObj = j["kind"] as? [String: Any]
+                let kind = kindObj?["type"] as? String ?? "Revolute"
+                var joint = DocJoint(id: id,
+                                     name: j["name"] as? String,
+                                     kind: kind,
+                                     state: (j["state"] as? NSNumber)?.doubleValue ?? 0)
+                joint.parentInstanceId = (j["parentInstanceId"] ?? j["parent_instance_id"]) as? String
+                joint.childInstanceId = ((j["childInstanceId"] ?? j["child_instance_id"]) as? String) ?? ""
+                if let a = (j["parentAnchor"] ?? j["parent_anchor"]) as? [String: Any] {
+                    joint.parentAnchor = SIMD3((a["x"] as? NSNumber)?.doubleValue ?? 0,
+                                               (a["y"] as? NSNumber)?.doubleValue ?? 0,
+                                               (a["z"] as? NSNumber)?.doubleValue ?? 0)
+                }
+                if let l = kindObj?["limits"] as? [NSNumber], l.count == 2,
+                   l[0].doubleValue <= l[1].doubleValue {
+                    joint.limits = l[0].doubleValue...l[1].doubleValue
+                }
+                joints.append(joint)
             }
         }
 

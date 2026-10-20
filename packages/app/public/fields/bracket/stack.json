@@ -1,0 +1,60 @@
+{
+ "name": "bracket",
+ "title": "Motor-controller L-bracket (6061-T6)",
+ "notes": "coupled: busbar 200 A \u2192 0.27 W Joule \u2192 thermal \u2192 \u03b1(T\u221240 \u00b0C) strain + 60 N tip load \u2192 stress",
+ "geometry": {
+  "boxes": [
+   {
+    "min": [
+     0,
+     0,
+     0
+    ],
+    "max": [
+     96,
+     48,
+     12
+    ]
+   },
+   {
+    "min": [
+     0,
+     0,
+     0
+    ],
+    "max": [
+     9,
+     48,
+     36
+    ]
+   }
+  ]
+ },
+ "layers": [
+  {
+   "id": "thermal",
+   "label": "Temperature",
+   "file": "bracket_thermal"
+  },
+  {
+   "id": "stress",
+   "label": "von Mises (load + thermal)",
+   "file": "bracket_vm"
+  },
+  {
+   "id": "stress_mech",
+   "label": "von Mises (load only)",
+   "file": "bracket_vm_mech"
+  },
+  {
+   "id": "displacement",
+   "label": "Displacement",
+   "file": "bracket_disp"
+  },
+  {
+   "id": "busbar",
+   "label": "Busbar |B| (200 A)",
+   "file": "bracket_busbar"
+  }
+ ]
+}

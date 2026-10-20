@@ -67,3 +67,10 @@ npm-dist/
 
 # Local-only sibling path overrides (see .cargo/config.toml.example)
 /.cargo/config.toml
+# tang-compress-wasm pkg (built by scripts/build-tc-wasm.sh) and raw field references
+packages/app/public/fields/**/*.f32
+examples/fields/**/*.f32
+# bracket power-cycle frames (regenerate: docs/compressed-fields.md "Animation")
+examples/fields/bracket/transient/
+# generated streams (regenerate with tang-compress `corpus`; manifests keep the hashes)
+examples/fields/**/tc/*.tc
