@@ -333,6 +333,8 @@ const ENGINE_TOOLS = new Set([
   "linear_pattern",
   "circular_pattern",
   "mirror",
+  "tube",
+  "polyline_tube",
 ]);
 
 /**

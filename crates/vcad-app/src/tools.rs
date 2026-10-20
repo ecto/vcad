@@ -6,32 +6,40 @@
 //! [`lower`] turns one call into the [`DocCommand`] the engine applies, so
 //! every host runs the same tool semantics instead of re-implementing them.
 //!
-//! Tools that need evaluated geometry (rotate about a bbox pivot, tubes,
-//! sketch-based features) are not lowered here yet and return
-//! [`CommandError::Unsupported`]; hosts keep their own path for those.
+//! Lowering reads the document where a tool needs it: rotate pivots about
+//! the part's evaluated world bbox centre, and refs are checked by `apply`.
+//! Tools still handled by hosts (`place`, reads, bulk edits) return
+//! [`CommandError::Unsupported`].
 
 use serde_json::Value;
 
 use crate::command::{CommandError, DocCommand};
 use crate::feature::{BooleanType, FeatureInput};
+use crate::DocumentApi;
 
 /// Lower one tool call into a command. `tool` is the top-level tool name
 /// (`create`, `translate`, `linear_pattern`, …); for `create`, `args.type`
 /// picks the feature kind and `args.params` carries its parameters.
-pub fn lower(tool: &str, args: &Value) -> Result<DocCommand, CommandError> {
+pub fn lower(tool: &str, args: &Value, doc: &DocumentApi) -> Result<DocCommand, CommandError> {
     match tool {
         "create" => {
             let kind = str_arg(args, "type", "create")?;
+            let kind = match kind {
+                // Models sometimes split the digit off (`sketch_2_d`).
+                "sketch_2_d" => "sketch_2d",
+                k => k,
+            };
             let empty = Value::Object(Default::default());
             let params = args.get("params").unwrap_or(&empty);
             let parent = args.get("parent_part_id").and_then(Value::as_str);
             let name = args.get("name").and_then(Value::as_str).map(str::to_string);
-            lower_create(kind, params, parent, name)
+            lower_create(kind, params, parent, name, doc)
         }
-        "linear_pattern" | "circular_pattern" | "mirror" | "translate" | "scale" | "union"
-        | "difference" | "intersection" | "fillet" | "chamfer" | "shell" => {
+        "linear_pattern" | "circular_pattern" | "mirror" | "translate" | "rotate" | "scale"
+        | "union" | "difference" | "intersection" | "fillet" | "chamfer" | "shell" | "tube"
+        | "polyline_tube" => {
             let name = args.get("name").and_then(Value::as_str).map(str::to_string);
-            lower_create(tool, args, None, name)
+            lower_create(tool, args, None, name, doc)
         }
         other => Err(unsupported(other)),
     }
@@ -42,7 +50,11 @@ fn lower_create(
     p: &Value,
     parent: Option<&str>,
     name: Option<String>,
+    doc: &DocumentApi,
 ) -> Result<DocCommand, CommandError> {
+    if let Some(cmd) = lower_geometry(kind, p, name.clone(), doc)? {
+        return Ok(cmd);
+    }
     let add = |feature| Ok(DocCommand::AddFeature { feature, name });
     match kind {
         "cube" => {
@@ -120,6 +132,303 @@ fn lower_create(
         }),
         other => Err(unsupported(other)),
     }
+}
+
+/// Tools that need sketches, paths or evaluated geometry. `Ok(None)` means
+/// "not one of these".
+fn lower_geometry(
+    kind: &str,
+    p: &Value,
+    name: Option<String>,
+    doc: &DocumentApi,
+) -> Result<Option<DocCommand>, CommandError> {
+    let add = |feature| {
+        Ok(Some(DocCommand::AddFeature {
+            feature,
+            name: name.clone(),
+        }))
+    };
+    match kind {
+        "rotate" => {
+            let id = str_arg(p, "child", kind)?.to_string();
+            let angles = vec3(p, "angles", kind)?;
+            let pivot = match p.get("pivot") {
+                Some(Value::String(s)) if s == "origin" => None,
+                Some(v @ Value::Object(_)) => {
+                    Some(vec3(&serde_json::json!({ "pivot": v }), "pivot", kind)?)
+                }
+                _ => doc.part_world_bbox(&id).map(|(lo, hi)| {
+                    [
+                        (lo[0] + hi[0]) / 2.0,
+                        (lo[1] + hi[1]) / 2.0,
+                        (lo[2] + hi[2]) / 2.0,
+                    ]
+                }),
+            };
+            let Some(pivot) = pivot else {
+                return Ok(Some(DocCommand::SetRotation { id, angles }));
+            };
+            // Keep `pivot` fixed in world space: the part's transform is
+            // T(offset)·R(angles), so solve for the offset that maps the
+            // pivot's local position back onto itself under the new angles.
+            let t_old = doc.feature_vec3(&id, "offset").unwrap_or([0.0; 3]);
+            let r_old = doc.feature_vec3(&id, "rotation").unwrap_or([0.0; 3]);
+            let local = inverse_rotate(sub(pivot, t_old), r_old);
+            let after = rotate(local, angles);
+            Ok(Some(DocCommand::Batch {
+                commands: vec![
+                    DocCommand::SetRotation {
+                        id: id.clone(),
+                        angles,
+                    },
+                    DocCommand::SetTranslation {
+                        id,
+                        offset: sub(pivot, after),
+                    },
+                ],
+            }))
+        }
+        "tube" => add(tube(p)?),
+        "polyline_tube" => {
+            let points = p
+                .get("points")
+                .and_then(Value::as_array)
+                .filter(|a| a.len() >= 2)
+                .ok_or_else(|| {
+                    invalid("polyline_tube requires points[] with at least 2 entries".into())
+                })?;
+            let base = name.clone().unwrap_or_else(|| "Tube".into());
+            let mut commands = Vec::with_capacity(points.len() - 1);
+            for (i, w) in points.windows(2).enumerate() {
+                let seg = serde_json::json!({
+                    "start": w[0], "end": w[1],
+                    "radius": p.get("radius").cloned().unwrap_or(Value::Null),
+                });
+                let feature =
+                    tube(&seg).map_err(|e| invalid(format!("polyline_tube segment {i}: {e}")))?;
+                commands.push(DocCommand::AddFeature {
+                    feature,
+                    name: Some(format!("{base} {}", i + 1)),
+                });
+            }
+            Ok(Some(DocCommand::Batch { commands }))
+        }
+        "extrude" => {
+            let direction = vec3(p, "direction", kind)?;
+            let depth = norm(direction);
+            if depth < 1e-9 {
+                return Err(invalid("extrude direction must be non-zero".into()));
+            }
+            add(FeatureInput::Extrude {
+                sketch: sketch_json(p.get("sketch"), kind)?,
+                depth,
+                direction: scale(direction, 1.0 / depth),
+                twist_angle: opt_num(p, "twist_angle")?,
+                scale_end: opt_num(p, "scale_end")?,
+            })
+        }
+        "revolve" => add(FeatureInput::Revolve {
+            sketch: sketch_json(p.get("sketch"), kind)?,
+            axis_origin: vec3(p, "axis_origin", kind)?,
+            axis_dir: vec3(p, "axis_dir", kind)?,
+            angle_deg: num(p, "angle_deg", kind)?,
+        }),
+        "sweep" => {
+            let sketch = sketch_json(p.get("sketch"), kind)?;
+            let path = p
+                .get("path")
+                .ok_or_else(|| invalid("sweep requires `path`".into()))?;
+            let sweep = |path: String| FeatureInput::Sweep {
+                sketch: sketch.clone(),
+                path: Some(path),
+                twist_angle: opt_num(p, "twist_angle").ok().flatten(),
+                scale_start: opt_num(p, "scale_start").ok().flatten(),
+                scale_end: opt_num(p, "scale_end").ok().flatten(),
+            };
+            // Polyline is a tool convenience the kernel doesn't have: one
+            // Line sweep per segment, kept as separate parts.
+            if path.get("type").and_then(Value::as_str) == Some("Polyline") {
+                let points = path
+                    .get("points")
+                    .and_then(Value::as_array)
+                    .filter(|a| a.len() >= 2)
+                    .ok_or_else(|| {
+                        invalid("sweep Polyline requires points[] with ≥2 entries".into())
+                    })?;
+                let commands = points
+                    .windows(2)
+                    .map(|w| {
+                        let line =
+                            serde_json::json!({ "type": "Line", "start": w[0], "end": w[1] });
+                        Ok(DocCommand::AddFeature {
+                            feature: sweep(path_json(&line)?),
+                            name: name.clone(),
+                        })
+                    })
+                    .collect::<Result<_, CommandError>>()?;
+                return Ok(Some(DocCommand::Batch { commands }));
+            }
+            add(sweep(path_json(path)?))
+        }
+        "loft" => {
+            let sketches = p
+                .get("sketches")
+                .and_then(Value::as_array)
+                .filter(|a| a.len() >= 2)
+                .ok_or_else(|| invalid("loft requires at least 2 sketch profiles".into()))?;
+            add(FeatureInput::Loft {
+                profiles: sketches
+                    .iter()
+                    .map(|s| sketch_json(Some(s), kind))
+                    .collect::<Result<_, _>>()?,
+                closed: p.get("closed").and_then(Value::as_bool),
+            })
+        }
+        _ => Ok(None),
+    }
+}
+
+/// A cylindrical pipe between two world points: a circular profile at
+/// `start`, perpendicular to the segment, swept along a straight line.
+fn tube(p: &Value) -> Result<FeatureInput, CommandError> {
+    let start = vec3(p, "start", "tube")?;
+    let end = vec3(p, "end", "tube")?;
+    let radius = num_or(p, "radius", 5.0)?;
+    if radius <= 0.0 {
+        return Err(invalid("tube radius must be positive".into()));
+    }
+    let dir = sub(end, start);
+    let len = norm(dir);
+    if len < 1e-6 {
+        return Err(invalid("tube start and end are coincident".into()));
+    }
+    let d = scale(dir, 1.0 / len);
+    let reference = if d[2].abs() < 0.9 {
+        [0.0, 0.0, 1.0]
+    } else {
+        [1.0, 0.0, 0.0]
+    };
+    let y_dir = normalize(cross(d, reference));
+    let x_dir = normalize(cross(y_dir, d));
+    let v = |a: [f64; 3]| serde_json::json!({ "x": a[0], "y": a[1], "z": a[2] });
+    let arc = |sx: f64, ex: f64| {
+        serde_json::json!({
+            "type": "Arc", "start": { "x": sx, "y": 0.0 }, "end": { "x": ex, "y": 0.0 },
+            "center": { "x": 0.0, "y": 0.0 }, "ccw": false
+        })
+    };
+    let sketch = serde_json::json!({
+        "origin": v(start), "x_dir": v(x_dir), "y_dir": v(y_dir),
+        "segments": [arc(radius, -radius), arc(-radius, radius)],
+    });
+    let line = serde_json::json!({ "type": "Line", "start": v(start), "end": v(end) });
+    Ok(FeatureInput::Sweep {
+        sketch: sketch_json(Some(&sketch), "tube")?,
+        path: Some(path_json(&line)?),
+        twist_angle: None,
+        scale_start: None,
+        scale_end: None,
+    })
+}
+
+/// Validate an inline sketch (`{origin, x_dir, y_dir, segments}`) as a
+/// closed `Sketch2D` and serialize it the way the CRDT stores sketches.
+fn sketch_json(sketch: Option<&Value>, ctx: &str) -> Result<String, CommandError> {
+    let s = sketch.filter(|s| s.is_object()).ok_or_else(|| {
+        invalid(format!(
+            "{ctx} requires an inline sketch {{origin, x_dir, y_dir, segments}}"
+        ))
+    })?;
+    let segments = s
+        .get("segments")
+        .and_then(Value::as_array)
+        .ok_or_else(|| invalid("sketch must have at least one segment".into()))?;
+    if segments.len() < 2 {
+        return Err(invalid(
+            "sketch must have at least 2 segments to form a closed loop. A single arc is not a closed profile — add a line or another arc to close it.".into(),
+        ));
+    }
+    let pt = |v: &Value, k: &str| {
+        v.get(k)
+            .and_then(|p| Some((p.get("x")?.as_f64()?, p.get("y")?.as_f64()?)))
+    };
+    for (i, seg) in segments.iter().enumerate() {
+        let next = &segments[(i + 1) % segments.len()];
+        let (Some(end), Some(_), Some(next_start)) =
+            (pt(seg, "end"), pt(seg, "start"), pt(next, "start"))
+        else {
+            return Err(invalid(format!("segment {i} missing start/end points")));
+        };
+        if (end.0 - next_start.0).abs() >= 1e-3 || (end.1 - next_start.1).abs() >= 1e-3 {
+            return Err(invalid(format!(
+                "sketch is not closed: segment {i} ends at ({}, {}) but segment {} starts at ({}, {}). Each segment's end must match the next segment's start.",
+                end.0, end.1, (i + 1) % segments.len(), next_start.0, next_start.1
+            )));
+        }
+    }
+    let mut obj = s.as_object().cloned().unwrap_or_default();
+    obj.insert("type".into(), "Sketch2D".into());
+    let value = Value::Object(obj);
+    serde_json::from_value::<vcad_ir::CsgOp>(value.clone())
+        .map_err(|e| invalid(format!("{ctx} sketch: {e}")))?;
+    Ok(value.to_string())
+}
+
+fn path_json(path: &Value) -> Result<String, CommandError> {
+    serde_json::from_value::<vcad_ir::PathCurve>(path.clone())
+        .map_err(|e| invalid(format!("invalid path: {e}")))?;
+    Ok(path.to_string())
+}
+
+fn opt_num(v: &Value, key: &str) -> Result<Option<f64>, CommandError> {
+    match v.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => num(v, key, key).map(Some),
+    }
+}
+
+fn sub(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn scale(a: [f64; 3], k: f64) -> [f64; 3] {
+    [a[0] * k, a[1] * k, a[2] * k]
+}
+
+fn norm(a: [f64; 3]) -> f64 {
+    (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt()
+}
+
+fn normalize(a: [f64; 3]) -> [f64; 3] {
+    scale(a, 1.0 / norm(a))
+}
+
+fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+/// Euler-XYZ rotation (degrees; X, then Y, then Z) — the kernel's convention.
+fn rotate(p: [f64; 3], deg: [f64; 3]) -> [f64; 3] {
+    let (sx, cx) = deg[0].to_radians().sin_cos();
+    let (sy, cy) = deg[1].to_radians().sin_cos();
+    let (sz, cz) = deg[2].to_radians().sin_cos();
+    let [x, y, z] = [p[0], p[1] * cx - p[2] * sx, p[1] * sx + p[2] * cx];
+    let [x, y, z] = [x * cy + z * sy, y, -x * sy + z * cy];
+    [x * cz - y * sz, x * sz + y * cz, z]
+}
+
+/// Inverse of [`rotate`]: Z⁻¹, then Y⁻¹, then X⁻¹.
+fn inverse_rotate(p: [f64; 3], deg: [f64; 3]) -> [f64; 3] {
+    let (sx, cx) = deg[0].to_radians().sin_cos();
+    let (sy, cy) = deg[1].to_radians().sin_cos();
+    let (sz, cz) = deg[2].to_radians().sin_cos();
+    let [x, y, z] = [p[0] * cz + p[1] * sz, -p[0] * sz + p[1] * cz, p[2]];
+    let [x, y, z] = [x * cy - z * sy, y, x * sy + z * cy];
+    [x, y * cx + z * sx, -y * sx + z * cx]
 }
 
 fn unsupported(tool: &str) -> CommandError {
@@ -200,9 +509,13 @@ mod tests {
     use serde_json::json;
     use vcad_crdt::ReplicaId;
 
+    fn lower_empty(tool: &str, args: &Value) -> Result<DocCommand, CommandError> {
+        lower(tool, args, &DocumentApi::new(ReplicaId(1)))
+    }
+
     #[test]
     fn create_cube_maps_ir_size() {
-        let cmd = lower(
+        let cmd = lower_empty(
             "create",
             &json!({"type": "cube", "params": {"size": {"x": 1, "y": 2, "z": 3}}, "name": "Block"}),
         )
@@ -226,7 +539,7 @@ mod tests {
 
     #[test]
     fn primitives_default_like_the_web() {
-        let cmd = lower("create", &json!({"type": "cylinder"})).unwrap();
+        let cmd = lower_empty("create", &json!({"type": "cylinder"})).unwrap();
         assert!(matches!(
             cmd,
             DocCommand::AddFeature {
@@ -238,7 +551,7 @@ mod tests {
 
     #[test]
     fn fillet_prefers_parent_part_id() {
-        let cmd = lower(
+        let cmd = lower_empty(
             "create",
             &json!({"type": "fillet", "parent_part_id": "1:0", "params": {"radius": 2, "child": "9:9"}}),
         )
@@ -261,7 +574,7 @@ mod tests {
             ("translate", json!({"child": "1:0"})),
         ] {
             assert!(
-                matches!(lower(tool, &args), Err(CommandError::Invalid { .. })),
+                matches!(lower_empty(tool, &args), Err(CommandError::Invalid { .. })),
                 "{tool} should be invalid"
             );
         }
@@ -270,11 +583,11 @@ mod tests {
     #[test]
     fn geometry_dependent_tools_are_unsupported() {
         assert!(matches!(
-            lower("rotate", &json!({})),
+            lower_empty("place", &json!({})),
             Err(CommandError::Unsupported { .. })
         ));
         assert!(matches!(
-            lower("create", &json!({"type": "tube"})),
+            lower_empty("create", &json!({"type": "gear"})),
             Err(CommandError::Unsupported { .. })
         ));
     }
@@ -283,15 +596,141 @@ mod tests {
     fn boolean_with_unknown_operand_fails_closed() {
         let mut api = DocumentApi::new(ReplicaId(1));
         let a = api
-            .apply(lower("create", &json!({"type": "cube"})).unwrap())
+            .apply(lower_empty("create", &json!({"type": "cube"})).unwrap())
             .unwrap()
             .created_feature_id
             .unwrap();
         let err = api
-            .apply(lower("difference", &json!({"left": a, "right": "nope"})).unwrap())
+            .apply(lower_empty("difference", &json!({"left": a, "right": "nope"})).unwrap())
             .unwrap_err();
         assert_eq!(err, CommandError::UnknownId { id: "nope".into() });
         assert_eq!(api.get_state().parts.len(), 1);
+    }
+
+    fn apply_ok(api: &mut DocumentApi, tool: &str, args: Value) -> Value {
+        let v: Value =
+            serde_json::from_str(&api.apply_tool_envelope(tool, &args.to_string())).unwrap();
+        assert_eq!(v["ok"], true, "{tool} {args}: {v}");
+        v
+    }
+
+    #[test]
+    fn rotate_keeps_bbox_center_fixed() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let id = apply_ok(
+            &mut api,
+            "create",
+            json!({"type": "cube", "params": {"size": {"x": 10, "y": 4, "z": 2}}}),
+        )["result"]["createdFeatureId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        apply_ok(
+            &mut api,
+            "create",
+            json!({"type": "translate", "params": {"child": id, "offset": {"x": 30, "y": 0, "z": 0}}}),
+        );
+        let center = |api: &DocumentApi| {
+            let (lo, hi) = api.part_world_bbox(&id).unwrap();
+            [
+                (lo[0] + hi[0]) / 2.0,
+                (lo[1] + hi[1]) / 2.0,
+                (lo[2] + hi[2]) / 2.0,
+            ]
+        };
+        let before = center(&api);
+        apply_ok(
+            &mut api,
+            "create",
+            json!({"type": "rotate", "params": {"child": id, "angles": {"x": 0, "y": 0, "z": 90}}}),
+        );
+        let after = center(&api);
+        for k in 0..3 {
+            assert!(
+                (before[k] - after[k]).abs() < 1e-6,
+                "axis {k}: {before:?} vs {after:?}"
+            );
+        }
+        let (lo, hi) = api.part_world_bbox(&id).unwrap();
+        assert!(((hi[0] - lo[0]) - 4.0).abs() < 1e-6 && ((hi[1] - lo[1]) - 10.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn rotate_about_origin_only_sets_rotation() {
+        let cmd = lower_empty(
+            "rotate",
+            &json!({"child": "1:0", "angles": {"x": 0, "y": 0, "z": 45}, "pivot": "origin"}),
+        )
+        .unwrap();
+        assert!(matches!(cmd, DocCommand::SetRotation { .. }));
+    }
+
+    #[test]
+    fn tube_spans_start_to_end() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let v = apply_ok(
+            &mut api,
+            "tube",
+            json!({"start": {"x": 0, "y": 0, "z": 0}, "end": {"x": 0, "y": 0, "z": 50}, "radius": 3}),
+        );
+        let id = v["result"]["createdFeatureId"].as_str().unwrap();
+        let (lo, hi) = api.part_world_bbox(id).unwrap();
+        assert!((hi[2] - lo[2] - 50.0).abs() < 1e-3, "{lo:?} {hi:?}");
+        assert!((hi[0] - lo[0] - 6.0).abs() < 0.2, "{lo:?} {hi:?}");
+    }
+
+    #[test]
+    fn polyline_tube_names_each_segment() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        apply_ok(
+            &mut api,
+            "polyline_tube",
+            json!({"name": "Frame", "points": [
+                {"x": 0, "y": 0, "z": 0}, {"x": 40, "y": 0, "z": 0}, {"x": 40, "y": 40, "z": 0}
+            ]}),
+        );
+        let names: Vec<String> = api
+            .get_state()
+            .parts
+            .iter()
+            .map(|p| {
+                serde_json::to_value(p).unwrap()["name"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(names, ["Frame 1", "Frame 2"]);
+    }
+
+    #[test]
+    fn extrude_inline_sketch() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let sq = |a: f64| {
+            json!([
+                {"type": "Line", "start": {"x": 0, "y": 0}, "end": {"x": a, "y": 0}},
+                {"type": "Line", "start": {"x": a, "y": 0}, "end": {"x": a, "y": a}},
+                {"type": "Line", "start": {"x": a, "y": a}, "end": {"x": 0, "y": a}},
+                {"type": "Line", "start": {"x": 0, "y": a}, "end": {"x": 0, "y": 0}}
+            ])
+        };
+        let plane = |segs: Value| json!({"origin": {"x": 0, "y": 0, "z": 0}, "x_dir": {"x": 1, "y": 0, "z": 0}, "y_dir": {"x": 0, "y": 1, "z": 0}, "segments": segs});
+        let v = apply_ok(
+            &mut api,
+            "create",
+            json!({"type": "extrude", "params": {"sketch": plane(sq(10.0)), "direction": {"x": 0, "y": 0, "z": 7}}}),
+        );
+        let id = v["result"]["createdFeatureId"].as_str().unwrap();
+        let (lo, hi) = api.part_world_bbox(id).unwrap();
+        assert!((hi[2] - lo[2] - 7.0).abs() < 1e-6 && (hi[0] - lo[0] - 10.0).abs() < 1e-6);
+
+        let mut open = sq(10.0);
+        open[3]["end"] = json!({"x": 1, "y": 1});
+        let err = lower_empty("create", &json!({"type": "extrude", "params": {"sketch": plane(open), "direction": {"x": 0, "y": 0, "z": 1}}})).unwrap_err();
+        assert!(
+            matches!(err, CommandError::Invalid { ref message } if message.contains("not closed")),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -299,7 +738,7 @@ mod tests {
         let mut api = DocumentApi::new(ReplicaId(1));
         let res = api
             .apply(
-                lower(
+                lower_empty(
                     "create",
                     &json!({"type": "cone", "params": {"radius_bottom": 5, "height": 8}}),
                 )
@@ -328,7 +767,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(v["ok"], true);
-        let v: Value = serde_json::from_str(&api.apply_tool_envelope("rotate", "{}")).unwrap();
+        let v: Value = serde_json::from_str(&api.apply_tool_envelope("place", "{}")).unwrap();
         assert_eq!(v["error"]["kind"], "unsupported");
     }
 }
