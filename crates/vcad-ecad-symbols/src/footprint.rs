@@ -1078,95 +1078,450 @@ fn qfn_via_derive(pins: u32, pitch: f64, body: f64, ep: f64) -> Option<Footprint
 }
 
 // ============================================================================
-// Power MOSFET packages and high-current wire-to-board connectors
+// Power MOSFETs, power diodes, IMUs and high-current wire-to-board connectors
 // ============================================================================
 //
-// Power FETs collapse their multi-lead source/drain rows into one pad per
+// Every land pattern in this section is transcribed from the vendor document
+// cited on its function (document number + revision), in KiCad's top-view,
+// Y-down frame. Where a vendor drawing gives only the package (no land
+// pattern) the derivation is spelled out next to the numbers.
+//
+// Power FETs collapse their multi-lead source/drain rows into one net per
 // terminal, numbered 1 = G, 2 = S, 3 = D (the netlist model schematics use for
-// discrete FETs). Geometry is NOMINAL — derived from the manufacturers'
-// package outlines, not a land-pattern standard — and must be checked against
-// the vendor's recommended footprint before fabrication.
+// discrete FETs). A terminal whose vendor land is not a rectangle (combed
+// source/drain lands) is emitted as several abutting rectangles that share the
+// terminal's number, exactly like KiCad's multi-pad terminals.
+//
+// Paste: pads carry full-size paste. The vendors' reduced stencil windows for
+// the big FET drain/source lands (e.g. the TDSON-8 FL aperture drawing) are not
+// modelled — apply them in the stencil step for production.
 
-/// Infineon PG-HSOF-8 (TOLL, 9.9 × 11.7 mm): gate + 7 source leads on one
-/// edge, drain tab opposite.
+/// Mechanical (non-plated) hole, e.g. a connector's plastic locating peg.
+fn npth(x: f64, y: f64, w: f64, h: f64) -> Pad {
+    Pad {
+        number: String::new(),
+        pad_type: PadType::NPTH,
+        shape: if (w - h).abs() < 1e-9 {
+            PadShape::Circle { diameter: w }
+        } else {
+            PadShape::Rect {
+                width: w,
+                height: h,
+            }
+        },
+        position: Vec2::new(x, y),
+        rotation: 0.0,
+        drill: Some(DrillSpec {
+            diameter: w.min(h),
+            oval: (w - h).abs() > 1e-9,
+            oval_height: if (w - h).abs() > 1e-9 {
+                Some(w.max(h))
+            } else {
+                None
+            },
+        }),
+        net: None,
+        layers: vec![PcbLayer::FMask, PcbLayer::BMask],
+    }
+}
+
+/// Axis-aligned extent of a pad's copper (or hole, for NPTH).
+fn pad_extent(p: &Pad) -> (f64, f64, f64, f64) {
+    let (w, h) = match p.shape {
+        PadShape::Rect { width, height } => (width, height),
+        PadShape::Circle { diameter } => (diameter, diameter),
+        _ => (0.0, 0.0),
+    };
+    (
+        p.position.x - w / 2.0,
+        p.position.y - h / 2.0,
+        p.position.x + w / 2.0,
+        p.position.y + h / 2.0,
+    )
+}
+
+/// Body silk outline `(x1, y1, x2, y2)` + pin-1 dot + a courtyard enclosing
+/// the body AND every pad (IPC-7351 0.25 mm excess). Connectors and LGAs whose
+/// pads overhang the body, or whose body is not centred on the origin, need the
+/// union — `ic_graphics` assumes a centred body that covers its pads.
+fn outlined_graphics(
+    pads: &[Pad],
+    body: (f64, f64, f64, f64),
+    pin1: (f64, f64),
+) -> Vec<FootprintGraphic> {
+    let (bx1, by1, bx2, by2) = body;
+    let mut g = silk_rect(bx1, by1, bx2, by2);
+    g.push(pin1_dot(pin1.0, pin1.1));
+    let (mut x1, mut y1, mut x2, mut y2) = (bx1, by1, bx2, by2);
+    for p in pads {
+        let (a, b, c, d) = pad_extent(p);
+        x1 = x1.min(a);
+        y1 = y1.min(b);
+        x2 = x2.max(c);
+        y2 = y2.max(d);
+    }
+    g.push(FootprintGraphic::Rect {
+        start: Vec2::new(x1 - 0.25, y1 - 0.25),
+        end: Vec2::new(x2 + 0.25, y2 + 0.25),
+        width: 0.05,
+        layer: PcbLayer::FCrtYd,
+    });
+    g
+}
+
+/// Infineon PG-HSOF-8-1 (TOLL, 9.9 × 11.7 mm). Package: outline
+/// Z8B00169619 rev 02 (IPT015N10N5 datasheet Rev. 2.2, 2016-10-13, fig. 1):
+/// 8 leads at e = 1.20, gate = lead 1, leads 2–8 source, tab = drain. Infineon
+/// publishes the land pattern only as a separate footprint drawing on the
+/// PG-HSOF-8-1 package page (not in the datasheet); the numbers below are that
+/// drawing as captured in KiCad 9's `Infineon_PG-HSOF-8-1.kicad_mod`, rotated
+/// 90° so the leads sit on the +Y edge:
+/// - lead lands 0.8 × 2.8 at x = −4.2 + 1.2·i, y 3.85…6.65;
+/// - source leads 2–8 bridged by a 0.8 mm bar (y 3.85…4.65);
+/// - drain land 9.7 × 6.6 (y −5.25…1.35) + 10.1 × 1.4 tab strip (y −6.65…−5.25);
+/// - 2.5 mm source-to-drain gap; courtyard ±5.3 × ±6.9.
 fn toll() -> FootprintTemplate {
-    let pads = vec![
-        rect_smd("1", -4.2, 4.9, 0.8, 1.9),  // gate (lead 1)
-        rect_smd("2", 0.6, 4.9, 7.6, 1.9),   // source (leads 2–8, 1.2 mm pitch)
-        rect_smd("3", 0.0, -1.6, 10.0, 7.6), // drain tab
-    ];
+    let mut pads = vec![rect_smd("1", -4.2, 5.25, 0.8, 2.8)];
+    // Source: bar + 7 fingers (the fingers' inner 0.8 mm is the bar).
+    pads.push(rect_smd("2", 0.6, 4.25, 8.0, 0.8));
+    for i in 1..8 {
+        pads.push(rect_smd("2", -4.2 + 1.2 * i as f64, 5.65, 0.8, 2.0));
+    }
+    pads.push(rect_smd("3", 0.0, -1.95, 9.7, 6.6));
+    pads.push(rect_smd("3", 0.0, -5.95, 10.1, 1.4));
+    let graphics = outlined_graphics(&pads, (-4.95, -5.84, 4.95, 5.84), (-5.3, 6.4));
     FootprintTemplate {
         name: "TOLL".into(),
         pads,
-        graphics: ic_graphics(10.4, 12.2),
+        graphics,
     }
 }
 
-/// Infineon PG-TDSON-8 (SuperSO8, 5 × 6 mm) and PG-TSDSON-8 (S3O8, 3.3 ×
-/// 3.3 mm): leads 1–3 source, 4 gate on one edge; leads 5–8 + exposed pad drain.
-fn power_son8(name: &str, pitch: f64, body: (f64, f64)) -> FootprintTemplate {
-    let (bw, bh) = body;
-    let lead_y = bh / 2.0 - 0.35;
-    let lead_h = 0.9_f64.min(bh * 0.2);
-    let lead_w = pitch * 0.55;
-    let pads = vec![
-        rect_smd("1", 1.5 * pitch, lead_y, lead_w, lead_h), // gate (lead 4)
-        rect_smd("2", -0.5 * pitch, lead_y, 2.0 * pitch + lead_w, lead_h), // source (leads 1–3)
-        rect_smd("3", 0.0, -0.1 * bh, bw * 0.85, bh * 0.6), // drain pad + leads 5–8
-    ];
+/// Infineon PG-TDSON-8 FL (SuperSO8, 5.15 × 6.15 mm). Land pattern:
+/// "PG-TDSON-8-FL: Recommended Boardpads & Apertures", BSC010N04LS datasheet
+/// Rev. 2.4 (2020-03-13), fig. 2. Leads 1–3 source, 4 gate (+Y edge, pin 1 at
+/// −X); leads 5–8 + exposed pad drain. Pads at the 1.27 mm lead pitch:
+/// - gate 0.5 × 1.1, 0.77 from the source land;
+/// - source: 3.2 × 0.6 bar (y 2.225…2.825) + three 0.5 × 0.5 fingers to y 3.325;
+/// - drain: 4.41 × 3.75 (y −2.525…1.225) + four 0.6 × 0.8 fingers to y −3.325;
+/// - 1.0 mm source-to-drain gap.
+fn tdson8() -> FootprintTemplate {
+    let p = 1.27;
+    let mut pads = vec![rect_smd("1", 1.5 * p, 2.775, 0.5, 1.1)];
+    pads.push(rect_smd("2", -0.715, 2.525, 3.2, 0.6));
+    for i in 0..3 {
+        pads.push(rect_smd("2", (i as f64 - 1.5) * p, 3.075, 0.5, 0.5));
+    }
+    pads.push(rect_smd("3", 0.0, -0.65, 4.41, 3.75));
+    for i in 0..4 {
+        pads.push(rect_smd("3", (i as f64 - 1.5) * p, -2.925, 0.6, 0.8));
+    }
+    let graphics = outlined_graphics(&pads, (-2.575, -3.075, 2.575, 3.075), (-2.9, 3.6));
     FootprintTemplate {
-        name: name.into(),
+        name: "TDSON-8".into(),
         pads,
-        graphics: ic_graphics(bw + 0.4, bh + 0.4),
+        graphics,
     }
 }
 
-/// AMASS XT-series PCB plugs. `power` = (pitch, drill); `signal` = optional
-/// 2-pin signal pair (pitch, drill, y offset) for the (2+2) variants.
-fn amass_xt(
+/// Infineon PG-TSDSON-8 FL (S3O8, 3.3 × 3.3 mm). Land pattern: outline
+/// Z8B00158553 rev 02 (BSZ018N04LS6 datasheet Rev. 2.1, 2020-03-31, fig. 1,
+/// F-dimensions), rotated so the source/gate leads sit on the +Y edge:
+/// - overall F1 = 3.90 across the land, F2 = 2.29 wide;
+/// - drain F7 = 2.51 deep incl. F5 = 0.80 lead fingers (0.34 wide = F4,
+///   0.65 pitch);
+/// - gate 0.34 × ~1.0 (F6 = 1.00), F3 = 0.31 gap to source;
+/// - source F8 = 1.64 wide incl. F9 = 0.50 lead fingers.
+///
+/// F10 (source/gate land depth) is not legible in the datasheet's table; it
+/// is taken as F1 − F7 − 0.40 = 0.99 (0.40 = the drawn drain-to-source gap,
+/// to scale against F1/F7) — consistent with F6 = 1.00.
+fn tsdson8() -> FootprintTemplate {
+    let p = 0.65;
+    let mut pads = vec![rect_smd("1", 1.5 * p, 1.455, 0.34, 0.99)];
+    pads.push(rect_smd("2", -0.325, 1.205, 1.64, 0.49));
+    for i in 0..3 {
+        pads.push(rect_smd("2", (i as f64 - 1.5) * p, 1.70, 0.34, 0.5));
+    }
+    pads.push(rect_smd("3", 0.0, -0.295, 2.29, 1.71));
+    for i in 0..4 {
+        pads.push(rect_smd("3", (i as f64 - 1.5) * p, -1.55, 0.34, 0.8));
+    }
+    let graphics = outlined_graphics(&pads, (-1.65, -1.65, 1.65, 1.65), (-1.9, 2.2));
+    FootprintTemplate {
+        name: "TSDSON-8".into(),
+        pads,
+        graphics,
+    }
+}
+
+/// Vishay SMPC / TO-277A (e.g. SS10P10-class Schottkys, 4.6 × 6.5 mm).
+/// Mounting pad layout from Vishay SS5PH102 datasheet, doc. 98856 rev.
+/// 04-Dec-2025, p. 4 ("Conform to JEDEC TO-277A"): cathode tab land
+/// 4.80 × 4.72 min, two anode lands 1.40 × 1.27 min on ±1.04 mm centres, 6.80
+/// overall. Numbered like the other two-terminal diodes here: 1 = cathode
+/// (tab), 2 = anode (both anode lands — they are one terminal).
+fn to277a() -> FootprintTemplate {
+    let pads = vec![
+        rect_smd("1", 0.0, -1.04, 4.80, 4.72),
+        rect_smd("2", -1.04, 2.765, 1.40, 1.27),
+        rect_smd("2", 1.04, 2.765, 1.40, 1.27),
+    ];
+    let graphics = outlined_graphics(&pads, (-2.3, -3.25, 2.3, 3.25), (-2.9, -3.5));
+    FootprintTemplate {
+        name: "TO-277A".into(),
+        pads,
+        graphics,
+    }
+}
+
+/// Bosch BMI088 IMU, LGA-16 3.0 × 4.5 mm, 0.5 mm pitch. Land pattern:
+/// BMI088 datasheet BST-BMI088-DS000-19, rev. 1.9 (January 2024), §8.2 fig. 11
+/// (top view): 0.675 × 0.25 lands; pins 1–7 down the right column, 9–15 up the
+/// left (inner edges 0.925 from the centre line), pin 8 bottom / 16 top
+/// (inner edges 1.675 from centre). Pin 1 top-right.
+fn bmi088() -> FootprintTemplate {
+    let (len, w, xc, yc) = (0.675, 0.25, 0.925 + 0.675 / 2.0, 1.675 + 0.675 / 2.0);
+    let mut pads = Vec::new();
+    for n in 1..=16u32 {
+        let pad = match n {
+            1..=7 => rect_smd(&n.to_string(), xc, -1.5 + 0.5 * (n - 1) as f64, len, w),
+            8 => rect_smd("8", 0.0, yc, w, len),
+            9..=15 => rect_smd(&n.to_string(), -xc, 1.5 - 0.5 * (n - 9) as f64, len, w),
+            _ => rect_smd("16", 0.0, -yc, w, len),
+        };
+        pads.push(pad);
+    }
+    let graphics = outlined_graphics(&pads, (-1.5, -2.25, 1.5, 2.25), (1.9, -2.6));
+    FootprintTemplate {
+        name: "BMI088_LGA-16".into(),
+        pads,
+        graphics,
+    }
+}
+
+/// TDK InvenSense ICM-42688-P IMU, LGA-14 3.0 × 2.5 mm, 0.5 mm pitch.
+/// Package: datasheet DS-000347 rev. 1.5, §10.2 (lead W 0.25, L 0.475, leads
+/// inset 0.10 from the body edge) and pin-out §4.1 fig. 5 (top view): pins
+/// 1–4 down the left edge, 5–7 along the bottom, 8–11 up the right, 12–14
+/// along the top right-to-left. TDK gives no land pattern, so lands follow
+/// IPC-7351 no-lead practice on that lead: 0.30 wide (W + 0.05), heel 0.05
+/// inside the lead, toe 0.10 past the body edge (Bosch's LGA convention above)
+/// → 0.725 long.
+fn icm42688() -> FootprintTemplate {
+    let (len, w) = (0.725, 0.30);
+    let xc = 1.6 - len / 2.0; // long-edge (x = ±1.5) leads: toe at ±1.60
+    let yc = 1.35 - len / 2.0; // short-edge (y = ±1.25) leads: toe at ±1.35
+    let mut pads = Vec::new();
+    for n in 1..=14u32 {
+        let k = n as f64;
+        let pad = match n {
+            1..=4 => rect_smd(&n.to_string(), -xc, -0.75 + 0.5 * (k - 1.0), len, w),
+            5..=7 => rect_smd(&n.to_string(), -0.5 + 0.5 * (k - 5.0), yc, w, len),
+            8..=11 => rect_smd(&n.to_string(), xc, 0.75 - 0.5 * (k - 8.0), len, w),
+            _ => rect_smd(&n.to_string(), 0.5 - 0.5 * (k - 12.0), -yc, w, len),
+        };
+        pads.push(pad);
+    }
+    let graphics = outlined_graphics(&pads, (-1.5, -1.25, 1.5, 1.25), (-1.9, -1.6));
+    FootprintTemplate {
+        name: "ICM-42688-P_LGA-14".into(),
+        pads,
+        graphics,
+    }
+}
+
+/// Plated power hole with a fab-safe 0.65 mm annular ring (pin 1 square).
+fn power_tht(num: &str, x: f64, y: f64, drill: f64) -> Pad {
+    let d = drill + 1.3;
+    if num == "1" {
+        rect_tht(num, x, y, d, d, drill)
+    } else {
+        circle_tht(num, x, y, d, drill)
+    }
+}
+
+/// AMASS XT30PW-M (horizontal). AMASS spec "XT30PW-M" V1.2, mounting hole
+/// diagram: 2 × Ø1.7 power holes on 5.00 mm, 2 × Ø1.0 housing pegs 11.00 mm
+/// apart, 10.00 mm behind the power row (toward the mating face).
+fn xt30pw() -> FootprintTemplate {
+    let pads = vec![
+        power_tht("1", -2.5, 0.0, 1.7),
+        power_tht("2", 2.5, 0.0, 1.7),
+        npth(-5.5, -10.0, 1.0, 1.0),
+        npth(5.5, -10.0, 1.0, 1.0),
+    ];
+    // Body 13.30 wide (incl. peg ears) × 9.90 deep, ending ~2.0 behind the row.
+    let graphics = outlined_graphics(&pads, (-6.65, -11.9, 6.65, 2.0), (-4.8, 1.8));
+    FootprintTemplate {
+        name: "XT30PW".into(),
+        pads,
+        graphics,
+    }
+}
+
+/// AMASS XT30PB(2+2)-M (vertical, 2 power + 2 signal). AMASS drawing
+/// 3099990210 "XT30(2+2)PB-M.G.B" V00 (2018-11-28), PCB layout: 2 × Ø1.90
+/// power holes on 5.00 mm; two 0.60 mm square signal tails 3.85 mm beyond the
+/// "−" hole, 2.00 mm apart across the power axis. Housing 13.90 × 5.20.
+///
+/// Pin order (from the mating-face view's moulded marks "+", "−", "1", "2"):
+/// pad 1 = "+", pad 2 = "−" (the power contact next to the signal pair),
+/// pad 3 = signal "1", pad 4 = signal "2". Seen from the component side with
+/// the signals at +X, signal "1" is at −Y and "2" at +Y. The square tails get a
+/// Ø1.0 hole (0.85 mm tail diagonal + clearance).
+fn xt30pb_2p2() -> FootprintTemplate {
+    let pads = vec![
+        power_tht("1", -2.5, 0.0, 1.9),
+        power_tht("2", 2.5, 0.0, 1.9),
+        circle_tht("3", 6.35, -1.0, 1.6, 1.0),
+        circle_tht("4", 6.35, 1.0, 1.6, 1.0),
+    ];
+    // Housing x: 3.90 outboard of the "+" hole, 13.90 long; 5.20 wide.
+    let graphics = outlined_graphics(&pads, (-6.4, -2.6, 7.5, 2.6), (-6.8, -3.0));
+    FootprintTemplate {
+        name: "XT30PB(2+2)".into(),
+        pads,
+        graphics,
+    }
+}
+
+/// AMASS XT60PW-M (horizontal). AMASS product spec XT60PW-M30.G.Y.T, version
+/// 2025V0, PCB layout: 2 × Ø2.90 on 7.20 mm, 2 × 0.80 × 1.90 peg slots
+/// 13.50 mm apart, 6.00 mm behind the power row; housing 15.50 wide, from
+/// 1.80 in front of the row to 16.35 behind it.
+fn xt60pw() -> FootprintTemplate {
+    let pads = vec![
+        power_tht("1", -3.6, 0.0, 2.9),
+        power_tht("2", 3.6, 0.0, 2.9),
+        npth(-6.75, -6.0, 0.8, 1.9),
+        npth(6.75, -6.0, 0.8, 1.9),
+    ];
+    let graphics = outlined_graphics(&pads, (-7.75, -16.35, 7.75, 1.8), (-5.8, 2.6));
+    FootprintTemplate {
+        name: "XT60PW".into(),
+        pads,
+        graphics,
+    }
+}
+
+/// AMASS XT60PB-M (vertical). AMASS product spec XT60PB30-M.G.*, §9 mounting
+/// hole diagram: 2 × Ø4.00 on 7.20 mm; housing 16.00 × 8.10 (4.15 outboard of
+/// the holes, 4.05 from the row to the housing edge).
+fn xt60pb() -> FootprintTemplate {
+    let pads = vec![
+        power_tht("1", -3.6, 0.0, 4.0),
+        power_tht("2", 3.6, 0.0, 4.0),
+    ];
+    let graphics = outlined_graphics(&pads, (-7.75, -4.05, 7.75, 4.05), (-8.2, -4.4));
+    FootprintTemplate {
+        name: "XT60PB".into(),
+        pads,
+        graphics,
+    }
+}
+
+/// AMASS XT90PW-M (horizontal). AMASS product spec XT90PW30-M.G.*, §9
+/// mounting hole dimensions: 2 × Ø3.80 on 10.90 mm, 2 × 0.60 × 1.40 peg slots
+/// 18.90 mm apart, 9.40 mm behind the power row; housing 20.80 wide, from
+/// 2.51 in front of the row to 24.60 behind it.
+fn xt90pw() -> FootprintTemplate {
+    let pads = vec![
+        power_tht("1", -5.45, 0.0, 3.8),
+        power_tht("2", 5.45, 0.0, 3.8),
+        npth(-9.45, -9.4, 0.6, 1.4),
+        npth(9.45, -9.4, 0.6, 1.4),
+    ];
+    let graphics = outlined_graphics(&pads, (-10.4, -24.6, 10.4, 2.51), (-8.0, 3.2));
+    FootprintTemplate {
+        name: "XT90PW".into(),
+        pads,
+        graphics,
+    }
+}
+
+/// AMASS LCB-series vertical (board-mount, 180°) 2-pin power plugs — the
+/// blind-mate dock candidate. AMASS 产品规格书 2023V2 PCB layouts:
+/// - LCB30PB-M: 2 × Ø3.20 on 7.60 mm, Ø1.70 peg 3.50 off the row; 17.10 × 12.20;
+/// - LCB40PB-M: 2 × Ø4.20 on 8.80 mm, Ø1.70 peg 4.05 off the row; 19.65 × 13.55.
+///
+/// The pad 1/2 ↔ "+"/"−" assignment is not dimensioned on the drawings —
+/// check the moulded marks before committing a polarity.
+fn amass_lcb(
     name: &str,
-    power: (f64, f64),
-    signal: Option<(f64, f64, f64)>,
+    pitch: f64,
+    drill: f64,
+    peg_off: f64,
     body: (f64, f64),
 ) -> FootprintTemplate {
-    let (pp, pd) = power;
-    let mut pads = vec![
-        circle_tht("1", -pp / 2.0, 0.0, pd + 0.8, pd),
-        circle_tht("2", pp / 2.0, 0.0, pd + 0.8, pd),
+    let pads = vec![
+        power_tht("1", -pitch / 2.0, 0.0, drill),
+        power_tht("2", pitch / 2.0, 0.0, drill),
+        npth(0.0, peg_off, 1.7, 1.7),
     ];
-    if let Some((sp, sd, sy)) = signal {
-        pads.push(circle_tht("3", -sp / 2.0, sy, sd + 0.6, sd));
-        pads.push(circle_tht("4", sp / 2.0, sy, sd + 0.6, sd));
-    }
+    let (bl, bw) = body;
+    let graphics = outlined_graphics(
+        &pads,
+        (-bl / 2.0, -bw / 2.0, bl / 2.0, bw / 2.0),
+        (-bl / 2.0 - 0.4, -bw / 2.0 - 0.4),
+    );
     FootprintTemplate {
         name: name.into(),
         pads,
-        graphics: ic_graphics(body.0, body.1),
+        graphics,
     }
 }
 
-/// Molex Micro-Fit 3.0 dual-row, 3.0 mm pitch (43045 RA / 43650-style).
-/// Pins 1..n/2 on the row nearer the mating face, as Molex numbers them.
-fn microfit_dual(cols: u32) -> FootprintTemplate {
+/// Molex Micro-Fit 3.0 dual-row headers, 3.00 mm pitch, Ø1.02 holes.
+/// - Right-angle 43045-xx00/01/02: Molex SD-43045-001 rev G — Ø3.00 locating
+///   pegs 4.32 mm in front of the circuit-1 row (one centred peg up to 6
+///   circuits; two at ±(B − 4.30)/2 from 8 up, B = (cols − 1)·3).
+/// - Vertical 43045-xx12/13/14: Molex SD-43045-009 rev H4 — two Ø1.02
+///   polarization pegs 0.94 mm beyond the far row, B + 6.00 apart.
+///
+/// Numbering per both drawings (component side, rotated 180° so circuit 1 is
+/// top-left): circuits 1…n/2 along the first row, n/2+1…n along the second,
+/// each below its partner. Pin 1 is the square pad.
+fn microfit_dual(cols: u32, vertical: bool) -> FootprintTemplate {
     let mut pads = Vec::new();
-    let x0 = -((cols as f64) - 1.0) * 1.5;
+    let span = (cols as f64 - 1.0) * 3.0; // Molex "B"
+    let x0 = -span / 2.0;
     for row in 0..2u32 {
         for c in 0..cols {
-            let num = row * cols + c + 1;
-            pads.push(circle_tht(
-                &num.to_string(),
-                x0 + c as f64 * 3.0,
-                row as f64 * 3.0,
-                1.9,
-                1.02,
-            ));
+            let num = (row * cols + c + 1).to_string();
+            let (x, y) = (x0 + c as f64 * 3.0, row as f64 * 3.0);
+            pads.push(if num == "1" {
+                rect_tht(&num, x, y, 1.9, 1.9, 1.02)
+            } else {
+                circle_tht(&num, x, y, 1.9, 1.02)
+            });
         }
     }
-    let w = cols as f64 * 3.0 + 3.4;
+    if vertical {
+        let c = span + 6.0;
+        pads.push(npth(-c / 2.0, 3.94, 1.02, 1.02));
+        pads.push(npth(c / 2.0, 3.94, 1.02, 1.02));
+    } else if cols <= 3 {
+        pads.push(npth(0.0, -4.32, 3.0, 3.0));
+    } else {
+        let c = span - 4.30;
+        pads.push(npth(-c / 2.0, -4.32, 3.0, 3.0));
+        pads.push(npth(c / 2.0, -4.32, 3.0, 3.0));
+    }
+    // Housing "A" = B + 6.65 wide; 7.37 deep around the two rows.
+    let a = span + 6.65;
+    let graphics = outlined_graphics(
+        &pads,
+        (-a / 2.0, -2.19, a / 2.0, 5.19),
+        (-a / 2.0 - 0.4, -2.6),
+    );
     FootprintTemplate {
-        name: format!("Micro-Fit_2x{cols:02}"),
+        name: format!(
+            "Micro-Fit_2x{cols:02}_{}",
+            if vertical { "Vertical" } else { "Horizontal" }
+        ),
         pads,
-        graphics: ic_graphics(w, 9.9),
+        graphics,
     }
 }
 
@@ -1175,36 +1530,59 @@ fn match_power_family(base: &str) -> Option<(FootprintTemplate, &'static str)> {
         return Some((toll(), "TOLL"));
     }
     if base.contains("TSDSON-8") {
-        return Some((power_son8("TSDSON-8", 0.65, (3.3, 3.3)), "PowerSON8"));
+        return Some((tsdson8(), "PowerSON8"));
     }
     if base.contains("TDSON-8") || base.contains("SuperSO8") {
-        return Some((power_son8("TDSON-8", 1.27, (5.15, 6.15)), "PowerSON8"));
+        return Some((tdson8(), "PowerSON8"));
     }
-    if base.contains("XT30PB") && base.contains("2+2") {
+    if base.contains("TO-277") || base.contains("SMPC") {
+        return Some((to277a(), "TO-277A"));
+    }
+    if base.contains("BMI088") {
+        return Some((bmi088(), "LGA-IMU"));
+    }
+    if base.contains("ICM-42688") || base.contains("ICM42688") {
+        return Some((icm42688(), "LGA-IMU"));
+    }
+    if base.contains("XT30") && base.contains("2+2") {
+        return Some((xt30pb_2p2(), "AMASS-XT"));
+    }
+    if base.contains("XT30PW") {
+        return Some((xt30pw(), "AMASS-XT"));
+    }
+    if base.contains("XT60PW") {
+        return Some((xt60pw(), "AMASS-XT"));
+    }
+    if base.contains("XT60PB") || base.contains("XT60UPB") {
+        return Some((xt60pb(), "AMASS-XT"));
+    }
+    if base.contains("XT90PW") {
+        return Some((xt90pw(), "AMASS-XT"));
+    }
+    if base.contains("LCB30PB") {
         return Some((
-            amass_xt(
-                "XT30PB(2+2)",
-                (5.0, 1.6),
-                Some((2.5, 0.9, -4.5)),
-                (10.2, 12.0),
-            ),
-            "AMASS-XT",
+            amass_lcb("LCB30PB", 7.6, 3.2, 3.5, (17.1, 12.2)),
+            "AMASS-LCB",
         ));
     }
-    if base.contains("XT30PW") || base.contains("XT30PB") {
+    if base.contains("LCB40PB") {
         return Some((
-            amass_xt("XT30PW", (5.0, 1.6), None, (10.2, 8.0)),
-            "AMASS-XT",
+            amass_lcb("LCB40PB", 8.8, 4.2, 4.05, (19.65, 13.55)),
+            "AMASS-LCB",
         ));
-    }
-    if base.contains("XT60") {
-        return Some((amass_xt("XT60", (7.2, 2.4), None, (15.8, 8.2)), "AMASS-XT"));
     }
     if base.contains("Micro-Fit") || base.contains("MicroFit") {
         let cols = rows_cols(base)
             .map(|(r, c)| if r == 2 { c } else { (r * c).div_ceil(2) })
             .unwrap_or(2);
-        return Some((microfit_dual(cols.max(1)), "Micro-Fit"));
+        // 43045-xx12/13/14 are the vertical headers; xx00…xx10 right-angle.
+        let vertical = base.contains("Vertical")
+            || base
+                .split("43045-")
+                .nth(1)
+                .and_then(|s| s.get(2..4))
+                .is_some_and(|v| matches!(v, "12" | "13" | "14"));
+        return Some((microfit_dual(cols.max(1), vertical), "Micro-Fit"));
     }
     None
 }
@@ -2656,63 +3034,331 @@ mod tests {
         }
     }
 
-    #[test]
-    fn power_fets_and_xt_connectors_resolve() {
-        let cases: [(&str, &str, &[&str]); 8] = [
-            ("Infineon_PG-HSOF-8-1_TOLL", "TOLL", &["1", "2", "3"]),
-            ("Infineon_PG-TDSON-8", "PowerSON8", &["1", "2", "3"]),
-            ("Infineon_PG-TSDSON-8", "PowerSON8", &["1", "2", "3"]),
-            (
-                "AMASS_XT30PB_2+2_-M_Horizontal",
-                "AMASS-XT",
-                &["1", "2", "3", "4"],
-            ),
-            ("AMASS_XT30PW-M_Horizontal", "AMASS-XT", &["1", "2"]),
-            ("AMASS_XT60PT-M_Vertical", "AMASS-XT", &["1", "2"]),
-            (
-                "Molex_Micro-Fit_3.0_43045-0412_2x02_P3.00mm_Horizontal",
-                "Micro-Fit",
-                &["1", "2", "3", "4"],
-            ),
-            (
-                "Molex_Micro-Fit_3.0_2x04_P3.00mm",
-                "Micro-Fit",
-                &["1", "2", "3", "4", "5", "6", "7", "8"],
-            ),
-        ];
-        for (name, family, nums) in cases {
-            let r = resolve_footprint(name, 0);
-            assert!(r.matched, "{name}: {}", r.note);
-            assert_eq!(r.family.as_deref(), Some(family), "{name}");
-            let t = r.template.unwrap();
-            let got: Vec<&str> = t.pads.iter().map(|p| p.number.as_str()).collect();
-            assert_eq!(got, nums, "{name}");
-            // No two pads of a land pattern may overlap (bounding boxes).
-            let bbox = |p: &Pad| -> (f64, f64, f64, f64) {
-                let (w, h) = match p.shape {
-                    PadShape::Rect { width, height } => (width, height),
-                    PadShape::Circle { diameter } => (diameter, diameter),
-                    _ => (0.0, 0.0),
-                };
-                (
-                    p.position.x - w / 2.0,
-                    p.position.y - h / 2.0,
-                    p.position.x + w / 2.0,
-                    p.position.y + h / 2.0,
-                )
-            };
-            for (i, a) in t.pads.iter().enumerate() {
-                for b in &t.pads[i + 1..] {
-                    let (a0, a1, a2, a3) = bbox(a);
-                    let (b0, b1, b2, b3) = bbox(b);
-                    let overlap = a0 < b2 && b0 < a2 && a1 < b3 && b1 < a3;
-                    assert!(
-                        !overlap,
-                        "{name}: pads {} and {} overlap",
-                        a.number, b.number
-                    );
+    /// Resolve `name` into its template, asserting the family and that no two
+    /// pads with DIFFERENT numbers overlap (same-number pads may abut: they
+    /// are one terminal split into rectangles).
+    fn power_fp(name: &str, family: &str) -> FootprintTemplate {
+        let r = resolve_footprint(name, 0);
+        assert!(r.matched, "{name}: {}", r.note);
+        assert_eq!(r.family.as_deref(), Some(family), "{name}");
+        let t = r.template.unwrap();
+        for (i, a) in t.pads.iter().enumerate() {
+            for b in &t.pads[i + 1..] {
+                if a.number == b.number && !a.number.is_empty() {
+                    continue;
                 }
+                let (a0, a1, a2, a3) = pad_extent(a);
+                let (b0, b1, b2, b3) = pad_extent(b);
+                let overlap = a0 < b2 && b0 < a2 && a1 < b3 && b1 < a3;
+                assert!(
+                    !overlap,
+                    "{name}: pads {:?} and {:?} overlap",
+                    a.number, b.number
+                );
             }
         }
+        // Courtyard encloses every pad.
+        let cy = t
+            .graphics
+            .iter()
+            .find_map(|g| match g {
+                FootprintGraphic::Rect {
+                    start, end, layer, ..
+                } if *layer == PcbLayer::FCrtYd => Some((*start, *end)),
+                _ => None,
+            })
+            .expect("courtyard");
+        for p in &t.pads {
+            let (x0, y0, x1, y1) = pad_extent(p);
+            assert!(
+                x0 >= cy.0.x && y0 >= cy.0.y && x1 <= cy.1.x && y1 <= cy.1.y,
+                "{name}: pad {:?} outside courtyard",
+                p.number
+            );
+        }
+        t
+    }
+
+    fn numbers(t: &FootprintTemplate) -> Vec<&str> {
+        let mut v: Vec<&str> = t
+            .pads
+            .iter()
+            .map(|p| p.number.as_str())
+            .filter(|n| !n.is_empty())
+            .collect();
+        v.dedup();
+        v
+    }
+
+    fn pads_of<'a>(t: &'a FootprintTemplate, n: &str) -> Vec<&'a Pad> {
+        t.pads.iter().filter(|p| p.number == n).collect()
+    }
+
+    fn size(p: &Pad) -> (f64, f64) {
+        match p.shape {
+            PadShape::Rect { width, height } => (width, height),
+            PadShape::Circle { diameter } => (diameter, diameter),
+            _ => (0.0, 0.0),
+        }
+    }
+
+    fn drill(p: &Pad) -> f64 {
+        p.drill.as_ref().map(|d| d.diameter).unwrap_or(0.0)
+    }
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-6
+    }
+
+    fn npths(t: &FootprintTemplate) -> Vec<&Pad> {
+        t.pads
+            .iter()
+            .filter(|p| p.pad_type == PadType::NPTH)
+            .collect()
+    }
+
+    #[test]
+    fn toll_matches_infineon_hsof8_land() {
+        let t = power_fp("Infineon_PG-HSOF-8-1_TOLL", "TOLL");
+        assert_eq!(numbers(&t), ["1", "2", "3"]);
+        // Gate = lead 1 at the −X end of the 1.20 mm lead row.
+        let g = pads_of(&t, "1")[0];
+        assert!(close(g.position.x, -4.2) && close(size(g).0, 0.8) && close(size(g).1, 2.8));
+        // 7 source fingers on the 1.20 pitch + bridging bar.
+        let fingers: Vec<f64> = pads_of(&t, "2")
+            .iter()
+            .filter(|p| close(size(p).0, 0.8))
+            .map(|p| p.position.x)
+            .collect();
+        assert_eq!(fingers.len(), 7);
+        for (i, x) in fingers.iter().enumerate() {
+            assert!(close(*x, -3.0 + 1.2 * i as f64), "finger {i} at {x}");
+        }
+        // 2.5 mm source-to-drain gap (source bar inner edge 3.85, drain 1.35).
+        let drain_low = pads_of(&t, "3")
+            .iter()
+            .map(|p| pad_extent(p).3)
+            .fold(f64::MIN, f64::max);
+        let src_high = pads_of(&t, "2")
+            .iter()
+            .map(|p| pad_extent(p).1)
+            .fold(f64::MAX, f64::min);
+        assert!(close(src_high - drain_low, 2.5));
+    }
+
+    #[test]
+    fn tdson8_matches_infineon_boardpads() {
+        let t = power_fp("Infineon_PG-TDSON-8", "PowerSON8");
+        assert_eq!(numbers(&t), ["1", "2", "3"]);
+        let g = pads_of(&t, "1")[0];
+        assert!(close(g.position.x, 1.905) && close(size(g).0, 0.5) && close(size(g).1, 1.1));
+        // Drain body 4.41 wide; source land 3.2 wide, 0.77 from the gate.
+        assert!(pads_of(&t, "3").iter().any(|p| close(size(p).0, 4.41)));
+        let bar = pads_of(&t, "2")
+            .into_iter()
+            .find(|p| close(size(p).0, 3.2))
+            .unwrap();
+        assert!(close(pad_extent(g).0 - pad_extent(bar).2, 0.77));
+        // Land spans ±3.325 (3.325 + 3.325 in the drawing).
+        let all: Vec<_> = t.pads.iter().map(pad_extent).collect();
+        let ymin = all.iter().map(|e| e.1).fold(f64::MAX, f64::min);
+        let ymax = all.iter().map(|e| e.3).fold(f64::MIN, f64::max);
+        assert!(close(ymin, -3.325) && close(ymax, 3.325));
+    }
+
+    #[test]
+    fn tsdson8_matches_infineon_f_dimensions() {
+        let t = power_fp("Infineon_PG-TSDSON-8", "PowerSON8");
+        assert_eq!(numbers(&t), ["1", "2", "3"]);
+        let all: Vec<_> = t.pads.iter().map(pad_extent).collect();
+        let ymin = all.iter().map(|e| e.1).fold(f64::MAX, f64::min);
+        let ymax = all.iter().map(|e| e.3).fold(f64::MIN, f64::max);
+        assert!(close(ymax - ymin, 3.90), "F1"); // F1
+        let drain_w = pads_of(&t, "3")
+            .iter()
+            .map(|p| size(p).0)
+            .fold(0.0, f64::max);
+        assert!(close(drain_w, 2.29), "F2");
+        assert!(close(pads_of(&t, "2")[0].position.x, -0.325));
+        assert!(close(size(pads_of(&t, "2")[0]).0, 1.64), "F8");
+        // Gate = lead 4 at +1.5·pitch, F3 = 0.31 from the source land.
+        let g = pads_of(&t, "1")[0];
+        assert!(close(g.position.x, 0.975));
+        assert!(close(
+            pad_extent(g).0 - pad_extent(pads_of(&t, "2")[0]).2,
+            0.31
+        ));
+    }
+
+    #[test]
+    fn to277a_matches_vishay_mounting_pads() {
+        let t = power_fp("Diode_SMD:D_TO-277A", "TO-277A");
+        assert_eq!(numbers(&t), ["1", "2"]);
+        let k = pads_of(&t, "1")[0];
+        assert_eq!(size(k), (4.80, 4.72));
+        let a = pads_of(&t, "2");
+        assert_eq!(a.len(), 2);
+        assert!(a.iter().all(|p| size(p) == (1.40, 1.27)));
+        assert!(close(a[1].position.x - a[0].position.x, 2.08));
+        let all: Vec<_> = t.pads.iter().map(pad_extent).collect();
+        let ymin = all.iter().map(|e| e.1).fold(f64::MAX, f64::min);
+        let ymax = all.iter().map(|e| e.3).fold(f64::MIN, f64::max);
+        assert!(close(ymax - ymin, 6.80));
+        // Cathode-to-anode gap = 6.80 − 4.72 − 1.27.
+        assert!(close(pad_extent(a[0]).1 - pad_extent(k).3, 0.81));
+    }
+
+    #[test]
+    fn bmi088_matches_bosch_landing_pattern() {
+        let t = power_fp("BMI088", "LGA-IMU");
+        let nums: Vec<String> = (1..=16).map(|n| n.to_string()).collect();
+        assert_eq!(
+            numbers(&t),
+            nums.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+        let p = |n: &str| pads_of(&t, n)[0];
+        // Pin 1 top-right, 1..7 down the right column at 0.5 mm, pin 4 on the
+        // centre line; 9..15 up the left; 8 bottom, 16 top.
+        assert!(p("1").position.x > 0.0 && close(p("1").position.y, -1.5));
+        assert!(close(p("4").position.y, 0.0) && close(p("7").position.y, 1.5));
+        assert!(close(p("9").position.y, 1.5) && close(p("15").position.y, -1.5));
+        assert!(p("9").position.x < 0.0);
+        assert!(p("8").position.y > 2.0 && p("16").position.y < -2.0);
+        assert_eq!(size(p("1")), (0.675, 0.25));
+        assert_eq!(size(p("8")), (0.25, 0.675));
+        // Inner edges: 0.925 (side rows) and 1.675 (pins 8/16) from centre.
+        assert!(close(pad_extent(p("9")).2, -0.925));
+        assert!(close(pad_extent(p("8")).1, 1.675));
+    }
+
+    #[test]
+    fn icm42688_matches_tdk_pinout() {
+        let t = power_fp("ICM-42688-P", "LGA-IMU");
+        assert_eq!(numbers(&t).len(), 14);
+        let p = |n: &str| pads_of(&t, n)[0];
+        // Pin 1 top-left; 1-4 down the left, 5-7 bottom L→R, 8-11 up the
+        // right, 12-14 top R→L (DS-000347 fig. 5, top view).
+        assert!(p("1").position.x < -1.0 && close(p("1").position.y, -0.75));
+        assert!(close(p("4").position.y, 0.75));
+        assert!(close(p("5").position.x, -0.5) && p("5").position.y > 0.9);
+        assert!(close(p("8").position.y, 0.75) && p("8").position.x > 1.0);
+        assert!(close(p("11").position.y, -0.75));
+        assert!(close(p("12").position.x, 0.5) && p("12").position.y < -0.9);
+        assert!(close(p("14").position.x, -0.5));
+        // Lands cover the 0.25 × 0.475 lead (inset 0.10 from the 3.0 × 2.5 body).
+        let (x0, _, x1, _) = pad_extent(p("1"));
+        assert!(x0 <= -1.5 && x1 >= -1.5 + 0.10 + 0.475);
+        let (_, y0, _, y1) = pad_extent(p("6"));
+        assert!(y1 >= 1.25 && y0 <= 1.25 - 0.10 - 0.475);
+        assert!(close(size(p("1")).1, 0.30));
+    }
+
+    #[test]
+    fn xt30pb_2p2_matches_amass_drawing() {
+        let t = power_fp("AMASS_XT30PB_2+2_-M", "AMASS-XT");
+        assert_eq!(numbers(&t), ["1", "2", "3", "4"]);
+        let p = |n: &str| pads_of(&t, n)[0];
+        assert!(close(p("2").position.x - p("1").position.x, 5.0));
+        assert!(close(drill(p("1")), 1.9) && close(drill(p("2")), 1.9));
+        // Signals 3.85 beyond the "−" (pad 2) hole, 2.00 apart; "1" at −Y.
+        assert!(close(p("3").position.x - p("2").position.x, 3.85));
+        assert!(close(p("4").position.y - p("3").position.y, 2.0));
+        assert!(p("3").position.y < 0.0);
+        assert!(
+            matches!(p("1").shape, PadShape::Rect { .. }),
+            "pin 1 square"
+        );
+    }
+
+    #[test]
+    fn xt30pw_xt60pw_xt90pw_match_amass_hole_diagrams() {
+        // (name, pitch, drill, peg (dx, dy, w, h))
+        let cases = [
+            (
+                "AMASS_XT30PW-M_Horizontal",
+                5.0,
+                1.7,
+                (11.0, -10.0, 1.0, 1.0),
+            ),
+            (
+                "AMASS_XT60PW-M_Horizontal",
+                7.2,
+                2.9,
+                (13.5, -6.0, 0.8, 1.9),
+            ),
+            (
+                "AMASS_XT90PW-M_Horizontal",
+                10.9,
+                3.8,
+                (18.9, -9.4, 0.6, 1.4),
+            ),
+        ];
+        for (name, pitch, d, (dx, dy, w, h)) in cases {
+            let t = power_fp(name, "AMASS-XT");
+            assert_eq!(numbers(&t), ["1", "2"], "{name}");
+            let p1 = pads_of(&t, "1")[0];
+            let p2 = pads_of(&t, "2")[0];
+            assert!(close(p2.position.x - p1.position.x, pitch), "{name} pitch");
+            assert!(close(drill(p1), d) && close(drill(p2), d), "{name} drill");
+            let pegs = npths(&t);
+            assert_eq!(pegs.len(), 2, "{name}");
+            assert!(close(pegs[1].position.x - pegs[0].position.x, dx), "{name}");
+            assert!(pegs.iter().all(|p| close(p.position.y, dy)), "{name}");
+            assert!(pegs.iter().all(|p| size(p) == (w, h)), "{name}");
+        }
+        let t = power_fp("AMASS_XT60PB-M_Vertical", "AMASS-XT");
+        assert!(close(drill(pads_of(&t, "1")[0]), 4.0));
+        assert!(npths(&t).is_empty());
+    }
+
+    #[test]
+    fn amass_lcb_matches_drawings() {
+        for (name, pitch, d, off) in [
+            ("AMASS_LCB30PB-M", 7.6, 3.2, 3.5),
+            ("AMASS_LCB40PB-M", 8.8, 4.2, 4.05),
+        ] {
+            let t = power_fp(name, "AMASS-LCB");
+            assert_eq!(numbers(&t), ["1", "2"]);
+            let p1 = pads_of(&t, "1")[0];
+            let p2 = pads_of(&t, "2")[0];
+            assert!(close(p2.position.x - p1.position.x, pitch));
+            assert!(close(drill(p1), d));
+            let peg = npths(&t)[0];
+            assert!(close(peg.position.y, off) && close(size(peg).0, 1.7));
+        }
+    }
+
+    #[test]
+    fn microfit_matches_molex_sd_43045() {
+        // Right-angle 2x02: one Ø3.00 peg, centred, 4.32 in front of row 1.
+        let t = power_fp(
+            "Molex_Micro-Fit_3.0_43045-0400_2x02_P3.00mm_Horizontal",
+            "Micro-Fit",
+        );
+        assert_eq!(numbers(&t), ["1", "2", "3", "4"]);
+        let p = |t: &FootprintTemplate, n: &str| pads_of(t, n)[0].position;
+        assert!(close(p(&t, "2").x - p(&t, "1").x, 3.0));
+        assert!(close(p(&t, "3").y - p(&t, "1").y, 3.0) && close(p(&t, "3").x, p(&t, "1").x));
+        let pegs = npths(&t);
+        assert_eq!(pegs.len(), 1);
+        assert!(close(pegs[0].position.x, 0.0) && close(pegs[0].position.y, -4.32));
+        assert!(close(size(pegs[0]).0, 3.0));
+        assert!(close(drill(pads_of(&t, "1")[0]), 1.02));
+        // Right-angle 2x04: two pegs, C = 4.70 apart (SD-43045-001 table).
+        let t = power_fp(
+            "Molex_Micro-Fit_3.0_43045-0800_2x04_P3.00mm_Horizontal",
+            "Micro-Fit",
+        );
+        let pegs = npths(&t);
+        assert!(close(pegs[1].position.x - pegs[0].position.x, 4.70));
+        // Vertical 2x04 (xx12): Ø1.02 pegs C = 15.00 apart, 0.94 past row 2.
+        let t = power_fp("Molex_Micro-Fit_3.0_43045-0812_2x04_P3.00mm", "Micro-Fit");
+        assert_eq!(numbers(&t).len(), 8);
+        let pegs = npths(&t);
+        assert!(close(pegs[1].position.x - pegs[0].position.x, 15.0));
+        assert!(pegs
+            .iter()
+            .all(|q| close(q.position.y, 3.94) && close(size(q).0, 1.02)));
+        assert!(matches!(pads_of(&t, "1")[0].shape, PadShape::Rect { .. }));
     }
 }
