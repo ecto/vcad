@@ -4,6 +4,7 @@ import type { Document } from "@vcad/ir";
 import { measure } from "../tools/measure.js";
 import { dispatchRegistryTool } from "../tools/registry-dispatch.js";
 import { documents, getSession, openDocument } from "../tools/session.js";
+import { partIdForRoot } from "../tools/part-ids.js";
 
 let engine: Engine;
 
@@ -108,8 +109,9 @@ describe("measure", () => {
     const res = out(
       measure({ document_id: docId, part_ids: [aRoot, bRoot] }, engine),
     );
-    expect(res.parts.a.id).toBe(aRoot);
-    expect(res.parts.b.id).toBe(bRoot);
+    // Legacy root-NodeId input resolves; the echo is the stable part id.
+    expect(res.parts.a.id).toBe(partIdForRoot(doc, doc.roots[0]));
+    expect(res.parts.b.id).toBe(partIdForRoot(doc, doc.roots[1]));
   });
 
   it("errors with a recovery hint listing available parts", () => {

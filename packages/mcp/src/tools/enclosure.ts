@@ -31,6 +31,7 @@ import {
   type TriangleMesh,
 } from "@vcad/engine";
 import { getSession } from "./session.js";
+import { findPartCandidate, partIdForNode } from "./part-ids.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 /** PCB data from a document — PcbBoard nodes first, legacy `doc.pcb` fallback. */
@@ -101,10 +102,10 @@ function enclosureMesh(
   enclosureDoc: Document,
   engine: Engine,
   partId?: string,
-): { mesh: TriangleMesh; rootId: number; name?: string } {
+): { mesh: TriangleMesh; rootId: number; id: string; name?: string } {
   const scene = engine.evaluate(enclosureDoc);
   const visibleRoots = enclosureDoc.roots.filter((e) => e.visible !== false);
-  const candidates: Array<{ rootId: number; name?: string; mesh: TriangleMesh }> = [];
+  const candidates: Array<{ rootId: number; id: string; name?: string; mesh: TriangleMesh }> = [];
   for (let i = 0; i < scene.parts.length && i < visibleRoots.length; i++) {
     const rootId = visibleRoots[i].root;
     const node = enclosureDoc.nodes[String(rootId)];
@@ -112,17 +113,22 @@ function enclosureMesh(
     if (opType === "PcbBoard") continue;
     const mesh = scene.parts[i].mesh;
     if (!mesh || mesh.positions.length === 0) continue;
-    candidates.push({ rootId, name: node?.name ?? undefined, mesh });
+    candidates.push({
+      rootId,
+      id: partIdForNode(enclosureDoc, rootId),
+      name: node?.name ?? undefined,
+      mesh,
+    });
   }
   if (candidates.length === 0) {
     throw new Error("Enclosure document has no solid parts (PcbBoard parts are excluded)");
   }
   if (partId) {
-    const found = candidates.find((c) => String(c.rootId) === partId);
+    const found = findPartCandidate(enclosureDoc, candidates, partId);
     if (!found) {
       throw new Error(
         `No enclosure part with id "${partId}". Available: ${candidates
-          .map((c) => `${c.rootId}${c.name ? ` (${c.name})` : ""}`)
+          .map((c) => `${c.id}${c.name ? ` (${c.name})` : ""}`)
           .join(", ")}`,
       );
     }
@@ -167,7 +173,7 @@ export async function computeEnclosureFitForBoard(
     derive?: boolean;
   } = {},
 ): Promise<EnclosureFitResult> {
-  let chosen: { mesh: TriangleMesh; rootId: number; name?: string };
+  let chosen: { mesh: TriangleMesh; rootId: number; id: string; name?: string };
   try {
     chosen = enclosureMesh(enclosureDoc, engine, opts.enclosurePartId);
   } catch (e) {

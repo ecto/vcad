@@ -264,7 +264,7 @@ describe("apply_edits (atomic multi-op batch)", () => {
     });
     const parts = JSON.parse(firstText(read)).parts as Array<{ id: string }>;
     expect(parts).toHaveLength(1);
-    expect(parts[0].id).toBe("5");
+    expect(parts[0].id).toBe("0:1");
 
     await client.close();
     await server.close();

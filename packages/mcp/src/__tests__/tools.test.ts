@@ -1369,7 +1369,7 @@ describe("GLB part-identity node names", () => {
     expect(glb.subarray(0, 4).toString()).toBe("glTF");
     const jsonLen = glb.readUInt32LE(12);
     const json = JSON.parse(glb.subarray(20, 20 + jsonLen).toString());
-    expect(json.nodes[0].name).toBe("1:test_cube");
+    expect(json.nodes[0].name).toBe("0:1:test_cube");
   });
 
   it("buildPartLabels skips hidden roots to stay aligned with scene.parts", async () => {
@@ -1379,7 +1379,7 @@ describe("GLB part-identity node names", () => {
     doc.roots.push({ root: 2, material: "default", visible: false });
     doc.nodes["3"] = { id: 3, name: null, op: { type: "Cube", size: { x: 2, y: 2, z: 2 } } };
     doc.roots.push({ root: 3, material: "default" });
-    expect(buildPartLabels(doc)).toEqual(["1:test_cube", "3:"]);
+    expect(buildPartLabels(doc)).toEqual(["0:1:test_cube", "0:3:"]);
   });
 });
 

@@ -16,6 +16,12 @@ import {
   listPartsFromDocument,
 } from "@vcad/core";
 import { getSession, recordLastChanged, recordTriangles } from "./session.js";
+import {
+  isStablePartId,
+  partIdDeprecation,
+  partIdForRoot,
+  rootForPartId,
+} from "./part-ids.js";
 import { applyJointState, jointStateSchemaProp } from "./pose.js";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
 import {
@@ -131,11 +137,15 @@ export const CREATE_PARAM_HINTS: Record<string, string> = {
 const NODE_REF_PARAM_KEYS = ["child", "left", "right", "sketch"] as const;
 
 /** Coerce a single node reference: the Rust planner's serde parse wants
- *  JSON numbers for CsgOp child refs, but part ids travel as strings
- *  everywhere else on the MCP surface ("5" from a prior result's part_id).
- *  Accept both by converting digit-strings to numbers. */
-function coerceNodeRef(v: unknown): unknown {
+ *  JSON numbers for CsgOp child refs, but ids travel as strings everywhere
+ *  else on the MCP surface. Digit-strings become numbers; a stable part id
+ *  ("0:7", from a prior result's part_id) becomes that part's root NodeId. */
+function coerceNodeRef(v: unknown, doc?: import("@vcad/ir").Document): unknown {
   if (typeof v === "string" && /^\d+$/.test(v)) return Number(v);
+  if (typeof v === "string" && doc && isStablePartId(v)) {
+    const r = rootForPartId(doc, v);
+    if (r) return r.entry.root;
+  }
   return v;
 }
 
@@ -149,10 +159,16 @@ function coerceNodeRef(v: unknown): unknown {
 export function normalizeNodeRefs(
   toolName: string,
   args: Record<string, unknown>,
+  doc?: import("@vcad/ir").Document,
 ): Record<string, unknown> {
   const out = { ...args };
-  for (const key of ["node_id", "part_id"]) {
+  for (const key of ["node_id", "part_id", "parent_part_id"]) {
     if (typeof out[key] === "number") out[key] = String(out[key]);
+  }
+  // The planner addresses a create's parent part by root NodeId.
+  if (doc && typeof out.parent_part_id === "string") {
+    const r = rootForPartId(doc, out.parent_part_id);
+    if (r) out.parent_part_id = String(r.entry.root);
   }
   if (
     (toolName === "create" || toolName === "update") &&
@@ -162,10 +178,10 @@ export function normalizeNodeRefs(
   ) {
     const params = { ...(out.params as Record<string, unknown>) };
     for (const key of NODE_REF_PARAM_KEYS) {
-      if (key in params) params[key] = coerceNodeRef(params[key]);
+      if (key in params) params[key] = coerceNodeRef(params[key], doc);
     }
     if (Array.isArray(params.sketches)) {
-      params.sketches = params.sketches.map(coerceNodeRef);
+      params.sketches = params.sketches.map((v) => coerceNodeRef(v, doc));
     }
     out.params = params;
   }
@@ -290,10 +306,11 @@ export function snapshotParts(
 ): Map<string, { name?: string; fingerprint: string }> {
   const map = new Map<string, { name?: string; fingerprint: string }>();
   for (const root of doc.roots) {
-    const partId = String(root.root);
+    const nodeKey = String(root.root);
+    const partId = partIdForRoot(doc, root);
     const pieces: string[] = [
       `material:${String(root.material ?? "")}:${String(
-        (doc.part_materials as Record<string, unknown> | undefined)?.[partId] ?? "",
+        (doc.part_materials as Record<string, unknown> | undefined)?.[nodeKey] ?? "",
       )}`,
     ];
     const stack = [root.root];
@@ -309,7 +326,7 @@ export function snapshotParts(
     }
     pieces.sort();
     map.set(partId, {
-      name: doc.nodes[partId]?.name ?? undefined,
+      name: doc.nodes[nodeKey]?.name ?? undefined,
       fingerprint: pieces.join("|"),
     });
   }
@@ -448,7 +465,7 @@ export function runMutation(
   doc: import("@vcad/ir").Document,
   documentId: string,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const toolArgs = normalizeNodeRefs(toolName, rawArgs);
+  const toolArgs = normalizeNodeRefs(toolName, rawArgs, doc);
   // `delete` and `set_material` go directly to applyToolOutcome — the
   // Rust planner expects CRDT stable_ids, but the IR-direct MCP path
   // uses stringified NodeIds for part_id. The args are already
@@ -458,6 +475,7 @@ export function runMutation(
   if (toolName === "delete") {
     const partId = String((toolArgs as { part_id?: unknown }).part_id ?? "");
     if (!partId) throw new Error("delete: missing `part_id`");
+    const deprecation = partIdDeprecation(partId, rootForPartId(doc, partId));
     const applied = applyToolOutcome(doc, {
       kind: "remove_part",
       part_id: partId,
@@ -469,6 +487,7 @@ export function runMutation(
           text: JSON.stringify({
             document_id: documentId,
             removed: applied.partId,
+            ...(deprecation ? { warnings: [deprecation] } : {}),
           }),
         },
       ],
@@ -481,6 +500,7 @@ export function runMutation(
     );
     if (!partId) throw new Error("set_material: missing `part_id` (bulk forms not yet supported via MCP)");
     if (!material) throw new Error("set_material: missing `material`");
+    const deprecation = partIdDeprecation(partId, rootForPartId(doc, partId));
     const applied = applyToolOutcome(doc, {
       kind: "set_part_material",
       part_id: partId,
@@ -494,6 +514,7 @@ export function runMutation(
             document_id: documentId,
             part_id: applied.partId,
             material,
+            ...(deprecation ? { warnings: [deprecation] } : {}),
           }),
         },
       ],
@@ -601,11 +622,12 @@ function handleRead(
       ],
     };
   }
-  const idx = doc.roots.findIndex((r) => String(r.root) === partId);
-  if (idx < 0) {
+  const resolved = rootForPartId(doc, String(partId));
+  if (!resolved) {
     throw new Error(`read: no part with id "${partId}"`);
   }
-  const root = doc.roots[idx];
+  const root = resolved.entry;
+  const deprecation = partIdDeprecation(String(partId), resolved);
   // Walk descendant nodes for the feature tree, keyed by node id.
   const tree: Record<string, unknown> = {};
   const stack = [root.root];
@@ -624,9 +646,11 @@ function handleRead(
       {
         type: "text",
         text: JSON.stringify({
-          part_id: partId,
+          part_id: resolved.partId,
+          node_id: String(root.root),
           material: root.material,
           nodes: tree,
+          ...(deprecation ? { warnings: [deprecation] } : {}),
         }),
       },
     ],

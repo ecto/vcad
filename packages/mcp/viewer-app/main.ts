@@ -577,7 +577,8 @@ const SELECT_EMISSIVE = 0xf92672; // --brand
 function partInfoFor(object: THREE.Object3D): SelectedPart | null {
   let o: THREE.Object3D | null = object;
   while (o) {
-    const m = /^(\d+):(.*)$/.exec(o.name);
+    // Stable "replica:seq" ids ("0:7:Flange"); a bare digit id is legacy.
+    const m = /^(\d+:\d+|\d+):(.*)$/.exec(o.name);
     if (m) {
       return { partId: m[1], name: m[2] || `part ${m[1]}`, object: o };
     }
@@ -1151,7 +1152,8 @@ function reselectById(partId: string): void {
   let found: SelectedPart | null = null;
   currentModel.traverse((o) => {
     if (found) return;
-    const m = /^(\d+):(.*)$/.exec(o.name);
+    // Stable "replica:seq" ids ("0:7:Flange"); a bare digit id is legacy.
+    const m = /^(\d+:\d+|\d+):(.*)$/.exec(o.name);
     if (m && m[1] === partId) {
       found = { partId: m[1], name: m[2] || `part ${m[1]}`, object: o };
     }
@@ -2757,15 +2759,15 @@ if (location.hash.startsWith("#dev")) {
     // Names follow the server's "<part_id>:<name>" GLB convention so
     // click-to-select can be exercised hostless.
     const flange = new THREE.Mesh(new THREE.CylinderGeometry(30, 30, 8, 64), steel);
-    flange.name = "1:Flange";
+    flange.name = "0:1:Flange";
     flange.rotation.x = Math.PI / 2;
     flange.position.z = 4;
     const boss = new THREE.Mesh(new THREE.CylinderGeometry(12, 12, 30, 48), steel);
-    boss.name = "2:Boss";
+    boss.name = "0:2:Boss";
     boss.rotation.x = Math.PI / 2;
     boss.position.z = 23;
     const cap = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 4, 48), plastic);
-    cap.name = "3:Cap";
+    cap.name = "0:3:Cap";
     cap.rotation.x = Math.PI / 2;
     cap.position.z = 40;
     sample.add(flange, boss, cap);

@@ -37,6 +37,7 @@ import type {
 import type { Document } from "@vcad/ir";
 
 import { getSession } from "./session-core.js";
+import { rootForPartId } from "./part-ids.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 /** Faces returned before the result switches to summary-only. */
@@ -87,8 +88,16 @@ function resolveParts(
     return { error: "This document has no visible geometry to inspect." };
   }
 
+  // Accept a stable part id (or legacy digit id) by mapping it to its root
+  // node; `node_id` and exact names still match directly.
+  const rootNode = partRef ? rootForPartId(doc, partRef)?.entry.root : undefined;
   const wanted = partRef
-    ? all.parts.filter((p) => p.node_id === partRef || p.name === partRef)
+    ? all.parts.filter(
+        (p) =>
+          p.node_id === partRef ||
+          p.name === partRef ||
+          (rootNode !== undefined && p.node_id === String(rootNode)),
+      )
     : all.parts;
 
   if (wanted.length === 0) {

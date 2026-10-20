@@ -26,12 +26,13 @@
 import type { Engine, SheetMetalFromSolid } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { getSession } from "./session.js";
+import { findPartCandidate, partIdForNode } from "./part-ids.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 interface FlatPatternGroup {
   pattern_id: string;
   quantity: number;
-  parts: Array<{ root_id: number; name?: string }>;
+  parts: Array<{ part_id: string; root_id: number; name?: string }>;
   thickness_mm: number;
   flat: { bbox: number[]; area_mm2: number; width_mm: number; height_mm: number };
   panels: SheetMetalFromSolid["panels"];
@@ -119,6 +120,7 @@ function solidParts(doc: Document, engine: Engine) {
   const visibleRoots = doc.roots.filter((e) => e.visible !== false);
   const out: Array<{
     rootId: number;
+    id: string;
     name?: string;
     mesh: { positions: ArrayLike<number>; indices: ArrayLike<number> };
   }> = [];
@@ -127,7 +129,7 @@ function solidParts(doc: Document, engine: Engine) {
     const node = doc.nodes[String(rootId)];
     const mesh = scene.parts[i].mesh;
     if (!mesh || mesh.positions.length === 0) continue;
-    out.push({ rootId, name: node?.name ?? undefined, mesh });
+    out.push({ rootId, id: partIdForNode(doc, rootId), name: node?.name ?? undefined, mesh });
   }
   return out;
 }
@@ -191,19 +193,18 @@ export function flatPatternFromSolid(
     throw new Error("Document has no solid parts to flatten");
   }
   const partId = a.part_id !== undefined ? String(a.part_id) : undefined;
-  const targets = partId
-    ? all.filter((p) => String(p.rootId) === partId)
-    : all;
+  const picked = partId ? findPartCandidate(doc, all, partId) : undefined;
+  const targets = partId ? (picked ? [picked] : []) : all;
   if (targets.length === 0) {
     throw new Error(
       `No part with id "${partId}". Available: ${all
-        .map((c) => `${c.rootId}${c.name ? ` (${c.name})` : ""}`)
+        .map((c) => `${c.id}${c.name ? ` (${c.name})` : ""}`)
         .join(", ")}`,
     );
   }
 
   const groups = new Map<string, FlatPatternGroup>();
-  const failed: Array<{ root_id: number; name?: string; reason: string }> = [];
+  const failed: Array<{ part_id: string; root_id: number; name?: string; reason: string }> = [];
 
   for (const part of targets) {
     let r: SheetMetalFromSolid;
@@ -211,6 +212,7 @@ export function flatPatternFromSolid(
       r = engine.flattenSolidToSheetMetal(part.mesh, options);
     } catch (e) {
       failed.push({
+        part_id: part.id,
         root_id: part.rootId,
         ...(part.name ? { name: part.name } : {}),
         reason: e instanceof Error ? e.message : String(e),
@@ -222,6 +224,7 @@ export function flatPatternFromSolid(
     if (existing) {
       existing.quantity += 1;
       existing.parts.push({
+        part_id: part.id,
         root_id: part.rootId,
         ...(part.name ? { name: part.name } : {}),
       });
@@ -232,7 +235,7 @@ export function flatPatternFromSolid(
     groups.set(sig, {
       pattern_id: `pattern-${groups.size + 1}`,
       quantity: 1,
-      parts: [{ root_id: part.rootId, ...(part.name ? { name: part.name } : {}) }],
+      parts: [{ part_id: part.id, root_id: part.rootId, ...(part.name ? { name: part.name } : {}) }],
       thickness_mm: r.thickness,
       flat: {
         bbox: r.flatPattern.bbox,
