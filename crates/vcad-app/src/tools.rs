@@ -41,8 +41,141 @@ pub fn lower(tool: &str, args: &Value, doc: &DocumentApi) -> Result<DocCommand, 
             let name = args.get("name").and_then(Value::as_str).map(str::to_string);
             lower_create(tool, args, None, name, doc)
         }
+        "delete" => Ok(DocCommand::DeleteFeature {
+            id: str_arg(args, "part_id", tool)?.to_string(),
+        }),
+        "set_material" => lower_set_material(args, doc),
+        "update" => lower_update(args, doc),
         other => Err(unsupported(other)),
     }
+}
+
+/// `set_material` with one of `part_id`, `part_ids[]` or
+/// `selector {by: kind|name_prefix|name_contains|name_equals, value}`
+/// (case-insensitive). Applied as one batch, so an unknown id refuses the
+/// whole call instead of half-painting the model.
+fn lower_set_material(args: &Value, doc: &DocumentApi) -> Result<DocCommand, CommandError> {
+    let material = str_arg(args, "material", "set_material")?.to_string();
+    let ids: Vec<String> = if let Some(ids) = args
+        .get("part_ids")
+        .and_then(Value::as_array)
+        .filter(|a| !a.is_empty())
+    {
+        ids.iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect()
+    } else if let Some(id) = args.get("part_id").and_then(Value::as_str) {
+        vec![id.to_string()]
+    } else if let Some(sel) = args.get("selector") {
+        let by = str_arg(sel, "by", "set_material selector")?;
+        let value = sel
+            .get("value")
+            .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_string))
+            .ok_or_else(|| invalid("set_material selector requires `value`".into()))?
+            .to_lowercase();
+        let ids: Vec<String> = parts_json(doc)
+            .into_iter()
+            .filter(|p| {
+                let field = |k: &str| {
+                    p.get(k)
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_lowercase()
+                };
+                match by {
+                    "kind" => field("kind") == value,
+                    "name_prefix" => field("name").starts_with(&value),
+                    "name_contains" => field("name").contains(&value),
+                    "name_equals" => field("name") == value,
+                    _ => false,
+                }
+            })
+            .filter_map(|p| p.get("id").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        if ids.is_empty() {
+            return Err(invalid(format!(
+                "set_material: selector {sel} matched zero parts"
+            )));
+        }
+        ids
+    } else {
+        return Err(invalid(
+            "set_material requires one of: part_id, part_ids[], or selector{by,value}".into(),
+        ));
+    };
+    let mut commands: Vec<DocCommand> = ids
+        .into_iter()
+        .map(|id| DocCommand::SetMaterial {
+            id,
+            material: material.clone(),
+        })
+        .collect();
+    Ok(if commands.len() == 1 {
+        commands.remove(0)
+    } else {
+        DocCommand::Batch { commands }
+    })
+}
+
+/// `update {node_id, params}`: set raw params on the part that owns
+/// `node_id` (an IR node id or the part's own id). Numbers, booleans,
+/// strings and `{x, y, z}` vectors map to CRDT values.
+fn lower_update(args: &Value, doc: &DocumentApi) -> Result<DocCommand, CommandError> {
+    let node = args
+        .get("node_id")
+        .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_string))
+        .ok_or_else(|| invalid("update requires `node_id`".into()))?;
+    let params = args
+        .get("params")
+        .and_then(Value::as_object)
+        .filter(|m| !m.is_empty())
+        .ok_or_else(|| invalid("update requires non-empty `params`".into()))?;
+    let node_num = node.parse::<u64>().ok();
+    let is_node = |v: &Value| node_num.is_some() && v.as_u64() == node_num;
+    let owner = parts_json(doc)
+        .into_iter()
+        .find(|p| {
+            p.get("id").and_then(Value::as_str) == Some(node.as_str())
+                || p.as_object().is_some_and(|m| {
+                    m.iter().any(|(k, v)| {
+                        k.ends_with("NodeId")
+                            && (is_node(v) || v.as_array().is_some_and(|a| a.iter().any(is_node)))
+                    })
+                })
+        })
+        .and_then(|p| p.get("id").and_then(Value::as_str).map(str::to_string))
+        .ok_or_else(|| CommandError::UnknownId { id: node.clone() })?;
+    let commands = params
+        .iter()
+        .filter_map(|(key, v)| {
+            let value = match v {
+                Value::Number(n) => vcad_crdt::Value::F64(n.as_f64()?),
+                Value::Bool(b) => vcad_crdt::Value::Bool(*b),
+                Value::String(s) => vcad_crdt::Value::String(s.clone()),
+                Value::Object(_) => vcad_crdt::Value::Vec3([
+                    v.get("x")?.as_f64()?,
+                    v.get("y")?.as_f64()?,
+                    v.get("z")?.as_f64()?,
+                ]),
+                _ => return None,
+            };
+            Some(DocCommand::SetParam {
+                id: owner.clone(),
+                key: key.clone(),
+                value,
+            })
+        })
+        .collect();
+    Ok(DocCommand::Batch { commands })
+}
+
+fn parts_json(doc: &DocumentApi) -> Vec<Value> {
+    doc.get_state()
+        .parts
+        .iter()
+        .filter_map(|p| serde_json::to_value(p).ok())
+        .collect()
 }
 
 fn lower_create(
@@ -731,6 +864,81 @@ mod tests {
             matches!(err, CommandError::Invalid { ref message } if message.contains("not closed")),
             "{err:?}"
         );
+    }
+
+    #[test]
+    fn set_material_selector_and_fail_closed_batch() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        for name in ["Bolt A", "Bolt B", "Plate"] {
+            apply_ok(
+                &mut api,
+                "create",
+                json!({"type": "cylinder", "name": name}),
+            );
+        }
+        apply_ok(
+            &mut api,
+            "set_material",
+            json!({"material": "steel", "selector": {"by": "name_prefix", "value": "bolt"}}),
+        );
+        let steel = api
+            .get_state()
+            .document
+            .roots
+            .iter()
+            .filter(|r| r.material == "steel")
+            .count();
+        assert_eq!(steel, 2);
+        let v: Value = serde_json::from_str(&api.apply_tool_envelope(
+            "set_material",
+            &json!({"material": "brass", "part_ids": ["1:0", "missing"]}).to_string(),
+        ))
+        .unwrap();
+        assert_eq!(v["error"]["kind"], "batch");
+        let v: Value = serde_json::from_str(
+            &api.apply_tool_envelope(
+                "set_material",
+                &json!({"material": "brass", "selector": {"by": "kind", "value": "sphere"}})
+                    .to_string(),
+            ),
+        )
+        .unwrap();
+        assert_eq!(v["error"]["kind"], "invalid");
+    }
+
+    #[test]
+    fn update_targets_the_part_that_owns_the_node() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        apply_ok(
+            &mut api,
+            "create",
+            json!({"type": "sphere", "params": {"radius": 1}}),
+        );
+        apply_ok(
+            &mut api,
+            "create",
+            json!({"type": "sphere", "params": {"radius": 2}}),
+        );
+        let second = serde_json::to_value(&api.get_state().parts[1]).unwrap();
+        let node = second["primitiveNodeId"].clone();
+        apply_ok(
+            &mut api,
+            "update",
+            json!({"node_id": node, "params": {"radius": 9}}),
+        );
+        let doc = api.get_state().document;
+        let radius = |n: &Value| match &doc.nodes[&n.as_u64().unwrap()].op {
+            vcad_ir::CsgOp::Sphere { radius, .. } => *radius,
+            other => panic!("{other:?}"),
+        };
+        let first = serde_json::to_value(&api.get_state().parts[0]).unwrap();
+        assert_eq!(radius(&first["primitiveNodeId"]), 1.0);
+        assert_eq!(radius(&node), 9.0);
+        let v: Value = serde_json::from_str(
+            &api.apply_tool_envelope("update", r#"{"node_id": 999, "params": {"radius": 1}}"#),
+        )
+        .unwrap();
+        assert_eq!(v["error"]["kind"], "unknown_id");
     }
 
     #[test]

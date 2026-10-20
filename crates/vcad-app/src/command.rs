@@ -245,7 +245,7 @@ impl DocumentApi {
 
     fn check(&self, cmd: &DocCommand) -> Result<(), CommandError> {
         for id in cmd.required_ids() {
-            if self.stable_ids().resolve(id).is_none() {
+            if !self.feature_exists(id) {
                 return Err(CommandError::UnknownId { id: id.to_string() });
             }
         }
@@ -483,6 +483,26 @@ mod tests {
         assert_eq!(err["ok"], false);
         assert_eq!(err["error"]["kind"], "unknown_id");
         assert_eq!(err["error"]["message"], "no feature with id `x`");
+    }
+
+    #[test]
+    fn deleted_features_are_unknown() {
+        let mut api = api();
+        let id = api
+            .apply(DocCommand::AddFeature {
+                feature: cube(),
+                name: None,
+            })
+            .unwrap()
+            .created_feature_id
+            .unwrap();
+        api.apply(DocCommand::DeleteFeature { id: id.clone() })
+            .unwrap();
+        assert_eq!(
+            api.apply(DocCommand::DeleteFeature { id: id.clone() })
+                .unwrap_err(),
+            CommandError::UnknownId { id }
+        );
     }
 
     #[test]

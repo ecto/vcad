@@ -1,0 +1,117 @@
+{
+  "replica": 5,
+  "steps": [
+    {
+      "tool": "create",
+      "args": {
+        "name": "Bolt A",
+        "params": {
+          "height": 12,
+          "radius": 2
+        },
+        "type": "cylinder"
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "name": "Bolt B",
+        "params": {
+          "height": 12,
+          "radius": 2
+        },
+        "type": "cylinder"
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "name": "Bracket",
+        "type": "cube"
+      }
+    },
+    {
+      "tool": "set_material",
+      "args": {
+        "material": "steel",
+        "selector": {
+          "by": "name_prefix",
+          "value": "BOLT"
+        }
+      }
+    },
+    {
+      "tool": "set_material",
+      "args": {
+        "material": "aluminum",
+        "part_id": "5:2"
+      }
+    },
+    {
+      "tool": "set_material",
+      "args": {
+        "material": "brass",
+        "part_ids": [
+          "5:0",
+          "5:404"
+        ]
+      }
+    },
+    {
+      "tool": "set_material",
+      "args": {
+        "material": "brass",
+        "selector": {
+          "by": "kind",
+          "value": "torus"
+        }
+      }
+    },
+    {
+      "tool": "update",
+      "args": {
+        "node_id": "5:1",
+        "params": {
+          "radius": 3.5
+        }
+      }
+    },
+    {
+      "tool": "update",
+      "args": {
+        "node_id": 424242,
+        "params": {
+          "radius": 1
+        }
+      }
+    },
+    {
+      "tool": "delete",
+      "args": {
+        "part_id": "5:1"
+      }
+    },
+    {
+      "tool": "delete",
+      "args": {
+        "part_id": "5:1"
+      }
+    }
+  ],
+  "expect": {
+    "outcomes": [
+      "ok:5:0",
+      "ok:5:1",
+      "ok:5:2",
+      "ok:-",
+      "ok:-",
+      "err:batch",
+      "err:invalid",
+      "ok:-",
+      "err:unknown_id",
+      "ok:-",
+      "err:unknown_id"
+    ],
+    "hash": "a2066f120a0947b1"
+  }
+}
