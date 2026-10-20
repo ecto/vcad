@@ -209,7 +209,14 @@ impl DocumentApi {
     /// Reorder a feature to a new position.
     pub fn reorder_feature(&mut self, stable_id: &str, new_index: u32) -> ApiResult {
         if let Some(fid) = self.stable_ids.resolve(stable_id) {
-            let ordered = self.crdt.ordered_features();
+            // Neighbours are computed without the moving feature, so `index`
+            // is its final position in the list.
+            let ordered: Vec<_> = self
+                .crdt
+                .ordered_features()
+                .into_iter()
+                .filter(|(id, _)| *id != fid)
+                .collect();
             let idx = new_index as usize;
 
             let before = if idx > 0 {

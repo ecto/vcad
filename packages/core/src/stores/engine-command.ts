@@ -51,6 +51,12 @@ export interface CommandEngine {
   set_joint_state(id: string, state: number): CommandResult;
   // These three predate consumedPartIds; the fallback fills it in empty.
   import_ir(ir_json: string): LegacyResult;
+  set_param(feature_id_json: string, key: string, value_json: string): LegacyResult;
+  create_feature(kind: string, params_json: string): LegacyResult & { createdFeatureId?: string };
+  delete_feature(feature_id_json: string): LegacyResult;
+  get_ordered_features_json(): string;
+  compute_position_between(before_id_json: string, after_id_json: string): string;
+  move_feature(feature_id_json: string, position_json: string): LegacyResult;
   undo(): LegacyResult;
   redo(): LegacyResult;
 }
@@ -119,6 +125,19 @@ function applyLegacy(engine: CommandEngine, c: DocCommand): CommandResult {
       return engine.set_joint_state(c.id, c.state);
     case "import_ir":
       return { consumedPartIds: [], ...engine.import_ir(JSON.stringify(c.document)) };
+    case "set_param":
+      return { consumedPartIds: [], ...engine.set_param(c.id, c.key, JSON.stringify(c.value)) };
+    case "create_feature":
+      return { consumedPartIds: [], ...engine.create_feature(c.kind, JSON.stringify(c.params ?? {})) };
+    case "reorder": {
+      const others = (JSON.parse(engine.get_ordered_features_json()) as { id: string }[]).filter(
+        (f) => f.id !== c.id,
+      );
+      const before = c.index > 0 ? (others[c.index - 1]?.id ?? "") : "";
+      const after = others[c.index]?.id ?? "";
+      const position = engine.compute_position_between(before, after);
+      return { consumedPartIds: [], ...engine.move_feature(c.id, position) };
+    }
     case "undo":
       return { consumedPartIds: [], ...engine.undo() };
     case "redo":
