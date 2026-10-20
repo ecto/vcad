@@ -109,6 +109,7 @@ import {
 } from "./session.js";
 import { buildKernelEventPayload } from "./kernel-event.js";
 import { emClaim } from "./em-claims.js";
+import { lookupOrderable, searchOrderable } from "./part-stock.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
@@ -13601,8 +13602,15 @@ export async function searchElectronicParts(args: Record<string, unknown>) {
   const query = typeof args.query === "string" ? args.query : "";
   const limit = typeof args.limit === "number" ? Math.max(1, Math.round(args.limit)) : 5;
   const results = await kernelSearchPartsEcad(query, limit);
+  // Real orderable MPNs (ICs, FETs, connectors) from the curated sourcing DB.
+  const orderable = searchOrderable(query, limit);
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ query, count: results.length, results }) }],
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ query, count: results.length, results, orderable_count: orderable.length, orderable }),
+      },
+    ],
   };
 }
 
@@ -13626,6 +13634,13 @@ export async function resolvePart(args: Record<string, unknown>) {
       content: [{ type: "text" as const, text: JSON.stringify({ kind: "jellybean", ...def }) }],
     };
   }
+  // Then the orderable sourcing DB (MPN / alias / LCSC#).
+  const orderable = lookupOrderable(query);
+  if (orderable) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify({ kind: "orderable", ...orderable }) }],
+    };
+  }
   return {
     content: [
       {
@@ -13641,8 +13656,21 @@ export async function resolvePart(args: Record<string, unknown>) {
 export async function findAlternatives(args: Record<string, unknown>) {
   const query = typeof args.query === "string" ? args.query : "";
   const alts = await kernelFindAlternatives(query);
+  // Curated substitutes for orderable parts (same footprint / pin-compatible).
+  const part = lookupOrderable(query);
+  const orderable_alternatives = part?.alternatives ?? [];
   return {
-    content: [{ type: "text" as const, text: JSON.stringify({ query, count: alts.length, alternatives: alts }) }],
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          query,
+          count: alts.length,
+          alternatives: alts,
+          ...(part ? { orderable: { id: part.id, mpn: part.mpn, lcsc: part.lcsc }, orderable_alternatives } : {}),
+        }),
+      },
+    ],
   };
 }
 

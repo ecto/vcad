@@ -134,6 +134,7 @@ import { toolDefs as orderToolDefs } from "./tools/order.js";
 import { toolDefs as orderingToolDefs } from "./tools/ordering.js";
 import { toolDefs as bomToolDefs } from "./tools/bom.js";
 import { toolDefs as mechPartsToolDefs } from "./tools/mech-parts.js";
+import { toolDefs as partStockToolDefs } from "./tools/part-stock.js";
 import { toolDefs as liveShareToolDefs } from "./tools/live-share.js";
 import { toolDefs as partsToolDefs } from "./tools/parts.js";
 import { toolDefs as previewToolDefs } from "./tools/preview.js";
@@ -331,6 +332,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...orderingToolDefs,
   ...bomToolDefs,
   ...mechPartsToolDefs,
+  ...partStockToolDefs,
   ...liveShareToolDefs,
   ...partsToolDefs,
   ...previewToolDefs,
@@ -412,6 +414,8 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "bom_add_line",
   "bom_export",
   "search_mechanical_parts",
+  "check_part_stock",
+  "bom_check_stock",
   // ── Live review window ─────────────────────────────────────
   "share_session",
   "unshare_session",
@@ -626,7 +630,7 @@ function buildInstructions(kernelPrompt: string | null): string {
     "- Ship with `export_cad` (STL/GLB/STEP) or `open_in_browser` (vcad.io deep link).",
     "- Fix in place: when geometry is wrong, prefer `update` on the offending node over deleting parts and starting over.",
     "- Cut sheet parts you already modelled: `flat_pattern_from_solid` turns any constant-thickness solid — extruded sketch, boolean, imported STEP — into a fab-ready DXF plus a bend table, no sheet-metal re-authoring. Called without `part_id` it does the whole document and groups identical parts into one pattern × quantity; hand its `nest_input` to `sheet_metal_nest`, then `sheet_metal_cost`, for a quote. It fails closed: the emitted profile re-extruded by the detected thickness must reproduce the solid's volume.",
-    "- Deliver the project bill of materials with `bom_create` → `bom_export` (markdown/CSV/JSON with landed-cost totals): link quote_manufacturing quotes on manufactured lines, and source COTS hardware (bearings, shafts, standoffs, screws, ferrite magnets) with `search_mechanical_parts`. All BOM prices are estimates and flagged as such.",
+    "- Deliver the project bill of materials with `bom_create` → `bom_export` (markdown/CSV/JSON with landed-cost totals): link quote_manufacturing quotes on manufactured lines, and source COTS hardware (bearings, shafts, standoffs, screws, ferrite magnets) with `search_mechanical_parts`. Check electronic lines against live LCSC/JLCPCB stock and price with `bom_check_stock` (or one part with `check_part_stock`). All BOM prices are estimates and flagged as such.",
     "",
     "",
     "Sessions and server restarts: a `document_id` is a handle to server-side state, NOT storage. If ANY preview goes dark, a widget stops updating, or a call fails with an unknown `document_id`, check `server_info` FIRST — a low `uptime_s` or a changed `instance_id` means the SERVER RESTARTED and the feature is fine. That is the fastest way to tell a restart from a bug, and it should be the first check for any preview-shaped complaint. On a restart every live document_id dies at once, so previously-working widgets all go dark together — that is not a renderer bug. When `server_info` reports `durable:false`, sessions are in-memory only and cannot be recovered: keep the authoring source (your `create_cad_loon` call or record of edits) so a document can be rebuilt, and snapshot long-lived work with `checkpoint_document` / `save_document`. Every tool result also carries `_meta['io.vcad/build']` with `boot_token` + `instance_id`, so a changed value flags a restart without polling.",
