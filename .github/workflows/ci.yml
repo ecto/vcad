@@ -94,6 +94,10 @@ jobs:
       - name: Run Rust tests
         id: rust-tests
         run: cargo nextest run --workspace --profile ci --no-fail-fast
+        env:
+          # DocCommand property tests (crates/vcad-app/tests/command_algebra.rs):
+          # a quick sweep on PRs, a deep one on the nightly schedule.
+          VCAD_ALGEBRA_CASES: ${{ github.event_name == 'schedule' && '20000' || '200' }}
       # nextest does not execute doctests; retain cargo's coverage explicitly.
       - name: Rust doctests
         if: ${{ !cancelled() && (success() || steps.rust-tests.outcome == 'failure') }}
