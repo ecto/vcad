@@ -207,6 +207,11 @@ fn check_pin_type_conflicts(sheet: &SchematicSheet, violations: &mut Vec<ErcViol
         }
 
         // Two or more power outputs on the same net.
+        // Several power-output pins of ONE component on one net are a single
+        // source (e.g. an MCU's two VCAP pins, a regulator's paralleled OUT
+        // pins) — only distinct components fight.
+        power_output_pins.sort_unstable();
+        power_output_pins.dedup();
         if power_output_pins.len() > 1 {
             violations.push(ErcViolation {
                 severity: ErcSeverity::Error,
@@ -277,6 +282,54 @@ fn check_power_pins_on_power_nets(sheet: &SchematicSheet, violations: &mut Vec<E
 mod tests {
     use super::*;
     use vcad_ir::Vec2;
+
+    #[test]
+    fn same_component_power_outputs_are_one_source() {
+        let pin = |n: &str, t: PinType| SchematicPin {
+            number: n.to_string(),
+            name: format!("P{n}"),
+            pin_type: t,
+            position: Vec2::new(0.0, 0.0),
+        };
+        let mcu = SchematicComponent {
+            pins: vec![
+                pin("48", PinType::PowerOutput),
+                pin("73", PinType::PowerOutput),
+            ],
+            ..make_simple_component("U1", Vec2::new(0.0, 0.0), vec![])
+        };
+        let ldo = SchematicComponent {
+            pins: vec![pin("1", PinType::PowerOutput)],
+            ..make_simple_component("U2", Vec2::new(50.0, 0.0), vec![])
+        };
+        let sheet = |comps: Vec<SchematicComponent>, pins: &[&str]| SchematicSheet {
+            components: comps,
+            nets: Some(
+                [(
+                    "VCAP".to_string(),
+                    pins.iter().map(|p| p.to_string()).collect(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            title: None,
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+        };
+        let conflicts = |s: &SchematicSheet| {
+            let mut v = Vec::new();
+            check_pin_type_conflicts(s, &mut v);
+            v.iter()
+                .filter(|v| v.message.contains("multiple power outputs"))
+                .count()
+        };
+        assert_eq!(conflicts(&sheet(vec![mcu.clone()], &["U1.48", "U1.73"])), 0);
+        assert_eq!(
+            conflicts(&sheet(vec![mcu, ldo], &["U1.48", "U1.73", "U2.1"])),
+            1
+        );
+    }
 
     fn make_simple_component(
         reference: &str,

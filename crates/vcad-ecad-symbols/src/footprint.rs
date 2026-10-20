@@ -1077,7 +1077,142 @@ fn qfn_via_derive(pins: u32, pitch: f64, body: f64, ep: f64) -> Option<Footprint
     vcad_ecad_package::derive(&pc).ok().map(|d| d.footprint)
 }
 
+// ============================================================================
+// Power MOSFET packages and high-current wire-to-board connectors
+// ============================================================================
+//
+// Power FETs collapse their multi-lead source/drain rows into one pad per
+// terminal, numbered 1 = G, 2 = S, 3 = D (the netlist model schematics use for
+// discrete FETs). Geometry is NOMINAL — derived from the manufacturers'
+// package outlines, not a land-pattern standard — and must be checked against
+// the vendor's recommended footprint before fabrication.
+
+/// Infineon PG-HSOF-8 (TOLL, 9.9 × 11.7 mm): gate + 7 source leads on one
+/// edge, drain tab opposite.
+fn toll() -> FootprintTemplate {
+    let pads = vec![
+        rect_smd("1", -4.2, 4.9, 0.8, 1.9),  // gate (lead 1)
+        rect_smd("2", 0.6, 4.9, 7.6, 1.9),   // source (leads 2–8, 1.2 mm pitch)
+        rect_smd("3", 0.0, -1.6, 10.0, 7.6), // drain tab
+    ];
+    FootprintTemplate {
+        name: "TOLL".into(),
+        pads,
+        graphics: ic_graphics(10.4, 12.2),
+    }
+}
+
+/// Infineon PG-TDSON-8 (SuperSO8, 5 × 6 mm) and PG-TSDSON-8 (S3O8, 3.3 ×
+/// 3.3 mm): leads 1–3 source, 4 gate on one edge; leads 5–8 + exposed pad drain.
+fn power_son8(name: &str, pitch: f64, body: (f64, f64)) -> FootprintTemplate {
+    let (bw, bh) = body;
+    let lead_y = bh / 2.0 - 0.35;
+    let lead_h = 0.9_f64.min(bh * 0.2);
+    let lead_w = pitch * 0.55;
+    let pads = vec![
+        rect_smd("1", 1.5 * pitch, lead_y, lead_w, lead_h), // gate (lead 4)
+        rect_smd("2", -0.5 * pitch, lead_y, 2.0 * pitch + lead_w, lead_h), // source (leads 1–3)
+        rect_smd("3", 0.0, -0.1 * bh, bw * 0.85, bh * 0.6), // drain pad + leads 5–8
+    ];
+    FootprintTemplate {
+        name: name.into(),
+        pads,
+        graphics: ic_graphics(bw + 0.4, bh + 0.4),
+    }
+}
+
+/// AMASS XT-series PCB plugs. `power` = (pitch, drill); `signal` = optional
+/// 2-pin signal pair (pitch, drill, y offset) for the (2+2) variants.
+fn amass_xt(
+    name: &str,
+    power: (f64, f64),
+    signal: Option<(f64, f64, f64)>,
+    body: (f64, f64),
+) -> FootprintTemplate {
+    let (pp, pd) = power;
+    let mut pads = vec![
+        circle_tht("1", -pp / 2.0, 0.0, pd + 0.8, pd),
+        circle_tht("2", pp / 2.0, 0.0, pd + 0.8, pd),
+    ];
+    if let Some((sp, sd, sy)) = signal {
+        pads.push(circle_tht("3", -sp / 2.0, sy, sd + 0.6, sd));
+        pads.push(circle_tht("4", sp / 2.0, sy, sd + 0.6, sd));
+    }
+    FootprintTemplate {
+        name: name.into(),
+        pads,
+        graphics: ic_graphics(body.0, body.1),
+    }
+}
+
+/// Molex Micro-Fit 3.0 dual-row, 3.0 mm pitch (43045 RA / 43650-style).
+/// Pins 1..n/2 on the row nearer the mating face, as Molex numbers them.
+fn microfit_dual(cols: u32) -> FootprintTemplate {
+    let mut pads = Vec::new();
+    let x0 = -((cols as f64) - 1.0) * 1.5;
+    for row in 0..2u32 {
+        for c in 0..cols {
+            let num = row * cols + c + 1;
+            pads.push(circle_tht(
+                &num.to_string(),
+                x0 + c as f64 * 3.0,
+                row as f64 * 3.0,
+                1.9,
+                1.02,
+            ));
+        }
+    }
+    let w = cols as f64 * 3.0 + 3.4;
+    FootprintTemplate {
+        name: format!("Micro-Fit_2x{cols:02}"),
+        pads,
+        graphics: ic_graphics(w, 9.9),
+    }
+}
+
+fn match_power_family(base: &str) -> Option<(FootprintTemplate, &'static str)> {
+    if base.contains("HSOF-8") || base.contains("TOLL") {
+        return Some((toll(), "TOLL"));
+    }
+    if base.contains("TSDSON-8") {
+        return Some((power_son8("TSDSON-8", 0.65, (3.3, 3.3)), "PowerSON8"));
+    }
+    if base.contains("TDSON-8") || base.contains("SuperSO8") {
+        return Some((power_son8("TDSON-8", 1.27, (5.15, 6.15)), "PowerSON8"));
+    }
+    if base.contains("XT30PB") && base.contains("2+2") {
+        return Some((
+            amass_xt(
+                "XT30PB(2+2)",
+                (5.0, 1.6),
+                Some((2.5, 0.9, -4.5)),
+                (10.2, 12.0),
+            ),
+            "AMASS-XT",
+        ));
+    }
+    if base.contains("XT30PW") || base.contains("XT30PB") {
+        return Some((
+            amass_xt("XT30PW", (5.0, 1.6), None, (10.2, 8.0)),
+            "AMASS-XT",
+        ));
+    }
+    if base.contains("XT60") {
+        return Some((amass_xt("XT60", (7.2, 2.4), None, (15.8, 8.2)), "AMASS-XT"));
+    }
+    if base.contains("Micro-Fit") || base.contains("MicroFit") {
+        let cols = rows_cols(base)
+            .map(|(r, c)| if r == 2 { c } else { (r * c).div_ceil(2) })
+            .unwrap_or(2);
+        return Some((microfit_dual(cols.max(1)), "Micro-Fit"));
+    }
+    None
+}
+
 fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'static str)> {
+    if let Some(hit) = match_power_family(base) {
+        return Some(hit);
+    }
     // --- Chip passives (imperial + metric synonyms) ------------------------
     // Bounded match only: a bare code must be `_`/boundary-delimited so an
     // embedded run (MAX2512, BGA-1206, ...) doesn't get mistaken for a chip.
@@ -2515,6 +2650,66 @@ mod tests {
                         "{id} pad {} annular ring {:.3}mm < 0.15mm",
                         pad.number,
                         ring
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn power_fets_and_xt_connectors_resolve() {
+        let cases: [(&str, &str, &[&str]); 8] = [
+            ("Infineon_PG-HSOF-8-1_TOLL", "TOLL", &["1", "2", "3"]),
+            ("Infineon_PG-TDSON-8", "PowerSON8", &["1", "2", "3"]),
+            ("Infineon_PG-TSDSON-8", "PowerSON8", &["1", "2", "3"]),
+            (
+                "AMASS_XT30PB_2+2_-M_Horizontal",
+                "AMASS-XT",
+                &["1", "2", "3", "4"],
+            ),
+            ("AMASS_XT30PW-M_Horizontal", "AMASS-XT", &["1", "2"]),
+            ("AMASS_XT60PT-M_Vertical", "AMASS-XT", &["1", "2"]),
+            (
+                "Molex_Micro-Fit_3.0_43045-0412_2x02_P3.00mm_Horizontal",
+                "Micro-Fit",
+                &["1", "2", "3", "4"],
+            ),
+            (
+                "Molex_Micro-Fit_3.0_2x04_P3.00mm",
+                "Micro-Fit",
+                &["1", "2", "3", "4", "5", "6", "7", "8"],
+            ),
+        ];
+        for (name, family, nums) in cases {
+            let r = resolve_footprint(name, 0);
+            assert!(r.matched, "{name}: {}", r.note);
+            assert_eq!(r.family.as_deref(), Some(family), "{name}");
+            let t = r.template.unwrap();
+            let got: Vec<&str> = t.pads.iter().map(|p| p.number.as_str()).collect();
+            assert_eq!(got, nums, "{name}");
+            // No two pads of a land pattern may overlap (bounding boxes).
+            let bbox = |p: &Pad| -> (f64, f64, f64, f64) {
+                let (w, h) = match p.shape {
+                    PadShape::Rect { width, height } => (width, height),
+                    PadShape::Circle { diameter } => (diameter, diameter),
+                    _ => (0.0, 0.0),
+                };
+                (
+                    p.position.x - w / 2.0,
+                    p.position.y - h / 2.0,
+                    p.position.x + w / 2.0,
+                    p.position.y + h / 2.0,
+                )
+            };
+            for (i, a) in t.pads.iter().enumerate() {
+                for b in &t.pads[i + 1..] {
+                    let (a0, a1, a2, a3) = bbox(a);
+                    let (b0, b1, b2, b3) = bbox(b);
+                    let overlap = a0 < b2 && b0 < a2 && a1 < b3 && b1 < a3;
+                    assert!(
+                        !overlap,
+                        "{name}: pads {} and {} overlap",
+                        a.number, b.number
                     );
                 }
             }
