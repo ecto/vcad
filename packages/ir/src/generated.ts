@@ -2173,7 +2173,7 @@ height: number,
 /**
  * Tessellation segments.
  */
-segments: number | null, } | { "type": "Sphere", 
+segments?: number, } | { "type": "Sphere", 
 /**
  * Radius.
  */
@@ -2181,7 +2181,7 @@ radius: number,
 /**
  * Tessellation segments.
  */
-segments: number | null, } | { "type": "Cone", 
+segments?: number, } | { "type": "Cone", 
 /**
  * Bottom radius.
  */
@@ -2197,7 +2197,7 @@ height: number,
 /**
  * Tessellation segments.
  */
-segments: number | null, } | { "type": "Boolean", 
+segments?: number, } | { "type": "Boolean", 
 /**
  * Union, difference, or intersection.
  */
@@ -2225,11 +2225,11 @@ direction: [number, number, number],
 /**
  * Optional twist angle (degrees).
  */
-twist_angle: number | null, 
+twist_angle?: number, 
 /**
  * Optional end scale factor.
  */
-scale_end: number | null, } | { "type": "Revolve", 
+scale_end?: number, } | { "type": "Revolve", 
 /**
  * Sketch data (JSON-serialized CsgOp::Sketch2D).
  */
@@ -2253,19 +2253,19 @@ sketch: string,
 /**
  * Path curve (JSON-serialized PathCurve).
  */
-path: string | null, 
+path?: string, 
 /**
  * Optional twist angle.
  */
-twist_angle: number | null, 
+twist_angle?: number, 
 /**
  * Optional start scale.
  */
-scale_start: number | null, 
+scale_start?: number, 
 /**
  * Optional end scale.
  */
-scale_end: number | null, } | { "type": "Loft", 
+scale_end?: number, } | { "type": "Loft", 
 /**
  * Sketch data for each profile (JSON-serialized CsgOp::Sketch2D).
  */
@@ -2273,7 +2273,7 @@ profiles: Array<string>,
 /**
  * Whether the loft is closed (wraps around).
  */
-closed: boolean | null, } | { "type": "Fillet", 
+closed?: boolean, } | { "type": "Fillet", 
 /**
  * Source feature ID.
  */
@@ -2357,15 +2357,15 @@ depth: number,
 /**
  * Text alignment ("left", "center", "right").
  */
-alignment: string | null, 
+alignment?: string, 
 /**
  * Letter spacing multiplier.
  */
-letter_spacing: number | null, 
+letter_spacing?: number, 
 /**
  * Line spacing multiplier.
  */
-line_spacing: number | null, } | { "type": "ImportedMesh", 
+line_spacing?: number, } | { "type": "ImportedMesh", 
 /**
  * Vertex positions as JSON array of f64.
  */
@@ -2377,23 +2377,23 @@ indices_json: string,
 /**
  * Vertex normals as JSON array of f64.
  */
-normals_json: string | null, 
+normals_json?: string, 
 /**
  * Source filename.
  */
-source: string | null, } | { "type": "PcbBoard", 
+source?: string, } | { "type": "PcbBoard", 
 /**
  * Board data (JSON-serialized Pcb).
  */
-board: string | null, } | { "type": "EmbroideryPattern", 
+board?: string, } | { "type": "EmbroideryPattern", 
 /**
  * Design data (JSON-serialized EmbroideryDesign).
  */
-design: string | null, 
+design?: string, 
 /**
  * Source filename.
  */
-source: string | null, } | { "type": "PartInstance", 
+source?: string, } | { "type": "PartInstance", 
 /**
  * Part source path, e.g. `"std:fastener.bolt.socket-head"`.
  */
@@ -2413,7 +2413,7 @@ source_feature: string,
 /**
  * Optional human-readable name.
  */
-name: string | null, } | { "type": "Instance", 
+name?: string, } | { "type": "Instance", 
 /**
  * Part definition feature ID.
  */
@@ -2421,11 +2421,11 @@ part_def: string,
 /**
  * Optional name.
  */
-name: string | null, 
+name?: string, 
 /**
  * Transform data (JSON-serialized Transform3D).
  */
-transform: string | null, } | { "type": "Joint", 
+transform?: string, } | { "type": "Joint", 
 /**
  * Joint kind ("Fixed", "Revolute", "Slider", "Cylindrical", "Ball").
  */
@@ -2437,7 +2437,7 @@ child_instance: string,
 /**
  * Parent instance feature ID.
  */
-parent_instance: string | null, 
+parent_instance?: string, 
 /**
  * Parent anchor point.
  */
@@ -2449,71 +2449,71 @@ anchor_b: [number, number, number],
 /**
  * Joint axis (for revolute/slider/cylindrical).
  */
-axis: [number, number, number] | null, 
+axis?: [number, number, number], 
 /**
  * Optional name.
  */
-name: string | null, 
+name?: string, 
 /**
  * Joint limits (JSON-serialized JointLimits).
  */
-limits: string | null, } | { "type": "SceneSettings", 
+limits?: string, } | { "type": "SceneSettings", 
 /**
  * Environment settings (JSON).
  */
-environment: string | null, 
+environment?: string, 
 /**
  * Light definitions (JSON).
  */
-lights: string | null, 
+lights?: string, 
 /**
  * Background settings (JSON).
  */
-background: string | null, 
+background?: string, 
 /**
  * Post-processing settings (JSON).
  */
-post_processing: string | null, 
+post_processing?: string, 
 /**
  * Camera presets (JSON).
  */
-camera_presets: string | null, } | { "type": "Schematic", 
+camera_presets?: string, } | { "type": "Schematic", 
 /**
  * Sheet title.
  */
-title: string | null, 
+title?: string, 
 /**
  * Sheet data (JSON-serialized SchematicSheet).
  */
-sheet: string | null, } | { "type": "DrawingSettings", 
+sheet?: string, } | { "type": "DrawingSettings", 
 /**
  * Title block fields (JSON-serialized `DrawingTitleBlock`).
  */
-title_block: string | null, 
+title_block?: string, 
 /**
  * Section lines (JSON-serialized `Vec<DrawingSectionLine>`).
  */
-sections: string | null, 
+sections?: string, 
 /**
  * BOM table visibility (JSON bool).
  */
-show_bom: string | null, } | { "type": "Molecule", 
+show_bom?: string, } | { "type": "Molecule", 
 /**
  * System data (JSON-serialized `MoleculeSystem`).
  */
-system: string | null, } | { "type": "AnalysisStudies", 
+system?: string, } | { "type": "AnalysisStudies", 
 /**
  * Studies data (JSON-serialized `Vec<AnalysisStudy>`).
  */
-studies: string | null, } | { "type": "DesignConstraints", 
+studies?: string, } | { "type": "DesignConstraints", 
 /**
  * Constraints data (JSON-serialized `Vec<DesignConstraint>`).
  */
-constraints: string | null, } | { "type": "Timeline", 
+constraints?: string, } | { "type": "Timeline", 
 /**
  * Timeline data (JSON-serialized `vcad_ir::Timeline`).
  */
-timeline: string | null, };
+timeline?: string, };
 
 /**
  * Parameters controlling how a stitch group is filled.

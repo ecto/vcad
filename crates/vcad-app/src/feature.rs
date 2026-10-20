@@ -73,6 +73,7 @@ pub enum FeatureInput {
         height: f64,
         /// Tessellation segments.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         segments: Option<u32>,
     },
     /// Sphere primitive.
@@ -81,6 +82,7 @@ pub enum FeatureInput {
         radius: f64,
         /// Tessellation segments.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         segments: Option<u32>,
     },
     /// Cone/frustum primitive.
@@ -93,6 +95,7 @@ pub enum FeatureInput {
         height: f64,
         /// Tessellation segments.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         segments: Option<u32>,
     },
     /// Boolean operation between two features.
@@ -114,9 +117,11 @@ pub enum FeatureInput {
         direction: [f64; 3],
         /// Optional twist angle (degrees).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         twist_angle: Option<f64>,
         /// Optional end scale factor.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         scale_end: Option<f64>,
     },
     /// Revolve a sketch profile around an axis.
@@ -136,15 +141,19 @@ pub enum FeatureInput {
         sketch: String,
         /// Path curve (JSON-serialized PathCurve).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         path: Option<String>,
         /// Optional twist angle.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         twist_angle: Option<f64>,
         /// Optional start scale.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         scale_start: Option<f64>,
         /// Optional end scale.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         scale_end: Option<f64>,
     },
     /// Loft between multiple sketch profiles.
@@ -153,6 +162,7 @@ pub enum FeatureInput {
         profiles: Vec<String>,
         /// Whether the loft is closed (wraps around).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         closed: Option<bool>,
     },
     /// Fillet (round edges).
@@ -217,12 +227,15 @@ pub enum FeatureInput {
         depth: f64,
         /// Text alignment ("left", "center", "right").
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         alignment: Option<String>,
         /// Letter spacing multiplier.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         letter_spacing: Option<f64>,
         /// Line spacing multiplier.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         line_spacing: Option<f64>,
     },
     /// Imported triangle mesh.
@@ -233,24 +246,29 @@ pub enum FeatureInput {
         indices_json: String,
         /// Vertex normals as JSON array of f64.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         normals_json: Option<String>,
         /// Source filename.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         source: Option<String>,
     },
     /// PCB board.
     PcbBoard {
         /// Board data (JSON-serialized Pcb).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         board: Option<String>,
     },
     /// Embroidery pattern.
     EmbroideryPattern {
         /// Design data (JSON-serialized EmbroideryDesign).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         design: Option<String>,
         /// Source filename.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         source: Option<String>,
     },
     /// Stdlib or user-published part instance.
@@ -272,6 +290,7 @@ pub enum FeatureInput {
         source_feature: String,
         /// Optional human-readable name.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         name: Option<String>,
     },
     /// Assembly: instance of a part definition.
@@ -280,9 +299,11 @@ pub enum FeatureInput {
         part_def: String,
         /// Optional name.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         name: Option<String>,
         /// Transform data (JSON-serialized Transform3D).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         transform: Option<String>,
     },
     /// Assembly: joint between instances.
@@ -293,6 +314,7 @@ pub enum FeatureInput {
         child_instance: String,
         /// Parent instance feature ID.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         parent_instance: Option<String>,
         /// Parent anchor point.
         anchor_a: [f64; 3],
@@ -300,57 +322,71 @@ pub enum FeatureInput {
         anchor_b: [f64; 3],
         /// Joint axis (for revolute/slider/cylindrical).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         axis: Option<[f64; 3]>,
         /// Optional name.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         name: Option<String>,
         /// Joint limits (JSON-serialized JointLimits).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         limits: Option<String>,
     },
     /// Scene rendering settings.
     SceneSettings {
         /// Environment settings (JSON).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         environment: Option<String>,
         /// Light definitions (JSON).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         lights: Option<String>,
         /// Background settings (JSON).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         background: Option<String>,
         /// Post-processing settings (JSON).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         post_processing: Option<String>,
         /// Camera presets (JSON).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         camera_presets: Option<String>,
     },
     /// Schematic sheet.
     Schematic {
         /// Sheet title.
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         title: Option<String>,
         /// Sheet data (JSON-serialized SchematicSheet).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         sheet: Option<String>,
     },
     /// Drawing sheet settings (title block, section lines, BOM visibility).
     DrawingSettings {
         /// Title block fields (JSON-serialized `DrawingTitleBlock`).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         title_block: Option<String>,
         /// Section lines (JSON-serialized `Vec<DrawingSectionLine>`).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         sections: Option<String>,
         /// BOM table visibility (JSON bool).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         show_bom: Option<String>,
     },
     /// Atomic / molecular system (the `molecule` document domain).
     Molecule {
         /// System data (JSON-serialized `MoleculeSystem`).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         system: Option<String>,
     },
     /// Persisted Analyze-mode solver studies (singleton, like scene
@@ -358,6 +394,7 @@ pub enum FeatureInput {
     AnalysisStudies {
         /// Studies data (JSON-serialized `Vec<AnalysisStudy>`).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         studies: Option<String>,
     },
     /// Persisted document-level design constraints (singleton, like scene
@@ -365,6 +402,7 @@ pub enum FeatureInput {
     DesignConstraints {
         /// Constraints data (JSON-serialized `Vec<DesignConstraint>`).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         constraints: Option<String>,
     },
     /// Document animation timeline (singleton, like scene settings):
@@ -372,6 +410,7 @@ pub enum FeatureInput {
     Timeline {
         /// Timeline data (JSON-serialized `vcad_ir::Timeline`).
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         timeline: Option<String>,
     },
 }

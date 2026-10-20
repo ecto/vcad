@@ -1,0 +1,110 @@
+/**
+ * Send a `DocCommand` to the Rust document engine.
+ *
+ * Every document mutation on the web goes through here, so the web speaks
+ * the same command vocabulary as the native apps (`vcad_engine_apply`) and
+ * the AI planner (`vcad_app::command`). The engine fails closed: an unknown
+ * id or malformed payload comes back as a `CommandError`, which this
+ * throws as a {@link DocCommandError} instead of the old silent no-op.
+ */
+
+import type { CommandError, DocCommand, Document } from "@vcad/ir";
+import type { PartInfo } from "../types.js";
+
+/** Materialized engine state returned by every successful command. */
+export interface CommandResult {
+  document: Document;
+  parts: PartInfo[];
+  consumedPartIds: string[];
+  warnings?: string[];
+  createdFeatureId?: string;
+}
+
+type Envelope =
+  | { ok: true; result: CommandResult }
+  | { ok: false; error: CommandError & { message: string } };
+
+/** A command the engine refused. `error.kind` says why. */
+export class DocCommandError extends Error {
+  constructor(
+    readonly command: DocCommand,
+    readonly error: CommandError & { message: string },
+  ) {
+    super(`${command.type}: ${error.message}`);
+    this.name = "DocCommandError";
+  }
+}
+
+/** The slice of `WasmDocumentEngine` this module needs. */
+export interface CommandEngine {
+  apply?(command_json: string): string;
+  // Pre-`apply` per-method calls, used only by the fallback below.
+  add_feature(input_json: string): CommandResult;
+  delete_feature_by_id(stable_id: string): CommandResult;
+  set_translation(id: string, x: number, y: number, z: number): CommandResult;
+  set_rotation(id: string, x: number, y: number, z: number): CommandResult;
+  set_scale(id: string, x: number, y: number, z: number): CommandResult;
+  set_material(id: string, material: string): CommandResult;
+  set_visible(id: string, visible: boolean): CommandResult;
+  rename_feature(id: string, name: string): CommandResult;
+  set_joint_state(id: string, state: number): CommandResult;
+  // These three predate consumedPartIds; the fallback fills it in empty.
+  import_ir(ir_json: string): LegacyResult;
+  undo(): LegacyResult;
+  redo(): LegacyResult;
+}
+
+type LegacyResult = Omit<CommandResult, "consumedPartIds">;
+
+/** Apply `command`; throws {@link DocCommandError} if the engine refuses it. */
+export function applyCommand(
+  engine: CommandEngine,
+  command: DocCommand,
+): CommandResult {
+  if (typeof engine.apply !== "function") return applyLegacy(engine, command);
+  const envelope = JSON.parse(engine.apply(JSON.stringify(command))) as Envelope;
+  if (!envelope.ok) throw new DocCommandError(command, envelope.error);
+  for (const w of envelope.result.warnings ?? []) console.warn(`[vcad] ${w}`);
+  return envelope.result;
+}
+
+/**
+ * Kernel WASM built before `WasmDocumentEngine.apply` existed. The checked-in
+ * artifacts are refreshed on main after merge (`wasm-refresh.yml`), so this
+ * only bridges that window. Delete once the refreshed artifacts are on main.
+ */
+function applyLegacy(engine: CommandEngine, c: DocCommand): CommandResult {
+  switch (c.type) {
+    case "add_feature": {
+      const r = engine.add_feature(JSON.stringify(c.feature));
+      if (c.name && r.createdFeatureId) {
+        return { ...engine.rename_feature(r.createdFeatureId, c.name), createdFeatureId: r.createdFeatureId };
+      }
+      return r;
+    }
+    case "delete_feature":
+      return engine.delete_feature_by_id(c.id);
+    case "set_translation":
+      return engine.set_translation(c.id, ...c.offset);
+    case "set_rotation":
+      return engine.set_rotation(c.id, ...c.angles);
+    case "set_scale":
+      return engine.set_scale(c.id, ...c.factor);
+    case "set_material":
+      return engine.set_material(c.id, c.material);
+    case "set_visible":
+      return engine.set_visible(c.id, c.visible);
+    case "rename":
+      return engine.rename_feature(c.id, c.name);
+    case "set_joint_state":
+      return engine.set_joint_state(c.id, c.state);
+    case "import_ir":
+      return { consumedPartIds: [], ...engine.import_ir(JSON.stringify(c.document)) };
+    case "undo":
+      return { consumedPartIds: [], ...engine.undo() };
+    case "redo":
+      return { consumedPartIds: [], ...engine.redo() };
+    default:
+      throw new Error(`[vcad] ${c.type} needs a kernel WASM with WasmDocumentEngine.apply`);
+  }
+}
