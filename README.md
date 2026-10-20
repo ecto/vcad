@@ -26,28 +26,16 @@ Open-source parametric CAD for the AI era.
 
 Visit [vcad.io](https://vcad.io) — no install required.
 
-### Desktop App
+### Native Mac App
 
-Download the installer for your platform from the [latest release](https://github.com/ecto/vcad/releases/latest):
+A native SwiftUI app lives in [`apple/VcadApp`](apple/VcadApp) (macOS only;
+other platforms use the web app). Build it from source:
 
-- **macOS** — universal `.dmg` (Intel + Apple Silicon)
-- **Windows** — `.msi` installer
-- **Linux** — `.AppImage`, `.deb`, or `.rpm`
-
-#### First launch on macOS
-
-Releases are not yet notarized with Apple, so on first launch macOS shows
-*"Apple could not verify 'vcad.app' is free of malware"*. To open it:
-
-- **macOS 15+** — open **System Settings → Privacy & Security**, scroll to the
-  "vcad was blocked" notice, click **Open Anyway**, then re-launch vcad.
-- **Earlier macOS** — right-click `vcad.app` in `/Applications` and choose
-  **Open**, then **Open** in the confirmation dialog.
-- **From Terminal** — `xattr -d com.apple.quarantine /Applications/vcad.app`
-  removes the quarantine flag so the app launches normally.
-
-You only need to do this once per install. We'll remove this step once
-Apple Developer signing is set up.
+```bash
+apple/VcadApp/build-ffi.sh   # build the vcad-ffi kernel static library
+apple/VcadApp/bundle.sh      # assemble dist/vcad.app
+open apple/VcadApp/dist/vcad.app
+```
 
 ### CLI
 
@@ -120,14 +108,8 @@ cargo clippy --workspace -- -D warnings
 npm ci
 npm run dev -w @vcad/app   # Run web app locally
 
-# Desktop (optional — Tauri v2 shell)
-# Ubuntu/Debian system deps:
-#   sudo apt install libgtk-3-dev libwebkit2gtk-4.1-dev librsvg2-dev \
-#                    libsoup-3.0-dev libatk1.0-dev
-# macOS: Xcode command-line tools
-# Windows: WebView2 (shipped with Win11)
-npm run tauri:dev          # launches desktop window against the dev server
-npm run tauri:build        # produces a signed/unsigned installer
+# Native Mac app (macOS + Xcode command-line tools)
+apple/VcadApp/build-ffi.sh && apple/VcadApp/bundle.sh
 ```
 
 ## Export controls

@@ -5,7 +5,7 @@
  * so that startup picks the doc the user actually had open last, not whichever
  * row happens to have the highest `modifiedAt` after a background sync.
  *
- * localStorage is shared between web and Tauri webviews and survives reloads.
+ * localStorage survives reloads.
  * A read-only share session must NOT poison the slot — the writer skips when
  * `useUiStore.readOnlyShare` is set.
  */

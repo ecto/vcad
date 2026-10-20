@@ -45,7 +45,6 @@ export function InputPreferencesDialog({
         >
           {/* Header — title + tabs + close */}
           <div
-            data-tauri-drag-region=""
             className="flex items-center justify-between px-4 h-10 border-b border-border"
           >
             <Dialog.Title className="text-sm font-medium text-text">

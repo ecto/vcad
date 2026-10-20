@@ -304,6 +304,13 @@ export function executeCrud(
   uiStore: UiStore,
 ): ExecutionResult {
   const t0 = performance.now();
+  // The engine lowers the tools it knows (vcad_app::tools) and applies them
+  // as DocCommands; "unsupported" tools fall through to the paths below.
+  const engineResult = tryExecuteViaEngine(tool, args, docStore, uiStore);
+  if (engineResult) {
+    engineResult.duration = performance.now() - t0;
+    return engineResult;
+  }
   // Prefer the Rust planner when the kernel exposes plan_chat_tool.
   // Falls through to the TS path when the binding isn't loaded yet,
   // when Rust returns an outcome shape we haven't wired to a docstore
@@ -318,6 +325,77 @@ export function executeCrud(
   const result = executeCrudInner(tool, args, docStore, uiStore);
   result.duration = performance.now() - t0;
   return result;
+}
+
+/** Tools the Rust lowering handles at the top level (besides `create`). */
+const ENGINE_TOOLS = new Set([
+  "create",
+  "linear_pattern",
+  "circular_pattern",
+  "mirror",
+]);
+
+/**
+ * Run a tool through `docStore.applyTool` (Rust lowering + `DocCommand`).
+ * Returns `null` to fall through: old kernel, a tool the engine reports as
+ * unsupported, or a tool outside {@link ENGINE_TOOLS}.
+ */
+function tryExecuteViaEngine(
+  tool: string,
+  args: Record<string, unknown>,
+  docStore: DocStore,
+  uiStore: UiStore,
+): ExecutionResult | null {
+  if (!ENGINE_TOOLS.has(tool)) return null;
+  const kind = tool === "create" ? (CREATE_TYPE_ALIASES[args.type as string] ?? (args.type as string)) : tool;
+  let callArgs: Record<string, unknown> = tool === "create" ? { ...args, type: kind } : args;
+  // Booleans without operands use the current two-part selection.
+  if (tool === "create" && (kind === "union" || kind === "difference" || kind === "intersection")) {
+    const params = { ...((args.params as Record<string, unknown>) ?? {}) };
+    if (!params.left || !params.right) {
+      const selected = Array.from(uiStore.selectedPartIds);
+      if (selected.length !== 2) {
+        return { status: "error", result: "Boolean requires left and right part IDs, or exactly 2 parts selected" };
+      }
+      params.left = selected[0];
+      params.right = selected[1];
+    }
+    callArgs = { ...callArgs, params };
+  }
+  const envelope = docStore.applyTool(tool, callArgs);
+  if (!envelope) return null;
+  if (!envelope.ok) {
+    if (envelope.error.kind === "unsupported") return null;
+    return { status: "error", result: envelope.error.message };
+  }
+  const params = (tool === "create" ? args.params : args) as Record<string, unknown> | undefined;
+  const created = envelope.result.createdFeatureId;
+  const partId = created ?? (params?.child as string | undefined);
+  if (!partId) return { status: "success", result: `Applied ${kind}` };
+  if (created) uiStore.select(created);
+  return {
+    status: "success",
+    result: snapshotJson(partId, docStore, created ? { created: kind } : { applied: kind }),
+    partId,
+    display: {
+      summary: [text(created ? `+ ${kind} ` : `${kind} `), link(partId, docStore)],
+      fields: paramFields(params),
+      affectedPartIds: [partId],
+    },
+  };
+}
+
+/** Display fields for a tool call: its numeric and {x, y, z} params. */
+function paramFields(params: Record<string, unknown> | undefined): Array<{ label: string; value: string }> {
+  const fields: Array<{ label: string; value: string }> = [];
+  for (const [label, v] of Object.entries(params ?? {})) {
+    if (typeof v === "number") fields.push({ label, value: `${v}` });
+    else if (v && typeof v === "object" && "x" in v && "y" in v && "z" in v) {
+      const p = v as Vec3;
+      fields.push({ label, value: `(${p.x}, ${p.y}, ${p.z})` });
+    } else if (typeof v === "string" && label === "plane") fields.push({ label, value: v });
+  }
+  return fields;
 }
 
 /**

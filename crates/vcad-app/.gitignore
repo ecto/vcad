@@ -1,0 +1,3 @@
+# ts-rs generated TypeScript bindings (produced on-demand by the opt-in
+# `cargo test --features ts-rs export_bindings -- --ignored` test).
+/bindings/

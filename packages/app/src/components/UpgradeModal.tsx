@@ -548,7 +548,6 @@ export function UpgradeModal({ open, onOpenChange, reason }: UpgradeModalProps) 
         />
         <Dialog.Content
           aria-describedby={undefined}
-          data-tauri-drag-region=""
           className={cn(
             "upgrade-content fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
             "rounded-xl border border-border bg-card/95 backdrop-blur-md shadow-xl focus:outline-none select-none overflow-hidden",

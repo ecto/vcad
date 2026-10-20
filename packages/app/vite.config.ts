@@ -297,9 +297,9 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [
       // basicSsl produces a self-signed cert for local HTTPS dev. Skip it under
-      // TAURI_DEV (Tauri provides its own webview) and CLAUDE_PREVIEW (cloud
-      // proxy terminates TLS upstream and rejects self-signed certs).
-      !process.env.TAURI_DEV && process.env.CLAUDE_PREVIEW !== "1" && basicSsl(),
+      // CLAUDE_PREVIEW (cloud proxy terminates TLS upstream and rejects
+      // self-signed certs).
+      process.env.CLAUDE_PREVIEW !== "1" && basicSsl(),
       devApiPlugin(env),
       preloadKernelWasmPlugin(),
       react(),

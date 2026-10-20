@@ -311,6 +311,15 @@ impl DocumentApi {
         Ok(api)
     }
 
+    /// Replace the document contents with a snapshot from [`save`](Self::save),
+    /// keeping the name. Used to roll back a failed command batch.
+    pub(crate) fn restore(&mut self, bytes: &[u8]) {
+        if let Ok(crdt) = CrdtDocument::load(bytes) {
+            self.crdt = crdt;
+            self.stable_ids.rebuild(&self.crdt);
+        }
+    }
+
     /// Import IR JSON into the document.
     pub fn import_ir(&mut self, ir_json: &str) -> ApiResult {
         if let Ok(doc) = serde_json::from_str::<vcad_ir::Document>(ir_json) {

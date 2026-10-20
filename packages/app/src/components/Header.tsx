@@ -40,8 +40,6 @@ import { ensureNotRecording } from "@/lib/recording-guard";
 import { useDfmStore } from "@/stores/dfm-store";
 import { useAppCommands } from "@/hooks/useAppCommands";
 import { COMMAND_ICONS } from "@/lib/command-icons";
-import { useCapabilities } from "@/lib/capabilities";
-import { useNativeMenu } from "@/hooks/useNativeMenu";
 import { xrStore, useXRPresenting, useXRSupportStore } from "@/stores/xr-store";
 
 // Lazy so the prefs dialog (and its wasm-backed keybinding hook) doesn't
@@ -419,15 +417,6 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
     surface: "desktop-menu",
   });
 
-  // Under Tauri, the OS menu bar drives the same command registry — listen
-  // for menu events and skip rendering the in-window Menubar triggers.
-  const { tauri: nativeMenu, platform } = useCapabilities();
-  useNativeMenu(commands);
-  // Overlay titlebar on macOS puts the traffic lights on top of our row.
-  // Reserve ~78px so the logo clears them; make the row a drag region so
-  // the user can still drag the window by its toolbar.
-  const macOverlay = nativeMenu && platform === "mac";
-
   const handleCommandPalette = () => {
     useUiStore.getState().setCommandPaletteOpen(true);
   };
@@ -486,25 +475,16 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
 
   return (
     <div
-      data-tauri-drag-region={macOverlay ? "" : undefined}
-      className={cn(
-        "flex flex-col bg-surface select-none",
-        macOverlay && "relative z-[60] pointer-events-auto",
-      )}
+      className="flex flex-col bg-surface select-none"
     >
       {/* ─────────────────────────────────────────────────────── */}
       {/* Row 1: menu bar (logo + File/Edit/View/Tools/Help)     */}
       {/* ─────────────────────────────────────────────────────── */}
       <div
-        data-tauri-drag-region={macOverlay ? "" : undefined}
-        className={cn(
-          "relative flex items-center gap-0 px-1 border-b border-border/30",
-          macOverlay ? "h-9 pl-[78px]" : "h-7",
-        )}
+        className="relative flex items-center gap-0 px-1 border-b border-border/30 h-7"
       >
         <div
           className="flex items-center pr-2 pl-1"
-          data-tauri-drag-region={macOverlay ? "" : undefined}
         >
           <Tooltip content="About vcad" side="bottom">
             <button
@@ -520,17 +500,14 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
 
         {/* Centered document-identity strip — filename, save state, scope breadcrumb */}
         <div className="absolute left-1/2 -translate-x-1/2">
-          <DocTitle macOverlay={macOverlay} />
+          <DocTitle />
         </div>
 
         <Menubar.Root
           value={menuValue}
           onValueChange={setMenuValue}
           loop
-          className={cn(
-            "flex items-center gap-0 min-w-0 overflow-x-auto no-scrollbar",
-            nativeMenu && "hidden",
-          )}
+          className="flex items-center gap-0 min-w-0 overflow-x-auto no-scrollbar"
         >
           <Menubar.Menu value="file">
             <Menubar.Trigger className={TRIGGER_CLASS}>
@@ -724,7 +701,6 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
 
         <div
           className="flex-1"
-          data-tauri-drag-region={macOverlay ? "" : undefined}
         />
 
         {/* Right cluster: search · changelog bell · auth. Search drops below

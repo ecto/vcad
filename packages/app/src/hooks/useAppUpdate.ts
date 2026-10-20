@@ -1,10 +1,10 @@
 import { useRegisterSW } from "virtual:pwa-register/react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isTauri } from "@/lib/tauri";
 
-// Piggyback on the desktop updater manifest: `.github/workflows/desktop-release.yml`
-// only publishes this file on `v*` tag pushes, so gating the banner on it keeps
-// ad-hoc main-branch deploys from surfacing as "Update Available" to web users.
+// Gate the banner on a release manifest so ad-hoc main-branch deploys don't
+// surface as "Update Available". NOTE: this manifest was produced by the
+// removed desktop release workflow; nothing publishes it any more, so the
+// banner stays silent until a new publisher (or a different gate) exists.
 const LATEST_JSON_URL =
   "https://github.com/ecto/vcad/releases/latest/download/latest.json";
 const CHECK_INTERVAL_MS = 60 * 60 * 1000;
@@ -46,10 +46,6 @@ export function useAppUpdate() {
   });
 
   useEffect(() => {
-    // Tauri has its own signed updater (see native-updater.ts) that hits the
-    // same manifest — skip the web path inside the desktop shell.
-    if (isTauri()) return;
-
     let cancelled = false;
     const check = async () => {
       try {
