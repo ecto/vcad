@@ -2175,17 +2175,27 @@ fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'stat
     ] {
         if let Some(pins) = uint_after(base, marker) {
             if pins >= 4 && pins.is_multiple_of(2) {
-                return Some((
-                    dual_lr(
-                        format!("SOIC-{pins}"),
-                        pins,
-                        pitch,
-                        body_w,
-                        lead_len,
-                        lead_wid,
-                    ),
-                    label,
-                ));
+                let mut fp = dual_lr(
+                    format!("SOIC-{pins}"),
+                    pins,
+                    pitch,
+                    body_w,
+                    lead_len,
+                    lead_wid,
+                );
+                // KiCad `-1EP` packages (MSOP-8-1EP, TI_SO-8-1EP, ...): the
+                // exposed pad is numbered pins + 1 (KiCad's convention) and
+                // sized from the `_EP<w>x<h>mm` token. Dropping it silently
+                // lost the thermal/GND pad of LDOs and buck regulators.
+                if base.contains("-1EP") {
+                    if let Some((ep_w, ep_h)) =
+                        base.find("_EP").and_then(|i| body_mm(&base[i + 3..]))
+                    {
+                        fp.pads
+                            .push(rect_smd(&(pins + 1).to_string(), 0.0, 0.0, ep_w, ep_h));
+                    }
+                }
+                return Some((fp, label));
             }
         }
     }
@@ -3453,6 +3463,22 @@ mod tests {
         let t = power_fp("AMASS_XT60PB-M_Vertical", "AMASS-XT");
         assert!(close(drill(pads_of(&t, "1")[0]), 4.0));
         assert!(npths(&t).is_empty());
+    }
+
+    #[test]
+    fn dual_row_1ep_keeps_its_exposed_pad() {
+        for (name, ep) in [
+            ("MSOP-8-1EP_3x3mm_P0.65mm_EP1.68x1.88mm", (1.68, 1.88)),
+            ("TI_SO-8-1EP_3.9x4.9mm_P1.27mm_EP2.41x3.1mm", (2.41, 3.1)),
+        ] {
+            let r = resolve_footprint(name, 9);
+            assert!(r.matched, "{name}");
+            let t = r.template.unwrap();
+            assert_eq!(t.pads.len(), 9, "{name}");
+            let p9 = pads_of(&t, "9")[0];
+            assert_eq!(size(p9), ep, "{name}");
+            assert!(close(p9.position.x, 0.0) && close(p9.position.y, 0.0));
+        }
     }
 
     #[test]
