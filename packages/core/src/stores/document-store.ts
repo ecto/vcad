@@ -671,7 +671,13 @@ const MUTATION_METHODS = new Set<string>([
   "import_ir",
   "undo",
   "redo",
+  // DocCommand entry points: return a JSON envelope string, not an object.
+  "apply",
+  "apply_tool",
 ]);
+
+/** Mutation methods whose result is a `DocCommand` envelope string. */
+const ENVELOPE_METHODS = new Set<string>(["apply", "apply_tool"]);
 
 /**
  * Build a no-op result object shaped like ApiResult/CrdtMutationResult that
@@ -695,7 +701,8 @@ function makeNoOpResult(target: WasmDocumentEngine): ApiResult & CrdtMutationRes
  * sign-in-to-fork modal) and return a no-op result that keeps store state
  * unchanged.
  */
-function wrapEngineWithReadOnlyGuard(
+/** @internal Exported for tests. */
+export function wrapEngineWithReadOnlyGuard(
   engine: WasmDocumentEngine,
 ): WasmDocumentEngine {
   return new Proxy(engine, {
@@ -714,7 +721,10 @@ function wrapEngineWithReadOnlyGuard(
               new CustomEvent("vcad:fork-prompt", { detail: readOnly }),
             );
           }
-          return makeNoOpResult(target);
+          const noOp = makeNoOpResult(target);
+          return ENVELOPE_METHODS.has(name)
+            ? JSON.stringify({ ok: true, result: noOp })
+            : noOp;
         }
         return (value as (...a: unknown[]) => unknown).apply(target, args);
       };
