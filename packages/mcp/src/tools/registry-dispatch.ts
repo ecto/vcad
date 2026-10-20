@@ -16,6 +16,7 @@ import {
   listPartsFromDocument,
 } from "@vcad/core";
 import { getSession, recordLastChanged, recordTriangles } from "./session.js";
+import { markDocumentWritten, storeEngine, takeCachedEngine } from "./session-core.js";
 import {
   isStablePartId,
   partIdDeprecation,
@@ -598,9 +599,9 @@ function engineErrorMessage(
  * lowered, the WASM lacks `apply_tool`, the engine answers `unsupported`, or
  * VCAD_MCP_ENGINE_APPLY=0.
  *
- * A fresh engine is imported per call. Follow-up: cache the engine per
- * session (invalidated by any non-engine mutation) to avoid an O(doc)
- * import on every edit.
+ * One engine is cached per session (session-core `takeCachedEngine` /
+ * `storeEngine`): it is reused while the session still holds exactly the IR
+ * that engine produced, and rebuilt via `import_ir` otherwise.
  */
 function runMutationViaEngine(
   toolName: string,
@@ -615,7 +616,11 @@ function runMutationViaEngine(
   } | null;
   const factory = wasm?.WasmDocumentEngine;
   if (!factory || typeof factory.withReplica !== "function") return null;
-  const engine = factory.withReplica(0);
+  const cachedEngine = takeCachedEngine<ToolEngine>(documentId, doc);
+  const engine = cachedEngine ?? factory.withReplica(0);
+  // Ownership: until handed back to the cache on success, `engine` is freed
+  // in `finally`, so an error or decline never leaves a stale engine cached.
+  let keep = false;
   try {
     if (typeof engine.apply_tool !== "function") return null;
     const deprecation =
@@ -623,7 +628,7 @@ function runMutationViaEngine(
         ? partIdDeprecation(toolArgs.part_id, rootForPartId(doc, toolArgs.part_id))
         : undefined;
     const args = engineArgs(toolName, toolArgs, doc);
-    engine.import_ir(JSON.stringify(doc));
+    if (!cachedEngine) engine.import_ir(JSON.stringify(doc));
     const envelope = JSON.parse(engine.apply_tool(toolName, JSON.stringify(args))) as EngineEnvelope;
     if (!envelope.ok || !envelope.result) {
       const err = envelope.error ?? { kind: "invalid", message: "engine returned no result" };
@@ -643,6 +648,9 @@ function runMutationViaEngine(
     }
     for (const k of Object.keys(doc)) delete (doc as unknown as Record<string, unknown>)[k];
     Object.assign(doc, next);
+    // The session IR is now exactly the engine's own output: cache it.
+    storeEngine(documentId, doc, engine);
+    keep = true;
 
     const warnings = [...(envelope.result.warnings ?? []), ...(deprecation ? [deprecation] : [])];
     const payload: Record<string, unknown> = { document_id: documentId };
@@ -672,7 +680,7 @@ function runMutationViaEngine(
     if (warnings.length) payload.warnings = warnings;
     return { content: [{ type: "text", text: JSON.stringify(payload) }] };
   } finally {
-    engine.free?.();
+    if (!keep) engine.free?.();
   }
 }
 
@@ -690,6 +698,8 @@ export function runMutation(
     if (viaEngine) return viaEngine;
   }
   // ---- Legacy vcad-chat planner path ----
+  // Writes the doc in place, bypassing the engine: invalidate its cache.
+  if (documentId) markDocumentWritten(documentId);
   // Reached only when the engine path declined: the tool is outside
   // ENGINE_LOWERED_TOOLS (today no dispatchable mutation is — every registry
   // mutation MCP exposes is engine-lowered; `place` and the tube / pattern /

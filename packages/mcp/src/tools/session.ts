@@ -34,6 +34,7 @@ import {
   getSession,
   clearHistory,
   setSessionScopeProvider,
+  freeScopeEngines,
   setDurabilityProbe,
   addDocumentEnterHook,
   runDocumentEnterHooks,
@@ -61,6 +62,11 @@ export {
   getLastChanged,
   recordTriangles,
   getLastTriangles,
+  markDocumentWritten,
+  documentWriteVersion,
+  hasCachedEngine,
+  dropEngine,
+  freeScopeEngines,
   currentBootToken,
   sessionIdBootToken,
   isForeignSessionId,
@@ -125,7 +131,23 @@ setDurabilityProbe(isSessionStoreDurable);
  */
 export function runInSessionScope<T>(user: AuthUser | null, fn: () => T): T {
   if (!user) return fn();
-  return sessionScope.run({ documents: new Map(), user }, fn);
+  const documents = new Map<string, Document>();
+  // The scope's cached document engines hold WASM memory; free them when the
+  // scope ends (sync or async), since nothing can reach this Map afterwards.
+  const release = () => freeScopeEngines(documents);
+  let out: T;
+  try {
+    out = sessionScope.run({ documents, user }, fn);
+  } catch (e) {
+    release();
+    throw e;
+  }
+  if (out && typeof (out as { then?: unknown }).then === "function") {
+    (out as unknown as Promise<unknown>).then(release, release);
+  } else {
+    release();
+  }
+  return out;
 }
 
 /** The signed-in user for the current tool call, or null (anonymous/stdio).
