@@ -203,7 +203,9 @@ repository = "https://github.com/ecto/vcad"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip: exact f64 parsing, so save → load never perturbs geometry
+# (the default parser can be off by one ulp).
+serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 # Sibling-repo deps are declared by registry version and redirected to the
 # sibling checkout by `[patch.crates-io]` below, so a downstream that pulls

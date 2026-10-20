@@ -292,6 +292,25 @@ impl CrdtDocument {
         cs
     }
 
+    /// Number of undo groups on this replica's stack. Pass it to
+    /// [`coalesce_undo_since`](Self::coalesce_undo_since) to make everything
+    /// pushed afterwards undo as one step.
+    pub fn undo_depth(&self) -> usize {
+        self.undo_stacks.get(&self.replica_id).map_or(0, Vec::len)
+    }
+
+    /// Merge every undo group pushed since `depth` into a single group, so
+    /// one user-level command (e.g. create + rename, or a batch) is one undo.
+    pub fn coalesce_undo_since(&mut self, depth: usize) {
+        let Some(stack) = self.undo_stacks.get_mut(&self.replica_id) else {
+            return;
+        };
+        if stack.len() > depth + 1 {
+            let merged: Vec<OpId> = stack.drain(depth..).flatten().collect();
+            stack.push(merged);
+        }
+    }
+
     /// Undo the last operation group for this replica.
     ///
     /// Per-user undo: pops the undo stack, computes inverse operations,
@@ -503,7 +522,14 @@ impl CrdtDocument {
             .filter(|(_, f)| !f.deleted)
             .map(|(id, f)| (*id, f))
             .collect();
-        features.sort_by(|a, b| a.1.position.cmp(&b.1.position));
+        // Concurrent inserts can pick the same position on two replicas;
+        // break ties by id so every replica agrees on the order (HashMap
+        // iteration order differs per process).
+        features.sort_by(|a, b| {
+            a.1.position
+                .cmp(&b.1.position)
+                .then_with(|| (a.0 .0 .0, a.0 .1).cmp(&(b.0 .0 .0, b.0 .1)))
+        });
         features
     }
 
@@ -659,6 +685,39 @@ impl ChangeSet {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn concurrent_inserts_order_the_same_on_every_replica() {
+        let mut a = CrdtDocument::new(ReplicaId(1));
+        let mut b = CrdtDocument::new(ReplicaId(2));
+        a.create_feature("cube", FractionalIndex::between(None, None), HashMap::new());
+        b.create_feature("cube", FractionalIndex::between(None, None), HashMap::new());
+        let empty = BTreeMap::new();
+        let (ops_a, ops_b) = (a.ops_since(&empty), b.ops_since(&empty));
+        a.merge(ops_b);
+        b.merge(ops_a);
+        let ids = |d: &CrdtDocument| {
+            d.ordered_features()
+                .iter()
+                .map(|(id, _)| *id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&a), ids(&b));
+    }
+
+    #[test]
+    fn coalesced_groups_undo_together() {
+        let mut d = CrdtDocument::new(ReplicaId(1));
+        let (fid, _) =
+            d.create_feature("cube", FractionalIndex::between(None, None), HashMap::new());
+        let depth = d.undo_depth();
+        d.set_param(fid, "a", Value::F64(1.0));
+        d.set_param(fid, "b", Value::F64(2.0));
+        d.coalesce_undo_since(depth);
+        assert_eq!(d.undo_depth(), depth + 1);
+        d.undo();
+        assert_eq!(d.undo_depth(), depth);
+    }
+
     use super::*;
 
     #[test]

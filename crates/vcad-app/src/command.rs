@@ -218,12 +218,22 @@ impl DocCommand {
 impl DocumentApi {
     /// Apply one command. Fails closed: on error nothing is mutated
     /// (a failing [`DocCommand::Batch`] rolls back the commands before it).
+    ///
+    /// Every successful command is exactly one undo step, however many CRDT
+    /// operations it took (a named add, a rotate about a pivot, a batch).
     pub fn apply(&mut self, cmd: DocCommand) -> Result<ApiResult, CommandError> {
-        if let DocCommand::Batch { commands } = cmd {
-            return self.apply_batch(commands);
+        let history = matches!(cmd, DocCommand::Undo | DocCommand::Redo);
+        let depth = self.crdt().undo_depth();
+        let result = if let DocCommand::Batch { commands } = cmd {
+            self.apply_batch(commands)
+        } else {
+            self.check(&cmd)?;
+            Ok(self.apply_checked(cmd))
+        };
+        if result.is_ok() && !history {
+            self.crdt_mut().coalesce_undo_since(depth);
         }
-        self.check(&cmd)?;
-        Ok(self.apply_checked(cmd))
+        result
     }
 
     /// Parse and apply a JSON command.
