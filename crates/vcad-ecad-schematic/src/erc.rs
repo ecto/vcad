@@ -36,13 +36,20 @@ pub struct ErcViolation {
 ///
 /// Returns a list of violations sorted by severity (errors first) then by
 /// message for deterministic output.
+///
+/// A hierarchical sheet is flattened first ([`crate::hierarchy::flatten`]);
+/// its structural findings (unbound ports, scope collisions, unknown sheets)
+/// are reported alongside the electrical rules.
 pub fn check_erc(sheet: &SchematicSheet) -> Vec<ErcViolation> {
-    let mut violations = Vec::new();
+    let flat = crate::hierarchy::flatten(sheet);
+    let sheet = &flat.sheet;
+    let mut violations = flat.diagnostics;
 
     check_duplicate_references(sheet, &mut violations);
     check_unconnected_pins(sheet, &mut violations);
     check_pin_type_conflicts(sheet, &mut violations);
     check_power_pins_on_power_nets(sheet, &mut violations);
+    check_power_flags(sheet, &mut violations);
 
     // Sort: errors first, then warnings, then by message.
     violations.sort_by(|a, b| {
@@ -207,6 +214,11 @@ fn check_pin_type_conflicts(sheet: &SchematicSheet, violations: &mut Vec<ErcViol
         }
 
         // Two or more power outputs on the same net.
+        // Several power-output pins of ONE component on one net are a single
+        // source (e.g. an MCU's two VCAP pins, a regulator's paralleled OUT
+        // pins) — only distinct components fight.
+        power_output_pins.sort_unstable();
+        power_output_pins.dedup();
         if power_output_pins.len() > 1 {
             violations.push(ErcViolation {
                 severity: ErcSeverity::Error,
@@ -216,6 +228,55 @@ fn check_pin_type_conflicts(sheet: &SchematicSheet, violations: &mut Vec<ErcViol
                     power_output_pins.join(", ")
                 ),
                 position: None,
+            });
+        }
+    }
+}
+
+/// Names of netlist nets that carry a power flag. When several names merged
+/// into one net the netlist keeps only one of them, so a flag on any explicit
+/// name of a merged net flags the whole net.
+fn flagged_net_names<'a>(sheet: &SchematicSheet, netlist: &'a crate::Netlist) -> HashSet<&'a str> {
+    let flags: HashSet<&str> = sheet.power_flags.iter().map(|f| f.net.as_str()).collect();
+    let mut flagged_pins: HashSet<String> = HashSet::new();
+    if let Some(explicit) = &sheet.nets {
+        for (name, pins) in explicit {
+            if flags.contains(name.as_str()) {
+                flagged_pins.extend(pins.iter().cloned());
+            }
+        }
+    }
+    netlist
+        .nets
+        .iter()
+        .filter(|n| {
+            flags.contains(n.name.as_str())
+                || n.connections.iter().any(|c| {
+                    flagged_pins.contains(&format!("{}.{}", c.component_ref, c.pin_number))
+                })
+        })
+        .map(|n| n.name.as_str())
+        .collect()
+}
+
+/// A power flag must sit on a net that exists — a flag naming nothing
+/// silently waives nothing.
+fn check_power_flags(sheet: &SchematicSheet, violations: &mut Vec<ErcViolation>) {
+    if sheet.power_flags.is_empty() {
+        return;
+    }
+    let netlist = generate_netlist(sheet);
+    let mut names: HashSet<&str> = netlist.nets.iter().map(|n| n.name.as_str()).collect();
+    if let Some(explicit) = &sheet.nets {
+        names.extend(explicit.keys().map(String::as_str));
+    }
+    names.extend(sheet.labels.iter().map(|l| l.name.as_str()));
+    for flag in &sheet.power_flags {
+        if !names.contains(flag.net.as_str()) {
+            violations.push(ErcViolation {
+                severity: ErcSeverity::Warning,
+                message: format!("Power flag on net '{}', which does not exist", flag.net),
+                position: flag.position,
             });
         }
     }
@@ -243,7 +304,13 @@ fn check_power_pins_on_power_nets(sheet: &SchematicSheet, violations: &mut Vec<E
     .copied()
     .collect();
 
+    // Nets carrying a power flag (KiCad PWR_FLAG) are driven by declaration.
+    let flagged = flagged_net_names(sheet, &netlist);
+
     for net in &netlist.nets {
+        if flagged.contains(net.name.as_str()) {
+            continue;
+        }
         let has_power_input = net.connections.iter().any(|c| {
             let key = (c.component_ref.clone(), c.pin_number.clone());
             matches!(pin_types.get(&key), Some(PinType::PowerInput))
@@ -278,6 +345,56 @@ mod tests {
     use super::*;
     use vcad_ir::Vec2;
 
+    #[test]
+    fn same_component_power_outputs_are_one_source() {
+        let pin = |n: &str, t: PinType| SchematicPin {
+            number: n.to_string(),
+            name: format!("P{n}"),
+            pin_type: t,
+            position: Vec2::new(0.0, 0.0),
+        };
+        let mcu = SchematicComponent {
+            pins: vec![
+                pin("48", PinType::PowerOutput),
+                pin("73", PinType::PowerOutput),
+            ],
+            ..make_simple_component("U1", Vec2::new(0.0, 0.0), vec![])
+        };
+        let ldo = SchematicComponent {
+            pins: vec![pin("1", PinType::PowerOutput)],
+            ..make_simple_component("U2", Vec2::new(50.0, 0.0), vec![])
+        };
+        let sheet = |comps: Vec<SchematicComponent>, pins: &[&str]| SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
+            components: comps,
+            nets: Some(
+                [(
+                    "VCAP".to_string(),
+                    pins.iter().map(|p| p.to_string()).collect(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            title: None,
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+        };
+        let conflicts = |s: &SchematicSheet| {
+            let mut v = Vec::new();
+            check_pin_type_conflicts(s, &mut v);
+            v.iter()
+                .filter(|v| v.message.contains("multiple power outputs"))
+                .count()
+        };
+        assert_eq!(conflicts(&sheet(vec![mcu.clone()], &["U1.48", "U1.73"])), 0);
+        assert_eq!(
+            conflicts(&sheet(vec![mcu, ldo], &["U1.48", "U1.73", "U2.1"])),
+            1
+        );
+    }
+
     fn make_simple_component(
         reference: &str,
         position: Vec2,
@@ -300,6 +417,8 @@ mod tests {
     fn clean_schematic_no_violations() {
         // R1 and R2 connected by a wire, with VCC and GND labels.
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![
@@ -385,6 +504,8 @@ mod tests {
     #[test]
     fn detect_duplicate_reference() {
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![
@@ -429,6 +550,8 @@ mod tests {
     fn detect_unconnected_pin() {
         // R1 with two pins, only pin 1 is wired.
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![make_simple_component(
@@ -471,6 +594,8 @@ mod tests {
     fn not_connected_pin_type_skipped() {
         // A pin explicitly marked NotConnected should not trigger a warning.
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![make_simple_component(
@@ -502,6 +627,8 @@ mod tests {
     fn detect_output_driving_output() {
         // Two output pins on the same net.
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![
@@ -547,6 +674,8 @@ mod tests {
         // IC with a PowerInput pin on a net that has no power source and
         // no power-related label.
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![make_simple_component(
@@ -584,6 +713,8 @@ mod tests {
     fn power_pin_on_vcc_net_is_ok() {
         // Power input pin on a net labeled "VCC" — should be fine.
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![make_simple_component(
@@ -620,6 +751,8 @@ mod tests {
     fn power_pin_with_power_output_is_ok() {
         // Power input pin on a net with a power output pin — should be fine.
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![
@@ -665,6 +798,8 @@ mod tests {
     #[test]
     fn empty_schematic_no_violations() {
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![],
@@ -680,6 +815,8 @@ mod tests {
     fn violations_sorted_errors_first() {
         // Create a schematic with both errors and warnings.
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![
@@ -732,6 +869,8 @@ mod tests {
         let mut nets = std::collections::BTreeMap::new();
         nets.insert("PHA".to_string(), vec!["R1.1".to_string()]);
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: Some(nets),
             title: None,
             components: vec![make_simple_component(
@@ -769,6 +908,8 @@ mod tests {
             vec!["U1.1".to_string(), "U2.1".to_string()],
         );
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: Some(nets),
             title: None,
             components: vec![
@@ -820,6 +961,8 @@ mod tests {
             vec!["U1.1".to_string(), "R1.1".to_string()],
         );
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: Some(nets),
             title: None,
             components: vec![
@@ -858,5 +1001,133 @@ mod tests {
             "Expected floating-power warning on explicit net SENSE, got: {violations:?}"
         );
         assert_eq!(pwr.unwrap().severity, ErcSeverity::Warning);
+    }
+
+    /// The SENSE sheet from `floating_power_via_explicit_nets`.
+    fn floating_sense_sheet() -> SchematicSheet {
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert(
+            "SENSE".to_string(),
+            vec!["U1.1".to_string(), "R1.1".to_string()],
+        );
+        let pin = |name: &str, pin_type| SchematicPin {
+            number: "1".to_string(),
+            name: name.to_string(),
+            pin_type,
+            position: Vec2::new(0.0, 0.0),
+        };
+        SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
+            nets: Some(nets),
+            title: None,
+            components: vec![
+                make_simple_component(
+                    "U1",
+                    Vec2::new(0.0, 0.0),
+                    vec![pin("VCC", PinType::PowerInput)],
+                ),
+                make_simple_component(
+                    "R1",
+                    Vec2::new(100.0, 0.0),
+                    vec![pin("~", PinType::Passive)],
+                ),
+            ],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+        }
+    }
+
+    #[test]
+    fn power_flag_marks_net_driven() {
+        let mut sheet = floating_sense_sheet();
+        sheet.power_flags.push(PowerFlag {
+            net: "SENSE".into(),
+            position: None,
+            note: Some("fed through FB1".into()),
+        });
+        let violations = check_erc(&sheet);
+        assert!(
+            !violations
+                .iter()
+                .any(|v| v.message.contains("no power source")),
+            "power flag must satisfy the power-source rule: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn power_flag_on_missing_net_warns() {
+        let mut sheet = floating_sense_sheet();
+        sheet.power_flags.push(PowerFlag {
+            net: "SENS".into(),
+            position: None,
+            note: None,
+        });
+        let violations = check_erc(&sheet);
+        assert!(violations
+            .iter()
+            .any(|v| v.message.contains("no power source")));
+        assert!(violations
+            .iter()
+            .any(|v| v.message == "Power flag on net 'SENS', which does not exist"));
+    }
+
+    #[test]
+    fn hierarchical_sheet_is_flattened_for_erc() {
+        // The SENSE circuit as a child sheet with a flag inside, placed twice:
+        // each instance's SENSE is local and flagged, and its refs unique.
+        let body = {
+            let mut s = floating_sense_sheet();
+            s.power_flags.push(PowerFlag {
+                net: "SENSE".into(),
+                position: None,
+                note: None,
+            });
+            s
+        };
+        let inst = |name: &str| SheetInstance {
+            name: name.into(),
+            sheet: "sense".into(),
+            connections: [("EN".to_string(), "EN_ROOT".to_string())].into(),
+            ref_map: None,
+            ref_offset: None,
+            position: None,
+        };
+        let root = SchematicSheet {
+            hierarchy: Some(Box::new(SchematicHierarchy {
+                sheets: vec![SheetDefinition {
+                    name: "sense".into(),
+                    ports: vec![HierarchicalPort {
+                        name: "EN".into(),
+                        direction: PinType::Input,
+                    }],
+                    body,
+                    instances: vec![],
+                }],
+                instances: vec![inst("A"), inst("B")],
+                global_nets: vec![],
+            })),
+            ..floating_sense_sheet()
+        };
+        let violations = check_erc(&root);
+        let msgs: Vec<&str> = violations.iter().map(|v| v.message.as_str()).collect();
+        assert!(
+            !msgs.iter().any(|m| m.contains("Duplicate reference")),
+            "{msgs:?}"
+        );
+        // Root SENSE is unflagged and still fires; the child SENSE nets are flagged.
+        assert_eq!(
+            msgs.iter()
+                .filter(|m| m.contains("no power source"))
+                .count(),
+            1,
+            "{msgs:?}"
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("'EN' of sheet 'sense' connects to nothing")),
+            "{msgs:?}"
+        );
     }
 }

@@ -1316,6 +1316,10 @@ fn write_kicad_sch_impl(
     project_name: &str,
     sch_filename: &str,
 ) -> (String, SchematicLinks) {
+    // A hierarchical design is written as its flattened netlist on one
+    // KiCad sheet (KiCad multi-file hierarchy is not emitted yet).
+    let flat = vcad_ecad_schematic::hierarchy::flatten(sheet);
+    let sheet = &flat.sheet;
     let mut e = Emitter::new();
     let root_uuid = e.uuid();
     let mut symbol_uuids = BTreeMap::new();
@@ -3609,6 +3613,8 @@ mod tests {
     fn sample_sheet() -> SchematicSheet {
         use vcad_ir::ecad::{SchematicComponent, SchematicJunction, SchematicPin, SchematicWire};
         SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: Some("vcad export".into()),
             components: vec![
                 SchematicComponent {
@@ -3748,6 +3754,8 @@ mod tests {
     fn schematic_writes_valid_shell() {
         use vcad_ir::ecad::{SchematicComponent, SchematicPin, SchematicWire};
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: Some("Test".into()),
             components: vec![SchematicComponent {
                 reference: "R1".into(),
@@ -3826,6 +3834,8 @@ mod tests {
 
     fn sheet_of(components: Vec<SchematicComponent>) -> SchematicSheet {
         SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: None,
             components,
             wires: vec![],
@@ -4010,6 +4020,8 @@ mod tests {
             ],
         );
         SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: Some("degenerate".into()),
             components: vec![
                 comp(
@@ -4158,6 +4170,8 @@ mod tests {
             vec!["R1.2".to_string(), "C1.2".to_string()],
         );
         SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: Some("nets flow".into()),
             components: vec![
                 comp("R1", "10k", "Resistor_SMD:R_0805", 100.0),
@@ -4275,6 +4289,8 @@ mod tests {
 
     fn empty_sheet() -> SchematicSheet {
         SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: None,
             components: vec![],
             wires: vec![],
@@ -4840,6 +4856,8 @@ mod tests {
     #[test]
     fn metadata_layout_is_deterministic() {
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: None,
             components: vec![sample_ic()],
             wires: vec![],
@@ -4861,6 +4879,8 @@ mod tests {
         nets.insert("SIG_B".to_string(), vec!["U1.4".to_string()]);
         nets.insert("OUT".to_string(), vec!["U1.5".to_string()]);
         SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: Some("metadata ic".into()),
             components: vec![sample_ic()],
             wires: vec![],

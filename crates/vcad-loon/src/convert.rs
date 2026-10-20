@@ -637,6 +637,8 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
     let ensure_schematic = |ctx: &mut ConvertCtx| {
         if ctx.doc.schematic.is_none() {
             ctx.doc.schematic = Some(ecad::SchematicSheet {
+                power_flags: Vec::new(),
+                hierarchy: None,
                 nets: None,
                 title: None,
                 components: vec![],

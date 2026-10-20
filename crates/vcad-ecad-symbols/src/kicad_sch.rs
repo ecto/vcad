@@ -22,8 +22,8 @@
 use std::collections::{BTreeMap, HashMap};
 
 use vcad_ir::ecad::{
-    LabelScope, PinType, SchematicComponent, SchematicJunction, SchematicLabel, SchematicPin,
-    SchematicSheet, SchematicWire,
+    LabelScope, PinType, PowerFlag, SchematicComponent, SchematicJunction, SchematicLabel,
+    SchematicPin, SchematicSheet, SchematicWire,
 };
 use vcad_ir::Vec2;
 
@@ -394,6 +394,8 @@ fn convert_sheet(root: &SExpr<'_>) -> SchematicSheet {
         .map(|s| s.to_string());
 
     let mut sheet = SchematicSheet {
+        power_flags: Vec::new(),
+        hierarchy: None,
         title,
         components,
         wires,
@@ -402,7 +404,53 @@ fn convert_sheet(root: &SExpr<'_>) -> SchematicSheet {
         nets: None,
     };
     sheet.nets = reconstruct_nets(&sheet);
+    extract_power_flags(&mut sheet);
     sheet
+}
+
+/// Is this component a KiCad `power:PWR_FLAG` symbol (ref `#FLGnn`)?
+fn is_pwr_flag(comp: &SchematicComponent) -> bool {
+    comp.value == "PWR_FLAG" || comp.reference.starts_with("#FLG")
+}
+
+/// Turn KiCad `PWR_FLAG` symbols whose net was reconstructed into
+/// [`PowerFlag`]s: they are ERC annotations, not parts, so they must not
+/// reach the BOM or the board. A flag whose net could not be resolved stays a
+/// component (nothing is lost).
+fn extract_power_flags(sheet: &mut SchematicSheet) {
+    let Some(nets) = sheet.nets.as_mut() else {
+        return;
+    };
+    let mut flagged_refs = Vec::new();
+    for comp in sheet.components.iter().filter(|c| is_pwr_flag(c)) {
+        let pin_refs: Vec<String> = comp
+            .pins
+            .iter()
+            .map(|p| format!("{}.{}", comp.reference, p.number))
+            .collect();
+        let Some(net) = nets
+            .iter()
+            .find(|(_, pins)| pins.iter().any(|p| pin_refs.contains(p)))
+            .map(|(n, _)| n.clone())
+        else {
+            continue;
+        };
+        sheet.power_flags.push(PowerFlag {
+            net,
+            position: Some(comp.position),
+            note: None,
+        });
+        flagged_refs.push((comp.reference.clone(), pin_refs));
+    }
+    for (reference, pin_refs) in &flagged_refs {
+        sheet.components.retain(|c| &c.reference != reference);
+        for pins in nets.values_mut() {
+            pins.retain(|p| !pin_refs.contains(p));
+        }
+    }
+    // Keep a net a flag names even if the flag was its only pin.
+    let flagged: Vec<String> = sheet.power_flags.iter().map(|f| f.net.clone()).collect();
+    nets.retain(|name, pins| !pins.is_empty() || flagged.contains(name));
 }
 
 #[cfg(test)]
@@ -412,6 +460,8 @@ mod tests {
 
     fn sample_sheet() -> SchematicSheet {
         SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: Some("vcad export".into()),
             components: vec![
                 SchematicComponent {
@@ -748,6 +798,8 @@ mod tests {
     #[test]
     fn nets_flow_sheet_survives_round_trip() {
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: None,
             components: vec![
                 SchematicComponent {
@@ -861,6 +913,44 @@ mod tests {
     }
 
     /// Unknown tokens are skipped, mirroring the PCB parser's tolerance.
+    #[test]
+    fn pwr_flag_symbols_import_as_power_flags() {
+        let mut sheet = sample_sheet();
+        sheet.components.push(SchematicComponent {
+            reference: "#FLG01".into(),
+            value: "PWR_FLAG".into(),
+            footprint_id: String::new(),
+            position: Vec2::new(60.0, 80.0),
+            rotation: 0.0,
+            mirror: false,
+            pins: vec![SchematicPin {
+                number: "1".into(),
+                name: "pwr".into(),
+                pin_type: PinType::PowerOutput,
+                position: Vec2::new(0.0, 0.0),
+            }],
+            pads_override: None,
+            properties: std::collections::HashMap::new(),
+        });
+        sheet.labels.clear();
+        sheet.nets = Some(
+            [(
+                "VBUS_F".to_string(),
+                vec!["R1.1".to_string(), "#FLG01.1".to_string()],
+            )]
+            .into(),
+        );
+        let reparsed = parse_kicad_sch(&crate::write_kicad_sch(&sheet)).expect("reimport");
+        assert!(
+            !reparsed.components.iter().any(|c| c.reference == "#FLG01"),
+            "PWR_FLAG must not import as a part"
+        );
+        assert_eq!(reparsed.power_flags.len(), 1, "{:?}", reparsed.nets);
+        assert_eq!(reparsed.power_flags[0].net, "VBUS_F");
+        let nets = reparsed.nets.expect("nets");
+        assert_eq!(nets["VBUS_F"], vec!["R1.1".to_string()]);
+    }
+
     #[test]
     fn unknown_tokens_are_skipped() {
         let input = r#"(kicad_sch

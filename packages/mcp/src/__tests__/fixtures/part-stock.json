@@ -1,0 +1,616 @@
+{
+ "recorded": "2026-10-20",
+ "jlc": {
+  "C17556513": {
+   "code": 200,
+   "data": {
+    "componentPageInfo": {
+     "list": [
+      {
+       "componentCode": "C17556513",
+       "componentModelEn": "TPS48110AQDGXRQ1",
+       "componentBrandEn": "Texas Instruments",
+       "componentSpecificationEn": "VSSOP-19",
+       "describe": "-40℃~+125℃ 12V 3.5V~80V 700uA Not supported VSSOP-19 Power Distribution Switches ROHS",
+       "stockCount": 78,
+       "componentLibraryType": "expand",
+       "componentPrices": [
+        {
+         "startNumber": 1,
+         "productPrice": 3.987
+        },
+        {
+         "startNumber": 10,
+         "productPrice": 3.5213
+        },
+        {
+         "startNumber": 30,
+         "productPrice": 3.2844
+        },
+        {
+         "startNumber": 100,
+         "productPrice": 2.9674
+        },
+        {
+         "startNumber": 500,
+         "productPrice": 2.853
+        },
+        {
+         "startNumber": 1000,
+         "productPrice": 2.804
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "C7519": {
+   "code": 200,
+   "data": {
+    "componentPageInfo": {
+     "list": [
+      {
+       "componentCode": "C7519",
+       "componentModelEn": "USBLC6-2SC6",
+       "componentBrandEn": "STMicroelectronics",
+       "componentSpecificationEn": "SOT-23-6L",
+       "describe": "-40℃~+125℃ 150nA 17V 2 3.5pF 5.25V 5A 6V ESD IEC 61000-4-2 Unidirectional SOT-23-6L ESD and Surge Protection (TVS/ESD) ROHS",
+       "stockCount": 43858,
+       "componentLibraryType": "expand",
+       "componentPrices": [
+        {
+         "startNumber": 1,
+         "productPrice": 0.1776
+        },
+        {
+         "startNumber": 50,
+         "productPrice": 0.1367
+        },
+        {
+         "startNumber": 150,
+         "productPrice": 0.1167
+        },
+        {
+         "startNumber": 500,
+         "productPrice": 0.0989
+        },
+        {
+         "startNumber": 3000,
+         "productPrice": 0.094
+        },
+        {
+         "startNumber": 6000,
+         "productPrice": 0.0911
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "C730142": {
+   "code": 200,
+   "data": {
+    "componentPageInfo": {
+     "list": [
+      {
+       "componentCode": "C730142",
+       "componentModelEn": "STM32H723VGT6",
+       "componentBrandEn": "STMicroelectronics",
+       "componentSpecificationEn": "LQFP-100(14x14)",
+       "describe": "-40℃~+85℃ 1.71V~3.6V 12bit 16bit 1MB 32 Bit 550MHz 564KB 80 ARM Cortex-M7 Built-in FLASH LQFP-100(14x14) Microcontrollers (MCU/MPU/SOC) ROHS",
+       "stockCount": 41,
+       "componentLibraryType": "expand",
+       "componentPrices": [
+        {
+         "startNumber": 1,
+         "productPrice": 16.9954
+        },
+        {
+         "startNumber": 10,
+         "productPrice": 15.43
+        },
+        {
+         "startNumber": 30,
+         "productPrice": 14.8597
+        },
+        {
+         "startNumber": 90,
+         "productPrice": 13.7323
+        },
+        {
+         "startNumber": 92,
+         "productPrice": 13.7323
+        },
+        {
+         "startNumber": 94,
+         "productPrice": 13.7323
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "10kΩ 0603": {
+   "code": 200,
+   "data": {
+    "componentPageInfo": {
+     "list": [
+      {
+       "componentCode": "C15401",
+       "componentModelEn": "0603WAJ0103T5E",
+       "componentBrandEn": "UNI-ROYAL(Uniroyal Elec)",
+       "componentSpecificationEn": "0603",
+       "describe": "-55℃~+155℃ 100mW 10kΩ 75V Thick Film Resistor ±100ppm/℃ ±5% 0603 Chip Resistor - Surface Mount ROHS",
+       "stockCount": 840130,
+       "componentLibraryType": "expand",
+       "componentPrices": [
+        {
+         "startNumber": 1,
+         "productPrice": 0.0018
+        },
+        {
+         "startNumber": 1000,
+         "productPrice": 0.0014
+        },
+        {
+         "startNumber": 5000,
+         "productPrice": 0.0012
+        },
+        {
+         "startNumber": 10000,
+         "productPrice": 0.001
+        },
+        {
+         "startNumber": 50000,
+         "productPrice": 0.0009
+        },
+        {
+         "startNumber": 50200,
+         "productPrice": 0.0009
+        }
+       ]
+      },
+      {
+       "componentCode": "C25804",
+       "componentModelEn": "0603WAF1002T5E",
+       "componentBrandEn": "UNI-ROYAL(Uniroyal Elec)",
+       "componentSpecificationEn": "0603",
+       "describe": "-55℃~+155℃ 100mW 10kΩ 75V Thick Film Resistor ±1% ±100ppm/℃ 0603 Chip Resistor - Surface Mount ROHS",
+       "stockCount": 38218756,
+       "componentLibraryType": "base",
+       "componentPrices": [
+        {
+         "startNumber": 1,
+         "productPrice": 0.0054
+        },
+        {
+         "startNumber": 1000,
+         "productPrice": 0.0044
+        },
+        {
+         "startNumber": 5000,
+         "productPrice": 0.0039
+        },
+        {
+         "startNumber": 10000,
+         "productPrice": 0.0036
+        },
+        {
+         "startNumber": 50000,
+         "productPrice": 0.0034
+        },
+        {
+         "startNumber": 50200,
+         "productPrice": 0.0034
+        }
+       ]
+      },
+      {
+       "componentCode": "C73809",
+       "componentModelEn": "RS-03K103JT",
+       "componentBrandEn": "FH (Guangdong Fenghua Advanced Tech)",
+       "componentSpecificationEn": "0603",
+       "describe": "-55℃~+155℃ 100mW 10kΩ 50V Thick Film Resistor ±100ppm/℃ ±5% 0603 Chip Resistor - Surface Mount ROHS",
+       "stockCount": 4869921,
+       "componentLibraryType": "expand",
+       "componentPrices": [
+        {
+         "startNumber": 1,
+         "productPrice": 0.0016
+        },
+        {
+         "startNumber": 1000,
+         "productPrice": 0.0012
+        },
+        {
+         "startNumber": 5000,
+         "productPrice": 0.001
+        },
+        {
+         "startNumber": 10000,
+         "productPrice": 0.0009
+        },
+        {
+         "startNumber": 50000,
+         "productPrice": 0.0008
+        },
+        {
+         "startNumber": 50200,
+         "productPrice": 0.0008
+        }
+       ]
+      },
+      {
+       "componentCode": "C95204",
+       "componentModelEn": "RT0603BRD0710KL",
+       "componentBrandEn": "YAGEO",
+       "componentSpecificationEn": "0603",
+       "describe": "-55℃~+155℃ 100mW 10kΩ 75V Thin Film Resistor ±0.1% ±25ppm/℃ 0603 Chip Resistor - Surface Mount ROHS",
+       "stockCount": 1964100,
+       "componentLibraryType": "expand",
+       "componentPrices": [
+        {
+         "startNumber": 1,
+         "productPrice": 0.0329
+        },
+        {
+         "startNumber": 200,
+         "productPrice": 0.028
+        },
+        {
+         "startNumber": 600,
+         "productPrice": 0.0259
+        },
+        {
+         "startNumber": 5000,
+         "productPrice": 0.0239
+        },
+        {
+         "startNumber": 10000,
+         "productPrice": 0.0233
+        },
+        {
+         "startNumber": 20000,
+         "productPrice": 0.0228
+        }
+       ]
+      },
+      {
+       "componentCode": "C98220",
+       "componentModelEn": "RC0603FR-0710KL",
+       "componentBrandEn": "YAGEO",
+       "componentSpecificationEn": "0603",
+       "describe": "-55℃~+155℃ 100mW 10kΩ 75V Thick Film Resistor ±1% ±100ppm/℃ 0603 Chip Resistor - Surface Mount ROHS",
+       "stockCount": 6840197,
+       "componentLibraryType": "expand",
+       "componentPrices": [
+        {
+         "startNumber": 1,
+         "productPrice": 0.0036
+        },
+        {
+         "startNumber": 1000,
+         "productPrice": 0.0027
+        },
+        {
+         "startNumber": 5000,
+         "productPrice": 0.0022
+        },
+        {
+         "startNumber": 10000,
+         "productPrice": 0.0019
+        },
+        {
+         "startNumber": 50000,
+         "productPrice": 0.0016
+        },
+        {
+         "startNumber": 50200,
+         "productPrice": 0.0016
+        }
+       ]
+      },
+      {
+       "componentCode": "C99198",
+       "componentModelEn": "RC0603JR-0710KL",
+       "componentBrandEn": "YAGEO",
+       "componentSpecificationEn": "0603",
+       "describe": "-55℃~+155℃ 100mW 10kΩ 75V Thick Film Resistor ±100ppm/℃ ±5% 0603 Chip Resistor - Surface Mount ROHS",
+       "stockCount": 8412437,
+       "componentLibraryType": "expand",
+       "componentPrices": [
+        {
+         "startNumber": 1,
+         "productPrice": 0.002
+        },
+        {
+         "startNumber": 1000,
+         "productPrice": 0.0015
+        },
+        {
+         "startNumber": 5000,
+         "productPrice": 0.0013
+        },
+        {
+         "startNumber": 10000,
+         "productPrice": 0.0011
+        },
+        {
+         "startNumber": 50000,
+         "productPrice": 0.001
+        },
+        {
+         "startNumber": 50200,
+         "productPrice": 0.001
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  "EEH-ZA1J101P": {
+   "code": 200,
+   "data": {
+    "componentPageInfo": {
+     "list": []
+    }
+   }
+  },
+  "C531199": {
+   "code": 200,
+   "data": {
+    "componentPageInfo": {
+     "list": [
+      {
+       "componentCode": "C531199",
+       "componentModelEn": "IPT012N08N5",
+       "componentBrandEn": "Infineon Technologies",
+       "componentSpecificationEn": "HSOF-8",
+       "describe": "-55℃~+175℃ 1 N-channel 1.2mΩ@10V 300A 375W 3V 80V N-Channel HSOF-8 MOSFETs ROHS",
+       "stockCount": 5149,
+       "componentLibraryType": "expand",
+       "componentPrices": [
+        {
+         "startNumber": 1,
+         "productPrice": 2.7795
+        },
+        {
+         "startNumber": 10,
+         "productPrice": 2.389
+        },
+        {
+         "startNumber": 30,
+         "productPrice": 2.1439
+        },
+        {
+         "startNumber": 100,
+         "productPrice": 1.8939
+        },
+        {
+         "startNumber": 500,
+         "productPrice": 1.7811
+        },
+        {
+         "startNumber": 1000,
+         "productPrice": 1.7321
+        }
+       ]
+      }
+     ]
+    }
+   }
+  }
+ },
+ "lcsc": {
+  "C17556513": {
+   "code": 200,
+   "result": {
+    "productCode": "C17556513",
+    "productModel": "TPS48110AQDGXRQ1",
+    "brandNameEn": "TI",
+    "encapStandard": "VSSOP-19",
+    "productIntroEn": "High Side Switch VSSOP-19 Power Distribution Switches, Load Drivers RoHS",
+    "stockNumber": 78,
+    "minBuyNumber": 1,
+    "productCycle": "normal",
+    "productPriceList": [
+     {
+      "ladder": 1,
+      "usdPrice": 4.0207
+     },
+     {
+      "ladder": 10,
+      "usdPrice": 3.551
+     },
+     {
+      "ladder": 30,
+      "usdPrice": 3.3121
+     },
+     {
+      "ladder": 100,
+      "usdPrice": 2.9924
+     },
+     {
+      "ladder": 500,
+      "usdPrice": 2.8771
+     },
+     {
+      "ladder": 1000,
+      "usdPrice": 2.8277
+     }
+    ]
+   }
+  },
+  "C7519": {
+   "code": 200,
+   "result": {
+    "productCode": "C7519",
+    "productModel": "USBLC6-2SC6",
+    "brandNameEn": "ST",
+    "encapStandard": "SOT-23-6L",
+    "productIntroEn": "17VC Clamp 5A Ipp ESD DIODE SOT-23-6L",
+    "stockNumber": 39510,
+    "minBuyNumber": 5,
+    "productCycle": "normal",
+    "productPriceList": [
+     {
+      "ladder": 5,
+      "usdPrice": 0.1786
+     },
+     {
+      "ladder": 50,
+      "usdPrice": 0.1375
+     },
+     {
+      "ladder": 150,
+      "usdPrice": 0.1174
+     },
+     {
+      "ladder": 500,
+      "usdPrice": 0.0995
+     },
+     {
+      "ladder": 3000,
+      "usdPrice": 0.0946
+     },
+     {
+      "ladder": 6000,
+      "usdPrice": 0.0916
+     }
+    ]
+   }
+  },
+  "C730142": {
+   "code": 200,
+   "result": {
+    "productCode": "C730142",
+    "productModel": "STM32H723VGT6",
+    "brandNameEn": "ST",
+    "encapStandard": "LQFP-100(14x14)",
+    "productIntroEn": "ARM Cortex-M7 32 Bit 550MHz LQFP-100(14x14) Microcontrollers RoHS",
+    "stockNumber": 41,
+    "minBuyNumber": 1,
+    "productCycle": "normal",
+    "productPriceList": [
+     {
+      "ladder": 1,
+      "usdPrice": 17.1439
+     },
+     {
+      "ladder": 10,
+      "usdPrice": 15.5648
+     },
+     {
+      "ladder": 30,
+      "usdPrice": 14.9896
+     },
+     {
+      "ladder": 90,
+      "usdPrice": 13.8522
+     }
+    ]
+   }
+  },
+  "C730194": {
+   "code": 200,
+   "result": {
+    "productCode": "C730194",
+    "productModel": "STM32H747AGI6",
+    "brandNameEn": "ST",
+    "encapStandard": "UFBGA-169",
+    "productIntroEn": "32 Bit UFBGA-169 Microcontrollers RoHS",
+    "stockNumber": 10,
+    "minBuyNumber": 1,
+    "productCycle": "normal",
+    "productPriceList": [
+     {
+      "ladder": 1,
+      "usdPrice": 25.0853
+     },
+     {
+      "ladder": 30,
+      "usdPrice": 23.825
+     }
+    ]
+   }
+  },
+  "C25804": {
+   "code": 200,
+   "result": {
+    "productCode": "C25804",
+    "productModel": "0603WAF1002T5E",
+    "brandNameEn": "UNI-ROYAL",
+    "encapStandard": "0603",
+    "productIntroEn": "10kΩ ±1% 100mW 0603 Thick Film Resistor",
+    "stockNumber": 0,
+    "minBuyNumber": 100,
+    "productCycle": "normal",
+    "productPriceList": [
+     {
+      "ladder": 100,
+      "usdPrice": 0.0054
+     },
+     {
+      "ladder": 1000,
+      "usdPrice": 0.0044
+     },
+     {
+      "ladder": 5000,
+      "usdPrice": 0.004
+     },
+     {
+      "ladder": 10000,
+      "usdPrice": 0.0037
+     },
+     {
+      "ladder": 50000,
+      "usdPrice": 0.0035
+     }
+    ]
+   }
+  },
+  "C531199": {
+   "code": 200,
+   "result": {
+    "productCode": "C531199",
+    "productModel": "IPT012N08N5",
+    "brandNameEn": "Infineon",
+    "encapStandard": "HSOF-8",
+    "productIntroEn": "N-Channel 80V 375W HSOF-8",
+    "stockNumber": 5149,
+    "minBuyNumber": 1,
+    "productCycle": "normal",
+    "productPriceList": [
+     {
+      "ladder": 1,
+      "usdPrice": 2.7877
+     },
+     {
+      "ladder": 10,
+      "usdPrice": 2.396
+     },
+     {
+      "ladder": 30,
+      "usdPrice": 2.1502
+     },
+     {
+      "ladder": 100,
+      "usdPrice": 1.8994
+     },
+     {
+      "ladder": 500,
+      "usdPrice": 1.7863
+     },
+     {
+      "ladder": 1000,
+      "usdPrice": 1.7372
+     }
+    ]
+   }
+  }
+ }
+}

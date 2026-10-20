@@ -1,0 +1,21 @@
+{
+  "id": "2026-10-20-hierarchical-schematic-sheets",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "feat",
+  "title": "Hierarchical schematic sheets",
+  "summary": "Schematics can hold reusable child sheets placed many times (CAN x6), with ports, per-instance refs and local nets, global nets, and flattening for ERC, BOM, board and KiCad.",
+  "features": [
+    "schematic",
+    "ecad",
+    "erc"
+  ],
+  "mcpTools": [
+    "create_schematic",
+    "update_schematic",
+    "inspect_schematic",
+    "run_erc",
+    "place_components",
+    "export_kicad"
+  ]
+}
