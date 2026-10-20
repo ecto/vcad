@@ -589,6 +589,20 @@ final class EditorModel {
     var photorealBusy = false
     var photorealStatus: String?
 
+    // MARK: path-traced viewport (PathTracer.swift)
+    /// The live irys path-traced view is on.
+    var pathTraceEnabled = false
+    /// Why it isn't running, or what it's doing (nil when converging normally).
+    var pathTraceStatus: String?
+    /// Samples per pixel in the image on screen.
+    var pathTraceSamples: UInt32 = 0
+    /// A still was asked for and is waiting for enough samples.
+    var pathTraceStillPending = false
+    @ObservationIgnored let pathTracer = PathTracer()
+    /// Bumped whenever a new scene's meshes are adopted, so the path tracer
+    /// knows to rebuild its scene (pose changes go through `poseTick`).
+    @ObservationIgnored var sceneGeneration = 0
+
     var isPlaying = false
     /// Current playback time in seconds (drives the scrubber).
     var playbackTime: Double = 0
@@ -1740,6 +1754,7 @@ final class EditorModel {
         }
         guard !meshes.isEmpty else { return nil }
         docPartMeshes = picks
+        sceneGeneration &+= 1
         docPartEdges = edges
         docPartInstancing = instancing
         solveMillis = Date().timeIntervalSince(start) * 1000
@@ -2919,6 +2934,7 @@ final class EditorModel {
         let size = Self.extent(lo, hi)
         displayCenter = center
         displayScale = 0.6 / max(size, 0.0001)
+        sceneGeneration &+= 1
         assemblyInstanceIDs = (0..<count).map { instString(vcad_scene_instance_id, $0) }
         assemblyLocalCenters = centers
         // Land on the authored pose at t=0 when a timeline exists.
@@ -2993,6 +3009,7 @@ final class EditorModel {
         }
         guard !meshes.isEmpty else { return .empty }
         docPartMeshes = picks
+        sceneGeneration &+= 1
         docPartEdges = edges
         docPartInstancing = instancing
         lastRootKeys = (0..<count).compactMap { i in

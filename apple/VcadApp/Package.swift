@@ -17,9 +17,11 @@ let package = Package(
     targets: [
         // Header + modulemap exposing the Rust static lib to Swift.
         .systemLibrary(name: "CVcadFFI", path: "Sources/CVcadFFI"),
+        // irys's C types (no link: the dylib is loaded at runtime when present).
+        .systemLibrary(name: "CIrys", path: "Sources/CIrys"),
         .executableTarget(
             name: "VcadApp",
-            dependencies: ["CVcadFFI"],
+            dependencies: ["CVcadFFI", "CIrys"],
             path: "Sources/VcadApp",
             linkerSettings: [
                 .unsafeFlags(["-L", ffiLibDir]),

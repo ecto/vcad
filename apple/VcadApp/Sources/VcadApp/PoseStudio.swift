@@ -354,6 +354,7 @@ extension EditorModel {
 struct PoseStudioWindow: View {
     @Bindable var model: EditorModel
     @State private var filter = ""
+    @State private var showsRenderer = false
 
     private var groups: [(String, [DocJoint])] {
         let js = model.drivenJoints.filter {
@@ -407,14 +408,34 @@ struct PoseStudioWindow: View {
             .frame(maxHeight: 300)
             Divider()
             HStack(spacing: Theme.Space.s) {
+                Text("Path traced").font(.callout)
+                if model.pathTraceEnabled {
+                    Text("\(model.pathTraceSamples) spp").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Button { showsRenderer.toggle() } label: { Image(systemName: "slider.horizontal.3") }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).help("Renderer settings")
+                    .popover(isPresented: $showsRenderer, arrowEdge: .trailing) {
+                        Form { RendererSettingsForm() }.formStyle(.grouped).frame(width: 340, height: 520)
+                    }
+                Toggle("Path traced", isOn: Binding(get: { model.pathTraceEnabled }, set: { model.setPathTrace($0) }))
+                    .labelsHidden().toggleStyle(.switch).controlSize(.mini)
+            }
+            if let s = model.pathTraceStatus {
+                Text(s).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+            }
+            HStack(spacing: Theme.Space.s) {
                 Button {
-                    model.photorealSnapshot()
+                    // In-process irys when it's available: save the converged
+                    // frame on screen. Otherwise the vcad-render subprocess.
+                    if case .success = IrysLib.shared { model.requestPathTracedStill() }
+                    else { model.photorealSnapshot() }
                 } label: {
                     Label("Photoreal still", systemImage: "camera.aperture")
                 }
                 .controlSize(.small)
-                .disabled(model.photorealBusy)
-                if model.photorealBusy { ProgressView().controlSize(.small) }
+                .disabled(model.photorealBusy || model.pathTraceStillPending)
+                if model.photorealBusy || model.pathTraceStillPending { ProgressView().controlSize(.small) }
                 Spacer(minLength: 0)
                 if model.isLoonDocument {
                     Button { model.reloadFromDisk() } label: { Image(systemName: "arrow.clockwise") }
