@@ -1,0 +1,33 @@
+{
+ "field": "temperature",
+ "units": "\u00b0C",
+ "source": "vcad-kernel-thermal bracket (6 W MOSFET + 0.266 W busbar Joule, 40 C wall, h=12)",
+ "dims_zyx": [
+  48,
+  64,
+  128
+ ],
+ "origin_mm": [
+  0,
+  0,
+  0
+ ],
+ "voxel_mm": [
+  0.75,
+  0.75,
+  0.75
+ ],
+ "min": 25,
+ "max": 44.66517,
+ "joule_w": 0.26599999999999996,
+ "energy_residual_rel": 1.6913364105431692e-09,
+ "format": "tcg3s",
+ "bound": {
+  "kind": "max_abs",
+  "value": 0.0019665170000000005,
+  "units": "\u00b0C"
+ },
+ "native_fnv1a": "3048f6d56ae47311",
+ "bytes": 20564,
+ "raw_bytes": 1572864
+}

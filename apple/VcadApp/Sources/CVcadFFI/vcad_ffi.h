@@ -94,6 +94,11 @@ VcadScene *vcad_scene_from_json_in(const uint8_t *json, size_t json_len,
                                    const uint8_t *base_dir, size_t base_dir_len);
 
 VcadScene *vcad_scene_from_loon(const uint8_t *loon, size_t loon_len);
+/* Compile a .loon FILE (path bytes) to .vcad document JSON: [use] modules and
+ * relative import-mesh paths resolve against the file's directory (mesh paths
+ * come back absolute), so the JSON evaluates like any .vcad document. Owned
+ * string, free with vcad_cam_free; NULL + vcad_last_error on failure. */
+char *vcad_loon_file_to_json(const uint8_t *path, size_t path_len);
 size_t vcad_scene_part_count(const VcadScene *scene);
 VcadMeshView vcad_scene_part_mesh(const VcadScene *scene, size_t index);
 

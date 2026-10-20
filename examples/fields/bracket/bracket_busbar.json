@@ -1,0 +1,1 @@
+{"field":"flux_density","units":"mT","source":"vcad-kernel-em planar busbar 200 A (per-meter, ends ignored)","plane":"yz","dims_zyx":[1,144,288],"origin_mm":[48,-12,-12],"voxel_mm":[0.75,0.25,0.25],"min":0.0155793615,"max":2.392772,"sor_residual":9.74309187039823e-9}
