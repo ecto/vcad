@@ -1,0 +1,55 @@
+{
+ "name": "bracket",
+ "title": "Motor-controller L-bracket (6061-T6)",
+ "notes": "6 W MOSFET, 40 \u00b0C wall, h=12 \u00b7 60 N tip load \u00b7 plate doubles as 200 A busbar",
+ "geometry": {
+  "boxes": [
+   {
+    "min": [
+     0,
+     0,
+     0
+    ],
+    "max": [
+     96,
+     48,
+     12
+    ]
+   },
+   {
+    "min": [
+     0,
+     0,
+     0
+    ],
+    "max": [
+     9,
+     48,
+     36
+    ]
+   }
+  ]
+ },
+ "layers": [
+  {
+   "id": "thermal",
+   "label": "Temperature",
+   "file": "bracket_thermal"
+  },
+  {
+   "id": "stress",
+   "label": "von Mises stress",
+   "file": "bracket_vm"
+  },
+  {
+   "id": "displacement",
+   "label": "Displacement",
+   "file": "bracket_disp"
+  },
+  {
+   "id": "busbar",
+   "label": "Busbar |B| (200 A)",
+   "file": "bracket_busbar"
+  }
+ ]
+}

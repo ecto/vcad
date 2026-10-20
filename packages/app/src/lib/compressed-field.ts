@@ -27,6 +27,9 @@ export interface FieldMeta {
   /** FNV-1a 64 of the native CPU decode's f32 bit patterns. */
   native_fnv1a?: string;
   format?: string;
+  units?: string;
+  /** 2D field: the world plane its image lies in (columns → first axis, rows → second). */
+  plane?: "xy" | "yz" | "xz";
 }
 
 export interface DecodedField {
@@ -89,7 +92,7 @@ function getGpu(mod: TcModule) {
  */
 export async function loadCompressedField(
   base: string,
-  opts: { forceCpu?: boolean; referenceUrl?: string } = {},
+  opts: { forceCpu?: boolean; forceGpu?: boolean; referenceUrl?: string } = {},
 ): Promise<DecodedField> {
   const t0 = performance.now();
   const [bytes, meta] = await Promise.all([
@@ -104,7 +107,12 @@ export async function loadCompressedField(
   ]);
   const t1 = performance.now();
   const mod = await loadModule();
-  const gpu = opts.forceCpu ? null : await getGpu(mod);
+  // Below ~4M cells WebGPU loses to the WASM CPU decoder on fixed
+  // per-dispatch costs (measured: 262k-cell TCG3s, GPU ~55 ms vs CPU ~15 ms),
+  // so default to CPU there; both are byte-identical to native.
+  const cells = meta.dims_zyx.reduce((a, b) => a * b, 1);
+  const wantGpu = opts.forceGpu || (!opts.forceCpu && cells >= 1 << 22);
+  const gpu = wantGpu ? await getGpu(mod) : null;
   const t2 = performance.now();
   const stream = new Uint8Array(bytes);
   let data: Float32Array;
@@ -149,4 +157,109 @@ export function turbo(t: number): [number, number, number] {
   const b = 0.1067 + x * (12.5925 - x * (60.1097 - x * (109.0745 - x * (88.5066 - x * 26.8183))));
   const c = (v: number) => Math.round(255 * Math.min(1, Math.max(0, v)));
   return [c(r), c(g), c(b)];
+}
+
+// ---------------------------------------------------------------------------
+// Multiphysics stacks: several co-registered fields on one part
+// (`<dir>/stack.json`, see docs/compressed-fields.md).
+
+export interface FieldStack {
+  name: string;
+  title: string;
+  notes?: string;
+  geometry?: { boxes: { min: [number, number, number]; max: [number, number, number] }[] };
+  layers: { id: string; label: string; file: string }[];
+}
+
+export interface StackLayer {
+  id: string;
+  label: string;
+  field: DecodedField;
+  /** Colormap range: over solid cells for a volume with geometry, else the field's. */
+  range: [number, number];
+}
+
+/** Fetch `stack.json` and decode every layer (sequentially: one GPU queue). */
+export async function loadFieldStack(
+  dir: string,
+  opts: { forceCpu?: boolean; forceGpu?: boolean } = {},
+): Promise<{ stack: FieldStack; layers: StackLayer[]; totalMs: number }> {
+  const t0 = performance.now();
+  const r = await fetch(`${dir}/stack.json`);
+  if (!r.ok) throw new Error(`fetch ${dir}/stack.json: ${r.status}`);
+  const stack = (await r.json()) as FieldStack;
+  const layers: StackLayer[] = [];
+  for (const l of stack.layers) {
+    const base = `${dir}/${l.file}`;
+    const field = await loadCompressedField(base, { ...opts, referenceUrl: `${base}.ref.f32` });
+    let range: [number, number] = [field.meta.min, field.meta.max];
+    if (stack.geometry && !field.meta.plane) {
+      const mask = solidMask(field.meta, stack.geometry.boxes);
+      let [lo, hi] = [Infinity, -Infinity];
+      for (let i = 0; i < mask.length; i++) {
+        if (!mask[i]) continue;
+        lo = Math.min(lo, field.data[i]!);
+        hi = Math.max(hi, field.data[i]!);
+      }
+      if (lo < hi) range = [lo, hi];
+    }
+    layers.push({ id: l.id, label: l.label, field, range });
+  }
+  return { stack, layers, totalMs: performance.now() - t0 };
+}
+
+/** Whether a field is a 2D plane (`meta.plane`) rather than a volume. */
+export const isPlane = (m: FieldMeta) => !!m.plane;
+
+/** Solid mask of a volume field's grid: cell centers inside any geometry box. */
+export function solidMask(meta: FieldMeta, boxes: NonNullable<FieldStack["geometry"]>["boxes"]): Uint8Array {
+  const [nz, ny, nx] = meta.dims_zyx;
+  const [ox, oy, oz] = meta.origin_mm;
+  const [vx, vy, vz] = meta.voxel_mm;
+  const mask = new Uint8Array(nx * ny * nz);
+  for (let k = 0; k < nz; k++)
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        const p = [ox + (i + 0.5) * vx, oy + (j + 0.5) * vy, oz + (k + 0.5) * vz];
+        if (boxes.some((b) => p.every((c, a) => c >= b.min[a]! && c <= b.max[a]!))) mask[(k * ny + j) * nx + i] = 1;
+      }
+  return mask;
+}
+
+/**
+ * Exposed voxel faces of the solid as a quad soup (two triangles per face),
+ * in kernel mm. `cell[q]` is the grid cell of quad q, for coloring and
+ * probing.
+ */
+export function buildSkin(meta: FieldMeta, mask: Uint8Array): { positions: Float32Array; index: Uint32Array; cell: Uint32Array } {
+  const [nz, ny, nx] = meta.dims_zyx;
+  const [ox, oy, oz] = meta.origin_mm;
+  const [vx, vy, vz] = meta.voxel_mm;
+  const solid = (i: number, j: number, k: number) =>
+    i >= 0 && j >= 0 && k >= 0 && i < nx && j < ny && k < nz && mask[(k * ny + j) * nx + i] === 1;
+  const pos: number[] = [];
+  const cells: number[] = [];
+  // For each axis/side: neighbor offset and the 4 corners (unit cube) CCW from outside.
+  const faces: [number[], number[][]][] = [
+    [[-1, 0, 0], [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]]],
+    [[1, 0, 0], [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]]],
+    [[0, -1, 0], [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 1]]],
+    [[0, 1, 0], [[0, 1, 0], [0, 1, 1], [1, 1, 1], [1, 1, 0]]],
+    [[0, 0, -1], [[0, 0, 0], [0, 1, 0], [1, 1, 0], [1, 0, 0]]],
+    [[0, 0, 1], [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]],
+  ];
+  for (let k = 0; k < nz; k++)
+    for (let j = 0; j < ny; j++)
+      for (let i = 0; i < nx; i++) {
+        if (!solid(i, j, k)) continue;
+        for (const [d, corners] of faces) {
+          if (solid(i + d[0]!, j + d[1]!, k + d[2]!)) continue;
+          for (const c of corners) pos.push(ox + (i + c[0]!) * vx, oy + (j + c[1]!) * vy, oz + (k + c[2]!) * vz);
+          cells.push((k * ny + j) * nx + i);
+        }
+      }
+  const nq = cells.length;
+  const index = new Uint32Array(nq * 6);
+  for (let q = 0; q < nq; q++) index.set([4 * q, 4 * q + 1, 4 * q + 2, 4 * q, 4 * q + 2, 4 * q + 3], 6 * q);
+  return { positions: new Float32Array(pos), index, cell: new Uint32Array(cells) };
 }

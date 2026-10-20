@@ -1,0 +1,1 @@
+{"field":"temperature","units":"degC","source":"vcad-kernel-thermal bracket (6 W MOSFET, 40 C wall, h=12)","dims_zyx":[48,64,128],"origin_mm":[0,0,0],"voxel_mm":[0.75,0.75,0.75],"min":25,"max":44.546528,"energy_residual_rel":1.7480491174842542e-9}

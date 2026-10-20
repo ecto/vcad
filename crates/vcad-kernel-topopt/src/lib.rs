@@ -55,7 +55,10 @@ mod fea;
 mod simp;
 mod spec;
 
-pub use analyze::{analyze, analyze_box, analyze_mesh, AnalysisSpec, AnalyzeError, StaticAnalysis};
+pub use analyze::{
+    analyze, analyze_box, analyze_fields, analyze_mesh, AnalysisSpec, AnalyzeError, StaticAnalysis,
+    StaticFields,
+};
 pub use domain::Domain;
 pub use fea::FeError;
 pub use spec::{Load, RegionBox, Support, TopoOptSpec};

@@ -1,0 +1,1 @@
+{"field":"displacement","units":"um","source":"vcad-kernel-topopt voxel FEA bracket (60 N tip, fixed wall)","dims_zyx":[48,64,128],"origin_mm":[0,0,0],"voxel_mm":[0.75,0.75,0.75],"min":0,"max":30.44751,"max_von_mises_mpa":5.491685849036571,"max_displacement_mm":0.03064947224530542,"relative_residual":9.449395709094625e-9}

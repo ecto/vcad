@@ -139,6 +139,26 @@ const SOLVE_MAX_ITER: usize = 6000;
 
 /// Run a static solve on a prepared domain.
 pub fn analyze(domain: &Domain, spec: &AnalysisSpec) -> Result<StaticAnalysis, AnalyzeError> {
+    analyze_fields(domain, spec).map(|(a, _)| a)
+}
+
+/// Per-element result fields of a static solve, on the domain's full
+/// element grid (index `(iz * ny + iy) * nx + ix`; inactive elements are 0).
+#[derive(Debug, Clone)]
+pub struct StaticFields {
+    /// Element-centroid von Mises stress, MPa.
+    pub von_mises_mpa: Vec<f64>,
+    /// Displacement magnitude at the element centroid (mean of its 8
+    /// nodal displacement vectors), mm.
+    pub displacement_mm: Vec<f64>,
+}
+
+/// [`analyze`], also returning the per-element stress and displacement
+/// fields (for field export / visualization).
+pub fn analyze_fields(
+    domain: &Domain,
+    spec: &AnalysisSpec,
+) -> Result<(StaticAnalysis, StaticFields), AnalyzeError> {
     validate(spec)?;
     let sys = FeSystem::build(domain, spec.poisson, &spec.loads, &spec.supports)?;
 
@@ -183,6 +203,10 @@ pub fn analyze(domain: &Domain, spec: &AnalysisSpec) -> Result<StaticAnalysis, A
         [-1.0, 1.0, 1.0],
     ];
     let inv4h = 1.0 / (4.0 * domain.h);
+    let mut fields = StaticFields {
+        von_mises_mpa: vec![0.0; domain.num_elements()],
+        displacement_mm: vec![0.0; domain.num_elements()],
+    };
     let mut max_vm = 0.0f64;
     let mut max_vm_elem = 0u32;
     for (ei, dofs) in sys.edofs.iter().enumerate() {
@@ -208,6 +232,16 @@ pub fn analyze(domain: &Domain, spec: &AnalysisSpec) -> Result<StaticAnalysis, A
         let vm = (0.5 * ((sx - sy).powi(2) + (sy - sz).powi(2) + (sz - sx).powi(2))
             + 3.0 * (txy * txy + tyz * tyz + txz * txz))
             .sqrt();
+        let grid_e = sys.active_elems[ei] as usize;
+        fields.von_mises_mpa[grid_e] = vm;
+        let mut mean = [0.0f64; 3];
+        for k in 0..8 {
+            for (a, m) in mean.iter_mut().enumerate() {
+                *m += u[dofs[3 * k + a] as usize] / 8.0;
+            }
+        }
+        fields.displacement_mm[grid_e] =
+            (mean[0].powi(2) + mean[1].powi(2) + mean[2].powi(2)).sqrt() / e;
         if vm > max_vm {
             max_vm = vm;
             max_vm_elem = sys.active_elems[ei];
@@ -234,17 +268,20 @@ pub fn analyze(domain: &Domain, spec: &AnalysisSpec) -> Result<StaticAnalysis, A
         domain.origin[2] + (eiz as f64 + 0.5) * domain.h,
     ];
 
-    Ok(StaticAnalysis {
-        compliance_n_mm: compliance,
-        max_displacement_mm,
-        max_displacement_at: domain.node_pos(nix, niy, niz),
-        max_von_mises_mpa: max_vm,
-        max_stress_at: ecenter,
-        grid: [domain.nx, domain.ny, domain.nz],
-        voxel_size_mm: domain.h,
-        relative_residual: relres,
-        converged: relres < 1e-6,
-    })
+    Ok((
+        StaticAnalysis {
+            compliance_n_mm: compliance,
+            max_displacement_mm,
+            max_displacement_at: domain.node_pos(nix, niy, niz),
+            max_von_mises_mpa: max_vm,
+            max_stress_at: ecenter,
+            grid: [domain.nx, domain.ny, domain.nz],
+            voxel_size_mm: domain.h,
+            relative_residual: relres,
+            converged: relres < 1e-6,
+        },
+        fields,
+    ))
 }
 
 /// Analyze an axis-aligned solid box.
