@@ -4,8 +4,7 @@
  *
  * A part id is the document engine's stable `"replica:seq"` id (e.g. `"0:7"`),
  * stored on the IR as `Document.partIds` keyed by the stringified root
- * NodeId. Unlike the old ids (the root NodeId itself, or a position in
- * `doc.roots`), a stable id never shifts when another part is deleted, and it
+ * NodeId. Unlike the old ids (the root NodeId itself), a stable id never shifts when another part is deleted, and it
  * survives IR round trips through the engine (the materializer writes
  * `partIds`, import honors it).
  *
@@ -17,7 +16,7 @@ import type { Document, NodeId, SceneEntry } from "@vcad/ir";
 
 /** How {@link rootForPartId} matched its input. Anything but `"stable"` is a
  *  deprecated spelling kept for compatibility. */
-export type PartIdMatch = "stable" | "legacy-node-id" | "legacy-index" | "name";
+export type PartIdMatch = "stable" | "legacy-node-id" | "name";
 
 /** A resolved scene root. */
 export interface ResolvedPart {
@@ -150,8 +149,8 @@ export function forgetPartId(doc: Document, root: NodeId | string): void {
 /**
  * Resolve a `part_id` to its scene root. Accepts, in order:
  *  1. a stable `"replica:seq"` id;
- *  2. a legacy digit id — the root NodeId the old surface handed out, or
- *     failing that a position in `doc.roots` (deprecated);
+ *  2. a legacy digit id — the root NodeId the old surface handed out
+ *     (deprecated; never a position — a stale id must miss, not misfire);
  *  3. a part name (the root node's name; first match).
  * Returns undefined when nothing matches. Never mints for the input itself,
  * but does persist ids for any root it returns.
@@ -175,8 +174,8 @@ export function rootForPartId(
   if (/^\d+$/.test(key)) {
     const byNode = doc.roots.findIndex((r) => String(r.root) === key);
     if (byNode >= 0) return done(byNode, "legacy-node-id");
-    const pos = Number(key);
-    if (pos < doc.roots.length) return done(pos, "legacy-index");
+    // No positional fallback: old ids were NodeIds, so a stale NodeId must
+    // miss rather than land on whichever part now sits at that index.
   }
   const byName = doc.roots.findIndex((r) => doc.nodes[String(r.root)]?.name === key);
   if (byName >= 0) return done(byName, "name");
@@ -197,8 +196,6 @@ export function partIdDeprecation(
   const how =
     resolved.matchedBy === "name"
       ? "a part name"
-      : resolved.matchedBy === "legacy-index"
-        ? "a positional index"
-        : "a legacy node-id part id";
+      : "a legacy node-id part id";
   return `part_id "${String(input)}" was resolved as ${how}; use the stable id "${resolved.partId}" instead (legacy spellings are deprecated).`;
 }

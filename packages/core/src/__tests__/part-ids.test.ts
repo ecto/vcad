@@ -72,11 +72,12 @@ describe("part ids", () => {
     expect(doc.roots.map((r) => partIdForRoot(doc, r))).toEqual(["0:4", "0:12"]);
   });
 
-  it("resolves stable, legacy node-id, legacy index and name spellings", () => {
+  it("resolves stable, legacy node-id and name (never position) spellings", () => {
     const doc = ensurePartIds(threeParts());
     expect(rootForPartId(doc, "0:9")).toMatchObject({ index: 1, matchedBy: "stable" });
     expect(rootForPartId(doc, "12")).toMatchObject({ index: 2, partId: "0:12", matchedBy: "legacy-node-id" });
-    expect(rootForPartId(doc, "1")).toMatchObject({ index: 1, matchedBy: "legacy-index" });
+    // "1" is no root's NodeId: a stale id misses instead of hitting doc.roots[1].
+    expect(rootForPartId(doc, "1")).toBeUndefined();
     expect(rootForPartId(doc, "c")).toMatchObject({ index: 2, matchedBy: "name" });
     expect(rootForPartId(doc, "0:99")).toBeUndefined();
     expect(rootForPartId(doc, "nope")).toBeUndefined();
