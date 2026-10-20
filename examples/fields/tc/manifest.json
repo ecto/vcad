@@ -1,0 +1,8 @@
+[
+  {"file":"hot_chip_m1e-4_tcg1.tc","field":"hot_chip","target":"m1e-4","format":"tcg1","dims":[16, 128, 128],"cells":262144,"bytes":30904,"hash":"635f431a0b4ba2bd","native_cpu1_s":0.010416958,"native_gpu_s":0.01457825,"native_gpu_kernels_s":0.011500375},
+  {"file":"hot_chip_m1e-4_tcg3s.tc","field":"hot_chip","target":"m1e-4","format":"tcg3s","dims":[16, 128, 128],"cells":262144,"bytes":23480,"hash":"e1a3021ce69b8d0d","native_cpu1_s":0.010672834,"native_gpu_s":0.071224625,"native_gpu_kernels_s":0.069553167},
+  {"file":"hot_chip_m1e-4_tcg3l.tc","field":"hot_chip","target":"m1e-4","format":"tcg3l","dims":[16, 128, 128],"cells":262144,"bytes":30434,"hash":"e1a3021ce69b8d0d","native_cpu1_s":0.11378975,"native_gpu_s":0.063926125,"native_gpu_kernels_s":0.062179584},
+  {"file":"hot_chip_m1e-3_tcg1.tc","field":"hot_chip","target":"m1e-3","format":"tcg1","dims":[16, 128, 128],"cells":262144,"bytes":13770,"hash":"19edf00b5b2824fd","native_cpu1_s":0.009629916,"native_gpu_s":0.013390917,"native_gpu_kernels_s":0.010281125},
+  {"file":"hot_chip_m1e-3_tcg3s.tc","field":"hot_chip","target":"m1e-3","format":"tcg3s","dims":[16, 128, 128],"cells":262144,"bytes":9602,"hash":"f016453c18972e15","native_cpu1_s":0.010095,"native_gpu_s":0.060822,"native_gpu_kernels_s":0.059121541},
+  {"file":"hot_chip_m1e-3_tcg3l.tc","field":"hot_chip","target":"m1e-3","format":"tcg3l","dims":[16, 128, 128],"cells":262144,"bytes":13558,"hash":"f016453c18972e15","native_cpu1_s":0.11309475,"native_gpu_s":0.059521833,"native_gpu_kernels_s":0.057711083}
+]

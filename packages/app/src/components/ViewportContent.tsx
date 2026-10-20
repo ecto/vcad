@@ -42,6 +42,7 @@ import { TransformGizmo } from "./TransformGizmo";
 import { SelectionOverlay } from "./SelectionOverlay";
 import { DimensionOverlay } from "./DimensionOverlay";
 import { DfmAnnotations } from "./DfmAnnotations";
+import { CompressedFieldSlice } from "./CompressedFieldOverlay";
 import { RayTracedViewportSync } from "./RayTracedViewport";
 import { ParticipantCameraOverlay } from "./ParticipantCameraOverlay";
 import {
@@ -2076,6 +2077,9 @@ export function ViewportContent({
           {/* DFM (Design for Manufacturing) issue badges. No-op when the
               DFM panel hasn't been enabled. */}
           <DfmAnnotations />
+
+          {/* Decoded compressed scalar field (tang-compress), z-slice */}
+          <CompressedFieldSlice />
 
           {/* XR presence — broadcasts local headset/hand pose and renders
               remote peers. No-op outside XR / outside cloud-sync. Inside the

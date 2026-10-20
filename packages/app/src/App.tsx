@@ -21,6 +21,7 @@ import { ToolDialogs } from "@/components/ToolDialogs";
 // splash render and WASM start fetching before we pay the parse cost.
 import { FeatureTree } from "@/components/FeatureTree";
 import { DfmDrawer } from "@/components/DfmDrawer";
+import { CompressedFieldHud } from "@/components/CompressedFieldOverlay";
 import { MobileShell } from "@/components/mobile/MobileShell";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useNativeWindowDrag } from "@/hooks/useNativeWindowDrag";
@@ -1112,6 +1113,7 @@ export function App() {
       {/* Manufacturability drawer (slides up from bottom; chip-triggered) */}
       <AsyncBoundary region="dfm-drawer" fallback={null}>
         <DfmDrawer />
+        <CompressedFieldHud />
       </AsyncBoundary>
 
       {/* Quote panel (slides in from right when Make It Real clicked) */}
