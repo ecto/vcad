@@ -235,13 +235,12 @@ impl DocumentApi {
     /// Lower an AI tool call ([`crate::tools::lower`]) and apply it,
     /// returning the same envelope as [`apply_json_envelope`](Self::apply_json_envelope).
     pub fn apply_tool_envelope(&mut self, tool: &str, args_json: &str) -> String {
-        let result = serde_json::from_str::<serde_json::Value>(args_json)
+        let lowered = serde_json::from_str::<serde_json::Value>(args_json)
             .map_err(|e| CommandError::Invalid {
                 message: e.to_string(),
             })
-            .and_then(|args| crate::tools::lower(tool, &args))
-            .and_then(|cmd| self.apply(cmd));
-        envelope(result)
+            .and_then(|args| crate::tools::lower(tool, &args, self));
+        envelope(lowered.and_then(|cmd| self.apply(cmd)))
     }
 
     fn check(&self, cmd: &DocCommand) -> Result<(), CommandError> {

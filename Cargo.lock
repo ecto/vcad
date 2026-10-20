@@ -4271,6 +4271,7 @@ dependencies = [
  "thiserror 2.0.18",
  "ts-rs",
  "vcad-crdt",
+ "vcad-eval",
  "vcad-i18n",
  "vcad-ir",
  "vcad-kernel",

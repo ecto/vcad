@@ -320,6 +320,33 @@ impl DocumentApi {
         }
     }
 
+    /// A feature's `Vec3` param (e.g. `offset`, `rotation`), if set.
+    pub fn feature_vec3(&self, stable_id: &str, key: &str) -> Option<[f64; 3]> {
+        let fid = self.stable_ids.resolve(stable_id)?;
+        let ordered = self.crdt.ordered_features();
+        let (_, feature) = ordered.iter().find(|(id, _)| *id == fid)?;
+        match &feature.params.get(key)?.0 {
+            Value::Vec3(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// World-space bounding box `(min, max)` of a part, by evaluating its
+    /// root node with the full `vcad-eval` evaluator (transforms included).
+    /// `None` for an unknown id or a part that produces no solid.
+    pub fn part_world_bbox(&self, stable_id: &str) -> Option<([f64; 3], [f64; 3])> {
+        let state = self.get_state();
+        let part = state.parts.iter().find(|p| p.id() == stable_id)?;
+        let mut cache = HashMap::new();
+        let solid = vcad_eval::evaluate::evaluate_node(
+            part.root_node_id(),
+            &state.document.nodes,
+            &mut cache,
+        )
+        .ok()??;
+        Some(solid.bounding_box())
+    }
+
     /// Deterministic fingerprint of the materialized state (IR document +
     /// parts): FNV-1a 64 over key-sorted JSON, as 16 hex digits. The parity
     /// harness compares it across native, WASM and C-ABI hosts, so it must

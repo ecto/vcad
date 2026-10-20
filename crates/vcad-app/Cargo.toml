@@ -13,6 +13,7 @@ ts-rs = { version = "10", optional = true }
 vcad-ir = { path = "../vcad-ir", version = "0.10.0" }
 vcad-crdt = { path = "../vcad-crdt", version = "0.10.0" }
 vcad-kernel = { path = "../vcad-kernel", version = "0.10.0" }
+vcad-eval = { workspace = true }
 vcad-kernel-math = { path = "../vcad-kernel-math", version = "0.10.0" }
 vcad-i18n = { path = "../vcad-i18n" }
 

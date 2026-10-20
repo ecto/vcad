@@ -103,13 +103,13 @@
       "err:unknown_id",
       "err:invalid",
       "err:unknown_id",
-      "err:unsupported",
+      "ok:-",
       "ok:-",
       "ok:-",
       "ok:-",
       "err:batch",
       "ok:7:1"
     ],
-    "hash": "ae20deae754eb1fa"
+    "hash": "258f2c0e7ae99600"
   }
 }
