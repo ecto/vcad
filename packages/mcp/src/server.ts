@@ -1470,7 +1470,7 @@ export async function createServer(
       def?.behavior.writesDoc &&
       documents.has(incomingId)
     ) {
-      recordHistorySnapshot(incomingId);
+      recordHistorySnapshot(incomingId, name);
     }
 
     // Inner dispatch. Encloses the Map lookup + handler so the single persist
