@@ -5,7 +5,10 @@ use serde::{Deserialize, Serialize};
 /// A parameter value in the CRDT document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
-#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/", rename = "CrdtValue"))]
+#[cfg_attr(
+    feature = "ts-rs",
+    ts(export, export_to = "bindings/", rename = "CrdtValue")
+)]
 pub enum Value {
     /// 64-bit floating point.
     F64(f64),
