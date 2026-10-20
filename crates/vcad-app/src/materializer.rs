@@ -83,6 +83,12 @@ impl Context {
 fn collect_consumed_feature_ids(crdt: &CrdtDocument) -> std::collections::HashSet<String> {
     let mut consumed = std::collections::HashSet::new();
     for (_, feature) in crdt.ordered_features() {
+        // Collision geometry belongs to its part def, not the scene.
+        if feature.kind == "part-def" {
+            if let Some((Value::FeatureRefList(ids), _)) = feature.params.get("colliders") {
+                consumed.extend(ids.iter().cloned());
+            }
+        }
         let Some(input) = FeatureInput::from_crdt_params(&feature.kind, &feature.params) else {
             continue;
         };
@@ -113,6 +119,7 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
     let mut parts = Vec::new();
     let mut ctx = Context::new();
     let consumed = collect_consumed_feature_ids(crdt);
+    let mut extras = Vec::new();
 
     for (fid, feature) in crdt.ordered_features() {
         // Non-geometry features: assembly metadata, scene settings.
@@ -157,10 +164,19 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
                 materialize_design_constraints(&mut doc, feature);
                 continue;
             }
+            "doc-extras" => {
+                extras.push(feature);
+                continue;
+            }
             _ => {}
         }
 
-        if let Some((part, root_id)) = materialize_feature(&mut doc, &mut ctx, fid, feature, crdt) {
+        let built = if feature.kind == "ir-subgraph" {
+            materialize_subgraph(&mut doc, &mut ctx, fid, feature)
+        } else {
+            materialize_feature(&mut doc, &mut ctx, fid, feature, crdt)
+        };
+        if let Some((part, root_id)) = built {
             let fid_str = fid_to_string(fid);
             if !consumed.contains(&fid_str) {
                 let material =
@@ -177,11 +193,110 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
         }
     }
 
+    // Imported document-level fields fill in only what no dedicated
+    // feature set, so later edits (e.g. scene settings) win.
+    for feature in extras {
+        materialize_doc_extras(&mut doc, feature);
+    }
+
     MaterializeResult {
         document: doc,
         parts,
         warnings: ctx.warnings,
     }
+}
+
+/// Re-emit an `ir-subgraph` feature's nodes with fresh ids.
+fn materialize_subgraph(
+    doc: &mut Document,
+    ctx: &mut Context,
+    fid: FeatureId,
+    feature: &FeatureState,
+) -> Option<(PartInfo, NodeId)> {
+    #[derive(serde::Deserialize)]
+    struct Blob {
+        root: NodeId,
+        nodes: HashMap<NodeId, vcad_ir::Node>,
+    }
+    let blob: Blob = match serde_json::from_str(&get_str(feature, "subgraph")?) {
+        Ok(b) => b,
+        Err(e) => {
+            ctx.warnings
+                .push(format!("ir-subgraph {}: {e}", fid_to_string(fid)));
+            return None;
+        }
+    };
+    let mut old_ids: Vec<NodeId> = blob.nodes.keys().copied().collect();
+    old_ids.sort_unstable();
+    let fresh: HashMap<NodeId, NodeId> = old_ids.iter().map(|&old| (old, ctx.alloc())).collect();
+    for old in old_ids {
+        let mut node = blob.nodes[&old].clone();
+        node.id = fresh[&old];
+        for child in node.op.child_ids_mut() {
+            if let Some(&n) = fresh.get(child) {
+                *child = n;
+            }
+        }
+        doc.nodes.insert(node.id, node);
+    }
+    let root = *fresh.get(&blob.root)?;
+    // Same Scale → Rotate → Translate chain as every other feature, so the
+    // imported part can be moved like one.
+    let (scale_id, rotate_id, translate_id) = (ctx.alloc(), ctx.alloc(), ctx.alloc());
+    insert_transform_chain(doc, ctx, feature, root, scale_id, rotate_id, translate_id);
+    let id = fid_to_string(fid);
+    let name = get_str(feature, "name").unwrap_or_else(|| "Imported".to_string());
+    Some((
+        PartInfo::IrSubgraph {
+            id,
+            name,
+            subgraph_node_id: root,
+            scale_node_id: scale_id,
+            rotate_node_id: rotate_id,
+            translate_node_id: translate_id,
+        },
+        translate_id,
+    ))
+}
+
+fn materialize_doc_extras(doc: &mut Document, feature: &FeatureState) {
+    let Some(json) = get_str(feature, "extras") else {
+        return;
+    };
+    let Ok(serde_json::Value::Object(extras)) = serde_json::from_str::<serde_json::Value>(&json)
+    else {
+        return;
+    };
+    macro_rules! fill {
+        ($($field:ident),* $(,)?) => {$(
+            if let Some(v) = extras.get(stringify!($field)) {
+                let empty = serde_json::to_value(&doc.$field)
+                    .map(|cur| crate::migrate::is_empty_json(&cur))
+                    .unwrap_or(false);
+                if empty {
+                    if let Ok(x) = serde_json::from_value(v.clone()) {
+                        doc.$field = x;
+                    }
+                }
+            }
+        )*};
+    }
+    fill!(
+        materials,
+        part_materials,
+        scene,
+        mates,
+        schematic,
+        pcb,
+        parameters,
+        datums,
+        clearance_specs,
+        constraints,
+        analysis_studies,
+        drawing,
+        hardware,
+        source,
+    );
 }
 
 /// Materialize a single geometry feature into IR nodes.
@@ -1182,8 +1297,15 @@ fn materialize_part_def(
             name: part_name,
             root,
             default_material,
-            inertial: None,
-            colliders: None,
+            inertial: get_str(feature, "inertial").and_then(|j| serde_json::from_str(&j).ok()),
+            colliders: match feature.params.get("colliders") {
+                Some((Value::FeatureRefList(ids), _)) => Some(
+                    ids.iter()
+                        .filter_map(|id| ctx.feature_roots.get(id).copied())
+                        .collect(),
+                ),
+                _ => None,
+            },
         },
     );
 }
