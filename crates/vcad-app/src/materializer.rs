@@ -187,6 +187,9 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
                     material,
                     visible,
                 });
+                doc.part_ids
+                    .get_or_insert_with(Default::default)
+                    .insert(root_id.to_string(), fid_str.clone());
             }
             ctx.feature_roots.insert(fid_str, root_id);
             parts.push(part);

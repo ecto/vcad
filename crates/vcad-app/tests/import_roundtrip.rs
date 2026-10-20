@@ -158,3 +158,58 @@ fn imported_subgraph_parts_can_be_moved() {
         doc.nodes[&root].op
     );
 }
+
+fn part_ids(api: &DocumentApi) -> Vec<String> {
+    let parts = serde_json::to_value(&api.get_state().parts).unwrap();
+    parts
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// Stable ids of the parts that reach the scene (`partIds` values).
+fn scene_part_ids(api: &DocumentApi) -> Vec<String> {
+    api.get_state()
+        .document
+        .part_ids
+        .unwrap_or_default()
+        .into_values()
+        .collect()
+}
+
+/// MCP sessions persist the materialized IR and rebuild an engine from it on
+/// hydrate, so the stable part ids it hands out must survive that rebuild:
+/// same IR → same ids, save → load → same ids, and — because the
+/// materializer stamps `partIds` and import honors them — materialized IR
+/// re-imported → same ids, even though its node shape differs from the source.
+#[test]
+fn stable_ids_survive_rebuild_from_ir() {
+    let mut checked = 0;
+    for path in fixtures() {
+        let text = std::fs::read_to_string(&path).unwrap();
+        if serde_json::from_str::<vcad_ir::Document>(&text).is_err() {
+            continue;
+        }
+        let name = path.display();
+        let mut a = DocumentApi::new(ReplicaId(1));
+        a.import_ir(&text);
+        let mut b = DocumentApi::new(ReplicaId(7));
+        b.import_ir(&text);
+        assert_eq!(part_ids(&a), part_ids(&b), "{name}: fresh rebuild");
+
+        let c = DocumentApi::load(&a.save(), ReplicaId(1)).unwrap();
+        assert_eq!(part_ids(&a), part_ids(&c), "{name}: save/load");
+
+        let materialized = serde_json::to_string(&a.get_state().document).unwrap();
+        let mut d = DocumentApi::new(ReplicaId(1));
+        d.import_ir(&materialized);
+        let (mut want, mut got) = (scene_part_ids(&a), scene_part_ids(&d));
+        want.sort();
+        got.sort();
+        assert_eq!(got, want, "{name}: re-import");
+        checked += 1;
+    }
+    assert!(checked > 0);
+}

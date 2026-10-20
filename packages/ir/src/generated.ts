@@ -1868,6 +1868,13 @@ drawing?: DrawingSettings,
  */
 timeline?: Timeline, 
 /**
+ * Stable part ids, keyed by scene-root node id (stringified). Written by
+ * the document engine's materializer and honored on import, so a part's
+ * `"replica:seq"` id survives any round trip through IR — the id MCP
+ * tools and the app hand out as `part_id`. Absent for hand-written IR.
+ */
+partIds?: Record<string, string>, 
+/**
  * Off-the-shelf hardware contributed by the geometry itself — every
  * fastener form placed in the model emits a line here, so a BOM is
  * derived from what was actually modeled instead of being tallied by
