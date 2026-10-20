@@ -394,7 +394,9 @@ pub struct BoardSpec {
 /// JLC-class 4-layer defaults: 0.15 mm trace / clearance, 0.45 / 0.25 mm vias.
 pub fn default_rules() -> DesignRules {
     DesignRules {
+        allow_stacked_microvias: false,
         inferred_floors: Vec::new(),
+        rule_areas: Vec::new(),
         min_microvia_drill: 0.1,
         min_microvia_diameter: 0.2,
         default_rules: NetClassRules {
@@ -843,6 +845,8 @@ mod tests {
         let mut nets = BTreeMap::new();
         nets.insert("A".to_string(), vec!["R1.G".to_string()]);
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: None,
             components: vec![SchematicComponent {
                 reference: "R1".into(),
@@ -932,6 +936,8 @@ mod tests {
         nets.insert("A".to_string(), vec!["R1.1".to_string()]);
         nets.insert("B".to_string(), vec!["R1.2".to_string()]);
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: None,
             components: vec![SchematicComponent {
                 reference: "R1".into(),

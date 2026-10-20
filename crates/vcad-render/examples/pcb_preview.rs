@@ -305,7 +305,9 @@ fn sample_board() -> Pcb {
         stackup: LayerStackup { layers: vec![] },
         nets,
         rules: DesignRules {
+            allow_stacked_microvias: false,
             inferred_floors: Vec::new(),
+            rule_areas: Vec::new(),
             min_microvia_drill: 0.1,
             min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
@@ -342,7 +344,9 @@ fn sample_board() -> Pcb {
 
 fn base_rules() -> DesignRules {
     DesignRules {
+        allow_stacked_microvias: false,
         inferred_floors: Vec::new(),
+        rule_areas: Vec::new(),
         min_microvia_drill: 0.1,
         min_microvia_diameter: 0.2,
         default_rules: NetClassRules {

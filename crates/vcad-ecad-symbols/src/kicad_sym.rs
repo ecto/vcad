@@ -364,6 +364,34 @@ impl SymbolLib {
     }
 }
 
+impl Symbol {
+    /// Convert this symbol's pins into schematic pins, ready to drop into a
+    /// [`vcad_ir::ecad::SchematicComponent`] (or a `create_schematic` call).
+    ///
+    /// KiCad stacks several pins with the same number (e.g. repeated `VSS`
+    /// pins drawn on top of each other) and repeats pins across body styles;
+    /// each physical pin number is emitted once, keeping the first occurrence.
+    /// `"~"` (KiCad's "unnamed") becomes the pin number. Positions are kept in
+    /// the file's units (mm for KiCad 6+ libraries).
+    pub fn schematic_pins(&self) -> Vec<vcad_ir::ecad::SchematicPin> {
+        let mut seen = std::collections::HashSet::new();
+        self.pins
+            .iter()
+            .filter(|p| seen.insert(p.number.clone()))
+            .map(|p| vcad_ir::ecad::SchematicPin {
+                number: p.number.clone(),
+                name: if p.name == "~" || p.name.is_empty() {
+                    p.number.clone()
+                } else {
+                    p.name.clone()
+                },
+                pin_type: p.pin_type,
+                position: vcad_ir::Vec2::new(p.position.0, p.position.1),
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,6 +442,21 @@ mod tests {
     )
   )
 )"#;
+
+    #[test]
+    fn schematic_pins_dedupes_and_names_unnamed() {
+        let lib = parse_symbol_lib(RESISTOR_LIB).unwrap();
+        let sym = lib.get("R").unwrap();
+        let pins = sym.schematic_pins();
+        assert_eq!(pins.len(), 2);
+        assert_eq!(pins[0].number, "1");
+        assert_eq!(pins[0].name, "1", "\"~\" becomes the pin number");
+        assert_eq!(pins[0].pin_type, vcad_ir::ecad::PinType::Passive);
+
+        let mut doubled = sym.clone();
+        doubled.pins.push(doubled.pins[0].clone());
+        assert_eq!(doubled.schematic_pins().len(), 2, "stacked pins emit once");
+    }
 
     #[test]
     fn parse_resistor_symbol() {

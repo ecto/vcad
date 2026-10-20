@@ -1,0 +1,17 @@
+{
+  "id": "2026-10-19-inferred-pin-field-rule-areas",
+  "version": "0.10.0",
+  "date": "2026-10-19",
+  "category": "feat",
+  "title": "Inferred dense-pin-field rule areas",
+  "summary": "Dense pin fields (BGAs) get inferred rule areas (new DesignRules.ruleAreas) with locally relaxed width/clearance, matching how the original board was designed.",
+  "features": [
+    "pcb",
+    "routing",
+    "drc"
+  ],
+  "mcpTools": [
+    "route_nets",
+    "run_drc"
+  ]
+}

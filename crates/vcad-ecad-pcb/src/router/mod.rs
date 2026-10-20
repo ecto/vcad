@@ -50,6 +50,7 @@ pub mod complete;
 pub mod congestion;
 pub mod diff_pair;
 pub mod escape;
+pub mod flow;
 pub mod global;
 pub mod grid;
 pub(crate) mod legalize;
@@ -864,7 +865,9 @@ mod pcb_route_tests {
             },
             nets: vec![],
             rules: DesignRules {
+                allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
+                rule_areas: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {

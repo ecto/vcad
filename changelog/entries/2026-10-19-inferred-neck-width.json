@@ -1,0 +1,15 @@
+{
+  "id": "2026-10-19-inferred-neck-width",
+  "version": "0.10.0",
+  "date": "2026-10-19",
+  "category": "feat",
+  "title": "Inferred neck-down width",
+  "summary": "The router infers the board's neck-down trace width from existing copper instead of a fixed default when entering tight pads.",
+  "features": [
+    "pcb",
+    "routing"
+  ],
+  "mcpTools": [
+    "route_nets"
+  ]
+}

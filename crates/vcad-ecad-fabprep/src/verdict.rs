@@ -10,7 +10,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use vcad_ecad_pcb::ratsnest::{compute_ratsnest, NetConnection, Netlist, NetlistNet};
-use vcad_ecad_pcb::router::classes::via_geom_for;
 use vcad_ecad_pcb::router::complete::{
     path_vias, route_window_complete_pinned, CompleteOutcome, ViaClass, WindowBudget,
 };
@@ -182,13 +181,19 @@ pub fn route_remaining(pcb: &mut Pcb, opts: VerdictOptions) -> VerdictSummary {
         // drill-probed in-search. Without it the search spaces vias by copper
         // clearance alone and proposes paths the fail-closed commit has to
         // throw away as unknowns.
-        let via_class = conns.iter().map(|(n, _, _)| via_geom_for(pcb, n)).fold(
-            (
-                pcb.rules.default_rules.via_diameter,
-                pcb.rules.default_rules.via_drill,
-            ),
-            |(ad, adr), (d, dr)| (ad.max(d), adr.max(dr)),
-        );
+        //
+        // Per-span sizing (`vcad_ecad_pcb::via_sizing`): the window router
+        // hops one layer pair at a time, so it is handed the LARGEST
+        // single-hop via of the cluster (a microvia on an HDI board). A
+        // stacked descent it emits is judged at its real, drilled size by
+        // `vias_legal` before anything is committed.
+        let sz = session.via_sizing();
+        let via_class = conns
+            .iter()
+            .map(|(n, _, _)| sz.micro_size(n).unwrap_or_else(|| sz.drilled_size(n)))
+            .fold((0.0_f64, 0.0_f64), |(ad, adr), (d, dr)| {
+                (ad.max(d), adr.max(dr))
+            });
         match route_window_complete_pinned(
             &session,
             (*lo, *hi),
@@ -291,19 +296,23 @@ fn vias_legal(
     net: &str,
     path: &[(Vec2, Vec2, PcbLayer)],
 ) -> bool {
-    let (via_d, via_drill) = via_geom_for(pcb, net);
     let clearance = session.clearance_for(net);
     let vias = path_vias(path);
     vias.iter().all(|&(p, l0, l1)| {
-        if !session.probe_via_drill(p, net).legal {
+        // Each barrel at its own span's size.
+        let spec = session.via_spec(net, l0, l1);
+        let via_d = spec.diameter;
+        if !session.probe_via_span(p, net, l0, l1).legal {
             return false;
         }
         // The path's own barrels must clear each other too — the session
         // cannot judge them until they are committed.
-        let self_clear = vias.iter().all(|&(q, _, _)| {
+        let self_clear = vias.iter().all(|&(q, q0, q1)| {
             let (dx, dy) = (q.x - p.x, q.y - p.y);
             dx.abs() + dy.abs() < 1e-9
-                || (dx * dx + dy * dy).sqrt() - via_drill >= pcb.rules.hole_to_hole - 1e-6
+                || (dx * dx + dy * dy).sqrt()
+                    - (spec.drill + session.via_spec(net, q0, q1).drill) / 2.0
+                    >= pcb.rules.hole_to_hole - 1e-6
         });
         if !self_clear {
             return false;
@@ -350,9 +359,9 @@ fn commit_path(
     // Layer changes are barrels. `path_vias` merges a multi-step transition at
     // one point into a single barrel — two stacked vias at the same position
     // are a hole-to-hole violation against each other.
-    let (via_d, via_drill) = via_geom_for(pcb, net);
-    let r = via_d / 2.0;
     for (p, l0, l1) in path_vias(path) {
+        let spec = session.via_spec(net, l0, l1);
+        let (via_d, via_drill, r) = (spec.diameter, spec.drill, spec.r());
         // Copper on every spanned layer, and the drill in the hole index, so
         // the next path sees the whole barrel — both the annulus it must clear
         // and the hole it must keep `hole_to_hole` from.
@@ -367,7 +376,7 @@ fn commit_path(
         }
         session.commit_drill(p, via_drill);
         pcb.vias.push(Via {
-            via_type: None,
+            via_type: Some(spec.via_type),
             position: p,
             diameter: via_d,
             drill: via_drill,

@@ -1,0 +1,16 @@
+{
+  "id": "2026-10-19-flow-core-router",
+  "version": "0.10.0",
+  "date": "2026-10-19",
+  "category": "feat",
+  "title": "Experimental flow-core router (VCAD_FLOW=1)",
+  "summary": "Opt-in plan-first router: CDT capacity graph, multicommodity flow, embedding and funnel realization. Near DRC-clean but connects fewer nets than the default yet.",
+  "features": [
+    "pcb",
+    "routing",
+    "experimental"
+  ],
+  "mcpTools": [
+    "route_nets"
+  ]
+}

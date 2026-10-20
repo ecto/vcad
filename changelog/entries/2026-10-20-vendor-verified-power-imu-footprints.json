@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-20-vendor-verified-power-imu-footprints",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "feat",
+  "title": "Vendor-verified power, IMU and XT/LCB footprints",
+  "summary": "BMI088, ICM-42688-P, TO-277A, XT90PW, XT60PB and AMASS LCB footprints added; TOLL, TDSON/TSDSON, XT30/XT60 and Micro-Fit lands corrected to vendor drawings.",
+  "features": ["pcb", "footprints"],
+  "mcpTools": ["search_footprints", "get_footprint"]
+}

@@ -1,0 +1,17 @@
+{
+  "id": "2026-10-19-per-span-via-sizing",
+  "version": "0.10.0",
+  "date": "2026-10-19",
+  "category": "fix",
+  "title": "Vias sized per span \u2014 no undersized vias",
+  "summary": "Every via site now sizes its drill/annulus for the layer span it actually covers, so routed boards no longer emit undersized drilled vias.",
+  "features": [
+    "pcb",
+    "routing",
+    "drc"
+  ],
+  "mcpTools": [
+    "route_nets",
+    "fab_prep"
+  ]
+}

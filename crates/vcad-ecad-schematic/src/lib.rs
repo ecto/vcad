@@ -11,6 +11,7 @@ use vcad_ir::Vec2;
 
 pub mod erc;
 pub mod geometry;
+pub mod hierarchy;
 
 // ============================================================================
 // Netlist types
@@ -257,6 +258,16 @@ pub fn generate_netlist(sheet: &SchematicSheet) -> Netlist {
             for w in indices.windows(2) {
                 uf.union(w[0], w[1]);
             }
+            // An explicit net and a label of the same name are one net —
+            // the name means the same thing in both sources (this is how a
+            // flattened child sheet's pins join a root net drawn with labels).
+            if let Some(&first) = indices.first() {
+                for (label_name, label_idx) in &label_indices {
+                    if label_name == name {
+                        uf.union(first, *label_idx);
+                    }
+                }
+            }
             explicit_groups.push((name.clone(), indices));
         }
     }
@@ -369,6 +380,8 @@ mod tests {
     #[test]
     fn empty_schematic_produces_empty_netlist() {
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![],
@@ -386,6 +399,8 @@ mod tests {
         // R2 at (25, 0) with pins at (-5,0) and (5,0) => world (20,0) and (30,0)
         // Wire from (15,0) to (20,0) connects R1 pin 2 to R2 pin 1
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![
@@ -433,6 +448,8 @@ mod tests {
         // Wire from (5,0) to (0,0)
         // Label "VCC" at (0,0)
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![make_resistor("R1", Vec2::new(10.0, 0.0))],
@@ -465,6 +482,8 @@ mod tests {
     fn auto_naming_when_no_label() {
         // Two resistors connected by a wire, no labels
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![
@@ -499,6 +518,8 @@ mod tests {
         // R1 at (0,0) with pin offsets, but let's place pins directly:
         // Use components with pin at (0,0), (20,0), (10,10)
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![
@@ -588,6 +609,8 @@ mod tests {
 
         // Wire from (10, 5) to (0, 5) connecting pin 1 to a label
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![r1],
@@ -622,6 +645,8 @@ mod tests {
         r1.mirror = true;
 
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![r1],
@@ -653,6 +678,8 @@ mod tests {
     fn multiple_labels_same_net_picks_alphabetical() {
         // Two labels at the same position
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: None,
             components: vec![SchematicComponent {
@@ -706,6 +733,8 @@ mod tests {
             vec!["R1.1".to_string(), "R2.2".to_string()],
         );
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: Some(nets),
             title: None,
             components: vec![
@@ -737,6 +766,8 @@ mod tests {
         let mut nets = std::collections::BTreeMap::new();
         nets.insert("PHB".to_string(), vec!["R1.2".to_string()]);
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: Some(nets),
             title: None,
             components: vec![
@@ -777,6 +808,8 @@ mod tests {
             ],
         );
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: Some(nets),
             title: None,
             components: vec![make_resistor("R1", Vec2::new(0.0, 0.0))],

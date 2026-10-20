@@ -56,6 +56,12 @@ pub enum DrcRuleType {
     /// Signal copper (a trace) on a layer whose stackup role is plane /
     /// split plane: it cuts the plane. Plane layers carry vias only.
     PlaneLayerSignal,
+    /// Two microvias on consecutive spans (sharing one copper layer) whose
+    /// laser drills overlap — a STACKED microvia. Stacking needs filled,
+    /// planarized microvias, a fab capability the board does not declare;
+    /// microvias must be staggered (the next hop's drill lands clear of the
+    /// one below).
+    MicroviaStack,
 }
 
 /// DRC violation severity.
@@ -234,6 +240,7 @@ fn check_drc_scoped(pcb: &Pcb, region: Option<DrcRegion>) -> Vec<DrcViolation> {
     check_edge_clearance(pcb, region, &mut violations);
     check_hole_to_hole(pcb, region, &mut violations);
     check_annular_ring(pcb, region, &mut violations);
+    check_microvia_stack(pcb, region, &mut violations);
     check_keepout(pcb, region, &mut violations);
     check_courtyard_overlap(pcb, region, &mut violations);
     // Board-global by construction (a union-find over ALL copper): never scoped.
@@ -804,9 +811,11 @@ fn check_pad_clearance(
     }
 }
 
-/// Report every trace on a plane / split-plane layer (stackup role). The
-/// plane's own net is not exempt: a trace on a plane layer is a cut either way
-/// — pour copper belongs in the zone, not in traces.
+/// Report every trace on a plane / split-plane layer (stackup role). One
+/// exemption: a plane stub — a same-net trace no longer than
+/// [`crate::router::flow::access::PLANE_STUB_MAX`] with an end inside its
+/// own net's pour on that layer (a via landing just outside its pour). Any
+/// other trace on a plane, including a longer own-net one, is reported.
 fn check_plane_layer_signal(
     pcb: &Pcb,
     region: Option<&DrcRegion>,
@@ -816,7 +825,24 @@ fn check_plane_layer_signal(
     if planes.is_empty() {
         return;
     }
+    let own_pour = |t: &vcad_ir::ecad::Trace, p: Vec2| {
+        pcb.zones.iter().any(|z| {
+            z.net == t.net
+                && z.layer == t.layer
+                && z.outline.len() >= 3
+                && crate::spatial::point_in_polygon(p, &z.outline)
+                && !z
+                    .holes
+                    .iter()
+                    .any(|h| h.len() >= 3 && crate::spatial::point_in_polygon(p, h))
+        })
+    };
     for t in pcb.traces.iter().filter(|t| planes.contains(&t.layer)) {
+        if (t.end - t.start).length() <= crate::router::flow::access::PLANE_STUB_MAX + 1e-9
+            && (own_pour(t, t.start) || own_pour(t, t.end))
+        {
+            continue;
+        }
         if !in_scope(region, |r| r.hits_segment(t.start, t.end, t.width / 2.0)) {
             continue;
         }
@@ -865,7 +891,10 @@ fn check_min_trace_width(
         }
         let min_width = net_width.get(&trace.net).copied().unwrap_or(default_width);
 
-        if trace.width < min_width - 1e-6 && !neck_allows(pcb, trace) {
+        if trace.width < min_width - 1e-6
+            && !neck_allows(pcb, trace)
+            && !rule_area_allows(pcb, trace.start, trace.end, trace.layer, trace.width)
+        {
             violations.push(DrcViolation {
                 rule: DrcRuleType::MinTraceWidth,
                 severity: DrcSeverity::Error,
@@ -874,8 +903,11 @@ fn check_min_trace_width(
                     (trace.start.y + trace.end.y) / 2.0,
                 ),
                 message: format!(
-                    "Trace width {:.3}mm below minimum {:.3}mm for net '{}'",
-                    trace.width, min_width, trace.net
+                    "Trace width {:.3}mm below minimum {:.3}mm for net '{}'{}",
+                    trace.width,
+                    min_width,
+                    trace.net,
+                    rule_area_note(pcb, trace)
                 ),
                 actual: trace.width,
                 required: min_width,
@@ -1094,10 +1126,20 @@ fn check_hole_to_hole(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Ve
         .map(|h| in_scope(region, |r| r.hits_point(h.pos, h.radius)))
         .collect();
 
+    // Stacked microvias on a board that allows them are one laser stack, not
+    // two colliding holes (vias come first in `holes`, in board order).
+    let stacks: std::collections::HashSet<(usize, usize)> = if pcb.rules.allow_stacked_microvias {
+        pcb.stacked_microvia_pairs().into_iter().collect()
+    } else {
+        Default::default()
+    };
     // O(n^2) check — fine for typical PCB sizes; use spatial index for large boards
     for i in 0..holes.len() {
         for j in (i + 1)..holes.len() {
             if !in_region[i] && !in_region[j] {
+                continue;
+            }
+            if stacks.contains(&(i, j)) {
                 continue;
             }
             let dx = holes[i].pos.x - holes[j].pos.x;
@@ -1138,6 +1180,42 @@ fn check_hole_to_hole(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Ve
                 });
             }
         }
+    }
+}
+
+/// Stacked-microvia check (see [`DrcRuleType::MicroviaStack`]): two legal
+/// microvias whose spans meet at one copper layer and whose drills overlap in
+/// plan (centre distance below the larger drill). Staggered microvias — the
+/// next hop offset so its drill lands clear of the one below — pass.
+fn check_microvia_stack(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
+    // The fab may stack (declared, or inferred from the board's own stacks).
+    if pcb.rules.allow_stacked_microvias {
+        return;
+    }
+    for (i, j) in pcb.stacked_microvia_pairs() {
+        let (va, vb) = (&pcb.vias[i], &pcb.vias[j]);
+        if !in_scope(region, |r| r.hits_point(va.position, va.diameter / 2.0))
+            && !in_scope(region, |r| r.hits_point(vb.position, vb.diameter / 2.0))
+        {
+            continue;
+        }
+        let d = ((va.position.x - vb.position.x).powi(2) + (va.position.y - vb.position.y).powi(2))
+            .sqrt();
+        let need = va.drill.max(vb.drill);
+        violations.push(DrcViolation {
+            rule: DrcRuleType::MicroviaStack,
+            severity: DrcSeverity::Error,
+            position: va.position,
+            message: format!(
+                "Stacked microvias net '{}' {:?}-{:?} over {:?}-{:?}: drills {:.3}mm apart \
+                 (< {:.3}mm) — stagger them (the board does not allow stacked microvias)",
+                va.net, va.start_layer, va.end_layer, vb.start_layer, vb.end_layer, d, need
+            ),
+            actual: d,
+            required: need,
+            provenance: DrcProvenance::Routing,
+            generated: false,
+        });
     }
 }
 
@@ -2289,7 +2367,9 @@ fn detect_unstitched_pads(
         }
     }
 
-    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+    // The largest via the board can mint (its drilled size), so the
+    // suggested escape clears whatever span gets used.
+    let via_r = crate::via_sizing::ViaSizing::from_pcb(pcb).max_spec("").r();
     let suggest_offset =
         via_r + pcb.rules.default_rules.clearance + pcb.rules.default_rules.trace_width / 2.0;
 
@@ -3375,9 +3455,9 @@ pub(crate) fn net_class<'a>(pcb: &'a Pcb, net: &str) -> Option<&'a vcad_ir::ecad
 /// width applies. (The pad-entry neck of KiCad custom rules / Altium's
 /// neck-down: a bounded length from the land, not a blanket width waiver.)
 pub(crate) fn neck_allows_segment(pcb: &Pcb, net: &str, a: Vec2, b: Vec2, width: f64) -> bool {
-    let Some(class) = net_class(pcb, net) else {
-        return false;
-    };
+    // unclassed nets fall back to the default rules (an inferred neck lives
+    // there)
+    let class = net_class(pcb, net).unwrap_or(&pcb.rules.default_rules);
     let Some(neck_w) = class.neck_width else {
         return false;
     };
@@ -3402,6 +3482,40 @@ pub(crate) fn neck_allows_segment(pcb: &Pcb, net: &str, a: Vec2, b: Vec2, width:
         })
     };
     near_pad(a) && near_pad(b)
+}
+
+/// Whether segment `a`–`b` of `width` on `layer` lies in a rule area (both
+/// ends inside one) whose reduced minimum width it meets.
+pub(crate) fn rule_area_allows(pcb: &Pcb, a: Vec2, b: Vec2, layer: PcbLayer, width: f64) -> bool {
+    pcb.rules
+        .rule_areas
+        .iter()
+        .any(|r| width >= r.min_trace_width - 1e-6 && r.contains(a, layer) && r.contains(b, layer))
+}
+
+fn rule_area_note(pcb: &Pcb, t: &vcad_ir::ecad::Trace) -> String {
+    let inside = pcb
+        .rules
+        .rule_areas
+        .iter()
+        .find(|r| r.contains(t.start, t.layer) || r.contains(t.end, t.layer));
+    match inside {
+        Some(r) => format!(
+            " (in {} rule area '{}' but below its {:.3}mm or leaving it{})",
+            if r.inferred { "inferred" } else { "authored" },
+            r.name,
+            r.min_trace_width,
+            if r.inferred {
+                format!("; {}", r.provenance)
+            } else {
+                String::new()
+            }
+        ),
+        None if pcb.rules.rule_areas.iter().any(|r| r.inferred) => {
+            " (outside every inferred rule area)".to_string()
+        }
+        None => String::new(),
+    }
 }
 
 fn neck_allows(pcb: &Pcb, t: &vcad_ir::ecad::Trace) -> bool {
@@ -3670,7 +3784,9 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
+                rule_areas: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
@@ -5239,6 +5355,98 @@ mod tests {
         assert!(judge(0.06, (0.0, 0.0), (0.0, 0.8)));
     }
 
+    /// A short own-net stub ending in its pour on a plane layer is exempt
+    /// from PlaneLayerSignal; a long one, or another net's trace, is not.
+    #[test]
+    fn plane_stub_exempt_only_short_own_net() {
+        let judge = |net: &str, len: f64| {
+            let mut pcb = clean_pcb();
+            pcb.stackup.layers[1].role =
+                Some(vcad_ir::ecad::LayerRole::Plane { net: "GND".into() });
+            let bl = pcb.stackup.layers[1].layer;
+            pcb.zones.push(Zone {
+                outline: vec![
+                    Vec2::new(10.0, 10.0),
+                    Vec2::new(30.0, 10.0),
+                    Vec2::new(30.0, 30.0),
+                    Vec2::new(10.0, 30.0),
+                ],
+                holes: vec![],
+                net: "GND".to_string(),
+                layer: bl,
+                clearance: 0.2,
+                min_area: 0.0,
+                fill_type: ZoneFillType::Solid,
+                thermal_relief: ThermalReliefStyle::Relief,
+                thermal_gap: Some(0.5),
+                thermal_spoke_width: Some(0.5),
+                priority: 0,
+            });
+            pcb.traces.push(vcad_ir::ecad::Trace {
+                start: Vec2::new(10.0 - len / 2.0, 20.0),
+                end: Vec2::new(10.0 + len / 2.0, 20.0),
+                width: 0.1,
+                layer: bl,
+                net: net.into(),
+                source: None,
+            });
+            check_drc(&pcb)
+                .iter()
+                .any(|v| v.rule == DrcRuleType::PlaneLayerSignal)
+        };
+        assert!(!judge("GND", 0.6), "short own-net stub is exempt");
+        assert!(judge("GND", 3.0), "long own-net trace is reported");
+        assert!(judge("SIG", 0.6), "other net is reported");
+    }
+
+    /// An inferred rule area admits its reduced width inside it; outside,
+    /// the finding says so.
+    #[test]
+    fn inferred_rule_area_admits_reduced_width() {
+        let judge = |a: (f64, f64), b: (f64, f64)| {
+            let mut pcb = clean_pcb();
+            pcb.rules.default_rules.trace_width = 0.1;
+            pcb.rules.rule_areas.push(vcad_ir::ecad::RuleArea {
+                name: "U1".into(),
+                outline: vec![
+                    Vec2::new(40.0, 30.0),
+                    Vec2::new(60.0, 30.0),
+                    Vec2::new(60.0, 50.0),
+                    Vec2::new(40.0, 50.0),
+                ],
+                layers: vec![],
+                min_trace_width: 0.06,
+                clearance: None,
+                inferred: true,
+                provenance: "test".into(),
+            });
+            pcb.traces.push(vcad_ir::ecad::Trace {
+                start: Vec2::new(a.0, a.1),
+                end: Vec2::new(b.0, b.1),
+                width: 0.06,
+                layer: PcbLayer::FCu,
+                net: "NK".into(),
+                source: None,
+            });
+            check_drc(&pcb)
+                .into_iter()
+                .find(|v| v.rule == DrcRuleType::MinTraceWidth)
+        };
+        assert!(judge((45.0, 40.0), (55.0, 40.0)).is_none());
+        let out = judge((45.0, 60.0), (55.0, 60.0)).expect("outside the area");
+        assert!(
+            out.message.contains("inferred rule area"),
+            "{}",
+            out.message
+        );
+        let leaving = judge((45.0, 40.0), (55.0, 60.0)).expect("leaves the area");
+        assert!(
+            leaving.message.contains("inferred rule area"),
+            "{}",
+            leaving.message
+        );
+    }
+
     /// Microvias are judged by the microvia minimums (KiCad uvia_min_drill /
     /// uvia_min_size), not the via drill / annular-ring floors; a "micro" via
     /// whose span is not adjacent-outer gets the ordinary via rules.
@@ -5279,6 +5487,75 @@ mod tests {
         assert_eq!(judge(via(0.18, 0.08, f, i1, Micro)), (true, true));
         // "Micro" spanning F.Cu-B.Cu is not a microvia: via rules apply.
         assert_eq!(judge(via(0.21, 0.12, f, b, Micro)), (true, true));
+    }
+
+    /// Microvias on consecutive spans must be staggered: drills that overlap
+    /// in plan are a stacked microvia; offset by a drill or more they pass.
+    #[test]
+    fn stacked_microvias_flagged_staggered_pass() {
+        use vcad_ir::ecad::ViaType::Micro;
+        let (f, i1, i2) = (PcbLayer::FCu, PcbLayer::In1Cu, PcbLayer::In2Cu);
+        let judge = |dx: f64, second: (PcbLayer, PcbLayer)| {
+            let mut pcb = clean_pcb();
+            // Stack = F.Cu, In1.Cu, In2.Cu, B.Cu.
+            for (k, l) in [(1, PcbLayer::In1Cu), (2, PcbLayer::In2Cu)] {
+                let mut s = pcb.stackup.layers[0].clone();
+                s.layer = l;
+                pcb.stackup.layers.insert(k, s);
+            }
+            for (x, (a, b)) in [(30.0, (f, i1)), (30.0 + dx, second)] {
+                pcb.vias.push(Via {
+                    via_type: Some(Micro),
+                    position: Vec2::new(x, 60.0),
+                    diameter: 0.21,
+                    drill: 0.12,
+                    start_layer: a,
+                    end_layer: b,
+                    net: "2".to_string(),
+                    source: None,
+                });
+            }
+            check_drc(&pcb)
+                .iter()
+                .any(|v| v.rule == DrcRuleType::MicroviaStack)
+        };
+        assert!(
+            judge(0.0, (i1, i2)),
+            "coincident F-In1 + In1-In2 is a stack"
+        );
+        assert!(judge(0.05, (i1, i2)), "overlapping drills are a stack");
+        assert!(
+            !judge(0.3, (i1, i2)),
+            "staggered by more than a drill passes"
+        );
+        assert!(
+            !judge(0.0, (f, i1)),
+            "two same-span microvias are not a stack (hole-to-hole judges them)"
+        );
+        // A board that allows stacking: the coincident stack passes.
+        let mut pcb = clean_pcb();
+        for (k, l) in [(1, PcbLayer::In1Cu), (2, PcbLayer::In2Cu)] {
+            let mut s = pcb.stackup.layers[0].clone();
+            s.layer = l;
+            pcb.stackup.layers.insert(k, s);
+        }
+        for (a, b) in [(f, i1), (i1, i2)] {
+            pcb.vias.push(Via {
+                via_type: Some(Micro),
+                position: Vec2::new(30.0, 60.0),
+                diameter: 0.21,
+                drill: 0.12,
+                start_layer: a,
+                end_layer: b,
+                net: "2".to_string(),
+                source: None,
+            });
+        }
+        assert_eq!(pcb.stacked_microvia_pairs().len(), 1);
+        pcb.rules.allow_stacked_microvias = true;
+        assert!(!check_drc(&pcb)
+            .iter()
+            .any(|v| v.rule == DrcRuleType::MicroviaStack));
     }
 
     /// Every violation carries a provenance, and a via drill fault is routing.
