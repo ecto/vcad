@@ -13,6 +13,13 @@
 
 import type { Document, CsgOp, Node, NodeId, SceneEntry } from "@vcad/ir";
 import type { ToolOutcome } from "./registry.js";
+import {
+  forgetPartId,
+  movePartId,
+  partIdForNode,
+  partIdForRoot,
+  rootIndexForPartId,
+} from "./part-ids.js";
 
 /** Find the smallest unused integer node id for a fresh insertion. */
 function nextNodeId(doc: Document): NodeId {
@@ -28,7 +35,7 @@ function nextNodeId(doc: Document): NodeId {
  *  (where partId is the stringified NodeId — the convention used here for
  *  IR-direct, non-CRDT identification). */
 function findRootIndex(doc: Document, partId: string): number {
-  return doc.roots.findIndex((r) => String(r.root) === partId);
+  return rootIndexForPartId(doc, partId);
 }
 
 /** Walk every CsgOp child reference. Recursive — yields the ids of every
@@ -78,10 +85,10 @@ function opChildren(op: CsgOp): NodeId[] {
 }
 
 export interface ApplyOutcomeResult {
-  /** The id (stable string form of the root NodeId) of the part the outcome
+  /** The stable `"replica:seq"` id of the part the outcome
    *  acted on. For `add_feature` this is the newly created part. */
   partId: string;
-  /** For `add_feature`, the NodeId of the new root (which is also its part id). */
+  /** For `add_feature`, the NodeId of the new root. */
   nodeId?: string;
 }
 
@@ -119,6 +126,8 @@ export function applyToolOutcome(
         const first = doc.roots[consumedIdxs[0]!]!;
         const firstPartId = String(first.root);
         doc.roots[consumedIdxs[0]!] = { ...first, root: id };
+        // The part keeps its identity across the rewrite.
+        movePartId(doc, first.root, id);
         if (doc.part_materials[firstPartId] !== undefined) {
           doc.part_materials[String(id)] = doc.part_materials[firstPartId]!;
           delete doc.part_materials[firstPartId];
@@ -126,13 +135,14 @@ export function applyToolOutcome(
         for (let k = consumedIdxs.length - 1; k >= 1; k--) {
           const idx = consumedIdxs[k]!;
           delete doc.part_materials[String(doc.roots[idx]!.root)];
+          forgetPartId(doc, doc.roots[idx]!.root);
           doc.roots.splice(idx, 1);
         }
       } else {
         const entry: SceneEntry = { root: id, material: "default" };
         doc.roots.push(entry);
       }
-      return { partId: String(id), nodeId: String(id) };
+      return { partId: partIdForNode(doc, id), nodeId: String(id) };
     }
     case "remove_part": {
       const idx = findRootIndex(doc, outcome.part_id);
@@ -142,7 +152,9 @@ export function applyToolOutcome(
         );
       }
       const entry = doc.roots[idx]!;
+      const removedId = partIdForRoot(doc, entry);
       doc.roots.splice(idx, 1);
+      forgetPartId(doc, entry.root);
       // Garbage-collect nodes that were exclusive to this root. A node is
       // exclusive when no remaining root reaches it.
       const reachableFromOthers = new Set<NodeId>();
@@ -155,8 +167,8 @@ export function applyToolOutcome(
       for (const id of exclusive) {
         if (!reachableFromOthers.has(id)) delete doc.nodes[String(id)];
       }
-      delete doc.part_materials[outcome.part_id];
-      return { partId: outcome.part_id };
+      delete doc.part_materials[String(entry.root)];
+      return { partId: removedId };
     }
     case "set_part_material": {
       const idx = findRootIndex(doc, outcome.part_id);
@@ -167,8 +179,8 @@ export function applyToolOutcome(
       }
       const prev = doc.roots[idx]!;
       doc.roots[idx] = { root: prev.root, material: outcome.material, visible: prev.visible };
-      doc.part_materials[outcome.part_id] = outcome.material;
-      return { partId: outcome.part_id };
+      doc.part_materials[String(prev.root)] = outcome.material;
+      return { partId: partIdForRoot(doc, prev) };
     }
     case "update_params": {
       const node = doc.nodes[outcome.node_id];
@@ -187,7 +199,13 @@ export function applyToolOutcome(
         if (k === "type") continue;
         op[k] = v;
       }
-      return { partId: outcome.node_id, nodeId: outcome.node_id };
+      const owner = doc.roots.find((r) =>
+        collectChildNodeIds(doc, r.root).has(Number(outcome.node_id) as NodeId),
+      );
+      return {
+        partId: owner ? partIdForRoot(doc, owner) : outcome.node_id,
+        nodeId: outcome.node_id,
+      };
     }
   }
 }
@@ -202,6 +220,6 @@ export function listPartsFromDocument(
     const node = doc.nodes[String(entry.root)];
     const name = node?.name ?? `Part ${entry.root}`;
     const kind = node?.op?.type ?? "Unknown";
-    return { id: String(entry.root), name, kind };
+    return { id: partIdForRoot(doc, entry), name, kind };
   });
 }

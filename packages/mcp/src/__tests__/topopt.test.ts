@@ -3,6 +3,7 @@ import { Engine } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { topologyOptimizeTool } from "../tools/topopt.js";
 import { documents, getSession, openDocument } from "../tools/session.js";
+import { rootForPartId } from "../tools/part-ids.js";
 
 let engine: Engine;
 
@@ -67,7 +68,7 @@ describe("topology_optimize", () => {
     // The optimized part landed in the session document as a frozen mesh.
     const doc = getSession(result.document_id);
     expect(doc.roots).toHaveLength(1);
-    const node = doc.nodes[result.part_id];
+    const node = doc.nodes[String(rootForPartId(doc, result.part_id)!.entry.root)];
     expect(node.op.type).toBe("ImportedMesh");
   });
 
@@ -103,7 +104,7 @@ describe("topology_optimize", () => {
     expect(doc.roots[1].material).toBe("steel"); // material carried over
 
     // Optimized geometry stays inside the source part's bounding box.
-    const node = doc.nodes[result.part_id];
+    const node = doc.nodes[String(rootForPartId(doc, result.part_id)!.entry.root)];
     expect(node.op.type).toBe("ImportedMesh");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const positions = (node.op as any).positions as number[];

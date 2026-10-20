@@ -26,6 +26,7 @@ import {
 } from "../session-store.js";
 import type { AuthUser } from "../oauth.js";
 import { behavior, type ToolDef } from "./tool-def.js";
+import { ensurePartIds } from "./part-ids.js";
 import {
   documents,
   nextSessionId,
@@ -167,7 +168,11 @@ export async function persistSession(
   name?: string,
 ): Promise<void> {
   const doc = documents.get(documentId);
-  if (doc) await store.save(documentId, doc, name);
+  if (!doc) return;
+  // Every write lands here: assign stable part ids to any root still lacking
+  // one (and prune ids of deleted roots) so they persist with the session.
+  ensurePartIds(doc);
+  await store.save(documentId, doc, name);
 }
 
 /** Drop a session from both the cache and the durable store (close_document). */

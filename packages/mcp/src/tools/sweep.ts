@@ -15,6 +15,7 @@
 import type { Document, JointSweep, Transform3D } from "@vcad/ir";
 import type { Engine, TriangleMesh } from "@vcad/engine";
 import { solveForwardKinematics, transformMesh } from "@vcad/engine";
+import { partIdForRoot } from "./part-ids.js";
 
 /** One sampled configuration of the mechanism: joint id → state. */
 export type Pose = Array<{ joint: string; state: number }>;
@@ -267,7 +268,7 @@ export function poseableParts(doc: Document, engine: Engine): PoseablePart[] {
     const mesh = scene.parts[i].mesh;
     if (!mesh || mesh.positions.length === 0) continue;
     out.push({
-      id: rootId,
+      id: partIdForRoot(doc, root),
       name: node?.name ?? undefined,
       material: root.material ?? partMaterials?.[rootId] ?? undefined,
       localMesh: mesh,

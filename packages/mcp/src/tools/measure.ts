@@ -31,6 +31,7 @@ import type { ClearanceResult, Engine, TriangleMesh } from "@vcad/engine";
 import type { Document, JointSweep, Transform3D } from "@vcad/ir";
 import { computeMeshProperties, type BoundingBox } from "./inspect.js";
 import { getSession } from "./session-core.js";
+import { findPartCandidate } from "./part-ids.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import { applyJointState, jointStateSchemaProp, type PoseInfo } from "./pose.js";
 import {
@@ -73,16 +74,7 @@ function evaluateParts(doc: Document, engine: Engine): ResolvedPart[] {
   return placeParts(poseableParts(doc, engine));
 }
 
-/** Resolve a part by id first, then by exact name. */
-function findPart(
-  candidates: ResolvedPart[],
-  wanted: string,
-): ResolvedPart | undefined {
-  return (
-    candidates.find((c) => c.id === wanted) ??
-    candidates.find((c) => c.name === wanted)
-  );
-}
+const findPart = findPartCandidate;
 
 /** Human-readable list of what a caller could have asked for. */
 function availableList(candidates: ResolvedPart[]): string {
@@ -161,7 +153,7 @@ export function inspectPartResult(
 ): Record<string, unknown> {
   if (!partId) throw new MeasureError("inspect_part requires `part_id`.");
   const candidates = evaluateParts(doc, engine);
-  const part = findPart(candidates, partId);
+  const part = findPart(doc, candidates, partId);
   if (!part) {
     throw new MeasureError(
       `No part with id or name "${partId}". Available: ${availableList(candidates)}`,
@@ -199,7 +191,7 @@ export function describeSceneResult(
   const parts: Array<Record<string, unknown>> = [];
   const missing: string[] = [];
   for (const id of wanted) {
-    const part = findPart(candidates, id);
+    const part = findPart(doc, candidates, id);
     if (!part) missing.push(id);
     else parts.push(partSnapshot(part));
   }
@@ -225,7 +217,7 @@ export function measureResult(
   const resolved: ResolvedPart[] = [];
   const missing: string[] = [];
   for (const id of partIds.map(String)) {
-    const part = findPart(candidates, id);
+    const part = findPart(doc, candidates, id);
     if (!part) missing.push(id);
     else resolved.push(part);
   }
@@ -316,8 +308,7 @@ export function measureSweepResult(
   }
 
   const pick = (wanted: string): PoseablePart => {
-    const found =
-      base.find((p) => p.id === wanted) ?? base.find((p) => p.name === wanted);
+    const found = findPart(doc, base, wanted);
     if (!found) {
       const available =
         base.map((p) => `${p.id}${p.name ? ` (${p.name})` : ""}`).join(", ") || "none";

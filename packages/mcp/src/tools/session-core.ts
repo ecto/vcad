@@ -9,6 +9,7 @@
  */
 
 import { type Document } from "@vcad/ir";
+import { ensurePartIds } from "./part-ids.js";
 
 // ─── Session cache (per-connection isolated, or process-wide fallback) ────────
 //
@@ -152,7 +153,14 @@ export function registerSession(doc: Document): string {
  * rehydrated after a restart. Re-establishing that binding here means every
  * entry path is covered at once, rather than each loader remembering to do it.
  */
-const documentEnterHooks: Array<(doc: Document) => void> = [];
+const documentEnterHooks: Array<(doc: Document) => void> = [
+  // Stable part ids are migrated on load: a document entering the cache
+  // without them (hand-written IR, a pre-stable-id session) gets ids assigned
+  // here, once, so every later read and write sees the same ones.
+  (doc) => {
+    ensurePartIds(doc);
+  },
+];
 
 /** Register a hook to run on every document entering the session cache. */
 export function addDocumentEnterHook(hook: (doc: Document) => void): void {

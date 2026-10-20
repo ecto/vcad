@@ -8,3 +8,16 @@ export {
   listPartsFromDocument,
 } from "./document-mutations.js";
 export type { ApplyOutcomeResult } from "./document-mutations.js";
+export {
+  partIdForRoot,
+  partIdForNode,
+  ensurePartIds,
+  partIdMap,
+  movePartId,
+  forgetPartId,
+  rootForPartId,
+  rootIndexForPartId,
+  isStablePartId,
+  partIdDeprecation,
+} from "./part-ids.js";
+export type { ResolvedPart, PartIdMatch } from "./part-ids.js";

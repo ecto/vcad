@@ -119,6 +119,7 @@ import { bundleBytes, storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
 import type { FabFile } from "@vcad/engine";
 import { behavior, type ToolContext, type ToolDef } from "./tool-def.js";
+import { findPartCandidate, partIdForNode } from "./part-ids.js";
 import type { ToolResult } from "./tool-result.js";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
@@ -12872,7 +12873,7 @@ export function boardFromSolid(args: Record<string, unknown>, engine: Engine) {
   const scene = engine.evaluate(doc);
   const visibleRoots = doc.roots.filter((e) => e.visible !== false);
 
-  const candidates: Array<{ rootId: number; name?: string; mesh: TriangleMesh }> = [];
+  const candidates: Array<{ rootId: number; id: string; name?: string; mesh: TriangleMesh }> = [];
   for (let i = 0; i < scene.parts.length && i < visibleRoots.length; i++) {
     const rootId = visibleRoots[i].root;
     const node = doc.nodes[String(rootId)];
@@ -12880,7 +12881,7 @@ export function boardFromSolid(args: Record<string, unknown>, engine: Engine) {
     if (opType === "PcbBoard") continue;
     const mesh = scene.parts[i].mesh;
     if (!mesh || mesh.positions.length === 0) continue;
-    candidates.push({ rootId, name: node?.name ?? undefined, mesh });
+    candidates.push({ rootId, id: partIdForNode(doc, rootId), name: node?.name ?? undefined, mesh });
   }
 
   if (candidates.length === 0) {
@@ -12888,13 +12889,13 @@ export function boardFromSolid(args: Record<string, unknown>, engine: Engine) {
   }
 
   const partId = args.part_id ? String(args.part_id) : undefined;
-  let part: { rootId: number; name?: string; mesh: TriangleMesh };
+  let part: { rootId: number; id: string; name?: string; mesh: TriangleMesh };
   if (partId) {
-    const found = candidates.find((c) => String(c.rootId) === partId);
+    const found = findPartCandidate(doc, candidates, partId);
     if (!found) {
       throw new Error(
         `No part with id "${partId}". Available: ${candidates
-          .map((c) => `${c.rootId}${c.name ? ` (${c.name})` : ""}`)
+          .map((c) => `${c.id}${c.name ? ` (${c.name})` : ""}`)
           .join(", ")}`,
       );
     }
@@ -12904,7 +12905,7 @@ export function boardFromSolid(args: Record<string, unknown>, engine: Engine) {
   } else {
     throw new Error(
       `Document has ${candidates.length} parts — pass part_id. Available: ${candidates
-        .map((c) => `${c.rootId}${c.name ? ` (${c.name})` : ""}`)
+        .map((c) => `${c.id}${c.name ? ` (${c.name})` : ""}`)
         .join(", ")}`,
     );
   }
@@ -13013,7 +13014,7 @@ export function boardFromSolid(args: Record<string, unknown>, engine: Engine) {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
-          part: { root_id: part.rootId, ...(part.name ? { name: part.name } : {}) },
+          part: { part_id: part.id, root_id: part.rootId, ...(part.name ? { name: part.name } : {}) },
           outline,
           outline_vertices: outer.points.length,
           cutouts: cutouts.length,
@@ -13428,7 +13429,7 @@ export async function solidFromBoard(args: Record<string, unknown>) {
       offset: { x: b.min.x, y: b.min.y, z: b.min.z },
     });
     target.roots.push({ root: moveId, material: "default" });
-    componentPartIds.push(String(moveId));
+    componentPartIds.push(partIdForNode(target, moveId));
   }
 
   const created = !targetId;
@@ -13449,7 +13450,7 @@ export async function solidFromBoard(args: Record<string, unknown>) {
     document_id: outId,
     created_session: created,
     source_document_id: documentId,
-    part_id: String(substrateId),
+    part_id: partIdForNode(target, substrateId),
     part_name: partName,
     substrate: {
       outline_vertices: outline.vertices.length,
@@ -13496,7 +13497,7 @@ export async function solidFromBoard(args: Record<string, unknown>) {
     content: [{ type: "text" as const, text: JSON.stringify(payload) }],
     structuredContent: {
       solid_from_board: {
-        part_id: String(substrateId),
+        part_id: partIdForNode(target, substrateId),
         part_name: partName,
         components: componentPartIds.length,
         mass_g: round3(mass.totalG),

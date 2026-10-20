@@ -4,6 +4,7 @@ import type { Document } from "@vcad/ir";
 import { checkClearance } from "../tools/clearance.js";
 import { buildReceipt, verifyReceipt } from "../tools/ecad.js";
 import { documents, getSession, openDocument } from "../tools/session.js";
+import { partIdForRoot } from "../tools/part-ids.js";
 
 let engine: Engine;
 
@@ -139,7 +140,8 @@ describe("check_clearance", () => {
       ),
     );
     expect(res.pass).toBe(true);
-    expect(res.worst_pair.a.id).toBe(rotorRoot);
+    // Legacy root-NodeId input resolves; the echo is the stable part id.
+    expect(res.worst_pair.a.id).toBe(partIdForRoot(doc, doc.roots[0]));
   });
 
   it("errors on unknown parts, listing what is available", async () => {
@@ -183,7 +185,7 @@ describe("check_clearance", () => {
     expect(doc.clearance_specs![0].label).toBe("air-gap");
     expect(doc.clearance_specs![0].min_mm).toBe(0.9);
     // Persisted by resolved part id, so the spec survives renames.
-    expect(doc.clearance_specs![0].group_a).toEqual([String(doc.roots[0].root)]);
+    expect(doc.clearance_specs![0].group_a).toEqual([partIdForRoot(doc, doc.roots[0])]);
 
     // Re-running the same label updates in place instead of duplicating.
     out(

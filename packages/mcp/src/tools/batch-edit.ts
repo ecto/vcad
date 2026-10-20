@@ -37,6 +37,7 @@ import {
 } from "./registry-dispatch.js";
 import { computeIntegrity, appendIntegrity } from "./integrity.js";
 import { behavior, type ToolDef } from "./tool-def.js";
+import { partIdForNode } from "./part-ids.js";
 import type { ToolResult } from "./tool-result.js";
 
 /** Ops a single `apply_edits` op may name — the surgical single-node mutators. */
@@ -134,6 +135,7 @@ function resolveSymbolicRefs(
   args: Record<string, unknown>,
   createdIds: Array<string | undefined>,
   index: number,
+  doc: Document,
 ): Record<string, unknown> {
   const resolve = (v: unknown): unknown => {
     if (typeof v !== "string") return v;
@@ -157,6 +159,14 @@ function resolveSymbolicRefs(
   const out = { ...args };
   for (const key of ["part_id", "node_id"]) {
     if (key in out) out[key] = resolve(out[key]);
+  }
+  // "@N" names a node; as a `part_id` it means the part rooted there, so
+  // hand the mutation that part's stable id.
+  if (typeof args.part_id === "string" && SYMBOLIC_REF.test(args.part_id)) {
+    const nodeId = String(out.part_id);
+    if (doc.roots.some((r) => String(r.root) === nodeId)) {
+      out.part_id = partIdForNode(doc, nodeId);
+    }
   }
   if (out.params && typeof out.params === "object" && !Array.isArray(out.params)) {
     const params = { ...(out.params as Record<string, unknown>) };
@@ -191,7 +201,7 @@ function applyOps(
     try {
       result = runMutation(
         name,
-        resolveSymbolicRefs(args, createdIds, i),
+        resolveSymbolicRefs(args, createdIds, i, doc),
         doc,
         documentId,
       );

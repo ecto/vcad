@@ -15,6 +15,7 @@ import {
 } from "@vcad/engine";
 import type { Node } from "@vcad/ir";
 import { getSession } from "./session.js";
+import { partIdForNode } from "./part-ids.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 export const searchPartsSchema = {
@@ -196,7 +197,7 @@ export function placePartTool(
         text: JSON.stringify(
           {
             document_id: documentId,
-            part_id: String(rootId),
+            part_id: partIdForNode(doc, rootId),
             placed: {
               path,
               version: entry.version,
