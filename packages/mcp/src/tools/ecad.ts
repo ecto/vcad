@@ -3432,8 +3432,10 @@ export async function routeNets(args: Record<string, unknown>, toolCtx?: ToolCon
     for (const v of result.vias) {
       pcb.vias.push({
         position: { x: v.position.x, y: v.position.y },
-        diameter: pcb.rules.defaultRules.viaDiameter,
-        drill: pcb.rules.defaultRules.viaDrill,
+        // Per-span size from the kernel (microvia on an adjacent pair, drilled
+        // through/blind/buried elsewhere); older kernels send none.
+        diameter: v.diameter || pcb.rules.defaultRules.viaDiameter,
+        drill: v.drill || pcb.rules.defaultRules.viaDrill,
         // Span chosen by the 3D search (blind/buried supported); older
         // kernels without spans fall back to a through via.
         startLayer: v.start_layer ?? "FCu",

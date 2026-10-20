@@ -65,6 +65,59 @@ pub struct RoutedVia {
     /// size meets its microvia minimums. Consumers copy it onto `Via`.
     #[serde(default)]
     pub via_type: Option<vcad_ir::ecad::ViaType>,
+    /// Pad diameter (mm) for this via's span (see [`crate::via_sizing`]);
+    /// `0` until sized — consumers then fall back to the board default.
+    #[serde(default)]
+    pub diameter: f64,
+    /// Drill diameter (mm); `0` until sized.
+    #[serde(default)]
+    pub drill: f64,
+}
+
+impl RoutedVia {
+    /// An unsized via on `net` spanning `start`..`end`.
+    pub fn new(position: Vec2, net: &str, start: PcbLayer, end: PcbLayer) -> Self {
+        Self {
+            position,
+            net: net.to_string(),
+            start_layer: start,
+            end_layer: end,
+            via_type: None,
+            diameter: 0.0,
+            drill: 0.0,
+        }
+    }
+
+    /// The board via this routed via becomes: its own span size when sized,
+    /// else `pcb`'s per-span table (never one board-default size).
+    pub fn to_board_via(
+        &self,
+        pcb: &Pcb,
+        source: Option<vcad_ir::ecad::CopperSource>,
+    ) -> vcad_ir::ecad::Via {
+        let mut v = self.clone();
+        if v.diameter <= 0.0 || v.drill <= 0.0 || v.via_type.is_none() {
+            v.size_with(&crate::via_sizing::ViaSizing::from_pcb(pcb));
+        }
+        vcad_ir::ecad::Via {
+            via_type: v.via_type,
+            position: v.position,
+            diameter: v.diameter,
+            drill: v.drill,
+            start_layer: v.start_layer,
+            end_layer: v.end_layer,
+            net: v.net,
+            source,
+        }
+    }
+
+    /// Fill type and size from the board's per-span table.
+    pub fn size_with(&mut self, sizing: &crate::via_sizing::ViaSizing) {
+        let s = sizing.spec(&self.net, self.start_layer, self.end_layer);
+        self.via_type = Some(s.via_type);
+        self.diameter = s.diameter;
+        self.drill = s.drill;
+    }
 }
 
 /// The via type the router emits for a span on `pcb` at the board's default
@@ -72,30 +125,29 @@ pub struct RoutedVia {
 /// is one adjacent layer pair and the default via meets the microvia
 /// minimums, else through (outer to outer) or blind.
 pub fn router_via_type(pcb: &Pcb, start: PcbLayer, end: PcbLayer) -> vcad_ir::ecad::ViaType {
-    use vcad_ir::ecad::ViaType;
-    let d = &pcb.rules.default_rules;
-    let probe = vcad_ir::ecad::Via {
-        position: Vec2::new(0.0, 0.0),
-        diameter: d.via_diameter,
-        drill: d.via_drill,
-        start_layer: start,
-        end_layer: end,
-        net: String::new(),
-        source: None,
-        via_type: Some(ViaType::Micro),
-    };
-    if crate::drc::is_legal_microvia(pcb, &probe)
-        && d.via_drill >= pcb.rules.min_microvia_drill - 1e-9
-        && d.via_diameter >= pcb.rules.min_microvia_diameter - 1e-9
-    {
-        return ViaType::Micro;
-    }
-    let copper = copper_layers(pcb);
-    let outer = |l: PcbLayer| copper.first() == Some(&l) || copper.last() == Some(&l);
-    if outer(start) && outer(end) {
-        ViaType::Through
-    } else {
-        ViaType::Blind
+    crate::via_sizing::ViaSizing::from_pcb(pcb)
+        .spec("", start, end)
+        .via_type
+}
+
+/// A router-placed board via sized for its span (see [`crate::via_sizing`]).
+pub(crate) fn board_via(
+    sizing: &crate::via_sizing::ViaSizing,
+    position: Vec2,
+    net: &str,
+    a: PcbLayer,
+    b: PcbLayer,
+) -> vcad_ir::ecad::Via {
+    let s = sizing.spec(net, a, b);
+    vcad_ir::ecad::Via {
+        via_type: Some(s.via_type),
+        position,
+        diameter: s.diameter,
+        drill: s.drill,
+        start_layer: a,
+        end_layer: b,
+        net: net.to_string(),
+        source: Some(vcad_ir::ecad::CopperSource::Autoroute),
     }
 }
 
@@ -444,6 +496,7 @@ pub fn route_all_with_opts(
     // zones rather than duplicating them.
     super::maze::set_through_vias_only(opts.through_vias_only);
     super::maze::set_microvia(opts.microvia);
+    log::info!("{}", crate::via_sizing::ViaSizing::from_pcb(pcb).describe());
     FAST.store(opts.fast, std::sync::atomic::Ordering::Relaxed);
     // Plane / split-plane layers (stackup roles, authored or inferred) carry
     // no signal: a trace there cuts the plane. Union with the caller's list.
@@ -520,17 +573,9 @@ pub fn route_all_with_opts(
     } else {
         log::info!("planned microvia fan-out: {} plane pin(s)", micro_fan.len());
         let mut p = pcb.clone();
+        let sizing = crate::via_sizing::ViaSizing::from_pcb(pcb);
         for (pt, net, a, b) in &micro_fan {
-            p.vias.push(vcad_ir::ecad::Via {
-                via_type: Some(vcad_ir::ecad::ViaType::Micro),
-                position: *pt,
-                diameter: pcb.rules.default_rules.via_diameter,
-                drill: pcb.rules.default_rules.via_drill,
-                start_layer: *a,
-                end_layer: *b,
-                net: net.clone(),
-                source: Some(vcad_ir::ecad::CopperSource::Autoroute),
-            });
+            p.vias.push(board_via(&sizing, *pt, net, *a, *b));
         }
         micro_board = p;
         &micro_board
@@ -572,17 +617,10 @@ pub fn route_all_with_opts(
                     source: Some(vcad_ir::ecad::CopperSource::Autoroute),
                 });
             }
-            for (v, net) in &ps.vias {
-                p.vias.push(vcad_ir::ecad::Via {
-                    via_type: None,
-                    position: *v,
-                    diameter: pcb.rules.default_rules.via_diameter,
-                    drill: pcb.rules.default_rules.via_drill,
-                    start_layer: *copper.first().unwrap_or(&PcbLayer::FCu),
-                    end_layer: *copper.last().unwrap_or(&PcbLayer::BCu),
-                    net: net.clone(),
-                    source: Some(vcad_ir::ecad::CopperSource::Autoroute),
-                });
+            let sizing = crate::via_sizing::ViaSizing::from_pcb(pcb);
+            let _ = &copper;
+            for (v, net, a, b) in &ps.vias {
+                p.vias.push(board_via(&sizing, *v, net, *a, *b));
             }
             prestitched_board = p;
             &prestitched_board
@@ -820,7 +858,7 @@ pub fn route_all_with_opts(
     );
     {
         let mut per_net: BTreeMap<&str, (usize, usize)> = BTreeMap::new();
-        for (_, n) in &stitch.vias {
+        for (_, n, _, _) in &stitch.vias {
             per_net.entry(n.as_str()).or_default().0 += 1;
         }
         for (n, _) in &stitch.failed_pads {
@@ -844,8 +882,8 @@ pub fn route_all_with_opts(
         let mut targets: Vec<Vec2> = stitch
             .vias
             .iter()
-            .filter(|(_, n)| n == &net)
-            .map(|(p, _)| *p)
+            .filter(|(_, n, _, _)| n == &net)
+            .map(|(p, _, _, _)| *p)
             .collect();
         if let Some(layers) = planes.get(&net) {
             for fp in &pcb.footprints {
@@ -918,17 +956,11 @@ pub fn route_all_with_opts(
             stitch
                 .vias
                 .iter()
-                .map(|(p, _)| (*p, pcb.rules.default_rules.via_drill / 2.0)),
+                .map(|(p, n, a, b)| (*p, session.via_spec(n, *a, *b).drill / 2.0)),
         );
         for p in &placed {
-            holes_now.extend(
-                p.via_pts
-                    .iter()
-                    .map(|(v, _, _)| (*v, pcb.rules.default_rules.via_drill / 2.0)),
-            );
+            holes_now.extend(placed_holes(&session, p));
         }
-        let via_r = pcb.rules.default_rules.via_diameter / 2.0;
-        let drill_r = pcb.rules.default_rules.via_drill / 2.0;
         let copper = copper_layers(pcb);
         for round in 0..ISLAND_STITCH_ROUNDS {
             let board = realized_board(pcb, &placed, &stitch, &session, width);
@@ -949,40 +981,46 @@ pub fn route_all_with_opts(
                     let extra: Vec<Vec2> = stitch
                         .vias
                         .iter()
-                        .filter(|(_, n)| n == net)
-                        .map(|(p, _)| *p)
+                        .filter(|(_, n, _, _)| n == net)
+                        .map(|(p, _, _, _)| *p)
                         .collect();
-                    for &(pad_pt, pad_layer) in group {
-                        let mut spans: Vec<SpanId> = Vec::new();
-                        match escape_endpoint(
-                            &mut session,
-                            pcb,
-                            net,
-                            pad_pt,
-                            pad_layer,
-                            w,
-                            clearance,
-                            via_r,
-                            &copper,
-                            &placed,
-                            &extra,
-                            &mut spans,
-                            true,
-                            &holes_now,
-                        ) {
-                            Some(Escape {
-                                via: Some(v), stub, ..
-                            }) => {
-                                if let Some((a, b)) = stub {
-                                    stitch.stubs.push((a, b, net.clone(), pad_layer));
+                    'pads: for &(pad_pt, pad_layer) in group {
+                        // A stranded island needs every plane: the through
+                        // stitch first, then the short hop to the nearest
+                        // plane (a microvia when it is the adjacent layer).
+                        let spans_try = stitch_spans(&copper, pad_layer, &planes[net], true);
+                        for span in spans_try {
+                            let mut spans: Vec<SpanId> = Vec::new();
+                            match escape_endpoint(
+                                &mut session,
+                                pcb,
+                                net,
+                                pad_pt,
+                                pad_layer,
+                                w,
+                                clearance,
+                                span,
+                                &placed,
+                                &extra,
+                                &mut spans,
+                                true,
+                                &holes_now,
+                            ) {
+                                Some(Escape {
+                                    via: Some(v), stub, ..
+                                }) => {
+                                    if let Some((a, b)) = stub {
+                                        stitch.stubs.push((a, b, net.clone(), pad_layer));
+                                    }
+                                    let (sa, sb) = (span[0], span[span.len() - 1]);
+                                    stitch.vias.push((v, net.clone(), sa, sb));
+                                    holes_now.push((v, session.via_spec(net, sa, sb).drill / 2.0));
+                                    stitch.nets.insert(net.clone());
+                                    added += 1;
+                                    break 'pads;
                                 }
-                                stitch.vias.push((v, net.clone()));
-                                holes_now.push((v, drill_r));
-                                stitch.nets.insert(net.clone());
-                                added += 1;
-                                break;
+                                _ => rollback(&mut session, &spans),
                             }
-                            _ => rollback(&mut session, &spans),
                         }
                     }
                 }
@@ -1026,13 +1064,7 @@ pub fn route_all_with_opts(
             });
         }
         for &(pt, la, lb) in &p.via_pts {
-            vias.push(RoutedVia {
-                via_type: None,
-                position: pt,
-                net: p.net.clone(),
-                start_layer: la,
-                end_layer: lb,
-            });
+            vias.push(RoutedVia::new(pt, &p.net, la, lb));
         }
     }
     // The prestitch copper leaves the working board and joins the result: from
@@ -1042,13 +1074,7 @@ pub fn route_all_with_opts(
     // its prestitch.
     let pcb = pcb_in;
     for (pt, net, a, b) in &micro_fan {
-        vias.push(RoutedVia {
-            position: *pt,
-            net: net.clone(),
-            start_layer: *a,
-            end_layer: *b,
-            via_type: Some(vcad_ir::ecad::ViaType::Micro),
-        });
+        vias.push(RoutedVia::new(*pt, net, *a, *b));
         stitch.nets.insert(net.clone());
     }
     if let Some(ps) = prestitch {
@@ -1056,7 +1082,7 @@ pub fn route_all_with_opts(
             .stubs
             .iter()
             .map(|(a, _, _, _)| *a)
-            .chain(ps.vias.iter().map(|(v, _)| *v))
+            .chain(ps.vias.iter().map(|(v, _, _, _)| *v))
             .collect();
         let near = |p: Vec2| pre_pads.iter().any(|q| dist(*q, p) < 1e-3);
         let dup_vias: Vec<Vec2> = stitch
@@ -1068,7 +1094,7 @@ pub fn route_all_with_opts(
         stitch.stubs.retain(|(a, _, _, _)| !near(*a));
         stitch
             .vias
-            .retain(|(v, _)| !near(*v) && !dup_vias.iter().any(|d| dist(*d, *v) < 1e-3));
+            .retain(|(v, _, _, _)| !near(*v) && !dup_vias.iter().any(|d| dist(*d, *v) < 1e-3));
         stitch.failed_pads.retain(|(_, p)| !near(*p));
         stitch.stubs.extend(ps.stubs);
         stitch.vias.extend(ps.vias);
@@ -1085,19 +1111,8 @@ pub fn route_all_with_opts(
             net: net.clone(),
         });
     }
-    let copper_all = copper_layers(pcb);
-    let (through_top, through_bot) = (
-        *copper_all.first().unwrap_or(&PcbLayer::FCu),
-        *copper_all.last().unwrap_or(&PcbLayer::BCu),
-    );
-    for (pt, net) in &stitch.vias {
-        vias.push(RoutedVia {
-            via_type: None,
-            position: *pt,
-            net: net.clone(),
-            start_layer: through_top,
-            end_layer: through_bot,
-        });
+    for (pt, net, a, b) in &stitch.vias {
+        vias.push(RoutedVia::new(*pt, net, *a, *b));
     }
     for n in &stitch.nets {
         routed.insert(n.clone());
@@ -1108,7 +1123,13 @@ pub fn route_all_with_opts(
     // copper is still hole-to-hole illegal. Enforces the invariant that an
     // autoroute pass never returns HoleToHole or SameNetBypass violations of
     // its own making.
-    let stitch_via_pts: Vec<Vec2> = stitch.vias.iter().map(|(p, _)| *p).collect();
+    log::info!(
+        "route work: {} maze searches so far (work budget {} searches/ms, rescue {} searches/conn)",
+        super::maze::maze_searches(),
+        work_per_ms(),
+        rescue_searches()
+    );
+    let stitch_via_pts: Vec<Vec2> = stitch.vias.iter().map(|(p, _, _, _)| *p).collect();
     // Snapshot before legalization, not before the prune below: legalization
     // now prunes dead copper itself (it has to — see `legalize`), so a net that
     // ends up with nothing left has to be detectable across both passes.
@@ -1239,7 +1260,7 @@ pub fn route_all_with_opts(
         });
     }
     for v in &mut vias {
-        v.via_type = Some(router_via_type(pcb, v.start_layer, v.end_layer));
+        v.size_with(session.via_sizing());
     }
     // Fail-closed completion: a net is routed only if DRC's own connectivity
     // over the returned copper agrees its pads form ONE island. The router's
@@ -1258,10 +1279,10 @@ pub fn route_all_with_opts(
             source: None,
         }));
         b.vias.extend(vias.iter().map(|v| Via {
-            via_type: None,
+            via_type: v.via_type,
             position: v.position,
-            diameter: pcb.rules.default_rules.via_diameter,
-            drill: pcb.rules.default_rules.via_drill,
+            diameter: v.diameter,
+            drill: v.drill,
             start_layer: v.start_layer,
             end_layer: v.end_layer,
             net: v.net.clone(),
@@ -1698,6 +1719,13 @@ fn route_pass(
         }
     }
 
+    // Ring-by-ring BGA escape on microvias (opt-in `VCAD_RING_ESCAPE=1`),
+    // after the coupled pairs and before the singles: see `ring_escape`.
+    if ring_escape_on() {
+        let esc = ring_escape(&mut session, pcb, &placed, width, nets_filter);
+        placed.extend(esc);
+    }
+
     // Plane fan-out, after the coupled pairs and before every single: drop
     // the stitching via of each plane pad that needs one while the board is
     // still nearly empty — the order a human BGA layout uses. Stitching only
@@ -1708,9 +1736,8 @@ fn route_pass(
         let planes = plane_layers(pcb);
         if !planes.is_empty() {
             let mut holes = board_holes(pcb);
-            let drill_r = pcb.rules.default_rules.via_drill / 2.0;
             for p in &placed {
-                holes.extend(p.via_pts.iter().map(|(v, _, _)| (*v, drill_r)));
+                holes.extend(placed_holes(&session, p));
             }
             let st = stitch_planes(
                 &mut session,
@@ -1723,13 +1750,8 @@ fn route_pass(
                 false,
                 &[],
             );
-            let copper = copper_layers(pcb);
-            let (top, bot) = (
-                *copper.first().unwrap_or(&PcbLayer::FCu),
-                *copper.last().unwrap_or(&PcbLayer::BCu),
-            );
             let mut by_net: BTreeMap<String, Placed> = BTreeMap::new();
-            for (pt, net) in &st.vias {
+            for (pt, net, sa, sb) in &st.vias {
                 let e = by_net.entry(net.clone()).or_insert_with(|| Placed {
                     net: net.clone(),
                     from: *pt,
@@ -1743,7 +1765,7 @@ fn route_pass(
                     coupled: true,
                     fanout: true,
                 });
-                e.via_pts.push((*pt, top, bot));
+                e.via_pts.push((*pt, *sa, *sb));
             }
             for (a, b, net, l) in &st.stubs {
                 if let Some(e) = by_net.get_mut(net) {
@@ -1900,7 +1922,6 @@ fn audit_placed(session: &RouteSession, pcb: &Pcb, placed: &[Placed]) {
     if std::env::var("VCAD_ROUTE_AUDIT").as_deref() != Ok("1") {
         return;
     }
-    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
     let copper = copper_layers(pcb);
     let mut bad = 0usize;
     let mut report = |kind: &str, net: &str, at: Vec2, pr: &crate::session::ProbeResult| {
@@ -1937,7 +1958,7 @@ fn audit_placed(session: &RouteSession, pcb: &Pcb, placed: &[Placed]) {
         for &(p, la, lb) in &pl.via_pts {
             let g = CopperGeom::Disc {
                 center: p,
-                r: via_r,
+                r: session.via_spec(&pl.net, la, lb).r(),
             };
             let (ia, ib) = (
                 copper.iter().position(|&l| l == la).unwrap_or(0),
@@ -1963,7 +1984,6 @@ fn audit_stitch(session: &RouteSession, pcb: &Pcb, stitch: &Stitch, width: f64) 
     if std::env::var("VCAD_ROUTE_AUDIT").as_deref() != Ok("1") {
         return;
     }
-    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
     let copper = copper_layers(pcb);
     let mut bad = 0usize;
     for (a, b, net, l) in &stitch.stubs {
@@ -1984,12 +2004,12 @@ fn audit_stitch(session: &RouteSession, pcb: &Pcb, stitch: &Stitch, width: f64) 
             );
         }
     }
-    for (p, net) in &stitch.vias {
+    for (p, net, sa, sb) in &stitch.vias {
         let g = CopperGeom::Disc {
             center: *p,
-            r: via_r,
+            r: session.via_spec(net, *sa, *sb).r(),
         };
-        for &l in &copper {
+        for &l in copper.iter().filter(|l| l.spanned_by(*sa, *sb)) {
             let pr = session.probe(&g, l, net, session.clearance_for(net));
             if !pr.legal {
                 bad += 1;
@@ -2035,12 +2055,13 @@ fn arsenal_sweep(
     fail_cache: &mut FailCache,
 ) -> Vec<Conn> {
     let sw = Stopwatch::start();
+    let work = WorkBudget::for_ms(ARSENAL_SWEEP_BUDGET_MS);
     let total = pending.len();
     let mut still: Vec<Conn> = Vec::new();
     let mut rescued = 0usize;
     let mut it = pending.into_iter();
     for (net, from, to) in it.by_ref() {
-        if wall_budgets() && sw.ms() > ARSENAL_SWEEP_BUDGET_MS {
+        if (wall_budgets() && sw.ms() > ARSENAL_SWEEP_BUDGET_MS) || work.over() {
             log::info!("arsenal sweep over budget — deferring remainder");
             still.push((net, from, to));
             break;
@@ -2249,7 +2270,17 @@ fn route_batch(
     let mut committed = 0usize;
     let mut conflicts = 0usize;
     let batch_size = rayon::current_num_threads().max(1) * 2;
+    let work = deadline_ms.map(WorkBudget::for_ms);
     while !queue.is_empty() {
+        if let Some(w) = work.filter(|w| w.over()) {
+            log::info!(
+                "route_batch over its work budget ({} searches) — deferring {} conns",
+                w.units,
+                queue.len()
+            );
+            unrouted.extend(queue.drain(..).map(|(c, _)| c));
+            break;
+        }
         // Over-deadline: report the remaining queue unrouted rather than
         // routing it. Every caller that passes a deadline already handles an
         // unrouted connection — a stuck one stays pending, a ripped victim
@@ -2467,6 +2498,8 @@ fn try_route_inner(
     if !rescue {
         return None;
     }
+    // Per-connection rescue budget (deterministic, see `rescue_searches`).
+    let rescue_work = WorkBudget::searches(rescue_searches());
     // Both direct maze attempts (coarse + fine retry) failed. If an endpoint
     // sits inside a dense pin field (BGA / fine-pitch lattice), plan a
     // flow-based escape out of the field and re-search from the egress point.
@@ -2483,6 +2516,9 @@ fn try_route_inner(
         max_expansions,
     ) {
         return Some(p);
+    }
+    if rescue_work.over() {
+        return None;
     }
     // Coupled differential-pair stage: a `_P`/`_N` (or `_C`/`_T`) net whose
     // lone placement failed is exactly the anti-pattern — route it WITH its
@@ -2504,6 +2540,9 @@ fn try_route_inner(
             placed.push(theirs);
             return Some(mine);
         }
+    }
+    if rescue_work.over() {
+        return None;
     }
     // Last resort — true shove: displace the routed traces blocking the
     // corridor sideways (bounded, transactional) instead of ripping them,
@@ -2683,7 +2722,6 @@ pub(super) fn search_route(
     // default. The same width drives the maze search, the committed copper, and
     // the reported trace.
     let w = session.width_for(net, width);
-    let via_d = pcb.rules.default_rules.via_diameter;
     let copper = copper_layers(pcb);
 
     let from_layers = pad_anchor_layers(pcb, from, &copper);
@@ -2725,7 +2763,6 @@ pub(super) fn search_route(
             st,
             &to_layers,
             w,
-            via_d,
             Some(cong),
             max_expansions,
             pitch_scale,
@@ -2849,7 +2886,6 @@ pub(super) fn validate_and_commit(
     let net = cand.net.as_str();
     let w = cand.width;
     let hw = w / 2.0;
-    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
     let clearance = session.clearance_for(net);
     let copper = copper_layers(pcb);
     let (segments, route_vias) = (cand.segments, cand.vias);
@@ -2954,29 +2990,45 @@ pub(super) fn validate_and_commit(
         // layer of the union was probed by one of the two vias already, so this
         // adds no unprobed copper — and it is the common shape, so rejecting it
         // as a self-collision below would cost real routes.
-        let drill_r = session.via_drill_for(net) / 2.0;
-        if let Some(slot) = new_vias.iter_mut().find(|(q, _, _)| dist(*q, p) < 0.05) {
-            let (lo, hi) = span_union(&copper, (slot.1, slot.2), (la, lb));
-            slot.1 = lo;
-            slot.2 = hi;
-            continue;
-        }
-        if let Some(&(q, _, _)) = new_vias
+        // Fold a coincident sibling into one span union; the union may be a
+        // different size than either part (two stacked microvias F-In1 +
+        // In1-In2 become one drilled F-In2 via), so it is re-probed at its own
+        // size below rather than trusted.
+        // A board that allows stacked microvias keeps a consecutive micro hop
+        // as its own via on top of the one below (no union, no drilled via).
+        let stacked = new_vias.iter().any(|&(q, qa, qb)| {
+            dist(q, p) < 0.05 && session.via_sizing().may_stack((qa, qb), (la, lb))
+        });
+        let (p, la, lb) = match new_vias
             .iter()
-            .find(|&&(q, _, _)| dist(q, p) - 2.0 * drill_r < session.hole_to_hole() - 1e-6)
+            .position(|(q, _, _)| dist(*q, p) < 0.05)
+            .filter(|_| !stacked)
         {
+            Some(i) => {
+                let (q, a0, b0) = new_vias.remove(i);
+                let (lo, hi) = span_union(&copper, (a0, b0), (la, lb));
+                (q, lo, hi)
+            }
+            None => (p, la, lb),
+        };
+        let spec = session.via_spec(net, la, lb);
+        let drill_r = spec.drill / 2.0;
+        if let Some(&(q, qa, qb)) = new_vias.iter().find(|&&(q, qa, qb)| {
+            !(dist(q, p) < 0.05 && session.via_sizing().may_stack((qa, qb), (la, lb)))
+                && dist(q, p) - drill_r - session.via_spec(net, qa, qb).drill / 2.0
+                    < session.hole_to_hole() - 1e-6
+        }) {
             log::debug!(
                 "validate: {net} via ({:.3},{:.3}) hole-to-hole illegal against its own \
-                 path's via ({:.3},{:.3}) — {:.3}mm edge spacing",
+                 path's via ({:.3},{:.3}) {qa:?}..{qb:?}",
                 p.x,
                 p.y,
                 q.x,
                 q.y,
-                dist(q, p) - 2.0 * drill_r
             );
             return None;
         }
-        let hp = session.probe_via_drill(p, net);
+        let hp = session.probe_via_span(p, net, la, lb);
         if !hp.legal {
             let near = hp.nearest.unwrap_or(p);
             log::debug!(
@@ -2991,7 +3043,7 @@ pub(super) fn validate_and_commit(
         }
         let disc = CopperGeom::Disc {
             center: p,
-            r: via_r,
+            r: spec.r(),
         };
         let mut bad: Option<(PcbLayer, String, f64)> = None;
         for &l in span_slice(la, lb) {
@@ -3026,7 +3078,7 @@ pub(super) fn validate_and_commit(
         spans.push(commit_seg(session, net, *a, *b, thin_hw, *l));
     }
     for &(p, la, lb) in &new_vias {
-        commit_via(session, net, p, via_r, span_slice(la, lb), &mut spans);
+        commit_via(session, net, p, span_slice(la, lb), &mut spans);
     }
     Some(Placed {
         net: net.to_string(),
@@ -3365,7 +3417,6 @@ fn try_route_fanout(
 ) -> Option<Placed> {
     let w = session.width_for(net, width);
     let hw = w / 2.0;
-    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
     let clearance = session.clearance_for(net);
     let copper = copper_layers(pcb);
 
@@ -3381,7 +3432,6 @@ fn try_route_fanout(
         PcbLayer::FCu,
         w,
         clearance,
-        via_r,
         &copper,
         placed,
         &via_pts,
@@ -3410,7 +3460,6 @@ fn try_route_fanout(
         PcbLayer::FCu,
         w,
         clearance,
-        via_r,
         &copper,
         placed,
         &via_pts,
@@ -3505,7 +3554,6 @@ fn escape_endpoint(
     stub_layer: PcbLayer,
     w: f64,
     clearance: f64,
-    via_r: f64,
     copper: &[PcbLayer],
     placed: &[Placed],
     extra_vias: &[Vec2],
@@ -3520,8 +3568,24 @@ fn escape_endpoint(
     // ring search simply steps out to a drillable spot — rather than committing
     // an illegal drill and leaving post-route legalization to strip the net's
     // whole set of stitches to get rid of it.
-    let drill_r = pcb.rules.default_rules.via_drill / 2.0;
+    // This escape's via spans `copper` end to end, at that span's size.
+    let (Some(&top), Some(&bot)) = (copper.first(), copper.last()) else {
+        return None;
+    };
+    let spec = session.via_spec(net, top, bot);
+    let via_r = spec.r();
+    let drill_r = spec.drill / 2.0;
+    let extra_r = session.via_drill_for(net) / 2.0;
     let min_hole_gap = pcb.rules.hole_to_hole;
+    let pass_holes: Vec<(Vec2, f64)> = placed
+        .iter()
+        .flat_map(|pl| {
+            pl.via_pts
+                .iter()
+                .map(|&(vp, a, b)| (vp, session.via_spec(&pl.net, a, b).drill / 2.0))
+        })
+        .chain(extra_vias.iter().map(|&vp| (vp, extra_r)))
+        .collect();
     let hole_legal = |p: Vec2| -> bool {
         let clears = |other: Vec2, r: f64| {
             let d = dist(p, other);
@@ -3529,12 +3593,7 @@ fn escape_endpoint(
             // it is never a second hole, so it is not a conflict here.
             d < 0.05 || d - drill_r - r >= min_hole_gap - 1e-6
         };
-        holes.iter().all(|&(c, r)| clears(c, r))
-            && placed
-                .iter()
-                .flat_map(|pl| pl.via_pts.iter().map(|&(vp, _, _)| vp))
-                .chain(extra_vias.iter().copied())
-                .all(|vp| clears(vp, drill_r))
+        holes.iter().all(|&(c, r)| clears(c, r)) && pass_holes.iter().all(|&(vp, r)| clears(vp, r))
     };
 
     let via_legal = |session: &RouteSession, p: Vec2| -> bool {
@@ -3547,7 +3606,7 @@ fn escape_endpoint(
         };
         // The drilled barrel first: cheap, and layer-independent (copper
         // probes can't see a hole conflict across disjoint layer spans).
-        session.probe_via_drill(p, net).legal
+        session.probe_via_span(p, net, top, bot).legal
             && copper
                 .iter()
                 .all(|&l| session.probe(&disc, l, net, clearance).legal)
@@ -3574,7 +3633,7 @@ fn escape_endpoint(
             });
         }
         if via_legal(session, pad_pt) {
-            commit_via(session, net, pad_pt, via_r, copper, spans);
+            commit_via(session, net, pad_pt, copper, spans);
             return Some(Escape {
                 terminal: pad_pt,
                 stub: None,
@@ -3620,7 +3679,7 @@ fn escape_endpoint(
             if via_legal(session, vp) {
                 let s = commit_stub(session, net, pad_pt, vp, hw, stub_layer);
                 spans.push(s);
-                commit_via(session, net, vp, via_r, copper, spans);
+                commit_via(session, net, vp, copper, spans);
                 return Some(Escape {
                     terminal: vp,
                     stub: Some((pad_pt, vp)),
@@ -3699,12 +3758,16 @@ pub(super) fn commit_via(
     session: &mut RouteSession,
     net: &str,
     p: Vec2,
-    via_r: f64,
     copper: &[PcbLayer],
     spans: &mut Vec<SpanId>,
 ) {
-    let drill = session.via_drill_for(net);
-    spans.push(session.commit_drill(p, drill));
+    let (Some(&a), Some(&b)) = (copper.first(), copper.last()) else {
+        return;
+    };
+    // The span's own size (microvia / drilled): the size the board gets.
+    let spec = session.via_spec(net, a, b);
+    let via_r = spec.r();
+    spans.push(session.commit_drill(p, spec.drill));
     for &l in copper {
         spans.push(session.commit(CopperElement {
             min: [p.x - via_r, p.y - via_r],
@@ -3758,6 +3821,47 @@ fn board_holes(pcb: &Pcb) -> Vec<Hole> {
     holes
 }
 
+/// Copper spans a stitching via from `pad_layer` may take, in trial order:
+/// the short hop to the nearest of the net's `planes` (a microvia when it is
+/// the adjacent layer) and the full through span — through first when
+/// `through_first` (a stranded island needs every plane).
+fn stitch_spans<'a>(
+    copper: &'a [PcbLayer],
+    pad_layer: PcbLayer,
+    planes: &[PcbLayer],
+    through_first: bool,
+) -> Vec<&'a [PcbLayer]> {
+    let full: &[PcbLayer] = copper;
+    let pi = copper.iter().position(|&l| l == pad_layer);
+    let short = pi.and_then(|pi| {
+        planes
+            .iter()
+            .filter_map(|p| copper.iter().position(|l| l == p))
+            .filter(|&q| q != pi)
+            .min_by_key(|&q| q.abs_diff(pi))
+            .map(|q| &copper[pi.min(q)..=pi.max(q)])
+    });
+    let mut out = Vec::new();
+    match short {
+        Some(s) if s.len() < full.len() => {
+            if through_first {
+                out.extend([full, s]);
+            } else {
+                out.extend([s, full]);
+            }
+        }
+        _ => out.push(full),
+    }
+    out
+}
+
+/// The drilled holes of a placed connection's vias, each at its span's size.
+fn placed_holes<'a>(session: &'a RouteSession, p: &'a Placed) -> impl Iterator<Item = Hole> + 'a {
+    p.via_pts
+        .iter()
+        .map(move |&(v, a, b)| (v, session.via_spec(&p.net, a, b).drill / 2.0))
+}
+
 /// Copper layers present in the stackup, top → bottom (FCu/BCu fallback).
 pub(super) fn copper_layers(pcb: &Pcb) -> Vec<PcbLayer> {
     let v: Vec<PcbLayer> = pcb
@@ -3797,6 +3901,175 @@ fn plane_layers(pcb: &Pcb) -> BTreeMap<String, Vec<PcbLayer>> {
 /// islands (GND 82 -> 2 groups) but split MORE nets overall (30 -> 38) and
 /// ran 3427 s vs 1152 s, so stitch-after-routing + island stitching stays
 /// the default.
+fn ring_escape_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("VCAD_RING_ESCAPE").as_deref() == Ok("1"))
+}
+
+/// Ring-by-ring escape of every dense pin field's signal balls, planned
+/// before general routing (the human BGA order): outer rings escape on the
+/// pad layer, the rest drop by microvia-in-pad to the next routable layer
+/// and escape there, and so on down at most [`RING_ESCAPE_DEPTH`] layers
+/// (`escape::plan_multilayer_escapes`). A drop deeper than one dielectric is
+/// a STACK of microvias when the board allows stacking, else a drilled via
+/// (which must then fit the ball like any other). Plane / no-route layers
+/// are skipped. Every escape is committed fail-closed through
+/// `validate_and_commit` as fixed (never-ripped) same-net copper; the later
+/// routes tap it as their tree source.
+fn ring_escape(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    placed: &[Placed],
+    width: f64,
+    nets_filter: &[String],
+) -> Vec<Placed> {
+    let copper = copper_layers(pcb);
+    let fields = cached_pin_fields(pcb);
+    let planes = plane_layers(pcb);
+    let routed: BTreeSet<&str> = placed.iter().map(|p| p.net.as_str()).collect();
+    let mut pads_of: HashMap<&str, Vec<Vec2>> = HashMap::new();
+    for fp in &pcb.footprints {
+        for pad in &fp.pads {
+            if let Some(n) = pad.net.as_deref().filter(|n| !n.is_empty()) {
+                pads_of
+                    .entry(n)
+                    .or_default()
+                    .push(crate::geometry::pad_world_position(fp, pad));
+            }
+        }
+    }
+    let sizing = session.via_sizing().clone();
+    let mut out: Vec<Placed> = Vec::new();
+    let (mut planned, mut kept) = (0usize, 0usize);
+    for field in fields.iter() {
+        let Some(pi) = copper.iter().position(|&l| l == field.layer) else {
+            continue;
+        };
+        // routable layers going inward from the pad layer
+        let dir: isize = if pi == 0 { 1 } else { -1 };
+        let mut layers = Vec::new();
+        let mut k = pi as isize;
+        while layers.len() < RING_ESCAPE_DEPTH && k >= 0 && (k as usize) < copper.len() {
+            let l = copper[k as usize];
+            if !super::maze::is_no_route(l) {
+                layers.push(l);
+            }
+            k += dir;
+        }
+        let (lo, hi) = field.bbox();
+        let inside = |p: Vec2| {
+            p.x >= lo.x - 1e-6 && p.x <= hi.x + 1e-6 && p.y >= lo.y - 1e-6 && p.y <= hi.y + 1e-6
+        };
+        let mut endpoints: Vec<(String, Vec2, Vec2)> = Vec::new();
+        for fp in &pcb.footprints {
+            for pad in &fp.pads {
+                let Some(n) = pad.net.as_deref().filter(|n| !n.is_empty()) else {
+                    continue;
+                };
+                let at = crate::geometry::pad_world_position(fp, pad);
+                if !inside(at)
+                    || planes.contains_key(n)
+                    || routed.contains(n)
+                    || super::pair::pair_partner(n).is_some()
+                    || (!nets_filter.is_empty() && !nets_filter.iter().any(|f| f == n))
+                {
+                    continue;
+                }
+                let outside: Vec<Vec2> =
+                    pads_of[n].iter().copied().filter(|q| !inside(*q)).collect();
+                if outside.is_empty() {
+                    continue;
+                }
+                let k = outside.len() as f64;
+                let t = Vec2::new(
+                    outside.iter().map(|q| q.x).sum::<f64>() / k,
+                    outside.iter().map(|q| q.y).sum::<f64>() / k,
+                );
+                endpoints.push((n.to_string(), at, t));
+            }
+        }
+        if endpoints.is_empty() {
+            continue;
+        }
+        let fixed: Vec<(Vec2, f64, Vec<PcbLayer>)> = pcb
+            .vias
+            .iter()
+            .map(|v| {
+                let ls: Vec<PcbLayer> = copper
+                    .iter()
+                    .copied()
+                    .filter(|l| l.spanned_by(v.start_layer, v.end_layer))
+                    .collect();
+                (v.position, v.diameter / 2.0, ls)
+            })
+            .collect();
+        // The drop's via chain from the pad layer to `l`.
+        let chain = |net: &str, l: PcbLayer| -> Option<Vec<(PcbLayer, PcbLayer)>> {
+            let li = copper.iter().position(|&c| c == l)?;
+            if li == pi {
+                return Some(Vec::new());
+            }
+            let (a, b) = (pi.min(li), pi.max(li));
+            if b == a + 1
+                || !sizing.may_stack(
+                    (copper[a], copper[a + 1]),
+                    (copper[a + 1], copper[(a + 2).min(b)]),
+                )
+            {
+                return Some(vec![(field.layer, l)]);
+            }
+            let hops: Vec<(PcbLayer, PcbLayer)> =
+                (a..b).map(|i| (copper[i], copper[i + 1])).collect();
+            let _ = net;
+            Some(hops)
+        };
+        let via_r = |l: PcbLayer| -> f64 {
+            chain("", l)
+                .unwrap_or_default()
+                .iter()
+                .map(|&(x, y)| sizing.spec("", x, y).r())
+                .fold(0.0, f64::max)
+        };
+        let plans = escape::plan_multilayer_escapes(
+            session, pcb, field, &endpoints, &layers, &fixed, &via_r, width,
+        );
+        for ((net, at, _), plan) in endpoints.iter().zip(plans) {
+            let Some((_, plan)) = plan else { continue };
+            planned += 1;
+            let w = session.width_for(net, width);
+            let vias: Vec<(Vec2, PcbLayer, PcbLayer)> = chain(net, plan.layer)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(x, y)| (*at, x, y))
+                .collect();
+            let cand = Candidate {
+                net: net.clone(),
+                from: *at,
+                to: plan.egress,
+                width: w,
+                segments: plan
+                    .segments
+                    .iter()
+                    .map(|&(a, b)| (a, b, plan.layer))
+                    .collect(),
+                vias,
+                thin_segments: vec![],
+                thin_width: w,
+            };
+            if let Some(mut p) = validate_and_commit(session, pcb, cand, &out) {
+                p.coupled = true;
+                out.push(p);
+                kept += 1;
+            }
+        }
+    }
+    log::info!("ring escape: {kept} of {planned} planned ball escapes committed");
+    out
+}
+
+/// Layers the ring escape walks inward from a pin field's pad layer.
+const RING_ESCAPE_DEPTH: usize = 3;
+
 fn plane_fanout_first() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("VCAD_PLANE_FANOUT_FIRST").as_deref() == Ok("1"))
@@ -3827,8 +4100,6 @@ fn plan_microvia_fanout(
         return Vec::new();
     }
     let mut session = RouteSession::from_pcb(pcb);
-    let via_d = pcb.rules.default_rules.via_diameter;
-    let via_r = via_d / 2.0;
     let mut out = Vec::new();
     for fp in &pcb.footprints {
         for pad in &fp.pads {
@@ -3854,9 +4125,8 @@ fn plan_microvia_fanout(
             } else {
                 continue;
             };
-            if !layers.contains(&adj)
-                || router_via_type(pcb, pad_layer, adj) != vcad_ir::ecad::ViaType::Micro
-            {
+            let spec = session.via_spec(net, pad_layer, adj);
+            if !layers.contains(&adj) || spec.via_type != vcad_ir::ecad::ViaType::Micro {
                 continue;
             }
             // Via-in-pad: the annulus must sit inside the land.
@@ -3867,23 +4137,23 @@ fn plan_microvia_fanout(
                 }
                 _ => continue,
             };
-            if via_d > min_dim + 1e-9 {
+            if spec.diameter > min_dim + 1e-9 {
                 continue;
             }
             let pt = crate::geometry::pad_world_position(fp, pad);
             let clearance = session.clearance_for(net);
             let disc = CopperGeom::Disc {
                 center: pt,
-                r: via_r,
+                r: spec.r(),
             };
             if !session.probe(&disc, adj, net, clearance).legal
                 || !session.probe(&disc, pad_layer, net, clearance).legal
-                || !session.probe_drill(pt, session.via_drill_for(net)).legal
+                || !session.probe_via_span(pt, net, pad_layer, adj).legal
             {
                 continue;
             }
             let mut spans = Vec::new();
-            commit_via(&mut session, net, pt, via_r, &[pad_layer, adj], &mut spans);
+            commit_via(&mut session, net, pt, &[pad_layer, adj], &mut spans);
             out.push((pt, net.clone(), pad_layer, adj));
         }
     }
@@ -3916,6 +4186,80 @@ fn wall_budgets() -> bool {
     *ON.get_or_init(|| std::env::var("VCAD_ROUTE_NO_DEADLINES").as_deref() != Ok("1"))
 }
 
+/// Deterministic work budget: maze searches (`maze::maze_searches`), not wall
+/// clock, so a route under `VCAD_ROUTE_NO_DEADLINES=1` finishes and gives the
+/// same answer at any machine load. Every budgeted scope (arsenal sweep,
+/// route batch, rip-up pass, joint-repair round, per-connection rescue)
+/// converts its wall-clock budget to searches at [`work_per_ms`] and stops
+/// when EITHER is spent (the wall clock only when deadlines are live).
+#[derive(Clone, Copy)]
+pub(super) struct WorkBudget {
+    start: u64,
+    units: u64,
+}
+
+impl WorkBudget {
+    /// A budget of `units` maze searches from now.
+    pub(super) fn searches(units: u64) -> Self {
+        Self {
+            start: super::maze::maze_searches(),
+            units,
+        }
+    }
+    /// A budget equivalent to `ms` of wall clock.
+    pub(super) fn for_ms(ms: f64) -> Self {
+        Self::searches((ms * work_per_ms()).ceil() as u64)
+    }
+    /// Searches spent since the budget started.
+    pub(super) fn spent(&self) -> u64 {
+        super::maze::maze_searches().saturating_sub(self.start)
+    }
+    /// Whether the budget is spent.
+    pub(super) fn over(&self) -> bool {
+        self.spent() > self.units
+    }
+}
+
+/// What is left of a `total_ms` scope budget for a nested call: wall clock
+/// when deadlines are live, else the scope's WORK converted back to ms — so
+/// a `VCAD_ROUTE_NO_DEADLINES=1` route never reads the clock.
+fn remaining_ms(total_ms: f64, sw: &Stopwatch, work: Option<&WorkBudget>) -> f64 {
+    if wall_budgets() {
+        (total_ms - sw.ms()).max(0.0)
+    } else {
+        let spent = work.map_or(0.0, |w| w.spent() as f64 / work_per_ms());
+        (total_ms - spent).max(0.0)
+    }
+}
+
+/// Maze searches per millisecond of a scope's nominal wall budget
+/// (`VCAD_ROUTE_WORK_PER_MS`, default 0.05 = one search per 20 ms — measured
+/// on the CM5 at ~0.03-0.08 searches/ms under load, so the work cap sits near
+/// the wall cap it replaces).
+pub(super) fn work_per_ms() -> f64 {
+    static V: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("VCAD_ROUTE_WORK_PER_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.05)
+    })
+}
+
+/// Per-connection rescue budget in maze searches
+/// (`VCAD_ROUTE_RESCUE_SEARCHES`, default 400): once a failing connection's
+/// rescue arsenal (escape, coupled pair, shove) has spent it, the remaining
+/// stages are skipped. Applies with or without wall-clock deadlines.
+pub(super) fn rescue_searches() -> u64 {
+    static V: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("VCAD_ROUTE_RESCUE_SEARCHES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(400)
+    })
+}
+
 /// Rounds of [`route_all_with_opts`]'s island stitching: each round re-judges
 /// connectivity, since a stitch can land in a plane island that is itself
 /// stranded.
@@ -3933,14 +4277,8 @@ fn realized_board(
     use vcad_ir::ecad::{Trace, Via};
     let mut b = pcb.clone();
     let via = |pt: Vec2, net: &str, a: PcbLayer, z: PcbLayer| Via {
-        via_type: None,
-        position: pt,
-        diameter: pcb.rules.default_rules.via_diameter,
-        drill: pcb.rules.default_rules.via_drill,
-        start_layer: a,
-        end_layer: z,
-        net: net.to_string(),
         source: None,
+        ..board_via(session.via_sizing(), pt, net, a, z)
     };
     let tr = |a: Vec2, z: Vec2, w: f64, l: PcbLayer, net: &str| Trace {
         start: a,
@@ -3970,8 +4308,9 @@ fn realized_board(
         *copper.first().unwrap_or(&PcbLayer::FCu),
         *copper.last().unwrap_or(&PcbLayer::BCu),
     );
-    for (pt, net) in &stitch.vias {
-        b.vias.push(via(*pt, net, top, bot));
+    let _ = (top, bot);
+    for (pt, net, a, z) in &stitch.vias {
+        b.vias.push(via(*pt, net, *a, *z));
     }
     b
 }
@@ -3980,8 +4319,9 @@ fn realized_board(
 struct Stitch {
     /// Stub segments (pad → via) with their net and pad layer.
     stubs: Vec<(Vec2, Vec2, String, PcbLayer)>,
-    /// Stitching via centers with their net.
-    vias: Vec<(Vec2, String)>,
+    /// Stitching vias: center, net, and copper span (pad layer to a plane
+    /// layer — a microvia when the plane is the adjacent layer).
+    vias: Vec<(Vec2, String, PcbLayer, PcbLayer)>,
     /// Nets that got at least one pad onto their plane (via or direct flood).
     nets: BTreeSet<String>,
     /// Each (net, pad position) that could not be stitched legally — both the net
@@ -4020,7 +4360,6 @@ fn stitch_planes(
     if planes.is_empty() {
         return out;
     }
-    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
     let copper = copper_layers(pcb);
     // Drilled holes, growing as this pass places stitches. Stitch vias must
     // clear each other's drills too — and *across* nets, where the same-net
@@ -4028,7 +4367,6 @@ fn stitch_planes(
     // illegal against a +3V3 stitch is exactly the kind of single bad drill that
     // used to cost the whole net its stitching in post-route legalization.
     let mut holes: Vec<Hole> = holes.to_vec();
-    let drill_r = pcb.rules.default_rules.via_drill / 2.0;
 
     for fp in &pcb.footprints {
         for pad in &fp.pads {
@@ -4075,29 +4413,36 @@ fn stitch_planes(
             let extra: Vec<Vec2> = out
                 .vias
                 .iter()
-                .filter(|(_, n)| n == net)
-                .map(|(p, _)| *p)
+                .filter(|(_, n, _, _)| n == net)
+                .map(|(p, _, _, _)| *p)
                 .collect();
-            let mut spans: Vec<SpanId> = Vec::new();
-            match escape_endpoint(
-                session, pcb, net, pad_pt, pad_layer, w, clearance, via_r, &copper, placed, &extra,
-                &mut spans, fine_pitch, &holes,
-            ) {
-                Some(e) => {
+            // Microvia-first: the short hop to the nearest plane (a laser
+            // microvia when the plane is the adjacent layer), then the
+            // through stitch.
+            let mut done = false;
+            for span in stitch_spans(&copper, pad_layer, layers, false) {
+                let mut spans: Vec<SpanId> = Vec::new();
+                if let Some(e) = escape_endpoint(
+                    session, pcb, net, pad_pt, pad_layer, w, clearance, span, placed, &extra,
+                    &mut spans, fine_pitch, &holes,
+                ) {
                     if let Some((a, b)) = e.stub {
                         out.stubs.push((a, b, net.clone(), pad_layer));
                     }
                     if let Some(v) = e.via {
-                        out.vias.push((v, net.clone()));
-                        holes.push((v, drill_r));
+                        let (sa, sb) = (span[0], span[span.len() - 1]);
+                        out.vias.push((v, net.clone(), sa, sb));
+                        holes.push((v, session.via_spec(net, sa, sb).drill / 2.0));
                     }
                     out.nets.insert(net.clone());
                     // spans stay committed — the stitching copper is part of the board.
+                    done = true;
+                    break;
                 }
-                None => {
-                    rollback(session, &spans);
-                    out.failed_pads.push((net.clone(), pad_pt));
-                }
+                rollback(session, &spans);
+            }
+            if !done {
+                out.failed_pads.push((net.clone(), pad_pt));
             }
         }
     }
@@ -4134,8 +4479,14 @@ fn ripup_pass(
     let copper = copper_layers(pcb);
     let mut still: Vec<Conn> = Vec::new();
 
+    let work = deadline_ms.map(WorkBudget::for_ms);
     let mut unrouted = unrouted.into_iter();
     for (net, from, to) in unrouted.by_ref() {
+        if work.is_some_and(|w| w.over()) {
+            log::info!("ripup pass over its work budget — deferring remainder");
+            still.push((net, from, to));
+            break;
+        }
         // Over-deadline: park the rest as pending — negotiation's keep-best
         // treats an abandoned round exactly like a converged one.
         if let Some(d) = deadline_ms.filter(|_| wall_budgets()) {
@@ -4236,7 +4587,7 @@ fn ripup_pass(
             // The victim re-route inherits what is left of the pass budget:
             // it is a whole batch inside one connection's iteration, so
             // leaving it unbounded is what made the budget advisory.
-            deadline_ms.map(|d| (d - sw_pass.ms()).max(0.0)),
+            deadline_ms.map(|d| remaining_ms(d, &sw_pass, work.as_ref())),
         ));
     }
     still.extend(unrouted);
@@ -4391,8 +4742,9 @@ fn joint_window_repair(
         // remaining windows carry to the next escalation or the final report.
         let round_budget_ms = 300_000.0 * (max_expansions as f64 / 200_000.0).max(1.0);
         let sw_round = Stopwatch::start();
+        let work_round = WorkBudget::for_ms(round_budget_ms);
         for (gw, stuck) in groups {
-            if wall_budgets() && sw_round.ms() > round_budget_ms {
+            if (wall_budgets() && sw_round.ms() > round_budget_ms) || work_round.over() {
                 still.extend(stuck);
                 continue;
             }
@@ -4444,7 +4796,7 @@ fn joint_window_repair(
                 true,
                 &mut fail_cache,
                 &HashMap::new(),
-                Some((round_budget_ms - sw_round.ms()).max(0.0)),
+                Some(remaining_ms(round_budget_ms, &sw_round, Some(&work_round))),
             );
             lost.extend(reroute_victims_with_restore(
                 session,
@@ -4458,7 +4810,7 @@ fn joint_window_repair(
                 true,
                 &mut fail_cache,
                 &HashMap::new(),
-                Some((round_budget_ms - sw_round.ms()).max(0.0)),
+                Some(remaining_ms(round_budget_ms, &sw_round, Some(&work_round))),
             ));
             // Last resort for a small surviving clique: the COMPLETE window
             // router — either a joint routing the heuristics missed, or a
@@ -4487,9 +4839,23 @@ fn joint_window_repair(
                     // than a heuristic: the pad is probed at its real size and
                     // the drill is checked against hole-to-hole, which no
                     // layer-scoped copper probe can see.
+                    //
+                    // Per-span sizing: the window router hops one layer pair
+                    // at a time, so it models the SMALLEST via the nets get
+                    // (a microvia on an HDI board). A relaxation keeps its
+                    // infeasibility proofs sound; any stacked descent it
+                    // emits is re-judged at its real (drilled) size by
+                    // `validate_and_commit`.
+                    let sz = session.via_sizing();
+                    let (pad_diameter, drill) = lost
+                        .iter()
+                        .map(|c| sz.micro_size(&c.0).unwrap_or_else(|| sz.drilled_size(&c.0)))
+                        .fold((f64::INFINITY, f64::INFINITY), |a, b| {
+                            (a.0.min(b.0), a.1.min(b.1))
+                        });
                     let via_class = ViaClass {
-                        pad_diameter: pcb.rules.default_rules.via_diameter,
-                        drill: pcb.rules.default_rules.via_drill,
+                        pad_diameter,
+                        drill,
                     };
                     match route_window_complete_pinned(
                         session,
@@ -4727,7 +5093,9 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
+                rule_areas: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
@@ -4801,7 +5169,6 @@ mod tests {
             &mut session,
             "A",
             a,
-            via_r,
             &[PcbLayer::FCu, PcbLayer::In1Cu],
             &mut spans,
         );
@@ -5772,6 +6139,143 @@ mod tests {
             router_via_type(&pcb, PcbLayer::FCu, PcbLayer::In1Cu),
             ViaType::Blind
         );
+    }
+
+    /// Per-span via sizing end to end: on an HDI board (class via 0.21/0.12,
+    /// floors 0.15 drill / 0.125 ring) every routed via comes back at its
+    /// SPAN's size — microvia on an adjacent pair, 0.40/0.15 drilled
+    /// elsewhere — and the applied board carries no undersized via.
+    #[test]
+    fn routed_vias_sized_per_span_on_hdi_board() {
+        let mut pcb = board4(
+            vec![
+                fp("A1", 5.0, 15.0, vec![pad("1", 0.0, 0.0, "A")]),
+                fp("A2", 35.0, 15.0, vec![pad("1", 0.0, 0.0, "A")]),
+                fp("B1", 20.0, 5.0, vec![pad("1", 0.0, 0.0, "B")]),
+                fp("B2", 20.0, 25.0, vec![pad("1", 0.0, 0.0, "B")]),
+            ],
+            vec![],
+        );
+        pcb.rules.default_rules.via_diameter = 0.21;
+        pcb.rules.default_rules.via_drill = 0.12;
+        pcb.rules.min_drill = 0.15;
+        pcb.rules.min_annular_ring = 0.125;
+        let r = route_all(&pcb, 0.25, &[]);
+        assert!(r.unrouted_nets.is_empty(), "{:?}", r.unrouted_nets);
+        assert!(!r.vias.is_empty(), "crossing nets need a layer change");
+        let sizing = crate::via_sizing::ViaSizing::from_pcb(&pcb);
+        for v in &r.vias {
+            let s = sizing.spec(&v.net, v.start_layer, v.end_layer);
+            assert_eq!(
+                (v.diameter, v.drill, v.via_type),
+                (s.diameter, s.drill, Some(s.via_type)),
+                "{v:?}"
+            );
+        }
+        let mut applied = pcb.clone();
+        for v in &r.vias {
+            applied.vias.push(v.to_board_via(&pcb, None));
+        }
+        let bad: Vec<_> = crate::drc::check_drc(&applied)
+            .into_iter()
+            .filter(|x| {
+                matches!(
+                    x.rule,
+                    crate::drc::DrcRuleType::MinDrill
+                        | crate::drc::DrcRuleType::AnnularRing
+                        | crate::drc::DrcRuleType::HoleToHole
+                        | crate::drc::DrcRuleType::MicroviaStack
+                )
+            })
+            .collect();
+        assert!(bad.is_empty(), "{bad:?}");
+    }
+
+    /// Ring escape: a 7x7 0.8 mm BGA whose every ball leaves the field. Outer
+    /// balls escape on F.Cu, inner ones drop by microvia; everything it
+    /// commits is DRC-clean and every drop is a microvia.
+    #[test]
+    fn ring_escape_drops_inner_balls_on_microvias() {
+        let mut balls = Vec::new();
+        let mut outs = Vec::new();
+        for i in 0..7 {
+            for j in 0..7 {
+                let n = format!("S{i}{j}");
+                let mut p = pad("1", i as f64 * 0.8, j as f64 * 0.8, &n);
+                p.number = format!("{i}{j}");
+                p.shape = PadShape::Circle { diameter: 0.4 };
+                balls.push(p);
+                outs.push(fp(
+                    &format!("R{i}{j}"),
+                    5.0 + i as f64 * 6.0,
+                    21.0 + j as f64 * 1.2,
+                    vec![pad("1", 0.0, 0.0, &n)],
+                ));
+            }
+        }
+        let mut fps = vec![fp("U1", 15.0, 12.0, balls)];
+        fps.extend(outs);
+        let mut pcb = board4(fps, vec![]);
+        pcb.rules.default_rules.via_diameter = 0.21;
+        pcb.rules.default_rules.via_drill = 0.12;
+        pcb.rules.default_rules.trace_width = 0.1;
+        pcb.rules.default_rules.clearance = 0.1;
+        pcb.rules.min_drill = 0.15;
+        pcb.rules.min_annular_ring = 0.125;
+        // The CM5 case: the fab stacks microvias, so a two-layer drop is a
+        // stack of two microvias (without it, it would be a drilled via).
+        pcb.rules.allow_stacked_microvias = true;
+        let mut session = RouteSession::from_pcb(&pcb);
+        let esc = ring_escape(&mut session, &pcb, &[], 0.1, &[]);
+        assert!(esc.len() >= 10, "only {} escapes", esc.len());
+        let deep = esc.iter().filter(|p| !p.via_pts.is_empty()).count();
+        assert!(deep > 0, "inner balls drop a layer");
+        let sz = session.via_sizing();
+        for p in &esc {
+            for &(_, a, b) in &p.via_pts {
+                assert!(sz.is_micro_span(a, b), "{a:?}-{b:?}");
+            }
+        }
+        let mut b = pcb.clone();
+        for p in &esc {
+            for &(a, z, l) in &p.segments {
+                b.traces.push(vcad_ir::ecad::Trace {
+                    start: a,
+                    end: z,
+                    width: p.width,
+                    layer: l,
+                    net: p.net.clone(),
+                    source: None,
+                });
+            }
+            for &(v, a, z) in &p.via_pts {
+                b.vias.push(board_via(sz, v, &p.net, a, z));
+            }
+        }
+        let bad: Vec<_> = crate::drc::check_drc(&b)
+            .into_iter()
+            .filter(|v| {
+                !matches!(
+                    v.rule,
+                    crate::drc::DrcRuleType::UnconnectedNet | crate::drc::DrcRuleType::NetIslands
+                )
+            })
+            .collect();
+        assert!(bad.is_empty(), "{bad:?}");
+    }
+
+    /// Stitch spans: the short hop to the nearest plane, and the through span,
+    /// in the requested order.
+    #[test]
+    fn stitch_spans_prefer_nearest_plane_hop() {
+        use PcbLayer::*;
+        let cu = [FCu, In1Cu, In2Cu, BCu];
+        let s = stitch_spans(&cu, FCu, &[In2Cu, In1Cu], false);
+        assert_eq!(s, vec![&cu[0..=1], &cu[..]]);
+        let s = stitch_spans(&cu, BCu, &[In1Cu], true);
+        assert_eq!(s, vec![&cu[..], &cu[1..=3]]);
+        // plane span IS the through span: one entry
+        assert_eq!(stitch_spans(&cu, FCu, &[BCu], false).len(), 1);
     }
 
     /// The routed claim is fail-closed: a pad DRC sees stranded makes its net

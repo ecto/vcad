@@ -1321,8 +1321,7 @@ fn export_file(
 fn plan_bga_escapes(
     pcb: &mut vcad_ir::ecad::Pcb,
     layers: &[vcad_ir::ecad::PcbLayer],
-    via_d: f64,
-    via_drill: f64,
+    via: Option<(f64, f64)>,
     width: f64,
 ) -> (usize, usize) {
     use vcad_ecad_pcb::router::escape;
@@ -1405,6 +1404,14 @@ fn plan_bga_escapes(
             })
             .collect();
         let session = vcad_ecad_pcb::RouteSession::from_pcb(pcb);
+        // An explicit via size wins; else each drop gets its span's size
+        // (microvia for one dielectric, drilled deeper — `via_sizing`).
+        let size_to = |net: &str, l: vcad_ir::ecad::PcbLayer| {
+            via.unwrap_or_else(|| {
+                let s = session.via_spec(net, copper[0], l);
+                (s.diameter, s.drill)
+            })
+        };
         let plans = escape::plan_multilayer_escapes(
             &session,
             pcb,
@@ -1412,7 +1419,7 @@ fn plan_bga_escapes(
             &endpoints,
             layers,
             &fixed,
-            via_d / 2.0,
+            &|l| size_to("", l).0 / 2.0,
             width,
         );
         let mut per_layer = vec![0usize; layers.len()];
@@ -1420,6 +1427,7 @@ fn plan_bga_escapes(
             let Some((li, plan)) = plan else { continue };
             per_layer[li] += 1;
             if plan.layer != copper[0] {
+                let (via_d, via_drill) = size_to(net, plan.layer);
                 pcb.vias.push(Via {
                     via_type: None,
                     position: *at,
@@ -1548,7 +1556,7 @@ fn route_file(
     only: Vec<String>,
     escape: Option<&str>,
 ) -> Result<()> {
-    use vcad_ir::ecad::{CopperSource, Trace, Via};
+    use vcad_ir::ecad::{CopperSource, Trace};
     // RUST_LOG=info shows the router's own account (legalization, pruning)
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
         .try_init();
@@ -1772,11 +1780,7 @@ fn route_file(
             .map(|l| serde_json::from_str(&format!("\"{}\"", l.trim().replace('.', ""))))
             .collect::<std::result::Result<_, _>>()
             .map_err(|e| anyhow::anyhow!("--escape: bad layer list: {e}"))?;
-        let (vd, vdr) = microvia.unwrap_or((
-            route_pcb.rules.default_rules.via_diameter,
-            route_pcb.rules.default_rules.via_drill,
-        ));
-        let (t, v) = plan_bga_escapes(&mut route_pcb, &layers, vd, vdr, w);
+        let (t, v) = plan_bga_escapes(&mut route_pcb, &layers, microvia, w);
         progress(format!("escape: laid {t} escape traces, {v} microvias"));
         // the board copy written out carries them too
         pcb.traces.extend(
@@ -1810,10 +1814,6 @@ fn route_file(
         r.traces.len(),
         r.vias.len()
     ));
-    let (vd, vdrill) = (
-        pcb.rules.default_rules.via_diameter,
-        pcb.rules.default_rules.via_drill,
-    );
     pcb.traces.extend(r.traces.iter().map(|t| Trace {
         start: t.start,
         end: t.end,
@@ -1822,16 +1822,12 @@ fn route_file(
         net: t.net.clone(),
         source: Some(CopperSource::Autoroute),
     }));
-    pcb.vias.extend(r.vias.iter().map(|v| Via {
-        via_type: None,
-        position: v.position,
-        diameter: vd,
-        drill: vdrill,
-        start_layer: v.start_layer,
-        end_layer: v.end_layer,
-        net: v.net.clone(),
-        source: Some(CopperSource::Autoroute),
-    }));
+    let sized = pcb.clone();
+    pcb.vias.extend(
+        r.vias
+            .iter()
+            .map(|v| v.to_board_via(&sized, Some(CopperSource::Autoroute))),
+    );
     pcb.zones.extend(r.zones.iter().cloned());
     if let Some(raw) = std::env::var_os("VCAD_ROUTE_RAW") {
         std::fs::write(&raw, vcad_ecad_symbols::write_kicad_pcb_for_project(&pcb))?;
@@ -1948,18 +1944,12 @@ fn route_file(
                         source: Some(CopperSource::Autoroute),
                     }),
             );
-            trial
-                .vias
-                .extend(r2.vias.iter().filter(|v| in_split(&v.net)).map(|v| Via {
-                    via_type: None,
-                    position: v.position,
-                    diameter: vd,
-                    drill: vdrill,
-                    start_layer: v.start_layer,
-                    end_layer: v.end_layer,
-                    net: v.net.clone(),
-                    source: Some(CopperSource::Autoroute),
-                }));
+            trial.vias.extend(
+                r2.vias
+                    .iter()
+                    .filter(|v| in_split(&v.net))
+                    .map(|v| v.to_board_via(&again, Some(CopperSource::Autoroute))),
+            );
             anchor_track_ends(&mut trial);
             let after: usize = vcad_ecad_pcb::drc::net_islands(&trial, &split)
                 .values()
@@ -4384,10 +4374,6 @@ fn stitch_to_planes(
     let mut work = route_pcb.clone();
     work.traces = pcb.traces.clone();
     work.vias = pcb.vias.clone();
-    let (vd, vdrill) = (
-        pcb.rules.default_rules.via_diameter,
-        pcb.rules.default_rules.via_drill,
-    );
     let copper: Vec<PcbLayer> = work
         .stackup
         .layers
@@ -4472,6 +4458,11 @@ fn stitch_to_planes(
                 }
                 let w = session.width_for(net, width);
                 let clearance = session.clearance_for(net);
+                // A through stitch, at the through size for this net.
+                let (vd, vdrill) = {
+                    let s = session.via_spec(net, front, back);
+                    (s.diameter, s.drill)
+                };
                 'found: for ring in [-1.0, 0.5, 0.8, 1.1, 1.5, 2.0, 2.6] {
                     for k in 0..if ring < 0.0 { 1 } else { 24 } {
                         let a = k as f64 * std::f64::consts::TAU / 24.0;
@@ -4482,7 +4473,7 @@ fn stitch_to_planes(
                             r + vd / 2.0 + ring - 0.4
                         };
                         let v = vcad_ir::Vec2::new(c.x + d * a.cos(), c.y + d * a.sin());
-                        if !session.probe_via_drill(v, net).legal {
+                        if !session.probe_via_span(v, net, front, back).legal {
                             continue;
                         }
                         let disc = CopperGeom::Disc {

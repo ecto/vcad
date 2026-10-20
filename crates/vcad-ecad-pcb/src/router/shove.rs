@@ -184,7 +184,6 @@ fn commit_victim_copper(
     segments: &[(Vec2, Vec2, PcbLayer)],
 ) -> Vec<crate::session::SpanId> {
     let hw = victim.width / 2.0;
-    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
     let copper = copper_layers(pcb);
     let mut spans = Vec::new();
     for &(a, b, l) in segments {
@@ -197,7 +196,7 @@ fn commit_victim_copper(
             .position(|&l| l == lb)
             .unwrap_or(copper.len().saturating_sub(1));
         let slice = &copper[ia.min(ib)..=ia.max(ib)];
-        commit_via(session, &victim.net, p, via_r, slice, &mut spans);
+        commit_via(session, &victim.net, p, slice, &mut spans);
     }
     // Fan-out stubs never ride a shove (plan_shove refuses stub-anchored
     // segments), but a victim may still CARRY stubs elsewhere on its route;

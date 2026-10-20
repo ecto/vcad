@@ -1,0 +1,15 @@
+{
+  "id": "2026-10-19-plane-stub-drc-exemption",
+  "version": "0.10.0",
+  "date": "2026-10-19",
+  "category": "fix",
+  "title": "Plane stubs exempt from dangling-copper DRC",
+  "summary": "Short plane-connection stubs from pads to a plane via no longer report as dangling or unconnected copper.",
+  "features": [
+    "pcb",
+    "drc"
+  ],
+  "mcpTools": [
+    "run_drc"
+  ]
+}

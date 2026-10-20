@@ -609,7 +609,7 @@ fn clip_mesh_solid(solid: &Solid, plane: SectionPlane, remove_positive: bool) ->
     };
     let mut vertices: Vec<f32> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
-    for t in mesh.indices.chunks_exact(3) {
+    for t in mesh.indices.as_chunks::<3>().0 {
         let tri = [vert(t[0]), vert(t[1]), vert(t[2])];
         // Sutherland–Hodgman against one plane: at most a quad comes out.
         let mut poly: Vec<[f64; 3]> = Vec::with_capacity(4);

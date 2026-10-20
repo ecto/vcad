@@ -35,7 +35,7 @@
 
 use std::collections::BTreeSet;
 
-use vcad_ir::ecad::{CopperSource, Pcb, PcbLayer, Trace, Via};
+use vcad_ir::ecad::{CopperSource, Pcb, PcbLayer, Trace};
 use vcad_ir::Vec2;
 
 use crate::session::RouteSession;
@@ -420,8 +420,6 @@ fn pos_key(p: Vec2) -> (u64, u64) {
     )
 }
 
-use super::classes::via_geom_for;
-
 fn d2(a: Vec2, b: Vec2) -> f64 {
     let (dx, dy) = (a.x - b.x, a.y - b.y);
     dx * dx + dy * dy
@@ -454,6 +452,11 @@ fn merge_same_net_vias(
     let min_spacing = pcb.rules.hole_to_hole;
     let stack = copper_layers(pcb);
     let layer_idx = |l: PcbLayer| stack.iter().position(|&s| s == l).unwrap_or(0);
+    // Per-span sizes: a merged survivor takes the UNION span, which can be a
+    // different (larger) via than any member — two stacked microvias become
+    // one drilled via.
+    let sizing = crate::via_sizing::ViaSizing::from_pcb(pcb);
+    let drill_of = |v: &RoutedVia| sizing.spec(&v.net, v.start_layer, v.end_layer).drill;
     // The oracle for this stage: the board as the caller will actually commit
     // it. Same-net copper is excluded by the probe, so a cluster is judged
     // purely on the foreign copper it would newly touch — but only on copper
@@ -500,12 +503,19 @@ fn merge_same_net_vias(
         r
     }
     for i in 0..vias.len() {
-        let (_, drill_i) = via_geom_for(pcb, &vias[i].net);
+        let drill_i = drill_of(&vias[i]);
         for j in (i + 1)..vias.len() {
             if vias[i].net != vias[j].net {
                 continue;
             }
-            let (_, drill_j) = via_geom_for(pcb, &vias[j].net);
+            let drill_j = drill_of(&vias[j]);
+            // An allowed microvia stack is two vias by design, not a duplicate.
+            if sizing.may_stack(
+                (vias[i].start_layer, vias[i].end_layer),
+                (vias[j].start_layer, vias[j].end_layer),
+            ) {
+                continue;
+            }
             let edge =
                 d2(vias[i].position, vias[j].position).sqrt() - drill_i / 2.0 - drill_j / 2.0;
             if edge < min_spacing - 1e-6 {
@@ -562,7 +572,11 @@ fn merge_same_net_vias(
             let keep_pos = vias[keep].position;
             let net = vias[keep].net.clone();
             let clr = session.clearance_for(&net);
-            let (via_d, _) = via_geom_for(pcb, &net);
+            let union = sizing.spec(&net, stack[lo], stack[hi]);
+            let via_d = union.diameter;
+            let own_d = sizing
+                .spec(&net, vias[keep].start_layer, vias[keep].end_layer)
+                .diameter;
             // Layers the survivor would newly occupy: everything in the union span
             // outside its own original span.
             let (own_lo, own_hi) = {
@@ -576,8 +590,11 @@ fn merge_same_net_vias(
                 center: keep_pos,
                 r: via_d / 2.0,
             };
+            // A barrel that GREW (micro -> drilled) is new copper on every
+            // layer of the union, not just the newly spanned ones.
+            let grew = via_d > own_d + 1e-9;
             let span_ok = (lo..=hi)
-                .filter(|&li| li < own_lo || li > own_hi)
+                .filter(|&li| grew || li < own_lo || li > own_hi)
                 .all(|li| session.probe(&disc, stack[li], &net, clr).legal);
             if !span_ok {
                 log::debug!(
@@ -653,6 +670,7 @@ fn merge_same_net_vias(
         };
         vias[keep].start_layer = stack[lo_all];
         vias[keep].end_layer = stack[hi_all];
+        vias[keep].size_with(&sizing);
         connectors.extend(cluster_jogs);
 
         for &i in members {
@@ -690,17 +708,8 @@ fn candidate_pcb(pcb: &Pcb, traces: &[RoutedTrace], vias: &[RoutedVia]) -> Pcb {
         });
     }
     for v in vias {
-        let (diameter, drill) = via_geom_for(pcb, &v.net);
-        c.vias.push(Via {
-            via_type: None,
-            position: v.position,
-            diameter,
-            drill,
-            start_layer: v.start_layer,
-            end_layer: v.end_layer,
-            net: v.net.clone(),
-            source: Some(CopperSource::Autoroute),
-        });
+        c.vias
+            .push(v.to_board_via(pcb, Some(CopperSource::Autoroute)));
     }
     c
 }
@@ -855,7 +864,9 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
+                rule_areas: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
@@ -889,13 +900,7 @@ mod tests {
     }
 
     fn rvia(x: f64, y: f64, net: &str) -> RoutedVia {
-        RoutedVia {
-            via_type: None,
-            position: Vec2::new(x, y),
-            net: net.into(),
-            start_layer: PcbLayer::FCu,
-            end_layer: PcbLayer::BCu,
-        }
+        RoutedVia::new(Vec2::new(x, y), net, PcbLayer::FCu, PcbLayer::BCu)
     }
 
     fn rtrace(a: (f64, f64), b: (f64, f64), net: &str, layer: PcbLayer) -> RoutedTrace {
@@ -1201,13 +1206,7 @@ mod tests {
         let mut vias: Vec<RoutedVia> = full
             .vias
             .iter()
-            .map(|v| RoutedVia {
-                via_type: None,
-                position: v.position,
-                net: v.net.clone(),
-                start_layer: v.start_layer,
-                end_layer: v.end_layer,
-            })
+            .map(|v| RoutedVia::new(v.position, &v.net, v.start_layer, v.end_layer))
             .collect();
 
         let count = |p: &Pcb, rule: DrcRuleType| {

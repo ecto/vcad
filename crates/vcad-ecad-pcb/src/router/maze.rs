@@ -92,6 +92,21 @@ pub fn is_microvia_span(layers: &[PcbLayer], a: usize, b: usize) -> bool {
     hi == lo + 1 && (lo == 0 || hi + 1 == layers.len())
 }
 
+/// Exponent of the maze's via-size price (`VCAD_MICRO_BIAS`; default 0 =
+/// every span priced alike). Opt-in: on the full CM5 any bias (2.0, either
+/// inflating drilled vias or discounting microvias) cut the first batch from
+/// 401/434 to 325-ish committed and ran 3x slower — cheap microvia hops pull
+/// singles through the plane-layer stack into hop chains the oracle rejects.
+pub fn micro_bias() -> f64 {
+    static V: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        std::env::var("VCAD_MICRO_BIAS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0.0)
+    })
+}
+
 /// Plane layers: no trace runs on them (a signal there cuts the plane into
 /// islands); vias still pass through. Empty by default.
 static NO_ROUTE_LAYERS: std::sync::RwLock<Vec<PcbLayer>> = std::sync::RwLock::new(Vec::new());
@@ -271,6 +286,16 @@ impl RouteResult3d {
     }
 }
 
+/// Every 3D maze search ever started in this process: the router's
+/// deterministic WORK unit (see `auto::WorkBudget`). Each search is itself
+/// capped by its expansion budget, so a cap on searches bounds the work.
+static MAZE_SEARCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The running count of 3D maze searches (see [`MAZE_SEARCHES`]).
+pub fn maze_searches() -> u64 {
+    MAZE_SEARCHES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Layer-aware A* over `(x, y, layer)`: routes `net` from `start` to `end`
 /// across `layers` (the board's copper stack, front → back), choosing via
 /// positions as part of the search.
@@ -305,7 +330,6 @@ pub fn route_net_maze3d(
     end: Vec2,
     end_layers: &[PcbLayer],
     width: f64,
-    via_diameter: f64,
     congestion: Option<&Congestion>,
     max_expansions: usize,
     pitch_scale: f64,
@@ -315,12 +339,12 @@ pub fn route_net_maze3d(
     offgrid_vias: bool,
 ) -> RouteResult3d {
     let nl = layers.len();
+    MAZE_SEARCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if nl == 0 {
         return RouteResult3d::fail(net);
     }
     let clearance = session.clearance_for(net);
     let half_w = width / 2.0;
-    let via_r = via_diameter / 2.0;
 
     let grid = Grid::new_scaled(outline, start, end, width, clearance, pitch_scale, window);
     let plane = grid.nx * grid.ny;
@@ -342,17 +366,21 @@ pub fn route_net_maze3d(
     // A via at `p` spanning layer indices `a..=b` must clear other-net
     // copper on every spanned layer (and only those — a microvia between
     // adjacent layers doesn't care about copper elsewhere in the stack).
+    // HDI mode (the caller's microvia knob): one dielectric per hop.
     let micro = microvia();
+    // Each span at its own size (microvia on an adjacent pair, drilled
+    // through/blind/buried otherwise) — the size it is committed and written
+    // back at (`crate::via_sizing`).
     let via_ok = |p: Vec2, a: usize, b: usize| -> bool {
-        let r = match micro {
-            Some((d, _)) if is_microvia_span(layers, a, b) => d / 2.0,
-            _ => via_r,
+        let (la, lb) = (layers[a.min(b)], layers[a.max(b)]);
+        let disc = CopperGeom::Disc {
+            center: p,
+            r: session.via_spec(net, la, lb).r(),
         };
-        let disc = CopperGeom::Disc { center: p, r };
         // The drill barrel is layer-independent: a blind/buried via must keep
         // the hole-to-hole rule against every other-net hole on the board, not
         // just the ones sharing its copper layers.
-        session.probe_via_drill(p, net).legal
+        session.probe_via_span(p, net, la, lb).legal
             && layers[a.min(b)..=a.max(b)]
                 .iter()
                 .all(|&l| session.probe(&disc, l, net, clearance).legal)
@@ -360,6 +388,20 @@ pub fn route_net_maze3d(
     let cong = congestion.filter(|c| !c.is_flat());
     let node_cost =
         |cell: usize| -> f64 { cong.map(|c| c.cost_at(grid.world_of(cell))).unwrap_or(0.0) };
+    // Reference: the DRILLED via keeps the historical price, smaller vias
+    // are discounted. (Inflating drilled vias instead raised every path's g
+    // above the distance heuristic and starved the A* of its expansion
+    // budget: full-CM5 round 1 placed 431/518 instead of 500.)
+    let r_ref_via = session.via_sizing().drilled_size(net).0.max(1e-6) / 2.0;
+    // Differential pairs keep flat via pricing: their phantom centerline is
+    // realized as two vias per transition and the coupled run, not the via
+    // area, is what they optimize (biased pair searches coupled 26 of 48
+    // pairs on the full CM5 instead of 42).
+    let bias = if super::pair::pair_partner(net).is_some() {
+        0.0
+    } else {
+        micro_bias()
+    };
 
     // --- A* over (cell, layer) -------------------------------------------
     let n = plane * nl;
@@ -638,7 +680,16 @@ pub fn route_net_maze3d(
                 // the airwire grows (floor 0.3 at >= ~20mm).
                 let haul = dist(start, end);
                 let haul_scale = (6.0 / haul.max(1.0)).clamp(0.3, 1.0);
-                let tentative = g[node] + VIA_COST * haul_scale * (0.4 + 0.6 * span_frac);
+                // Microvia bias: a via's price scales with the board area its
+                // barrel takes, (r / r_drilled)^MICRO_BIAS — a 0.21 microvia
+                // costs ~0.28x a drilled 0.40 via at the default exponent 2, so
+                // a layer change goes down as microvia hops (staggered, or
+                // stacked where the board allows) wherever the hops fit, the
+                // way the human CM5 fans out.
+                let r_span = session.via_spec(net, layers[lo], layers[hi]).r();
+                let size_factor = (r_span / r_ref_via).min(1.0).powf(bias);
+                let tentative =
+                    g[node] + VIA_COST * haul_scale * (0.4 + 0.6 * span_frac) * size_factor;
                 if tentative < g[nb] {
                     g[nb] = tentative;
                     came[nb] = node;
@@ -1448,7 +1499,9 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
+                rule_areas: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
@@ -1591,7 +1644,6 @@ mod tests {
             Vec2::new(35.0, 20.0),
             &[PcbLayer::FCu],
             0.25,
-            0.8,
             None,
             0,
             1.0,
@@ -1626,7 +1678,6 @@ mod tests {
             Vec2::new(35.0, 20.0),
             &[PcbLayer::FCu],
             0.25,
-            0.8,
             None,
             0,
             1.0,
@@ -1688,7 +1739,6 @@ mod tests {
             Vec2::new(35.0, 20.0),
             &[PcbLayer::FCu],
             0.25,
-            0.8,
             None,
             0,
             1.0,
@@ -1724,7 +1774,6 @@ mod tests {
             Vec2::new(35.0, 20.0),
             &[PcbLayer::BCu],
             0.25,
-            0.8,
             None,
             0,
             1.0,

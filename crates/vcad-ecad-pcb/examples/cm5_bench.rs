@@ -20,7 +20,7 @@ use vcad_ecad_pcb::router::classes::{apply_classes, classify_nets};
 use vcad_ecad_pcb::router::length_match::net_routed_length;
 use vcad_ecad_pcb::router::{route_all_with_opts, RouteOptions};
 use vcad_ecad_symbols::parse_kicad_pcb;
-use vcad_ir::ecad::{Trace, Via};
+use vcad_ir::ecad::Trace;
 
 fn seg_len(a: vcad_ir::Vec2, b: vcad_ir::Vec2) -> f64 {
     ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt()
@@ -174,17 +174,152 @@ fn main() {
         println!("pours: synthesis DISABLED (VCAD_POUR_SYNTH=0)");
     }
     let t0 = Instant::now();
-    let r = route_all_with_opts(
-        &pcb,
-        width,
-        &filter,
-        &RouteOptions {
-            effort,
-            priority_nets: priority.clone(),
-            pour_policy,
-            ..Default::default()
-        },
-    );
+    // VCAD_FLOW=1: the flow-core router (one market; see router::flow).
+    let r = if vcad_ecad_pcb::router::flow::flow_enabled() {
+        let (r, rep) =
+            vcad_ecad_pcb::router::flow::route_flow(&pcb, width, &filter, &Default::default());
+        println!(
+            "flow: {}/{} connections committed, LB {:.1} mm, UB {:?}, gap {:?}; access {:?} gap {:?}",
+            rep.committed,
+            rep.commodities,
+            rep.lower_bound,
+            rep.upper_bound,
+            rep.gap,
+            rep.access,
+            rep.access_gap
+        );
+        if let Ok(p) = std::env::var("VCAD_FLOW_REPORT") {
+            std::fs::write(&p, serde_json::to_string_pretty(&rep).unwrap()).ok();
+        }
+        // Maze fallback (VCAD_FLOW_FALLBACK=0 disables): the classic router
+        // closes what the flow core left open, on the board with the flow's
+        // copper as fixed copper (its ratsnest skips joined pads).
+        if std::env::var("VCAD_FLOW_FALLBACK").as_deref() == Ok("0") {
+            r
+        } else {
+            let mut with = pcb.clone();
+            for t in &r.traces {
+                with.traces.push(Trace {
+                    start: t.start,
+                    end: t.end,
+                    width: t.width,
+                    layer: t.layer,
+                    net: t.net.clone(),
+                    source: None,
+                });
+            }
+            let sized = with.clone();
+            for v in &r.vias {
+                with.vias.push(v.to_board_via(&sized, None));
+            }
+            let planes: BTreeSet<String> = vcad_ecad_pcb::router::flow::access::plane_poured(&pcb)
+                .keys()
+                .map(|s| s.to_string())
+                .collect();
+            let mut left: Vec<String> = r
+                .unrouted_nets
+                .iter()
+                .cloned()
+                .chain(planes)
+                .filter(|n| filter.is_empty() || filter.contains(n))
+                .collect();
+            left.sort();
+            left.dedup();
+            println!("flow fallback: maze router on {} nets", left.len());
+            let fb = route_all_with_opts(
+                &with,
+                width,
+                &left,
+                &RouteOptions {
+                    effort,
+                    priority_nets: priority.clone(),
+                    pour_policy,
+                    // The flow path respects layer roles end to end: the
+                    // fallback may not put signal on plane layers either
+                    // (VCAD_FLOW_FALLBACK_PLANES=0 lifts it).
+                    no_route_layers: if std::env::var("VCAD_FLOW_FALLBACK_PLANES").as_deref()
+                        == Ok("0")
+                    {
+                        Vec::new()
+                    } else {
+                        pcb.plane_layers()
+                    },
+                    ..Default::default()
+                },
+            );
+            println!(
+                "flow fallback: {} routed, {} unrouted (plane layers {:?} closed to signal)",
+                fb.routed_nets.len(),
+                fb.unrouted_nets.len(),
+                pcb.plane_layers()
+            );
+            let still: BTreeSet<&String> = fb.unrouted_nets.iter().collect();
+            // Cause table: why each net is still open after flow + fallback.
+            {
+                let planes: BTreeSet<String> =
+                    vcad_ecad_pcb::router::flow::access::plane_poured(&pcb)
+                        .keys()
+                        .map(|s| s.to_string())
+                        .collect();
+                let mut table: BTreeMap<String, usize> = BTreeMap::new();
+                for n in &still {
+                    let c = if planes.contains(*n) {
+                        match rep.access_unsited.get(*n) {
+                            Some(k) => format!("plane net: {k} pad(s) without an access site, fallback stitch failed"),
+                            None => "plane net: fallback stitch failed".to_string(),
+                        }
+                    } else {
+                        format!(
+                            "{} -> fallback failed",
+                            rep.net_causes
+                                .get(*n)
+                                .map(|s| s.as_str())
+                                .unwrap_or("flow routed it (legalize demoted)")
+                        )
+                    };
+                    *table.entry(c).or_default() += 1;
+                }
+                println!(
+                    "cause table ({} unrouted nets after fallback):",
+                    still.len()
+                );
+                for (c, k) in &table {
+                    println!("  {k:>4}  {c}");
+                }
+                println!("flow open connections by cause: {:?}", rep.causes);
+            }
+            let mut routed: Vec<String> = r
+                .routed_nets
+                .iter()
+                .chain(fb.routed_nets.iter())
+                .filter(|n| !still.contains(n))
+                .cloned()
+                .collect();
+            routed.sort();
+            routed.dedup();
+            vcad_ecad_pcb::router::RouteAllResult {
+                traces: r.traces.into_iter().chain(fb.traces).collect(),
+                vias: r.vias.into_iter().chain(fb.vias).collect(),
+                routed_nets: routed,
+                unrouted_nets: fb.unrouted_nets,
+                diagnostics: fb.diagnostics,
+                routability: fb.routability,
+                zones: fb.zones,
+            }
+        }
+    } else {
+        route_all_with_opts(
+            &pcb,
+            width,
+            &filter,
+            &RouteOptions {
+                effort,
+                priority_nets: priority.clone(),
+                pour_policy,
+                ..Default::default()
+            },
+        )
+    };
     let elapsed = t0.elapsed();
 
     let routed_len: f64 = r.traces.iter().map(|t| seg_len(t.start, t.end)).sum();
@@ -253,17 +388,10 @@ fn main() {
             source: None,
         });
     }
+    // Each via at its span's size (microvia / drilled), as the router sized it.
+    let sized = pcb.clone();
     for v in &r.vias {
-        pcb.vias.push(Via {
-            position: v.position,
-            diameter: pcb.rules.default_rules.via_diameter,
-            drill: pcb.rules.default_rules.via_drill,
-            start_layer: v.start_layer,
-            end_layer: v.end_layer,
-            net: v.net.clone(),
-            source: None,
-            via_type: v.via_type,
-        });
+        pcb.vias.push(v.to_board_via(&sized, None));
     }
     // Stage bisection: dump the board as route_all left it, before si_finish
     // rewrites any of it.

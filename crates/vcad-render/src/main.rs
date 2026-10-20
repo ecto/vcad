@@ -1384,7 +1384,7 @@ fn run(cli: &Cli) -> Result<(), String> {
 
     let input = &inputs[0];
     if cli.eval_json {
-        return run_eval_json(input, &cli);
+        return run_eval_json(input, cli);
     }
     if cli.animate.is_some() {
         #[cfg(feature = "raytrace")]

@@ -818,6 +818,88 @@ pub struct DesignRules {
     )]
     #[cfg_attr(feature = "ts-rs", ts(rename = "inferredFloors"))]
     pub inferred_floors: Vec<String>,
+    /// Whether the fab may STACK microvias (a microvia landing on the one
+    /// below, which needs filled/planarized microvias). `false` (default):
+    /// consecutive microvias must be staggered (DRC `MicroviaStack`). An
+    /// importer may infer `true` from a board that already stacks them; it
+    /// then lists `allowStackedMicrovias` in [`Self::inferred_floors`].
+    #[serde(
+        rename = "allowStackedMicrovias",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
+    #[cfg_attr(
+        feature = "ts-rs",
+        ts(rename = "allowStackedMicrovias", optional, as = "Option<bool>")
+    )]
+    pub allow_stacked_microvias: bool,
+    /// Rule areas: polygons inside which a reduced minimum trace width (and
+    /// optionally clearance) applies — dense pin fields and their escapes.
+    /// An importer may infer them from the board's own copper; such areas
+    /// carry `inferred: true` and their provenance.
+    #[serde(rename = "ruleAreas", default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(
+        feature = "ts-rs",
+        ts(rename = "ruleAreas", optional, as = "Option<Vec<RuleArea>>")
+    )]
+    pub rule_areas: Vec<RuleArea>,
+}
+
+/// A design-rule area: inside `outline` (on `layers`, or every copper layer
+/// when empty) a trace may run at `min_trace_width`, and copper keeps
+/// `clearance` when given.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct RuleArea {
+    /// Name (e.g. the footprint reference it was derived from).
+    pub name: String,
+    /// Closed polygon outline.
+    pub outline: Vec<Vec2>,
+    /// Layers it applies to (empty = all copper layers).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, as = "Option<Vec<PcbLayer>>"))]
+    pub layers: Vec<PcbLayer>,
+    /// Minimum trace width inside the area (mm).
+    #[serde(rename = "minTraceWidth")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "minTraceWidth"))]
+    pub min_trace_width: f64,
+    /// Clearance inside the area (mm), if it overrides the class clearance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub clearance: Option<f64>,
+    /// Inferred by an importer rather than authored.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, as = "Option<bool>"))]
+    pub inferred: bool,
+    /// How it was derived (logged and quoted by the DRC).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[cfg_attr(feature = "ts-rs", ts(optional, as = "Option<String>"))]
+    pub provenance: String,
+}
+
+impl RuleArea {
+    /// Whether `p` on `layer` lies inside the area.
+    pub fn contains(&self, p: Vec2, layer: PcbLayer) -> bool {
+        if !self.layers.is_empty() && !self.layers.contains(&layer) {
+            return false;
+        }
+        let v = &self.outline;
+        let n = v.len();
+        if n < 3 {
+            return false;
+        }
+        let mut inside = false;
+        let mut j = n - 1;
+        for i in 0..n {
+            let (a, b) = (v[i], v[j]);
+            if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
+                inside = !inside;
+            }
+            j = i;
+        }
+        inside
+    }
 }
 
 /// Default neck region length from a pad's copper edge (mm) — the same
@@ -1375,6 +1457,55 @@ pub const PLANE_MAX_SIGNAL_SHARE: f64 = 0.03;
 pub const PLANE_MIN_COVERAGE: f64 = 0.6;
 
 impl Pcb {
+    /// Copper layers of this board, front to back (the full stack when the
+    /// stackup is empty).
+    pub fn copper_stack(&self) -> Vec<PcbLayer> {
+        PcbLayer::COPPER_STACK
+            .iter()
+            .copied()
+            .filter(|l| {
+                self.stackup.layers.is_empty() || self.stackup.layers.iter().any(|s| s.layer == *l)
+            })
+            .collect()
+    }
+
+    /// Index pairs of STACKED microvias: two declared microvias, each on one
+    /// adjacent layer pair, on consecutive spans (sharing one copper layer),
+    /// whose drills overlap in plan (centre distance below the larger drill).
+    /// Staggered microvias are not listed.
+    pub fn stacked_microvia_pairs(&self) -> Vec<(usize, usize)> {
+        let stack = self.copper_stack();
+        let idx = |l: PcbLayer| stack.iter().position(|&c| c == l);
+        let micro: Vec<(usize, usize, usize)> = self
+            .vias
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.is_micro())
+            .filter_map(|(i, v)| {
+                let (a, b) = (idx(v.start_layer)?, idx(v.end_layer)?);
+                let (lo, hi) = (a.min(b), a.max(b));
+                (hi == lo + 1).then_some((i, lo, hi))
+            })
+            .collect();
+        let mut out = Vec::new();
+        for x in 0..micro.len() {
+            for y in (x + 1)..micro.len() {
+                let ((i, alo, ahi), (j, blo, bhi)) = (micro[x], micro[y]);
+                if !(ahi == blo || bhi == alo) {
+                    continue;
+                }
+                let (va, vb) = (&self.vias[i], &self.vias[j]);
+                let d = ((va.position.x - vb.position.x).powi(2)
+                    + (va.position.y - vb.position.y).powi(2))
+                .sqrt();
+                if d < va.drill.max(vb.drill) - 1e-6 {
+                    out.push((i, j));
+                }
+            }
+        }
+        out
+    }
+
     /// Infer each copper layer's [`LayerRole`] from its copper, for layers
     /// with no authored role. A layer carrying at most
     /// [`PLANE_MAX_SIGNAL_SHARE`] of the board's trace length whose dominant
@@ -1517,7 +1648,9 @@ mod tests {
                 },
             ],
             rules: DesignRules {
+                allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
+                rule_areas: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {
