@@ -56,7 +56,42 @@ pub extern "C" fn vcad_engine_apply(
     }
 }
 
-/// Free a string returned by `vcad_engine_apply`.
+/// Lower and apply an AI tool call; same envelope as `vcad_engine_apply`.
+#[no_mangle]
+pub extern "C" fn vcad_engine_apply_tool(
+    engine: *mut VcadEngine,
+    tool: *const c_char,
+    args_json: *const c_char,
+) -> *mut c_char {
+    crate::err::clear_error();
+    if engine.is_null() || tool.is_null() || args_json.is_null() {
+        crate::err::set_error("vcad_engine_apply_tool: null argument");
+        return std::ptr::null_mut();
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let tool = unsafe { CStr::from_ptr(tool) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let args = unsafe { CStr::from_ptr(args_json) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let engine = unsafe { &mut *engine };
+        Ok::<_, String>(engine.api.apply_tool_envelope(tool, args))
+    }));
+    match result {
+        Ok(Ok(out)) => CString::new(out).map_or(std::ptr::null_mut(), CString::into_raw),
+        Ok(Err(e)) => {
+            crate::err::set_error(e);
+            std::ptr::null_mut()
+        }
+        Err(_) => {
+            crate::err::set_error("vcad_engine_apply_tool panicked");
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Free a string returned by `vcad_engine_apply` / `vcad_engine_apply_tool`.
 #[no_mangle]
 pub extern "C" fn vcad_engine_string_free(value: *mut c_char) {
     if !value.is_null() {

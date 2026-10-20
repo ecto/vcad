@@ -683,7 +683,11 @@ action: string, } | { "kind": "invalid",
 /**
  * Parser message.
  */
-message: string, } | { "kind": "batch", 
+message: string, } | { "kind": "unsupported", 
+/**
+ * Tool or feature kind.
+ */
+tool: string, } | { "kind": "batch", 
 /**
  * Index of the failing command.
  */

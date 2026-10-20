@@ -156,6 +156,12 @@ pub enum CommandError {
         /// Parser message.
         message: String,
     },
+    /// The host asked for a tool the engine can't lower yet.
+    #[error("tool `{tool}` is not handled by the engine")]
+    Unsupported {
+        /// Tool or feature kind.
+        tool: String,
+    },
     /// A command inside a batch failed.
     #[error("batch command {index} failed: {source}")]
     Batch {
@@ -177,8 +183,12 @@ impl DocCommand {
     /// Stable ids this command requires to exist.
     fn required_ids(&self) -> Vec<&str> {
         match self {
-            Self::UpdateFeature { id, .. }
-            | Self::SetParam { id, .. }
+            Self::UpdateFeature { id, feature } => {
+                let mut ids = vec![id.as_str()];
+                ids.extend(feature.input_refs());
+                ids
+            }
+            Self::SetParam { id, .. }
             | Self::DeleteFeature { id }
             | Self::SetTranslation { id, .. }
             | Self::SetRotation { id, .. }
@@ -189,6 +199,7 @@ impl DocCommand {
             | Self::Reorder { id, .. }
             | Self::SetJointState { id, .. } => vec![id.as_str()],
             Self::Duplicate { ids } => ids.iter().map(String::as_str).collect(),
+            Self::AddFeature { feature, .. } => feature.input_refs(),
             _ => Vec::new(),
         }
     }
@@ -217,26 +228,20 @@ impl DocumentApi {
     /// - `{"ok":true,"result":{"document":…,"parts":…,"consumedPartIds":…,"warnings":…,"createdFeatureId"?:…}}`
     /// - `{"ok":false,"error":{"kind":"unknown_id",…,"message":"…"}}`
     pub fn apply_json_envelope(&mut self, json: &str) -> String {
-        let value = match self.apply_json(json) {
-            Ok(r) => {
-                let mut result = serde_json::json!({
-                    "document": r.document,
-                    "parts": r.parts,
-                    "consumedPartIds": r.consumed_part_ids,
-                    "warnings": r.warnings,
-                });
-                if let Some(id) = r.created_feature_id {
-                    result["createdFeatureId"] = id.into();
-                }
-                serde_json::json!({ "ok": true, "result": result })
-            }
-            Err(e) => {
-                let mut error = serde_json::to_value(&e).unwrap_or_default();
-                error["message"] = e.to_string().into();
-                serde_json::json!({ "ok": false, "error": error })
-            }
-        };
-        value.to_string()
+        let result = self.apply_json(json);
+        envelope(result)
+    }
+
+    /// Lower an AI tool call ([`crate::tools::lower`]) and apply it,
+    /// returning the same envelope as [`apply_json_envelope`](Self::apply_json_envelope).
+    pub fn apply_tool_envelope(&mut self, tool: &str, args_json: &str) -> String {
+        let result = serde_json::from_str::<serde_json::Value>(args_json)
+            .map_err(|e| CommandError::Invalid {
+                message: e.to_string(),
+            })
+            .and_then(|args| crate::tools::lower(tool, &args))
+            .and_then(|cmd| self.apply(cmd));
+        envelope(result)
     }
 
     fn check(&self, cmd: &DocCommand) -> Result<(), CommandError> {
@@ -314,6 +319,33 @@ impl DocumentApi {
         }
         Ok(last)
     }
+}
+
+/// The JSON result envelope shared by every binding:
+///
+/// - `{"ok":true,"result":{"document":…,"parts":…,"consumedPartIds":…,"warnings":…,"createdFeatureId"?:…}}`
+/// - `{"ok":false,"error":{"kind":"unknown_id",…,"message":"…"}}`
+fn envelope(result: Result<ApiResult, CommandError>) -> String {
+    let value = match result {
+        Ok(r) => {
+            let mut result = serde_json::json!({
+                "document": r.document,
+                "parts": r.parts,
+                "consumedPartIds": r.consumed_part_ids,
+                "warnings": r.warnings,
+            });
+            if let Some(id) = r.created_feature_id {
+                result["createdFeatureId"] = id.into();
+            }
+            serde_json::json!({ "ok": true, "result": result })
+        }
+        Err(e) => {
+            let mut error = serde_json::to_value(&e).unwrap_or_default();
+            error["message"] = e.to_string().into();
+            serde_json::json!({ "ok": false, "error": error })
+        }
+    };
+    value.to_string()
 }
 
 #[cfg(all(test, feature = "ts-rs"))]

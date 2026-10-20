@@ -20,7 +20,7 @@ export interface CommandResult {
   createdFeatureId?: string;
 }
 
-type Envelope =
+export type Envelope =
   | { ok: true; result: CommandResult }
   | { ok: false; error: CommandError & { message: string } };
 
@@ -38,6 +38,7 @@ export class DocCommandError extends Error {
 /** The slice of `WasmDocumentEngine` this module needs. */
 export interface CommandEngine {
   apply?(command_json: string): string;
+  apply_tool?(tool: string, args_json: string): string;
   // Pre-`apply` per-method calls, used only by the fallback below.
   add_feature(input_json: string): CommandResult;
   delete_feature_by_id(stable_id: string): CommandResult;
@@ -66,6 +67,24 @@ export function applyCommand(
   if (!envelope.ok) throw new DocCommandError(command, envelope.error);
   for (const w of envelope.result.warnings ?? []) console.warn(`[vcad] ${w}`);
   return envelope.result;
+}
+
+/**
+ * Lower an AI tool call to a `DocCommand` in Rust and apply it. Returns
+ * `null` when the kernel predates `apply_tool`; otherwise the raw envelope,
+ * whose `error.kind === "unsupported"` means "the host handles this tool".
+ */
+export function applyToolCall(
+  engine: CommandEngine,
+  tool: string,
+  args: unknown,
+): Envelope | null {
+  if (typeof engine.apply_tool !== "function") return null;
+  const envelope = JSON.parse(engine.apply_tool(tool, JSON.stringify(args))) as Envelope;
+  if (envelope.ok) {
+    for (const w of envelope.result.warnings ?? []) console.warn(`[vcad] ${w}`);
+  }
+  return envelope;
 }
 
 /**

@@ -416,6 +416,26 @@ pub enum FeatureInput {
 }
 
 impl FeatureInput {
+    /// Stable ids of the parts this feature consumes (boolean operands,
+    /// modifier and pattern targets). `DocumentApi::apply` refuses a feature
+    /// whose input doesn't resolve.
+    pub fn input_refs(&self) -> Vec<&str> {
+        match self {
+            Self::Boolean {
+                input_a, input_b, ..
+            } => vec![input_a, input_b],
+            Self::Fillet { input, .. }
+            | Self::Chamfer { input, .. }
+            | Self::Shell { input, .. }
+            | Self::LinearPattern { input, .. }
+            | Self::CircularPattern { input, .. }
+            | Self::Mirror { input, .. } => vec![input],
+            _ => Vec::new(),
+        }
+    }
+}
+
+impl FeatureInput {
     /// Get the CRDT feature kind string for this input.
     pub fn kind(&self) -> &'static str {
         match self {

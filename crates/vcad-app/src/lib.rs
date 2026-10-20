@@ -20,6 +20,7 @@ pub mod mode;
 pub mod part_info;
 pub mod registry;
 pub mod selection;
+pub mod tools;
 
 pub use camera::Camera;
 pub use command::{CommandError, DocCommand};

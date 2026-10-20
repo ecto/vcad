@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { getKernelWasmSync } from "../wasm-singleton.js";
-import { applyCommand } from "./engine-command.js";
+import { applyCommand, applyToolCall, type Envelope } from "./engine-command.js";
 import type { FeatureInput } from "./feature-input.js";
 import { mergeSketchConstraints } from "../sketch-constraint-persist.js";
 import type {
@@ -90,6 +90,8 @@ export interface WasmDocumentEngine {
    *  `applyCommand` (engine-command.ts). Optional until the checked-in
    *  kernel WASM is refreshed. */
   apply?(command_json: string): string;
+  /** Lower + apply an AI tool call; see `applyToolCall`. */
+  apply_tool?(tool: string, args_json: string): string;
   // Typed API — returns ApiResult with consumedPartIds
   add_feature(input_json: string): ApiResult;
   update_feature(stable_id: string, input_json: string): ApiResult;
@@ -435,6 +437,9 @@ export interface DocumentState {
   setTransientEval: (active: boolean) => void;
   // Visibility toggle
   setPartVisible: (partId: string, visible: boolean) => void;
+  /** Run an AI tool call through the Rust lowering (`vcad_app::tools`).
+   *  `null` when the kernel predates it; see `applyToolCall`. */
+  applyTool: (tool: string, args: unknown) => Envelope | null;
   // Reorder parts in tree
   reorderPart: (partId: string, newIndex: number) => void;
   // Analyze mode (#592): persist solver studies on the document (CRDT
@@ -1995,6 +2000,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   setTransientEval: (active) => {
     set({ isTransientEval: active });
+  },
+
+  applyTool: (tool, args) => {
+    const engine = get()._crdtEngine;
+    if (!engine) return null;
+    const envelope = applyToolCall(engine, tool, args);
+    if (envelope?.ok) set(applyApiResult(envelope.result));
+    return envelope;
   },
 
   setPartVisible: (partId, visible) => {

@@ -26,6 +26,9 @@ void vcad_cam_free(char *json);
 typedef struct VcadEngine VcadEngine;
 VcadEngine *vcad_engine_new(uint64_t replica_id);
 char *vcad_engine_apply(VcadEngine *engine, const char *command_json);
+/* Lower an AI tool call (create, translate, linear_pattern, ...) in Rust and
+ * apply it; same envelope. Unhandled tools report error kind "unsupported". */
+char *vcad_engine_apply_tool(VcadEngine *engine, const char *tool, const char *args_json);
 void vcad_engine_string_free(char *json);
 void vcad_engine_free(VcadEngine *engine);
 
