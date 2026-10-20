@@ -301,6 +301,9 @@ jobs:
       # (~23s) and the native compile step.
       - run: npm ci --prefer-offline --no-audit --no-fund --ignore-scripts
       - run: npm run version:check
+      # Engine boundary: core/app mutate the Rust engine only via
+      # engine-command.ts, and TS geometry math may only shrink.
+      - run: node scripts/check-engine-boundary.mjs
       # VCAD_WASM_SKIP short-circuits vcad-kernel-wasm's build script
       # (the `wasm` job already produced pkg/ via the artifact above).
       # turbo's task graph still includes vcad-kernel-wasm#build as a
