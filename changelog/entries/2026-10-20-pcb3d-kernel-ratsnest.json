@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-pcb3d-kernel-ratsnest",
+  "version": "undefined",
+  "date": "2026-10-20",
+  "category": "fix",
+  "title": "3D PCB ratsnest matches the 2D view and autorouter",
+  "summary": "The 3D board view now draws the kernel's minimum-spanning-tree ratsnest instead of a TS approximation that hid a whole net once any trace on it existed.",
+  "features": ["electronics", "pcb"]
+}
