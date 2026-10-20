@@ -335,6 +335,9 @@ const ENGINE_TOOLS = new Set([
   "mirror",
   "tube",
   "polyline_tube",
+  "delete",
+  "set_material",
+  "update",
 ]);
 
 /**
@@ -370,10 +373,11 @@ function tryExecuteViaEngine(
     if (envelope.error.kind === "unsupported") return null;
     return { status: "error", result: envelope.error.message };
   }
+  if (tool === "delete") uiStore.clearSelection();
   const params = (tool === "create" ? args.params : args) as Record<string, unknown> | undefined;
   const created = envelope.result.createdFeatureId;
-  const partId = created ?? (params?.child as string | undefined);
-  if (!partId) return { status: "success", result: `Applied ${kind}` };
+  const partId = created ?? (params?.child as string | undefined) ?? (args.part_id as string | undefined);
+  if (!partId || tool === "delete") return { status: "success", result: `Applied ${kind}${partId ? ` to ${partId}` : ""}` };
   if (created) uiStore.select(created);
   return {
     status: "success",

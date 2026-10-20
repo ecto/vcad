@@ -320,6 +320,16 @@ impl DocumentApi {
         }
     }
 
+    /// Whether `stable_id` names a live (not deleted) feature.
+    pub fn feature_exists(&self, stable_id: &str) -> bool {
+        self.stable_ids.resolve(stable_id).is_some_and(|fid| {
+            self.crdt
+                .ordered_features()
+                .iter()
+                .any(|(id, _)| *id == fid)
+        })
+    }
+
     /// A feature's `Vec3` param (e.g. `offset`, `rotation`), if set.
     pub fn feature_vec3(&self, stable_id: &str, key: &str) -> Option<[f64; 3]> {
         let fid = self.stable_ids.resolve(stable_id)?;

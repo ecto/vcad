@@ -524,6 +524,17 @@ describe("executeCrud via the Rust engine (applyTool)", () => {
     expect(result).toMatchObject({ status: "error", result: "no feature with id `x`" });
   });
 
+  it("routes edits through the engine and clears selection on delete", () => {
+    const { doc, calls } = engineDoc(ok());
+    const ui = makeMockUiStore() as unknown as { select: (id: string) => void; selectedPartIds: Set<string> };
+    ui.select("p1");
+    const res = executeCrud("delete", { part_id: "p1" }, doc, ui as never);
+    expect(res).toMatchObject({ status: "success", result: "Applied delete to p1" });
+    expect(ui.selectedPartIds.size).toBe(0);
+    executeCrud("set_material", { selector: { by: "kind", value: "cube" }, material: "steel" }, doc, ui as never);
+    expect(calls.map((c) => c[0])).toEqual(["delete", "set_material"]);
+  });
+
   it("falls through to the TS path for tools the engine reports unsupported", () => {
     const { doc } = engineDoc({ ok: false, error: { kind: "unsupported", tool: "tube", message: "" } });
     const result = executeCrud("create", { type: "tube", params: {} }, doc, makeMockUiStore());
