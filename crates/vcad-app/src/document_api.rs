@@ -320,6 +320,23 @@ impl DocumentApi {
         }
     }
 
+    /// Deterministic fingerprint of the materialized state (IR document +
+    /// parts): FNV-1a 64 over key-sorted JSON, as 16 hex digits. The parity
+    /// harness compares it across native, WASM and C-ABI hosts, so it must
+    /// not depend on map iteration order or serde feature unification.
+    pub fn state_hash(&self) -> String {
+        let state = self.get_state();
+        let value = serde_json::json!({ "document": state.document, "parts": state.parts });
+        let mut canonical = String::new();
+        write_canonical(&value, &mut canonical);
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in canonical.bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        format!("{h:016x}")
+    }
+
     /// Import IR JSON into the document.
     pub fn import_ir(&mut self, ir_json: &str) -> ApiResult {
         if let Ok(doc) = serde_json::from_str::<vcad_ir::Document>(ir_json) {
@@ -412,6 +429,38 @@ impl DocumentApi {
     fn build_result(&self, created_id: Option<String>) -> ApiResult {
         let result = materialize(&self.crdt);
         ApiResult::from_materialize(result, created_id)
+    }
+}
+
+/// Serialize `v` as JSON with object keys sorted.
+fn write_canonical(v: &serde_json::Value, out: &mut String) {
+    use serde_json::Value as J;
+    match v {
+        J::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, k) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&J::String(k.clone()).to_string());
+                out.push(':');
+                write_canonical(&map[k], out);
+            }
+            out.push('}');
+        }
+        J::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_canonical(item, out);
+            }
+            out.push(']');
+        }
+        other => out.push_str(&other.to_string()),
     }
 }
 

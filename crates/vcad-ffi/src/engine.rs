@@ -91,6 +91,18 @@ pub extern "C" fn vcad_engine_apply_tool(
     }
 }
 
+/// Deterministic state fingerprint (16 hex digits, owned; free with
+/// `vcad_engine_string_free`). Matches `WasmDocumentEngine.stateHash`.
+#[no_mangle]
+pub extern "C" fn vcad_engine_state_hash(engine: *const VcadEngine) -> *mut c_char {
+    if engine.is_null() {
+        crate::err::set_error("vcad_engine_state_hash: null engine");
+        return std::ptr::null_mut();
+    }
+    let engine = unsafe { &*engine };
+    CString::new(engine.api.state_hash()).map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// Free a string returned by `vcad_engine_apply` / `vcad_engine_apply_tool`.
 #[no_mangle]
 pub extern "C" fn vcad_engine_string_free(value: *mut c_char) {
@@ -110,6 +122,56 @@ pub extern "C" fn vcad_engine_free(engine: *mut VcadEngine) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vcad_app::parity::{outcome, Expect, Fixture, Step};
+
+    fn take(raw: *mut c_char) -> String {
+        assert!(!raw.is_null());
+        let s = unsafe { CStr::from_ptr(raw) }.to_str().unwrap().to_owned();
+        vcad_engine_string_free(raw);
+        s
+    }
+
+    /// C-ABI leg of the parity harness (`crates/vcad-app/tests/parity`).
+    #[test]
+    fn parity_fixtures_match_golden() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../vcad-app/tests/parity");
+        let mut seen = 0;
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|x| x != "json") {
+                continue;
+            }
+            let fixture: Fixture =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let engine = vcad_engine_new(fixture.replica);
+            let outcomes = fixture
+                .steps
+                .iter()
+                .map(|step| {
+                    let raw = match step {
+                        Step::Command { command } => {
+                            let c = CString::new(command.to_string()).unwrap();
+                            vcad_engine_apply(engine, c.as_ptr())
+                        }
+                        Step::Tool { tool, args } => {
+                            let t = CString::new(tool.as_str()).unwrap();
+                            let a = CString::new(args.to_string()).unwrap();
+                            vcad_engine_apply_tool(engine, t.as_ptr(), a.as_ptr())
+                        }
+                    };
+                    outcome(&take(raw))
+                })
+                .collect();
+            let got = Expect {
+                outcomes,
+                hash: take(vcad_engine_state_hash(engine)),
+            };
+            vcad_engine_free(engine);
+            assert_eq!(got, fixture.expect, "{}", path.display());
+            seen += 1;
+        }
+        assert!(seen > 0);
+    }
 
     #[test]
     fn apply_round_trips_through_c_abi() {
