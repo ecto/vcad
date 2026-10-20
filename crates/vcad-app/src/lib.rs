@@ -17,6 +17,7 @@ pub mod keybinding;
 pub mod materializer;
 pub mod migrate;
 pub mod mode;
+pub mod parity;
 pub mod part_info;
 pub mod registry;
 pub mod selection;

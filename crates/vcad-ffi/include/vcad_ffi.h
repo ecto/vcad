@@ -29,6 +29,8 @@ char *vcad_engine_apply(VcadEngine *engine, const char *command_json);
 /* Lower an AI tool call (create, translate, linear_pattern, ...) in Rust and
  * apply it; same envelope. Unhandled tools report error kind "unsupported". */
 char *vcad_engine_apply_tool(VcadEngine *engine, const char *tool, const char *args_json);
+/* Deterministic state fingerprint (16 hex digits); free with vcad_engine_string_free. */
+char *vcad_engine_state_hash(const VcadEngine *engine);
 void vcad_engine_string_free(char *json);
 void vcad_engine_free(VcadEngine *engine);
 

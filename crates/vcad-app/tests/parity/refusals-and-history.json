@@ -1,0 +1,115 @@
+{
+  "replica": 7,
+  "steps": [
+    {
+      "command": {
+        "type": "undo"
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "params": {
+          "radius": 12
+        },
+        "type": "sphere"
+      }
+    },
+    {
+      "command": {
+        "id": "7:99",
+        "type": "delete_feature"
+      }
+    },
+    {
+      "tool": "mirror",
+      "args": {
+        "child": "7:0",
+        "plane": "QQ"
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "params": {
+          "left": "7:0",
+          "right": "nope"
+        },
+        "type": "union"
+      }
+    },
+    {
+      "tool": "rotate",
+      "args": {
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 45
+        },
+        "child": "7:0"
+      }
+    },
+    {
+      "command": {
+        "factor": [
+          2,
+          2,
+          2
+        ],
+        "id": "7:0",
+        "type": "set_scale"
+      }
+    },
+    {
+      "command": {
+        "type": "undo"
+      }
+    },
+    {
+      "command": {
+        "type": "redo"
+      }
+    },
+    {
+      "command": {
+        "commands": [
+          {
+            "id": "7:0",
+            "type": "set_visible",
+            "visible": false
+          },
+          {
+            "id": "7:404",
+            "material": "steel",
+            "type": "set_material"
+          }
+        ],
+        "type": "batch"
+      }
+    },
+    {
+      "command": {
+        "ids": [
+          "7:0"
+        ],
+        "type": "duplicate"
+      }
+    }
+  ],
+  "expect": {
+    "outcomes": [
+      "err:nothing_to",
+      "ok:7:0",
+      "err:unknown_id",
+      "err:invalid",
+      "err:unknown_id",
+      "err:unsupported",
+      "ok:-",
+      "ok:-",
+      "ok:-",
+      "err:batch",
+      "ok:7:1"
+    ],
+    "hash": "ae20deae754eb1fa"
+  }
+}

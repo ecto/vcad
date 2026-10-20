@@ -66,6 +66,22 @@ impl WasmDocumentEngine {
         self.api.apply_json_envelope(command_json)
     }
 
+    /// Create an empty engine with a fixed replica id (deterministic stable
+    /// ids — used by the parity harness and by hosts that persist replicas).
+    #[wasm_bindgen(js_name = withReplica)]
+    pub fn with_replica(replica_id: f64) -> Self {
+        Self {
+            api: DocumentApi::new(ReplicaId(replica_id as u64)),
+            migration: None,
+        }
+    }
+
+    /// Deterministic state fingerprint; matches `vcad_engine_state_hash`.
+    #[wasm_bindgen(js_name = stateHash)]
+    pub fn state_hash(&self) -> String {
+        self.api.state_hash()
+    }
+
     /// Lower an AI tool call (`create`, `translate`, `linear_pattern`, …)
     /// to a `DocCommand` in Rust and apply it. Same envelope as `apply`;
     /// tools the engine can't lower yet report `{"kind":"unsupported"}`.
