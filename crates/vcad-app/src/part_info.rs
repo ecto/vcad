@@ -348,6 +348,23 @@ pub enum PartInfo {
         /// Source filename.
         source: Option<String>,
     },
+    /// An imported IR subgraph the feature model has no kind for, kept
+    /// verbatim (re-emitted with fresh node ids).
+    #[serde(rename = "ir-subgraph", rename_all = "camelCase")]
+    IrSubgraph {
+        /// Part identifier (serialized FeatureId).
+        id: String,
+        /// Human-readable name.
+        name: String,
+        /// Root node of the re-emitted subgraph.
+        subgraph_node_id: NodeId,
+        /// Scale transform node.
+        scale_node_id: NodeId,
+        /// Rotation transform node.
+        rotate_node_id: NodeId,
+        /// Translation transform node.
+        translate_node_id: NodeId,
+    },
     /// Stdlib or user-published part instance.
     #[serde(rename = "part-instance", rename_all = "camelCase")]
     PartInstance {
@@ -393,13 +410,17 @@ impl PartInfo {
             | PartInfo::ImportedMesh { id, .. }
             | PartInfo::PcbBoard { id, .. }
             | PartInfo::EmbroideryPattern { id, .. }
-            | PartInfo::PartInstance { id, .. } => id,
+            | PartInfo::PartInstance { id, .. }
+            | PartInfo::IrSubgraph { id, .. } => id,
         }
     }
 
     /// Get the root (outermost) node ID for this part.
     pub fn root_node_id(&self) -> NodeId {
         match self {
+            PartInfo::IrSubgraph {
+                translate_node_id, ..
+            } => *translate_node_id,
             PartInfo::Cube {
                 translate_node_id, ..
             }

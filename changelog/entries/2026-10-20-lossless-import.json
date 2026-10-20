@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-lossless-import",
+  "version": "undefined",
+  "date": "2026-10-20",
+  "category": "fix",
+  "title": "Opening older documents keeps everything",
+  "summary": "Opening an older .vcad file no longer drops PCB boards, schematics, parameters, imported meshes, part inertials and colliders, or operations the editor has no tool for.",
+  "features": ["documents", "import", "electronics", "assembly"]
+}
