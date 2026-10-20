@@ -202,6 +202,134 @@ pub struct SchematicSheet {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub nets: Option<std::collections::BTreeMap<String, Vec<String>>>,
+    /// Power flags (KiCad `PWR_FLAG`): nets declared as driven even though no
+    /// `PowerOutput` pin sits on them — a rail fed through a ferrite, a load
+    /// switch FET, or straight off a connector. ERC treats a flagged net as
+    /// having a power source. Flags are not components: they never reach the
+    /// BOM, placement or the board.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts-rs", ts(as = "Option<Vec<PowerFlag>>", optional))]
+    pub power_flags: Vec<PowerFlag>,
+    /// Hierarchical design. When present, `components`/`wires`/`labels`/
+    /// `nets`/`power_flags` above are the ROOT sheet only, and the child
+    /// sheets live here. Every consumer that needs the whole design (ERC,
+    /// netlist, BOM, board, export) flattens first; a sheet without a
+    /// hierarchy is already flat, so single-sheet documents are unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub hierarchy: Option<Box<SchematicHierarchy>>,
+}
+
+/// A power flag: marks a net as driven for ERC (KiCad `PWR_FLAG`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct PowerFlag {
+    /// Net name the flag sits on, in the scope of the sheet that holds it.
+    pub net: String,
+    /// Optional drawing position (display only — connectivity is by name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub position: Option<Vec2>,
+    /// Why the net is driven (e.g. "fed through FB1 from VBAT").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub note: Option<String>,
+}
+
+/// A hierarchical port (KiCad sheet pin / hierarchical label): a net of a
+/// child sheet that the parent connects through the sheet instance.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct HierarchicalPort {
+    /// Port name — also the name of the child-sheet net it exposes.
+    pub name: String,
+    /// Electrical direction, as documentation and for ERC.
+    #[serde(default = "default_port_direction")]
+    #[cfg_attr(feature = "ts-rs", ts(as = "Option<PinType>", optional))]
+    pub direction: PinType,
+}
+
+fn default_port_direction() -> PinType {
+    PinType::Passive
+}
+
+/// One placement of a sheet definition inside a parent sheet.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct SheetInstance {
+    /// Instance name, unique among its siblings (e.g. "CAN1"). Local nets of
+    /// the instance flatten to `<path>/<net>`, path = instance names from
+    /// the root joined by `/`.
+    pub name: String,
+    /// Name of the [`SheetDefinition`] this instantiates.
+    pub sheet: String,
+    /// Port name → net name in the PARENT sheet's scope.
+    #[serde(default)]
+    #[cfg_attr(
+        feature = "ts-rs",
+        ts(as = "Option<std::collections::BTreeMap<String, String>>", optional)
+    )]
+    pub connections: std::collections::BTreeMap<String, String>,
+    /// Explicit reference-designator map for this instance (local ref →
+    /// flattened ref). Wins over `ref_offset` for the refs it names.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub ref_map: Option<std::collections::BTreeMap<String, String>>,
+    /// Add this to the numeric part of every ref (`U1` + 100 → `U101`),
+    /// KiCad-style per-sheet annotation. Without a map or an offset, a
+    /// sheet instantiated once keeps its refs and a repeated sheet gets
+    /// `<ref>_<instance>` (`U1_CAN1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub ref_offset: Option<u32>,
+    /// Offset added to the child's component positions in the flat sheet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub position: Option<Vec2>,
+}
+
+/// A reusable child sheet.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct SheetDefinition {
+    /// Definition name, referenced by [`SheetInstance::sheet`].
+    pub name: String,
+    /// Ports the parent connects. Hierarchical-scope labels in `body` are
+    /// ports too.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-rs", ts(as = "Option<Vec<HierarchicalPort>>", optional))]
+    pub ports: Vec<HierarchicalPort>,
+    /// The sheet contents. Net names are LOCAL unless they are a port or a
+    /// global net; its own `hierarchy` must be empty (nest via `instances`).
+    pub body: SchematicSheet,
+    /// Child sheets placed inside this one.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-rs", ts(as = "Option<Vec<SheetInstance>>", optional))]
+    pub instances: Vec<SheetInstance>,
+}
+
+/// The sheet tree of a hierarchical schematic.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct SchematicHierarchy {
+    /// Sheet definitions.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-rs", ts(as = "Option<Vec<SheetDefinition>>", optional))]
+    pub sheets: Vec<SheetDefinition>,
+    /// Sheet instances placed on the root sheet.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-rs", ts(as = "Option<Vec<SheetInstance>>", optional))]
+    pub instances: Vec<SheetInstance>,
+    /// Net names shared by every sheet (power rails, GND). Global-scope
+    /// labels in any sheet are global too.
+    #[serde(default)]
+    #[cfg_attr(feature = "ts-rs", ts(as = "Option<Vec<String>>", optional))]
+    pub global_nets: Vec<String>,
 }
 
 // ============================================================================
@@ -1761,6 +1889,8 @@ mod tests {
     #[test]
     fn schematic_roundtrip() {
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             nets: None,
             title: Some("Test Schematic".to_string()),
             components: vec![SchematicComponent {

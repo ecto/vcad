@@ -48,6 +48,12 @@ pub use eagle_brd::parse_eagle_brd;
 pub use kicad_mod::{parse_footprint_lib, FootprintDef, FootprintLib, GraphicDef, PadDef};
 pub use kicad_pcb::{parse_kicad_pcb, parse_kicad_pcb_with_warnings};
 pub use kicad_sch::parse_kicad_sch;
+
+/// Flatten a hierarchical schematic (identity for a flat one) — see
+/// [`vcad_ecad_schematic::hierarchy::flatten`].
+pub fn flatten_schematic(sheet: &vcad_ir::ecad::SchematicSheet) -> vcad_ir::ecad::SchematicSheet {
+    vcad_ecad_schematic::hierarchy::flatten(sheet).sheet
+}
 pub use kicad_sym::{parse_symbol_lib, Symbol, SymbolGraphic, SymbolLib, SymbolPin};
 pub use kicad_write::{
     write_kicad_pcb, write_kicad_pcb_for_project, write_kicad_pro_for_board, write_kicad_project,

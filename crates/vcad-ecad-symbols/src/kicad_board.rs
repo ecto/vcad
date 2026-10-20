@@ -845,6 +845,8 @@ mod tests {
         let mut nets = BTreeMap::new();
         nets.insert("A".to_string(), vec!["R1.G".to_string()]);
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: None,
             components: vec![SchematicComponent {
                 reference: "R1".into(),
@@ -934,6 +936,8 @@ mod tests {
         nets.insert("A".to_string(), vec!["R1.1".to_string()]);
         nets.insert("B".to_string(), vec!["R1.2".to_string()]);
         let sheet = SchematicSheet {
+            power_flags: Vec::new(),
+            hierarchy: None,
             title: None,
             components: vec![SchematicComponent {
                 reference: "R1".into(),

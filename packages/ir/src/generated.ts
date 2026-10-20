@@ -2255,6 +2255,20 @@ qty: number,
 head_protrusion_mm?: number, };
 
 /**
+ * A hierarchical port (KiCad sheet pin / hierarchical label): a net of a
+ * child sheet that the parent connects through the sheet instance.
+ */
+export type HierarchicalPort = { 
+/**
+ * Port name — also the name of the child-sheet net it exposes.
+ */
+name: string, 
+/**
+ * Electrical direction, as documentation and for ERC.
+ */
+direction?: PinType, };
+
+/**
  * Authored mass / inertia / center-of-mass for a part.
  *
  * Mirrors the URDF `<inertial>` element. The inertia tensor is symmetric;
@@ -3393,6 +3407,23 @@ toneMapping?: ToneMapping,
 exposure?: number, };
 
 /**
+ * A power flag: marks a net as driven for ERC (KiCad `PWR_FLAG`).
+ */
+export type PowerFlag = { 
+/**
+ * Net name the flag sits on, in the scope of the sheet that holds it.
+ */
+net: string, 
+/**
+ * Optional drawing position (display only — connectivity is by name).
+ */
+position?: Vec2, 
+/**
+ * Why the net is driven (e.g. "fed through FB1 from VBAT").
+ */
+note?: string, };
+
+/**
  * Realized-copper continuity for one power/plane net, captured in a receipt.
  *
  * A split power plane is an electrically *open* PDN even when DRC reports zero
@@ -3725,6 +3756,24 @@ pads?: Array<Pad>,
 properties?: Record<string, string>, };
 
 /**
+ * The sheet tree of a hierarchical schematic.
+ */
+export type SchematicHierarchy = { 
+/**
+ * Sheet definitions.
+ */
+sheets?: Array<SheetDefinition>, 
+/**
+ * Sheet instances placed on the root sheet.
+ */
+instances?: Array<SheetInstance>, 
+/**
+ * Net names shared by every sheet (power rails, GND). Global-scope
+ * labels in any sheet are global too.
+ */
+global_nets?: Array<string>, };
+
+/**
  * An explicit wire junction point.
  */
 export type SchematicJunction = { 
@@ -3805,7 +3854,23 @@ labels: Array<SchematicLabel>,
  * callers can declare nets as data instead of relying on coordinate
  * coincidence.
  */
-nets?: Record<string, Array<string>>, };
+nets?: Record<string, Array<string>>, 
+/**
+ * Power flags (KiCad `PWR_FLAG`): nets declared as driven even though no
+ * `PowerOutput` pin sits on them — a rail fed through a ferrite, a load
+ * switch FET, or straight off a connector. ERC treats a flagged net as
+ * having a power source. Flags are not components: they never reach the
+ * BOM, placement or the board.
+ */
+power_flags?: Array<PowerFlag>, 
+/**
+ * Hierarchical design. When present, `components`/`wires`/`labels`/
+ * `nets`/`power_flags` above are the ROOT sheet only, and the child
+ * sheets live here. Every consumer that needs the whole design (ERC,
+ * netlist, BOM, board, export) flattens first; a sheet without a
+ * hierarchy is already flat, so single-sheet documents are unchanged.
+ */
+hierarchy?: SchematicHierarchy, };
 
 /**
  * A wire connection on a schematic.
@@ -3857,6 +3922,64 @@ camera: CameraPose,
  * any parameter track exists).
  */
 geometryDirty: boolean, };
+
+/**
+ * A reusable child sheet.
+ */
+export type SheetDefinition = { 
+/**
+ * Definition name, referenced by [`SheetInstance::sheet`].
+ */
+name: string, 
+/**
+ * Ports the parent connects. Hierarchical-scope labels in `body` are
+ * ports too.
+ */
+ports?: Array<HierarchicalPort>, 
+/**
+ * The sheet contents. Net names are LOCAL unless they are a port or a
+ * global net; its own `hierarchy` must be empty (nest via `instances`).
+ */
+body: SchematicSheet, 
+/**
+ * Child sheets placed inside this one.
+ */
+instances?: Array<SheetInstance>, };
+
+/**
+ * One placement of a sheet definition inside a parent sheet.
+ */
+export type SheetInstance = { 
+/**
+ * Instance name, unique among its siblings (e.g. "CAN1"). Local nets of
+ * the instance flatten to `<path>/<net>`, path = instance names from
+ * the root joined by `/`.
+ */
+name: string, 
+/**
+ * Name of the [`SheetDefinition`] this instantiates.
+ */
+sheet: string, 
+/**
+ * Port name → net name in the PARENT sheet's scope.
+ */
+connections?: Record<string, string>, 
+/**
+ * Explicit reference-designator map for this instance (local ref →
+ * flattened ref). Wins over `ref_offset` for the refs it names.
+ */
+ref_map?: Record<string, string>, 
+/**
+ * Add this to the numeric part of every ref (`U1` + 100 → `U101`),
+ * KiCad-style per-sheet annotation. Without a map or an offset, a
+ * sheet instantiated once keeps its refs and a repeated sheet gets
+ * `<ref>_<instance>` (`U1_CAN1`).
+ */
+ref_offset?: number, 
+/**
+ * Offset added to the child's component positions in the flat sheet.
+ */
+position?: Vec2, };
 
 /**
  * Direction tag for sheet-metal flanges. Wire-compatible with

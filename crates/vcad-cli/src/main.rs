@@ -1261,11 +1261,13 @@ fn export_file(
             .schematic
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("{} has no schematic", input.display()))?;
+        // Count the flattened design (hierarchical sheets elaborated).
+        let flat = vcad_ecad_symbols::flatten_schematic(sheet);
         fs::write(output, vcad_ecad_symbols::write_kicad_sch(sheet))?;
-        let nets = sheet.nets.as_ref().map_or(0, |n| n.len());
+        let nets = flat.nets.as_ref().map_or(0, |n| n.len());
         println!(
             "Exported schematic ({} parts, {} nets) to {}",
-            sheet.components.len(),
+            flat.components.len(),
             nets,
             output.display()
         );
