@@ -49,10 +49,12 @@ pub unsafe extern "C" fn tc_decode_cpu(bytes: *const u8, len: usize, out: *mut T
     match std::panic::catch_unwind(|| decode_bits(input)) {
         Ok(Ok((bits, dims))) => {
             let hash = fnv1a(&bits);
-            let mut f: Vec<f32> = bits.into_iter().map(f32::from_bits).collect();
-            f.shrink_to_fit();
-            let mut f = std::mem::ManuallyDrop::new(f);
-            *out = TcField { data: f.as_mut_ptr(), len: f.len(), dims, fnv1a: hash };
+            // A boxed slice has exactly `len` capacity, so tc_field_free can
+            // rebuild it from (ptr, len) alone.
+            let f: Box<[f32]> = bits.into_iter().map(f32::from_bits).collect();
+            let len = f.len();
+            let data = Box::into_raw(f) as *mut f32;
+            *out = TcField { data, len, dims, fnv1a: hash };
             0
         }
         r => {
@@ -77,7 +79,7 @@ pub unsafe extern "C" fn tc_field_free(field: *mut TcField) {
     if field.is_null() || (*field).data.is_null() {
         return;
     }
-    drop(Vec::from_raw_parts((*field).data, (*field).len, (*field).len));
+    drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut((*field).data, (*field).len)));
     (*field).data = std::ptr::null_mut();
 }
 
