@@ -381,6 +381,20 @@
       "verification": { "status": "verified", "source": "JLCPCB/LCSC listing C3040128", "note": "Signal-pair pin order vs the RobStride harness is still unverified (mechanical, not sourcing)." }
     },
     {
+      "id": "amass.xt30pw22mgb",
+      "mpn": "XT30PW(2+2)-M.G.B",
+      "manufacturer": "Changzhou Amass",
+      "category": "connector",
+      "description": "XT30 2+2 (power + signal pair) male, right angle (horizontal) PCB",
+      "footprint": "AMASS_XT30PW_2+2_-M.G.B_Horizontal",
+      "pins": 4,
+      "footprint_status": "generated",
+      "params": { "power_current_a": 15, "positions": 4 },
+      "lcsc": "C19268030",
+      "jlc_library": "extended",
+      "verification": { "status": "verified", "source": "LCSC listing C19268030; land pattern from its EasyEDA footprint CONN-TH_4P-XT30PW-M", "note": "No AMASS drawing in hand; signal pad 3/4 order follows EasyEDA." }
+    },
+    {
       "id": "amass.xt60pt-m",
       "mpn": "XT60PT-M",
       "manufacturer": "Changzhou Amass",

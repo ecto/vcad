@@ -4,7 +4,7 @@
   "date": "2026-10-20",
   "category": "feat",
   "title": "TI DGX, SOT-563, CP_Elec and power-inductor footprints",
-  "summary": "VSSOP-19 TI DGX (TPS4811x), SOT-563, CP_Elec cans, 1008, SRR1260 and FXL1365 generate real land patterns; MSOP/SOIC -1EP packages keep their exposed pad.",
+  "summary": "VSSOP-19 TI DGX (TPS4811x), SOT-563, CP_Elec cans, 1008, SRR1260, FXL1365 and right-angle XT30PW(2+2) generate real land patterns; MSOP/SOIC -1EP packages keep their exposed pad.",
   "features": [
     "pcb",
     "footprints"

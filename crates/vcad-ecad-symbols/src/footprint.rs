@@ -1363,6 +1363,28 @@ fn xt30pw() -> FootprintTemplate {
     }
 }
 
+/// AMASS XT30PW(2+2)-M.G.B (right angle, 2 power + 2 signal; LCSC C19268030).
+/// Land pattern from the LCSC/EasyEDA footprint `CONN-TH_4P-XT30PW-M`
+/// (no AMASS drawing in hand): 2 × Ø1.90 power holes on 5.00 mm (EasyEDA
+/// draws 5.08; 5.00 is the XT30 family pitch), two Ø0.91 signal holes
+/// 3.85 mm beyond the "−" hole, 1.23 and 3.23 mm toward the mating face.
+/// Housing 14.00 wide, from 2.86 to 11.66 in front of the power row. Pad 3/4
+/// follow the EasyEDA numbering — check against the moulded "1"/"2" marks.
+fn xt30pw_2p2() -> FootprintTemplate {
+    let pads = vec![
+        power_tht("1", -2.5, 0.0, 1.9),
+        power_tht("2", 2.5, 0.0, 1.9),
+        circle_tht("3", 6.35, -1.23, 1.5, 1.0),
+        circle_tht("4", 6.35, -3.23, 1.5, 1.0),
+    ];
+    let graphics = outlined_graphics(&pads, (-5.24, -11.66, 8.76, 1.5), (-5.6, 2.2));
+    FootprintTemplate {
+        name: "XT30PW(2+2)".into(),
+        pads,
+        graphics,
+    }
+}
+
 /// AMASS XT30PB(2+2)-M (vertical, 2 power + 2 signal). AMASS drawing
 /// 3099990210 "XT30(2+2)PB-M.G.B" V00 (2018-11-28), PCB layout: 2 × Ø1.90
 /// power holes on 5.00 mm; two 0.60 mm square signal tails 3.85 mm beyond the
@@ -1685,6 +1707,9 @@ fn match_power_family(base: &str) -> Option<(FootprintTemplate, &'static str)> {
         if let Some(t) = cp_elec(base) {
             return Some((t, "CP_Elec"));
         }
+    }
+    if base.contains("XT30PW") && base.contains("2+2") {
+        return Some((xt30pw_2p2(), "AMASS-XT"));
     }
     if base.contains("XT30") && base.contains("2+2") {
         return Some((xt30pb_2p2(), "AMASS-XT"));
@@ -3405,6 +3430,20 @@ mod tests {
         let (_, y0, _, y1) = pad_extent(p("6"));
         assert!(y1 >= 1.25 && y0 <= 1.25 - 0.10 - 0.475);
         assert!(close(size(p("1")).1, 0.30));
+    }
+
+    #[test]
+    fn xt30pw_2p2_matches_easyeda_land() {
+        let t = power_fp("AMASS_XT30PW_2+2_-M.G.B_Horizontal", "AMASS-XT");
+        assert_eq!(numbers(&t), ["1", "2", "3", "4"]);
+        let p = |n: &str| pads_of(&t, n)[0];
+        assert!(close(p("2").position.x - p("1").position.x, 5.0));
+        assert!(close(drill(p("1")), 1.9));
+        assert!(close(p("3").position.x - p("2").position.x, 3.85));
+        assert!(close(p("3").position.y - p("4").position.y, 2.0));
+        // The vertical PB part must not capture the RA name.
+        let v = power_fp("AMASS_XT30PB_2+2_-M", "AMASS-XT");
+        assert!(close(pads_of(&v, "3")[0].position.y, -1.0));
     }
 
     #[test]
