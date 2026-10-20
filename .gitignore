@@ -69,3 +69,5 @@ npm-dist/
 # tang-compress-wasm pkg (built by scripts/build-tc-wasm.sh) and raw field references
 packages/app/public/fields/**/*.f32
 examples/fields/**/*.f32
+# bracket power-cycle frames (regenerate: docs/compressed-fields.md "Animation")
+examples/fields/bracket/transient/

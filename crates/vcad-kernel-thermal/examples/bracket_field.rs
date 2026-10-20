@@ -1,7 +1,7 @@
 //! Multiphysics demo, thermal layer: steady temperature in an aluminum
 //! motor-controller L-bracket (docs/compressed-fields.md, "multiphysics").
 //!
-//! Shared geometry (identical in the topopt and em `bracket_field`
+//! Shared geometry (identical in the topopt `bracket_stress` and em `bracket_busbar`
 //! examples): domain 96×48×36 mm on a 128×64×48 grid (0.75 mm cubes); base
 //! plate x 0–96, y 0–48, z 0–12; wall flange x 0–9, z 0–36. A 6 W MOSFET
 //! sits on the plate's far end (x 76–90, y 17–31, top 1.5 mm). The flange
@@ -9,7 +9,7 @@
 //! convects at h = 12 W/m²K to 25 °C air (supplied, not derived).
 //!
 //! Coupling (EM → thermal): the base plate is also the controller's 200 A
-//! DC busbar (vcad-kernel-em `bracket_field`). Its Joule heat
+//! DC busbar (vcad-kernel-em `bracket_busbar`). Its Joule heat
 //! P = I²·ρ·L/A (6061-T6 ρ = 3.99e-8 Ω·m, L = 96 mm, A = 48×12 mm²) =
 //! 0.266 W is added as a volumetric source over the plate — DC through a
 //! uniform section, so J (and I²R density) is uniform there. The flange and

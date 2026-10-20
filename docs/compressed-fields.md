@@ -203,7 +203,7 @@ busbar 200 A ──I²R──▶ thermal ──α(T−40 °C)──▶ stress  �
 | grid | 128×64×48 cells at 0.75 mm. The thermal cells and the FE elements are the same grid, so ΔT maps one-to-one onto elements. |
 | busbar → thermal | The plate carries 200 A DC. Joule heat is P = I²ρL/A = 0.266 W (ρ = 3.99e-8 Ω·m, L = 96 mm, A = 48×12 mm²). DC through a uniform section means uniform current density, so P goes in as a uniform volumetric source over the plate (`vcad-kernel-thermal --example bracket_field`). Effect: T_max goes from 44.55 to 44.67 °C. |
 | thermal | A 6 W MOSFET heats the far end and the 40 °C wall cools the flange; every other face convects at h = 12 W/m²K. Range 39.98 → 44.67 °C. |
-| thermal → stress | New additive API `analyze_fields_thermal(domain, spec, Some(&ThermalLoad))` in `vcad-kernel-topopt`. It applies the initial strain ε₀ = α·ΔT with α = 23e-6/K and computes σ = C(ε − ε₀). The equivalent nodal force is exact for a uniform ε₀ on a trilinear hex. Tests cover it: free expansion gives zero stress (< 1e-3 MPa) and δ = αΔTL to 2%; roller-ended bars read exactly EαΔT in every element; fully clamped ends read +3.5% at mid-span, which is real (the restrained ends stiffen the bar). `vcad-kernel-topopt --example bracket_field -- OUT --thermal T.f32`. |
+| thermal → stress | New additive API `analyze_fields_thermal(domain, spec, Some(&ThermalLoad))` in `vcad-kernel-topopt`. It applies the initial strain ε₀ = α·ΔT with α = 23e-6/K and computes σ = C(ε − ε₀). The equivalent nodal force is exact for a uniform ε₀ on a trilinear hex. Tests cover it: free expansion gives zero stress (< 1e-3 MPa) and δ = αΔTL to 2%; roller-ended bars read exactly EαΔT in every element; fully clamped ends read +3.5% at mid-span, which is real (the restrained ends stiffen the bar). `vcad-kernel-topopt --example bracket_stress -- OUT --thermal T.f32`. |
 | stress-free reference | **The wall temperature, 40 °C, not the 25 °C assembly temperature.** The chassis is the same alloy at 40 °C, so a bracket sitting uniformly at 40 °C grows with it and carries no stress; only T − 40 °C is mismatch. Using 25 °C against a rigid wall gave 99 MPa, which wrongly charges the bracket for expansion the chassis shares. The wall face is fully fixed, which over-restrains a real bolted joint, so near-wall stress is an upper bound. |
 | stress result | Load + thermal peaks at **5.90 MPa** vs **5.49 MPa** for the load alone (+7%), both at the plate root. The coupled layer also shows thermal stress around the MOSFET footprint, which the load-only layer lacks (p99 is 3.5 MPa). Tip deflection goes from 30.4 to 31.0 µm. |
 | busbar layer | Planar \|B\| on the plate's YZ cross-section, a **2D** layer (`"plane":"yz"`) placed at x = 48 mm. Peak 2.39 mT (hand calc µ₀I/2w gives 2.6). It treats the bar as infinitely long. |
@@ -260,3 +260,36 @@ captures are from the pre-coupling run.)
 - **The wall face is fully fixed.** A bolted-joint stiffness model would relax the near-wall stress.
 - **No native hover probe.**
 - **The geometry is boxes in `stack.json`,** not the document's BRep.
+
+## Animation: bracket power cycle
+
+![frame](assets/bracket-power-cycle-frame.png)
+
+Video: [`assets/bracket-power-cycle.mp4`](assets/bracket-power-cycle.mp4) (8 fps, 61 frames; also a [GIF](assets/bracket-power-cycle.gif)).
+It shows temperature beside coupled von Mises through a power cycle:
+- **0–240 s:** the 6 W MOSFET and the 0.27 W busbar Joule heat are on.
+- **240–480 s:** both are off.
+- **Start state:** the whole bracket at the 40 °C wall temperature.
+
+The color ranges are fixed across all frames. During cool-down the free end
+drops to 39 °C, below the wall, because it convects toward 25 °C air while
+only the wall holds 40 °C.
+
+**Pipeline.**
+1. **Transient thermal.** `vcad-kernel-thermal --example bracket_transient -- DIR` (backward Euler, Δt = 2 s, a snapshot every 8 s). It takes 68 s and the energy audit closes to 9.8e-7. Note the rise time constant is about 40 s, not the ~150 s I estimated first.
+2. **Coupled stress per frame, about 10× faster via a reduced-order model.** `vcad-kernel-topopt --example bracket_stress -- --frames DIR --rom`:
+   - Stress is linear in (load, ΔT), and the frames' ΔT fields span a low-dimensional subspace.
+   - So: POD the 61 ΔT frames by the method of snapshots (a 61×61 Gram matrix and a Jacobi eigensolver), keeping all but 1e-10 of the energy. That gives **5 modes**, with a worst per-frame projection error of 1.1e-4.
+   - Then one FE solve for the load alone plus one per mode: **6 solves instead of 61**.
+   - Each frame's stress **tensor** is rebuilt as σ_load + Σ cᵢσᵢ, and von Mises is taken after superposition, so its nonlinearity is handled exactly.
+   - New additive API: `StaticFields::stress_mpa` (the Voigt tensor per element), `von_mises()`, and `analyze_fields_thermal_warm()`.
+   - **160 s vs ~26 min** for full per-frame solves (each ~25 s on this loaded machine).
+   - Checked against 49 full solves: **max |Δσ| = 2.1e-4 MPa**, below the stress layer's own compression bound (5.9e-4 MPa).
+   - Warm-starting full per-frame solves (`--frames DIR` without `--rom`) does **not** help much: about 25 s per frame either way. Jacobi-PCG still has to grind down most of the residual decades from a close initial guess.
+3. **Compression.** tang-compress `corpus`, TCG3-static at max-abs 1e-4 × range per frame: 122 streams (61 T + 61 σ), **3.2 MB for 192 MB raw (59×)**. This is now the slowest step (8 min), because `corpus` also encodes TCG1 and TCG3-learned for its benchmark; a TCG3s-only encode would cut it to about a third.
+4. **Render from the compressed streams.** `VCAD_FIELD_FRAMES=DIR swift test --filter FieldAnimationTests` (apple/VcadApp):
+   - Every frame is decoded through the C ABI and **hash-checked against the native Rust decode**. All 122 pass; decoding takes 2.3 s in total.
+   - The skin is rendered in RealityKit and the frames composed in AppKit; the default Homebrew ffmpeg has no `drawtext` filter.
+5. **Encode.** `scripts/compose-field-animation.py DIR docs/assets/bracket-power-cycle` produces H.264 and GIF.
+
+The frame data is regenerable and gitignored (`examples/fields/bracket/transient/`).

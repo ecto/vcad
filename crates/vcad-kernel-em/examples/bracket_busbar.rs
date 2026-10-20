@@ -9,7 +9,7 @@
 //!
 //! Writes `OUT.f32` (row-major (z, y) = 1×nz×ny, mT) and `OUT.json` with
 //! `"plane":"yz"` (image columns → world y, rows → world z).
-//! Run: `cargo run --release -p vcad-kernel-em --example bracket_field -- OUT`
+//! Run: `cargo run --release -p vcad-kernel-em --example bracket_busbar -- OUT`
 
 use vcad_kernel_em::grid::SolveOptions;
 use vcad_kernel_em::planar::{Conductor, PlanarMagnetostatics, Rect};

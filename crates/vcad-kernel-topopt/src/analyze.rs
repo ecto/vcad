@@ -163,6 +163,17 @@ pub struct StaticFields {
     /// Displacement magnitude at the element centroid (mean of its 8
     /// nodal displacement vectors), mm.
     pub displacement_mm: Vec<f64>,
+    /// Element-centroid stress tensor, MPa, Voigt order
+    /// `[xx, yy, zz, xy, yz, xz]`. Linear in (loads, ΔT), so solutions
+    /// superpose — e.g. a reduced-order sweep over many thermal states.
+    pub stress_mpa: Vec<[f64; 6]>,
+}
+
+/// Von Mises equivalent of a Voigt stress `[xx, yy, zz, xy, yz, xz]`.
+pub fn von_mises(s: &[f64; 6]) -> f64 {
+    (0.5 * ((s[0] - s[1]).powi(2) + (s[1] - s[2]).powi(2) + (s[2] - s[0]).powi(2))
+        + 3.0 * (s[3] * s[3] + s[4] * s[4] + s[5] * s[5]))
+        .sqrt()
 }
 
 /// A thermal-expansion load: per-element temperature rise above the
@@ -197,6 +208,21 @@ pub fn analyze_fields_thermal(
     domain: &Domain,
     spec: &AnalysisSpec,
     thermal: Option<&ThermalLoad>,
+) -> Result<(StaticAnalysis, StaticFields), AnalyzeError> {
+    analyze_fields_thermal_warm(domain, spec, thermal, &mut Vec::new())
+}
+
+/// [`analyze_fields_thermal`], warm-starting the PCG solve from `warm`
+/// (unit-E nodal displacements from a previous solve on the same domain
+/// and supports; resized/zeroed when it doesn't match) and leaving this
+/// solve's displacements there. For sequences of nearby load cases — the
+/// frames of a transient — this cuts iterations sharply; the converged
+/// answer is the same to solver tolerance.
+pub fn analyze_fields_thermal_warm(
+    domain: &Domain,
+    spec: &AnalysisSpec,
+    thermal: Option<&ThermalLoad>,
+    warm: &mut Vec<f64>,
 ) -> Result<(StaticAnalysis, StaticFields), AnalyzeError> {
     validate(spec)?;
     if let Some(t) = thermal {
@@ -241,11 +267,14 @@ pub fn analyze_fields_thermal(
 
     // Solve at unit Young's modulus; linear elasticity lets us rescale.
     let scales = vec![1.0f64; sys.active_elems.len()];
-    let mut u = vec![0.0f64; sys.ndof];
-    let relres = sys.solve(&scales, &mut u, SOLVE_TOL, SOLVE_MAX_ITER);
+    if warm.len() != sys.ndof {
+        *warm = vec![0.0f64; sys.ndof];
+    }
+    let u: &mut [f64] = warm;
+    let relres = sys.solve(&scales, u, SOLVE_TOL, SOLVE_MAX_ITER);
     let e = spec.youngs_modulus_mpa;
     // u_real = u_unit / E; compliance_real = fᵀu / E.
-    let compliance = sys.f.iter().zip(&u).map(|(a, b)| a * b).sum::<f64>() / e;
+    let compliance = sys.f.iter().zip(u.iter()).map(|(a, b)| a * b).sum::<f64>() / e;
 
     // Max nodal displacement.
     let mut max_disp = 0.0f64;
@@ -282,6 +311,7 @@ pub fn analyze_fields_thermal(
     let inv4h = 1.0 / (4.0 * domain.h);
     let mut fields = StaticFields {
         von_mises_mpa: vec![0.0; domain.num_elements()],
+        stress_mpa: vec![[0.0; 6]; domain.num_elements()],
         displacement_mm: vec![0.0; domain.num_elements()],
     };
     let mut max_vm = 0.0f64;
@@ -313,6 +343,7 @@ pub fn analyze_fields_thermal(
             .sqrt();
         let grid_e = sys.active_elems[ei] as usize;
         fields.von_mises_mpa[grid_e] = vm;
+        fields.stress_mpa[grid_e] = [sx, sy, sz, txy, tyz, txz];
         let mut mean = [0.0f64; 3];
         for k in 0..8 {
             for (a, m) in mean.iter_mut().enumerate() {

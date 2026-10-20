@@ -55,9 +55,10 @@ mod fea;
 mod simp;
 mod spec;
 
+pub use analyze::von_mises;
 pub use analyze::{
-    analyze, analyze_box, analyze_fields, analyze_fields_thermal, analyze_mesh, AnalysisSpec,
-    AnalyzeError, StaticAnalysis, StaticFields, ThermalLoad,
+    analyze, analyze_box, analyze_fields, analyze_fields_thermal, analyze_fields_thermal_warm,
+    analyze_mesh, AnalysisSpec, AnalyzeError, StaticAnalysis, StaticFields, ThermalLoad,
 };
 pub use domain::Domain;
 pub use fea::FeError;
