@@ -44,6 +44,9 @@ export interface OrderablePart {
   description: string;
   footprint: string;
   pins: number;
+  /** Distinct electrical pad numbers on the land pattern, when the vendor
+   *  footprint numbers by terminal (e.g. MOSFET G/S/D) rather than by lead. */
+  pads?: number;
   /** `generated` = vcad derives a real land pattern; `placeholder` = not yet. */
   footprint_status: "generated" | "placeholder";
   params: Record<string, unknown>;

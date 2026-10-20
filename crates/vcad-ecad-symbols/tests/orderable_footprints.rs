@@ -14,15 +14,39 @@ fn orderable_db_footprints_resolve() {
     let parts = db["parts"].as_array().expect("parts array");
     assert!(!parts.is_empty());
     let mut failures = Vec::new();
+    let mut placeholders = Vec::new();
     for p in parts {
         let id = p["id"].as_str().unwrap_or("?");
         let fp = p["footprint"].as_str().expect("footprint");
-        let pins = p["pins"].as_u64().expect("pins") as u32;
+        // `pads` (optional) = distinct electrical pad numbers on the land
+        // pattern, when the vendor footprint numbers by terminal rather than
+        // by package lead (power packages: G/S/D = 1/2/3, diode K/A = 1/2).
+        let pins = p["pads"]
+            .as_u64()
+            .or_else(|| p["pins"].as_u64())
+            .expect("pins") as u32;
         let status = p["footprint_status"].as_str().expect("footprint_status");
         let res = resolve_footprint(fp, pins);
-        let pads = res.template.as_ref().map(|t| t.pads.len()).unwrap_or(0);
+        // Distinct numbered pads: vendor land patterns split one pin into
+        // several fingers (TDSON/TSDSON drain combs share a number) and add
+        // unnumbered NPTH pegs, so raw pad count overstates the pin count.
+        let pads = res
+            .template
+            .as_ref()
+            .map(|t| {
+                t.pads
+                    .iter()
+                    .filter(|p| !p.number.is_empty())
+                    .map(|p| p.number.as_str())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+            })
+            .unwrap_or(0);
         match (status, res.matched) {
-            ("generated", true) | ("placeholder", false) => {}
+            ("generated", true) => {}
+            ("placeholder", false) => {
+                placeholders.push(format!("{id} ({fp})"));
+            }
             ("placeholder", true) => {
                 failures.push(format!(
                     "{id}: '{fp}' now generates a real land pattern — set footprint_status to \"generated\""
@@ -44,6 +68,12 @@ fn orderable_db_footprints_resolve() {
             failures.push(format!("{id}: '{fp}' has {pads} pads, DB says {pins}"));
         }
     }
+    // Recorded so the remaining gap is visible in `--nocapture` output.
+    eprintln!(
+        "orderable parts still on placeholder footprints ({}):\n  {}",
+        placeholders.len(),
+        placeholders.join("\n  ")
+    );
     assert!(
         failures.is_empty(),
         "footprint mismatches:\n{}",
