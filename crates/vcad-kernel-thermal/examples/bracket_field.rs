@@ -8,6 +8,13 @@
 //! back face (x = 0) is bolted to a 40 °C chassis; every other exposed face
 //! convects at h = 12 W/m²K to 25 °C air (supplied, not derived).
 //!
+//! Coupling (EM → thermal): the base plate is also the controller's 200 A
+//! DC busbar (vcad-kernel-em `bracket_field`). Its Joule heat
+//! P = I²·ρ·L/A (6061-T6 ρ = 3.99e-8 Ω·m, L = 96 mm, A = 48×12 mm²) =
+//! 0.266 W is added as a volumetric source over the plate — DC through a
+//! uniform section, so J (and I²R density) is uniform there. The flange and
+//! the bolt-end current crowding are not modeled.
+//!
 //! Writes `OUT.f32` (row-major (z, y, x), °C; void = 25) and `OUT.json`.
 //! Run: `cargo run --release -p vcad-kernel-thermal --example bracket_field -- OUT`
 
@@ -37,6 +44,17 @@ fn main() {
         },
         power_w: 6.0,
     });
+    // Joule heating from the busbar current (see module docs).
+    let (current_a, rho_ohm_m, len_m, area_m2) = (200.0, 3.99e-8, 0.096, 0.048 * 0.012);
+    let joule_w = current_a * current_a * rho_ohm_m * len_m / area_m2;
+    m.sources.push(PowerSource {
+        name: "busbar_joule".into(),
+        shape: Shape::Box {
+            min_mm: [0.0, 0.0, 0.0],
+            size_mm: [96.0, 48.0, 12.0],
+        },
+        power_w: joule_w,
+    });
     let conv = Boundary::Convection {
         h_w_m2k: 12.0,
         ambient_c: 25.0,
@@ -63,9 +81,9 @@ fn main() {
     )
     .unwrap();
     let meta = format!(
-        "{{\"field\":\"temperature\",\"units\":\"degC\",\"source\":\"vcad-kernel-thermal bracket (6 W MOSFET, 40 C wall, h=12)\",\
+        "{{\"field\":\"temperature\",\"units\":\"degC\",\"source\":\"vcad-kernel-thermal bracket (6 W MOSFET + {joule_w:.3} W busbar Joule, 40 C wall, h=12)\",\
          \"dims_zyx\":[48,64,128],\"origin_mm\":[0,0,0],\"voxel_mm\":[0.75,0.75,0.75],\"min\":{lo},\"max\":{hi},\
-         \"energy_residual_rel\":{:e}}}\n",
+         \"joule_w\":{joule_w},\"energy_residual_rel\":{:e}}}\n",
         s.energy.residual_rel
     );
     std::fs::write(format!("{out}.json"), &meta).unwrap();

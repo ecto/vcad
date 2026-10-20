@@ -134,6 +134,18 @@ fn validate(spec: &AnalysisSpec) -> Result<(), AnalyzeError> {
     Ok(())
 }
 
+/// Natural-coordinate signs per local hex node (standard ordering).
+const THERMAL_SIGNS: [[f64; 3]; 8] = [
+    [-1.0, -1.0, -1.0],
+    [1.0, -1.0, -1.0],
+    [1.0, 1.0, -1.0],
+    [-1.0, 1.0, -1.0],
+    [-1.0, -1.0, 1.0],
+    [1.0, -1.0, 1.0],
+    [1.0, 1.0, 1.0],
+    [-1.0, 1.0, 1.0],
+];
+
 const SOLVE_TOL: f64 = 1e-8;
 const SOLVE_MAX_ITER: usize = 6000;
 
@@ -153,14 +165,79 @@ pub struct StaticFields {
     pub displacement_mm: Vec<f64>,
 }
 
+/// A thermal-expansion load: per-element temperature rise above the
+/// stress-free reference, applied as the isotropic initial strain
+/// `ε₀ = α·ΔT` (thermo-elastic coupling, one-way: the temperature field is
+/// an input, e.g. from vcad-kernel-thermal on the same grid).
+#[derive(Debug, Clone)]
+pub struct ThermalLoad {
+    /// ΔT per grid element (index `(iz * ny + iy) * nx + ix`), K. Entries
+    /// for inactive elements are ignored.
+    pub delta_t_k: Vec<f64>,
+    /// Linear expansion coefficient, 1/K (6061-T6: 23e-6).
+    pub alpha_per_k: f64,
+}
+
 /// [`analyze`], also returning the per-element stress and displacement
 /// fields (for field export / visualization).
 pub fn analyze_fields(
     domain: &Domain,
     spec: &AnalysisSpec,
 ) -> Result<(StaticAnalysis, StaticFields), AnalyzeError> {
+    analyze_fields_thermal(domain, spec, None)
+}
+
+/// [`analyze_fields`] with an optional thermal-expansion load superposed on
+/// the mechanical loads. Stresses are `σ = C (ε − ε₀)`.
+///
+/// The equivalent nodal force of a uniform `ε₀` over a trilinear hex is
+/// exact with the centroid shape gradients: `∫ ∂N_k/∂x_a dV = s_k[a]·h²/4`,
+/// so `f_k,a = s_k[a]·h²/4 · E·(c1 + 2·c2)·α·ΔT` (the isotropic `C·ε₀`).
+pub fn analyze_fields_thermal(
+    domain: &Domain,
+    spec: &AnalysisSpec,
+    thermal: Option<&ThermalLoad>,
+) -> Result<(StaticAnalysis, StaticFields), AnalyzeError> {
     validate(spec)?;
-    let sys = FeSystem::build(domain, spec.poisson, &spec.loads, &spec.supports)?;
+    if let Some(t) = thermal {
+        if t.delta_t_k.len() != domain.num_elements() || !t.alpha_per_k.is_finite() {
+            return Err(AnalyzeError::InvalidSpec(format!(
+                "thermal load needs one ΔT per grid element ({}), got {}",
+                domain.num_elements(),
+                t.delta_t_k.len()
+            )));
+        }
+    }
+    let mut sys = FeSystem::build(domain, spec.poisson, &spec.loads, &spec.supports)?;
+    // Isotropic C·ε₀ per unit (α·ΔT), unit E.
+    let c_iso = {
+        let nu = spec.poisson;
+        ((1.0 - nu) + 2.0 * nu) / ((1.0 + nu) * (1.0 - 2.0 * nu))
+    };
+    // ε₀ per active element (by position in `sys.edofs`).
+    let eps0: Vec<f64> = match thermal {
+        Some(t) => sys
+            .active_elems
+            .iter()
+            .map(|&e| t.alpha_per_k * t.delta_t_k[e as usize])
+            .collect(),
+        None => vec![0.0; sys.active_elems.len()],
+    };
+    if thermal.is_some() {
+        // Real thermal forces scaled into the unit-E system: the solve below
+        // divides every load by E, so add E·g here.
+        let w = spec.youngs_modulus_mpa * c_iso * domain.h * domain.h / 4.0;
+        for (ei, dofs) in sys.edofs.iter().enumerate() {
+            for (k, sg) in THERMAL_SIGNS.iter().enumerate() {
+                for a in 0..3 {
+                    let d = dofs[3 * k + a] as usize;
+                    if !sys.fixed[d] {
+                        sys.f[d] += sg[a] * w * eps0[ei];
+                    }
+                }
+            }
+        }
+    }
 
     // Solve at unit Young's modulus; linear elasticity lets us rescale.
     let scales = vec![1.0f64; sys.active_elems.len()];
@@ -224,10 +301,12 @@ pub fn analyze_fields(
             eps[4] += dz * uy + dy * uz;
             eps[5] += dz * ux + dx * uz;
         }
-        // Stress (the unit E cancels against 1/E on u, so this is real MPa).
-        let sx = c1 * eps[0] + c2 * (eps[1] + eps[2]);
-        let sy = c1 * eps[1] + c2 * (eps[0] + eps[2]);
-        let sz = c1 * eps[2] + c2 * (eps[0] + eps[1]);
+        // Stress (the unit E cancels against 1/E on u, so this is real MPa),
+        // minus the thermal initial stress E·C·ε₀ on the normal components.
+        let s0 = e * c_iso * eps0[ei];
+        let sx = c1 * eps[0] + c2 * (eps[1] + eps[2]) - s0;
+        let sy = c1 * eps[1] + c2 * (eps[0] + eps[2]) - s0;
+        let sz = c1 * eps[2] + c2 * (eps[0] + eps[1]) - s0;
         let (txy, tyz, txz) = (g * eps[3], g * eps[4], g * eps[5]);
         let vm = (0.5 * ((sx - sy).powi(2) + (sy - sz).powi(2) + (sz - sx).powi(2))
             + 3.0 * (txy * txy + tyz * tyz + txz * txz))

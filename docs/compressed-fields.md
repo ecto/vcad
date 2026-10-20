@@ -187,19 +187,27 @@ The stream is `hot_chip.tc` (TCG3-static, 23,480 B for 262,144 cells, 45×).
 
 GPU decode (wgpu/Metal) is deliberately **not** wired. At this field size, CPU decode is already faster than WebGPU was in the browser (13 ms vs 55 ms warm), so it can wait until there's a large-field case that needs it. It must stay byte-identical when it is added.
 
-## Multiphysics stack demo (bracket)
+## Multiphysics stack demo (bracket, coupled)
 
-The bracket is one part with four co-registered fields, all compressed with
-the same contract and viewable in both apps.
+The bracket is one part with five co-registered fields from a **coupled
+chain**, all compressed with the same contract and viewable in both apps:
+
+```
+busbar 200 A ──I²R──▶ thermal ──α(T−40 °C)──▶ stress  ◀── 60 N tip load
+ (EM, 2D |B|)   0.266 W   (T field)            (von Mises, displacement)
+```
 
 | | |
 |---|---|
 | part | Aluminum motor-controller L-bracket (6061-T6): a 96×48×12 mm base plate plus a 9×48×36 mm wall flange. The geometry boxes live in `stack.json`. |
-| grid | 128×64×48 cells at 0.75 mm, the same for every volume layer. |
-| thermal | `vcad-kernel-thermal --example bracket_field`. A 6 W MOSFET heats the far end; the flange is bolted to a 40 °C wall; every other face convects at h = 12 W/m²K. Result: 39.98 → 44.55 °C. |
-| stress / displacement | `vcad-kernel-topopt --example bracket_field`, using the new additive `analyze_fields()`. The wall is fixed and a 60 N load hangs off the tip. Peak von Mises is 5.49 MPa (the beam hand calc Mc/I gives 4.7). Tip deflection is 30.4 µm. |
-| busbar | `vcad-kernel-em --example bracket_field`. The base plate also carries 200 A DC. This layer is the planar \|B\| on the plate's YZ cross-section: a **2D** layer (`"plane":"yz"`) placed at x = 48 mm. Peak 2.39 mT (hand calc µ₀I/2w gives 2.6). It treats the bar as infinitely long; the flange, bolt end and return conductor are not modeled. |
-| streams | TCG3-static at max-abs 1e-4 × range each: 20.4 + 32.8 + 13.5 + 3.1 KB = **68 KB for 4.8 MB raw (70×)**. |
+| grid | 128×64×48 cells at 0.75 mm. The thermal cells and the FE elements are the same grid, so ΔT maps one-to-one onto elements. |
+| busbar → thermal | The plate carries 200 A DC. Joule heat is P = I²ρL/A = 0.266 W (ρ = 3.99e-8 Ω·m, L = 96 mm, A = 48×12 mm²). DC through a uniform section means uniform current density, so P goes in as a uniform volumetric source over the plate (`vcad-kernel-thermal --example bracket_field`). Effect: T_max goes from 44.55 to 44.67 °C. |
+| thermal | A 6 W MOSFET heats the far end and the 40 °C wall cools the flange; every other face convects at h = 12 W/m²K. Range 39.98 → 44.67 °C. |
+| thermal → stress | New additive API `analyze_fields_thermal(domain, spec, Some(&ThermalLoad))` in `vcad-kernel-topopt`. It applies the initial strain ε₀ = α·ΔT with α = 23e-6/K and computes σ = C(ε − ε₀). The equivalent nodal force is exact for a uniform ε₀ on a trilinear hex. Tests cover it: free expansion gives zero stress (< 1e-3 MPa) and δ = αΔTL to 2%; roller-ended bars read exactly EαΔT in every element; fully clamped ends read +3.5% at mid-span, which is real (the restrained ends stiffen the bar). `vcad-kernel-topopt --example bracket_field -- OUT --thermal T.f32`. |
+| stress-free reference | **The wall temperature, 40 °C, not the 25 °C assembly temperature.** The chassis is the same alloy at 40 °C, so a bracket sitting uniformly at 40 °C grows with it and carries no stress; only T − 40 °C is mismatch. Using 25 °C against a rigid wall gave 99 MPa, which wrongly charges the bracket for expansion the chassis shares. The wall face is fully fixed, which over-restrains a real bolted joint, so near-wall stress is an upper bound. |
+| stress result | Load + thermal peaks at **5.90 MPa** vs **5.49 MPa** for the load alone (+7%), both at the plate root. The coupled layer also shows thermal stress around the MOSFET footprint, which the load-only layer lacks (p99 is 3.5 MPa). Tip deflection goes from 30.4 to 31.0 µm. |
+| busbar layer | Planar \|B\| on the plate's YZ cross-section, a **2D** layer (`"plane":"yz"`) placed at x = 48 mm. Peak 2.39 mT (hand calc µ₀I/2w gives 2.6). It treats the bar as infinitely long. |
+| streams | TCG3-static at max-abs 1e-4 × range each: 20.6 + 35.6 + 32.8 + 13.2 + 3.1 KB = **105 KB for 6.3 MB raw (61×)**. |
 
 **Viewers.**
 - **Web:** `?fields=/fields/bracket`.
@@ -207,38 +215,48 @@ the same contract and viewable in both apps.
 - **Surface mode** colors the part's exposed voxel faces by the active layer. The skin has 27k quads; the native app colors it by giving each quad a UV into a 256×1 colormap texture.
 - **Slice mode** cuts along x, y or z and masks the void cells out.
 - 2D layers sit on their own plane inside a ghosted part.
-- The web app adds a hover probe that reads value ± bound at a point (e.g. `43.499 ± 2.0e-3 °C @ (85.1, 44.6, 11.6) mm`). There is no native probe yet.
-- Color ranges are taken over solid cells only. That's how the thermal layer reads 40–44.5 °C rather than starting at the 25 °C void fill.
+- The web app adds a hover probe that reads value ± bound at a point. There is no native probe yet.
+- Color ranges are taken over solid cells only.
 
 **Gate (2026-10-20, M4): PASS on every layer, every path.**
 
-| layer | native Rust (`corpus`) | web WebGPU | web WASM-CPU | native app (Swift → C ABI) | measured \|Δ\| ≤ bound |
+| layer | native Rust (`corpus`) | web WebGPU | web WASM-CPU | native app | measured \|Δ\| ≤ bound |
 |---|---|---|---|---|---|
-| thermal | `885c6c38b04aa965` | ✓ | ✓ | ✓ | 1.953e-3 ≤ 1.955e-3 °C |
-| stress | `7e7509c29c235505` | ✓ | ✓ | ✓ | 5.491e-4 ≤ 5.492e-4 MPa |
-| displacement | `647b1b6f2ac39355` | ✓ | ✓ | ✓ | 3.044e-3 ≤ 3.045e-3 µm |
-| busbar (2D) | `2a433f8f79030415` | ✓ | ✓ | ✓ | 2.375e-4 ≤ 2.377e-4 mT |
+| thermal | `3048f6d56ae47311` | ✓ | ✓ | ✓ | ✓ (1e-4 × range) |
+| stress (load + thermal) | `76cd14f4923fec65` | ✓ | ✓ | ✓ | ✓ |
+| stress_mech (load only) | `7e7509c29c235505` | ✓ | ✓ | ✓ | ✓ |
+| displacement | `2f50b000e9f9b475` | ✓ | ✓ | ✓ | ✓ |
+| busbar (2D) | `2a433f8f79030415` | ✓ | ✓ | ✓ | ✓ |
 
-**Timings** (decode only unless noted):
+`stress_mech` reproduces the pre-coupling stress layer **bit for bit** (same
+hash as the uncoupled run). That's a free determinism check across separate
+solver and encoder runs.
 
-| path | thermal / stress / displacement / busbar | whole stack |
+**Timings** (decode only):
+
+| path | thermal / stress / stress_mech / displacement / busbar | whole stack |
 |---|---|---|
-| web WASM-CPU | 40 / 32 / 31 / 5 ms | cold page load 1.06 s, of which ~0.9 s is the 4.8 MB uncompressed reference download for error checking |
-| web WebGPU (warm) | 155 / 152 / 140 / 44 ms | — |
-| native app (release Rust lib, debug Swift) | 18 / 20 / 18 / 1.4 ms | read + decode + solid mask + range: 210 ms |
+| web WASM-CPU | 39 / 23 / 23 / 22 / 2 ms | 353 ms including the 6.3 MB uncompressed reference download for error checking |
+| web WebGPU | 170 / 172 / 167 / 164 / 42 ms | 764 ms |
+| native app (release Rust, debug Swift) | 17 / 18 / 18 / 17 / 1.3 ms | 251 ms (read + decode + solid mask + range) |
 
 At 393k cells, WebGPU loses to CPU on fixed per-dispatch costs. So the web
 decoder now **picks automatically**: CPU below 4M cells, GPU above. Pass
 `&fieldgpu` or `&fieldcpu` to force one.
 
-Web: ![thermal](assets/stack-web-thermal.jpg) ![stress](assets/stack-web-stress.jpg)
+Web: ![thermal](assets/stack-web-thermal.jpg) ![coupled stress](assets/stack-web-stress-coupled.jpg)
 ![displacement](assets/stack-web-displacement.jpg) ![busbar](assets/stack-web-busbar.jpg)
 ![slice](assets/stack-web-slice.jpg)
 
-Native: ![thermal](assets/stack-native-thermal.png) ![busbar](assets/stack-native-busbar.png)
-![slice](assets/stack-native-thermal-slice.png) ![HUD](assets/stack-native-hud.png)
+Native: ![thermal](assets/stack-native-thermal.png) ![coupled stress](assets/stack-native-stress-coupled.png)
+![busbar](assets/stack-native-busbar.png) ![slice](assets/stack-native-thermal-slice.png) ![HUD](assets/stack-native-hud.png)
+
+(`stack-web-stress.jpg`, `stack-native-stress.png` and the other uncoupled
+captures are from the pre-coupling run.)
 
 **Not modeled / next:**
-- **No coupling between layers.** Joule heat from the busbar current (I²R ≈ 0.2 W here) does not feed the thermal solve, and there is no thermal-expansion stress. Each layer is an independent solve on shared geometry.
+- **The coupling is one-way.** T doesn't change resistivity, and deformation doesn't change the thermal or EM solves. At ΔT ≈ 5 K and 30 µm the feedback is negligible.
+- **Joule heat is uniform over the plate.** There is no current crowding at the bolt and tip terminals; that needs a 3D current-flow solve.
+- **The wall face is fully fixed.** A bolted-joint stiffness model would relax the near-wall stress.
 - **No native hover probe.**
-- **The geometry is boxes in `stack.json`,** not the document's BRep. Wiring stacks to `.vcad` parts is the `fields`-schema work proposed above.
+- **The geometry is boxes in `stack.json`,** not the document's BRep.

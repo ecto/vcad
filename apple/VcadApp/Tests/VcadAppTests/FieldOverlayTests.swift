@@ -31,11 +31,13 @@ final class FieldOverlayTests: XCTestCase {
     static let stackDir = base.deletingLastPathComponent().appendingPathComponent("bracket")
 
     /// Every layer of the multiphysics stack decodes to its native Rust hash.
+    /// (`stress_mech` reproduces the pre-coupling stress layer bit for bit.)
     func testStackMatchesNativeHashes() throws {
         let (stack, layers, ms) = try loadFieldStack(dir: Self.stackDir)
-        XCTAssertEqual(layers.map(\.id), ["thermal", "stress", "displacement", "busbar"])
-        let want = ["thermal": "885c6c38b04aa965", "stress": "7e7509c29c235505",
-                    "displacement": "647b1b6f2ac39355", "busbar": "2a433f8f79030415"]
+        XCTAssertEqual(layers.map(\.id), ["thermal", "stress", "stress_mech", "displacement", "busbar"])
+        // Coupled chain: busbar Joule heat → thermal → thermal strain + load → stress.
+        let want = ["thermal": "3048f6d56ae47311", "stress": "76cd14f4923fec65", "stress_mech": "7e7509c29c235505",
+                    "displacement": "2f50b000e9f9b475", "busbar": "2a433f8f79030415"]
         for l in layers {
             XCTAssertEqual(l.field.hash, want[l.id], l.id)
             XCTAssertEqual(l.field.hashMatch, true, l.id)
@@ -45,7 +47,7 @@ final class FieldOverlayTests: XCTestCase {
         XCTAssertEqual(layers[0].range.0, 40, accuracy: 0.1)
         let skin = FieldSkin(meta: layers[0].field.meta, mask: solidMask(layers[0].field.meta, stack.geometry!.boxes))
         XCTAssertGreaterThan(skin.cells.count, 10_000)
-        print("[field] native stack load (4 layers, read+decode+range): \(String(format: "%.1f", ms)) ms; skin quads \(skin.cells.count)")
+        print("[field] native stack load (\(layers.count) layers, read+decode+range): \(String(format: "%.1f", ms)) ms; skin quads \(skin.cells.count)")
     }
 
     func testRejectsGarbage() {

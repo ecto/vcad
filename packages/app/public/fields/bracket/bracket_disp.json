@@ -1,7 +1,7 @@
 {
  "field": "displacement",
  "units": "\u00b5m",
- "source": "vcad-kernel-topopt voxel FEA bracket (60 N tip, fixed wall)",
+ "source": "vcad-kernel-topopt voxel FEA bracket (60 N tip + thermal strain \u03b1(T\u221240 \u00b0C) from the thermal layer, fixed wall)",
  "dims_zyx": [
   48,
   64,
@@ -18,17 +18,17 @@
   0.75
  ],
  "min": 0,
- "max": 30.44751,
- "max_von_mises_mpa": 5.491685849036571,
- "max_displacement_mm": 0.03064947224530542,
- "relative_residual": 9.449395709094625e-09,
+ "max": 30.96643,
+ "max_von_mises_mpa": 5.8964639787582875,
+ "max_displacement_mm": 0.031177801402072814,
+ "relative_residual": 9.461769680891132e-09,
  "format": "tcg3s",
  "bound": {
   "kind": "max_abs",
-  "value": 0.003044751,
+  "value": 0.003096643,
   "units": "\u00b5m"
  },
- "native_fnv1a": "647b1b6f2ac39355",
- "bytes": 13490,
+ "native_fnv1a": "2f50b000e9f9b475",
+ "bytes": 13162,
  "raw_bytes": 1572864
 }

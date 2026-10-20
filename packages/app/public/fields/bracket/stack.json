@@ -1,7 +1,7 @@
 {
  "name": "bracket",
  "title": "Motor-controller L-bracket (6061-T6)",
- "notes": "6 W MOSFET, 40 \u00b0C wall, h=12 \u00b7 60 N tip load \u00b7 plate doubles as 200 A busbar",
+ "notes": "coupled: busbar 200 A \u2192 0.27 W Joule \u2192 thermal \u2192 \u03b1(T\u221240 \u00b0C) strain + 60 N tip load \u2192 stress",
  "geometry": {
   "boxes": [
    {
@@ -38,8 +38,13 @@
   },
   {
    "id": "stress",
-   "label": "von Mises stress",
+   "label": "von Mises (load + thermal)",
    "file": "bracket_vm"
+  },
+  {
+   "id": "stress_mech",
+   "label": "von Mises (load only)",
+   "file": "bracket_vm_mech"
   },
   {
    "id": "displacement",

@@ -56,8 +56,8 @@ mod simp;
 mod spec;
 
 pub use analyze::{
-    analyze, analyze_box, analyze_fields, analyze_mesh, AnalysisSpec, AnalyzeError, StaticAnalysis,
-    StaticFields,
+    analyze, analyze_box, analyze_fields, analyze_fields_thermal, analyze_mesh, AnalysisSpec,
+    AnalyzeError, StaticAnalysis, StaticFields, ThermalLoad,
 };
 pub use domain::Domain;
 pub use fea::FeError;
@@ -298,5 +298,121 @@ mod tests {
         let back: TopoOptSpec = serde_json::from_str(&json).unwrap();
         assert_eq!(back.resolution, spec.resolution);
         assert_eq!(back.loads.len(), 1);
+    }
+
+    fn thermal_bar(supports: Vec<Support>) -> (Domain, StaticAnalysis, StaticFields) {
+        // 40×4×4 mm bar, h = 1 mm, uniform ΔT = 10 K, α = 1e-5, E = 1e5 MPa.
+        let d = Domain::from_bbox([0.0; 3], [40.0, 4.0, 4.0], 40);
+        let spec = AnalysisSpec {
+            resolution: 40,
+            youngs_modulus_mpa: 1e5,
+            poisson: 0.3,
+            // A negligible mechanical load (a spec needs one).
+            loads: vec![Load {
+                region: RegionBox {
+                    min: [20.0, 2.0, 4.0],
+                    max: [20.0, 2.0, 4.0],
+                },
+                force: [0.0, 0.0, -1e-9],
+            }],
+            supports,
+        };
+        let t = ThermalLoad {
+            delta_t_k: vec![10.0; d.num_elements()],
+            alpha_per_k: 1e-5,
+        };
+        let (a, f) = analyze_fields_thermal(&d, &spec, Some(&t)).unwrap();
+        (d, a, f)
+    }
+
+    fn face(x: f64, fix: [bool; 3]) -> Support {
+        Support {
+            region: RegionBox {
+                min: [x, 0.0, 0.0],
+                max: [x, 4.0, 4.0],
+            },
+            fix,
+        }
+    }
+
+    #[test]
+    fn thermal_free_expansion_is_stress_free() {
+        // Statically determinate rollers: x on the x=0 face, plus one
+        // y and one z pin — the bar may grow freely in every direction.
+        let pins = |p: [f64; 3], fix| Support {
+            region: RegionBox { min: p, max: p },
+            fix,
+        };
+        let (_, a, f) = thermal_bar(vec![
+            face(0.0, [true, false, false]),
+            pins([0.0, 0.0, 0.0], [false, true, true]),
+            pins([0.0, 4.0, 0.0], [false, false, true]),
+        ]);
+        let peak = f.von_mises_mpa.iter().cloned().fold(0.0, f64::max);
+        // EαΔT = 10 MPa would be the fully restrained stress.
+        assert!(
+            peak < 1e-3,
+            "free expansion should be stress-free, got {peak} MPa"
+        );
+        // Tip moves αΔT·L = 4e-3 mm (plus the lateral growth of the corner).
+        assert!(
+            (a.max_displacement_mm - 4e-3).abs() / 4e-3 < 0.02,
+            "tip {}",
+            a.max_displacement_mm
+        );
+    }
+
+    #[test]
+    fn thermal_clamped_bar_reads_e_alpha_dt() {
+        // Roller ends (x fixed only) + lateral pins: exactly uniaxial, so
+        // every element reads |σ_xx| = E·α·ΔT = 10 MPa.
+        let pins = |p: [f64; 3], fix| Support {
+            region: RegionBox { min: p, max: p },
+            fix,
+        };
+        let (d, _, f) = thermal_bar(vec![
+            face(0.0, [true, false, false]),
+            face(40.0, [true, false, false]),
+            pins([0.0, 0.0, 0.0], [false, true, true]),
+            pins([0.0, 4.0, 0.0], [false, false, true]),
+        ]);
+        for e in [d.eidx(0, 0, 0), d.eidx(20, 2, 2), d.eidx(39, 3, 3)] {
+            let vm = f.von_mises_mpa[e];
+            assert!(
+                (vm - 10.0).abs() < 1e-3,
+                "element {e}: von Mises {vm} MPa, want 10"
+            );
+        }
+        // Fully clamped ends add lateral restraint near the ends; mid-span
+        // (10 widths away) stays within a few % of uniaxial.
+        let (d, _, f) = thermal_bar(vec![face(0.0, [true; 3]), face(40.0, [true; 3])]);
+        let mid = f.von_mises_mpa[d.eidx(20, 2, 2)];
+        assert!(
+            (mid - 10.0).abs() < 0.5,
+            "clamped mid-span von Mises {mid} MPa"
+        );
+    }
+
+    #[test]
+    fn thermal_load_must_match_grid() {
+        let d = Domain::from_bbox([0.0; 3], [4.0, 4.0, 4.0], 4);
+        let spec = AnalysisSpec {
+            resolution: 4,
+            youngs_modulus_mpa: 1e5,
+            poisson: 0.3,
+            loads: vec![Load {
+                region: RegionBox {
+                    min: [4.0, 0.0, 0.0],
+                    max: [4.0, 4.0, 4.0],
+                },
+                force: [1.0, 0.0, 0.0],
+            }],
+            supports: vec![face(0.0, [true; 3])],
+        };
+        let t = ThermalLoad {
+            delta_t_k: vec![1.0; 3],
+            alpha_per_k: 1e-5,
+        };
+        assert!(analyze_fields_thermal(&d, &spec, Some(&t)).is_err());
     }
 }
