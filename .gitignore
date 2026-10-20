@@ -71,3 +71,5 @@ packages/app/public/fields/**/*.f32
 examples/fields/**/*.f32
 # bracket power-cycle frames (regenerate: docs/compressed-fields.md "Animation")
 examples/fields/bracket/transient/
+# generated streams (regenerate with tang-compress `corpus`; manifests keep the hashes)
+examples/fields/**/tc/*.tc
