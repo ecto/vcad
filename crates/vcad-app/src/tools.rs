@@ -146,27 +146,66 @@ fn lower_update(args: &Value, doc: &DocumentApi) -> Result<DocCommand, CommandEr
         })
         .and_then(|p| p.get("id").and_then(Value::as_str).map(str::to_string))
         .ok_or_else(|| CommandError::UnknownId { id: node.clone() })?;
-    let commands = params
-        .iter()
-        .filter_map(|(key, v)| {
-            let value = match v {
-                Value::Number(n) => vcad_crdt::Value::F64(n.as_f64()?),
-                Value::Bool(b) => vcad_crdt::Value::Bool(*b),
-                Value::String(s) => vcad_crdt::Value::String(s.clone()),
-                Value::Object(_) => vcad_crdt::Value::Vec3([
-                    v.get("x")?.as_f64()?,
-                    v.get("y")?.as_f64()?,
-                    v.get("z")?.as_f64()?,
-                ]),
-                _ => return None,
-            };
-            Some(DocCommand::SetParam {
-                id: owner.clone(),
-                key: key.clone(),
-                value,
-            })
+    // The tool speaks in the create shape (`size: {x,y,z}`); features store
+    // flat keys (`size_x`, …). Map onto the keys the feature actually has and
+    // refuse anything else — writing an unknown key "succeeds" and changes
+    // nothing, which is exactly what this used to do for every cube resize.
+    let existing: std::collections::HashSet<String> = doc
+        .stable_ids()
+        .resolve(&owner)
+        .and_then(|fid| doc.crdt().get_feature(fid))
+        .map(|f| f.params.keys().cloned().collect())
+        .unwrap_or_default();
+    let scalar = |v: &Value| -> Option<vcad_crdt::Value> {
+        Some(match v {
+            Value::Number(n) => vcad_crdt::Value::F64(n.as_f64()?),
+            Value::Bool(b) => vcad_crdt::Value::Bool(*b),
+            Value::String(s) => vcad_crdt::Value::String(s.clone()),
+            _ => return None,
         })
-        .collect();
+    };
+    let mut commands = Vec::new();
+    for (key, v) in params {
+        let set = |key: String, value| DocCommand::SetParam {
+            id: owner.clone(),
+            key,
+            value,
+        };
+        if existing.contains(key) {
+            let value = scalar(v)
+                .or_else(|| {
+                    Some(vcad_crdt::Value::Vec3([
+                        v.get("x")?.as_f64()?,
+                        v.get("y")?.as_f64()?,
+                        v.get("z")?.as_f64()?,
+                    ]))
+                })
+                .ok_or_else(|| invalid(format!("update: unsupported value for `{key}`")))?;
+            commands.push(set(key.clone(), value));
+        } else if let Some(obj) = v.as_object() {
+            let mut any = false;
+            for (axis, n) in obj {
+                let flat = format!("{key}_{axis}");
+                if !existing.contains(&flat) {
+                    return Err(invalid(format!(
+                        "update: `{key}.{axis}` is not a parameter of this part"
+                    )));
+                }
+                let n = scalar(n).ok_or_else(|| {
+                    invalid(format!("update: unsupported value for `{key}.{axis}`"))
+                })?;
+                commands.push(set(flat, n));
+                any = true;
+            }
+            if !any {
+                return Err(invalid(format!("update: `{key}` is empty")));
+            }
+        } else {
+            return Err(invalid(format!(
+                "update: `{key}` is not a parameter of this part"
+            )));
+        }
+    }
     Ok(DocCommand::Batch { commands })
 }
 
@@ -904,6 +943,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(v["error"]["kind"], "invalid");
+    }
+
+    #[test]
+    fn update_maps_create_shaped_params_and_refuses_unknown_keys() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        apply_ok(
+            &mut api,
+            "create",
+            json!({"type": "cube", "params": {"size": {"x": 1, "y": 2, "z": 3}}}),
+        );
+        let part = serde_json::to_value(&api.get_state().parts[0]).unwrap();
+        let node = part["primitiveNodeId"].clone();
+        // The create shape (`size: {x,y,z}`) used to be written verbatim as
+        // a `size` key the cube never reads: ok, and nothing changed.
+        apply_ok(
+            &mut api,
+            "update",
+            json!({"node_id": node, "params": {"size": {"x": 8, "z": 5}}}),
+        );
+        let doc = api.get_state().document;
+        match &doc.nodes[&part["primitiveNodeId"].as_u64().unwrap()].op {
+            vcad_ir::CsgOp::Cube { size } => assert_eq!((size.x, size.y, size.z), (8.0, 2.0, 5.0)),
+            other => panic!("{other:?}"),
+        }
+        for bad in [json!({"radius": 1}), json!({"size": {"w": 1}})] {
+            let v: Value = serde_json::from_str(&api.apply_tool_envelope(
+                "update",
+                &json!({"node_id": node, "params": bad}).to_string(),
+            ))
+            .unwrap();
+            assert_eq!(v["error"]["kind"], "invalid", "{bad}");
+        }
     }
 
     #[test]

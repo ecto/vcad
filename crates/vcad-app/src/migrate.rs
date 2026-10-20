@@ -84,6 +84,17 @@ pub fn migrate_v1_mapped(doc: &Document) -> (CrdtDocument, MigrationMap) {
     let mut wanted: Vec<(FeatureId, FeatureId)> = Vec::new();
     for entry in &doc.roots {
         let fid = migrate_node(&mut crdt, &mut ctx, doc, entry.root);
+        // The scene entry's own material/visibility live on the part feature
+        // (the materializer reads them back from there). Dropping them reset
+        // every imported part to "default" on each IR round trip.
+        if let Some(fid) = fid {
+            if entry.material != "default" {
+                crdt.set_param(fid, "material", Value::String(entry.material.clone()));
+            }
+            if entry.visible == Some(false) {
+                crdt.set_param(fid, "visible", Value::Bool(false));
+            }
+        }
         let claim = doc
             .part_ids
             .as_ref()
