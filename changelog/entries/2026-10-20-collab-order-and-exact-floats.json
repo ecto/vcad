@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-collab-order-and-exact-floats",
+  "version": "undefined",
+  "date": "2026-10-20",
+  "category": "fix",
+  "title": "Collaborators see the same part order; exact reloads",
+  "summary": "Parts added at the same moment by two collaborators now order identically for both; one edit is one undo step; reloading a document no longer nudges dimensions by a rounding bit.",
+  "features": ["collaboration", "undo", "documents"]
+}
