@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-20-dgx-sot563-cp-elec-footprints",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "feat",
+  "title": "TI DGX, SOT-563, CP_Elec and power-inductor footprints",
+  "summary": "VSSOP-19 TI DGX (TPS4811x), SOT-563, SMD aluminium CP_Elec cans, 1008 chips, Bourns SRR1260 and Changjiang FXL1365 now generate real land patterns.",
+  "features": ["pcb", "footprints"],
+  "mcpTools": ["search_footprints", "get_footprint"]
+}

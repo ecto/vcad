@@ -217,6 +217,9 @@ fn chip_params(code: &str) -> Option<(f64, f64, f64, f64)> {
         "1210" => (1.6, 2.7, 1.0, 1.45),
         "2010" => (1.4, 2.7, 2.0, 1.45),
         "2512" => (1.6, 3.4, 2.4, 1.8),
+        // 1008 (2520 metric) inductors: IPC-7351 nominal, KiCad 9
+        // `L_1008_2520Metric` (1.25 × 2.2 lands at ±1.075).
+        "1008" => (1.25, 2.2, 0.9, 1.25),
         _ => return None,
     })
 }
@@ -1472,6 +1475,118 @@ fn amass_lcb(
     }
 }
 
+/// TI DGX0019A (VSSOP-19, 3.0 × 5.1 mm body, 0.5 mm pitch) — TPS4811x-Q1.
+/// TI drawing 4226944/A (07/2021), "EXAMPLE BOARD LAYOUT" in SLUSEE5E: a
+/// 20-position land pattern, 20× 1.45 × 0.30 pads on 0.50 mm, rows 4.40 mm
+/// apart (pad centres). Position 16 is depopulated (the HV creepage gap next
+/// to VS/ISCP), so the 19 leads keep their 20-pin numbers: 1–10 down the left
+/// row, 11–20 up the right row, 16 absent. No exposed pad.
+fn ti_dgx19() -> FootprintTemplate {
+    let (xc, pitch, w, h) = (2.2, 0.5, 1.45, 0.3);
+    let mut pads = Vec::new();
+    for n in 1..=20u32 {
+        if n == 16 {
+            continue;
+        }
+        let (x, i) = if n <= 10 { (-xc, n - 1) } else { (xc, 20 - n) };
+        pads.push(rect_smd(&n.to_string(), x, -2.25 + pitch * i as f64, w, h));
+    }
+    let graphics = outlined_graphics(&pads, (-1.5, -2.55, 1.5, 2.55), (-2.2, -2.9));
+    FootprintTemplate {
+        name: "VSSOP-19_TI_DGX".into(),
+        pads,
+        graphics,
+    }
+}
+
+/// SOT-563 (1.6 × 1.6 mm, 0.5 mm pitch, 6 leads), JEDEC MO-293B, IPC-7351
+/// nominal as captured in KiCad 9's `SOT-563.kicad_mod`: 0.675 × 0.35 lands at
+/// x = ±0.7125; pins 1–3 down the left side, 4–6 up the right.
+fn sot563() -> FootprintTemplate {
+    let mut pads = Vec::new();
+    for n in 1..=6u32 {
+        let (x, i) = if n <= 3 {
+            (-0.7125, n - 1)
+        } else {
+            (0.7125, 6 - n)
+        };
+        pads.push(rect_smd(
+            &n.to_string(),
+            x,
+            -0.5 + 0.5 * i as f64,
+            0.675,
+            0.35,
+        ));
+    }
+    let graphics = outlined_graphics(&pads, (-0.8, -0.8, 0.8, 0.8), (-1.25, -0.9));
+    FootprintTemplate {
+        name: "SOT-563".into(),
+        pads,
+        graphics,
+    }
+}
+
+/// Two-terminal SMD power inductor with rectangular lands at ±`cx`.
+fn smd_inductor(name: &str, cx: f64, pad: (f64, f64), body: (f64, f64)) -> FootprintTemplate {
+    let pads = vec![
+        rect_smd("1", -cx, 0.0, pad.0, pad.1),
+        rect_smd("2", cx, 0.0, pad.0, pad.1),
+    ];
+    let (bw, bh) = body;
+    let graphics = outlined_graphics(
+        &pads,
+        (-bw / 2.0, -bh / 2.0, bw / 2.0, bh / 2.0),
+        (-bw / 2.0 - 0.4, -bh / 2.0 - 0.4),
+    );
+    FootprintTemplate {
+        name: name.into(),
+        pads,
+        graphics,
+    }
+}
+
+/// Panasonic-style SMD aluminium electrolytic `CP_Elec_<D>x<L>`: land
+/// (centre x, pad w × h) per can, from KiCad 9's `Capacitor_SMD/CP_Elec_*`
+/// (Panasonic/Nichicon recommended land patterns). Pad 1 = +.
+fn cp_elec_land(d: &str, l: &str) -> Option<(f64, f64, f64)> {
+    Some(match (d, l) {
+        ("3", _) => (1.5, 2.2, 1.6),
+        ("4", _) => (1.8, 2.6, 1.6),
+        ("5", _) => (2.2, 3.0, 1.6),
+        ("6.3", "4.9" | "5.2" | "5.3" | "5.4" | "5.9" | "9.9") => (2.8, 3.5, 1.6),
+        ("6.3", _) => (2.7, 3.5, 1.6),
+        ("8", "5.4" | "6.2" | "6.5" | "6.7") => (3.05, 4.0, 2.5),
+        ("8", "6.9" | "11.9") => (3.475, 4.15, 1.9),
+        ("8", "10") => (3.25, 3.5, 2.5),
+        ("8", "10.5") => (3.7, 4.4, 2.5),
+        ("10", "10") => (4.0, 4.0, 2.5),
+        ("10", "7.7" | "7.9" | "12.6") => (4.35, 4.4, 1.9),
+        ("10", _) => (4.2, 4.4, 2.5),
+        ("16", _) => (6.25, 7.8, 9.6),
+        ("18", _) => (6.75, 8.8, 9.6),
+        _ => return None,
+    })
+}
+
+fn cp_elec(base: &str) -> Option<FootprintTemplate> {
+    let rest = base.split("CP_Elec_").nth(1)?;
+    let (d, tail) = rest.split_once('x')?;
+    let l: String = tail
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let (cx, w, h) = cp_elec_land(d, &l)?;
+    let dia: f64 = d.parse().ok()?;
+    let pads = vec![rect_smd("1", -cx, 0.0, w, h), rect_smd("2", cx, 0.0, w, h)];
+    let r = dia / 2.0 + 0.1;
+    let graphics = outlined_graphics(&pads, (-r, -r, r, r), (-r - 0.4, -r));
+    Some(FootprintTemplate {
+        name: format!("CP_Elec_{d}x{l}"),
+        pads,
+        graphics,
+    })
+}
+
 /// Molex Micro-Fit 3.0 dual-row headers, 3.00 mm pitch, Ø1.02 holes.
 /// - Right-angle 43045-xx00/01/02: Molex SD-43045-001 rev G — Ø3.00 locating
 ///   pegs 4.32 mm in front of the circuit-1 row (one centred peg up to 6
@@ -1544,6 +1659,33 @@ fn match_power_family(base: &str) -> Option<(FootprintTemplate, &'static str)> {
     if base.contains("ICM-42688") || base.contains("ICM42688") {
         return Some((icm42688(), "LGA-IMU"));
     }
+    if base.contains("TI_DGX") || base.contains("VSSOP-19") {
+        return Some((ti_dgx19(), "TI-DGX"));
+    }
+    if base.contains("SOT-563") {
+        return Some((sot563(), "SOT-563"));
+    }
+    // Bourns SRR1260 (12.5 × 12.5): bourns.com SRR1260 datasheet land
+    // pattern as captured in KiCad 9's `L_Bourns_SRR1260.kicad_mod`.
+    if base.contains("SRR1260") {
+        return Some((
+            smd_inductor("L_Bourns_SRR1260", 4.85, (2.9, 5.4), (12.5, 12.5)),
+            "SMD-Inductor",
+        ));
+    }
+    // Changjiang FXL1365 (12.9 × 12.6 × 6.5): cjiang FXL datasheet land
+    // pattern as captured in KiCad 9's `L_Changjiang_FXL1365.kicad_mod`.
+    if base.contains("FXL1365") {
+        return Some((
+            smd_inductor("L_Changjiang_FXL1365", 5.625, (3.25, 5.5), (12.9, 12.6)),
+            "SMD-Inductor",
+        ));
+    }
+    if base.contains("CP_Elec_") {
+        if let Some(t) = cp_elec(base) {
+            return Some((t, "CP_Elec"));
+        }
+    }
     if base.contains("XT30") && base.contains("2+2") {
         return Some((xt30pb_2p2(), "AMASS-XT"));
     }
@@ -1603,6 +1745,8 @@ fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'stat
         ("1210", "1210"),
         ("2010", "2010"),
         ("2512", "2512"),
+        ("1008", "1008"),
+        ("2520Metric", "1008"),
         ("1005Metric", "0402"),
         ("1608Metric", "0603"),
         ("2012Metric", "0805"),
@@ -3309,6 +3453,51 @@ mod tests {
         let t = power_fp("AMASS_XT60PB-M_Vertical", "AMASS-XT");
         assert!(close(drill(pads_of(&t, "1")[0]), 4.0));
         assert!(npths(&t).is_empty());
+    }
+
+    #[test]
+    fn ti_dgx19_matches_ti_land_pattern() {
+        let t = power_fp("VSSOP-19_3x4.9mm_P0.5mm_TI_DGX", "TI-DGX");
+        let nums = numbers(&t);
+        assert_eq!(nums.len(), 19);
+        assert!(!nums.contains(&"16"), "position 16 depopulated");
+        let p = |n: &str| pads_of(&t, n)[0];
+        // 4.40 between rows, 0.50 pitch, 1.45 × 0.30 lands.
+        assert!(close(p("20").position.x - p("1").position.x, 4.4));
+        assert!(close(p("1").position.y, p("20").position.y));
+        assert!(close(p("10").position.y, p("11").position.y));
+        assert!(close(p("2").position.y - p("1").position.y, 0.5));
+        assert!(
+            close(p("15").position.y, p("6").position.y),
+            "15 faces 6 (16 faces 5)"
+        );
+        assert_eq!(size(p("7")), (1.45, 0.3));
+    }
+
+    #[test]
+    fn sot563_srr1260_fxl1365_cp_elec_1008_resolve() {
+        let t = power_fp("SOT-563", "SOT-563");
+        assert_eq!(numbers(&t), ["1", "2", "3", "4", "5", "6"]);
+        let p = |t: &FootprintTemplate, n: &str| pads_of(t, n)[0].position;
+        assert!(close(p(&t, "6").x - p(&t, "1").x, 1.425) && close(p(&t, "6").y, p(&t, "1").y));
+        let t = power_fp("L_Bourns_SRR1260", "SMD-Inductor");
+        assert!(close(p(&t, "2").x - p(&t, "1").x, 9.7));
+        assert_eq!(size(pads_of(&t, "1")[0]), (2.9, 5.4));
+        let t = power_fp("L_Changjiang_FXL1365", "SMD-Inductor");
+        assert!(close(p(&t, "2").x - p(&t, "1").x, 11.25));
+        let t = power_fp("CP_Elec_8x6.9", "CP_Elec");
+        assert!(close(p(&t, "2").x - p(&t, "1").x, 6.95));
+        assert_eq!(size(pads_of(&t, "1")[0]), (4.15, 1.9));
+        let t = power_fp("Capacitor_SMD:CP_Elec_10x10.5", "CP_Elec");
+        assert!(close(p(&t, "2").x - p(&t, "1").x, 8.4));
+        assert!(
+            !resolve_footprint("CP_Elec_7x7", 2).matched,
+            "unknown can stays a placeholder"
+        );
+        let r = resolve_footprint("L_1008_2520Metric", 2);
+        assert!(r.matched);
+        let t = r.template.unwrap();
+        assert!(close(p(&t, "2").x - p(&t, "1").x, 2.15));
     }
 
     #[test]
