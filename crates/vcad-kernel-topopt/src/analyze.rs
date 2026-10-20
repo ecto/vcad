@@ -134,21 +134,147 @@ fn validate(spec: &AnalysisSpec) -> Result<(), AnalyzeError> {
     Ok(())
 }
 
+/// Natural-coordinate signs per local hex node (standard ordering).
+const THERMAL_SIGNS: [[f64; 3]; 8] = [
+    [-1.0, -1.0, -1.0],
+    [1.0, -1.0, -1.0],
+    [1.0, 1.0, -1.0],
+    [-1.0, 1.0, -1.0],
+    [-1.0, -1.0, 1.0],
+    [1.0, -1.0, 1.0],
+    [1.0, 1.0, 1.0],
+    [-1.0, 1.0, 1.0],
+];
+
 const SOLVE_TOL: f64 = 1e-8;
 const SOLVE_MAX_ITER: usize = 6000;
 
 /// Run a static solve on a prepared domain.
 pub fn analyze(domain: &Domain, spec: &AnalysisSpec) -> Result<StaticAnalysis, AnalyzeError> {
+    analyze_fields(domain, spec).map(|(a, _)| a)
+}
+
+/// Per-element result fields of a static solve, on the domain's full
+/// element grid (index `(iz * ny + iy) * nx + ix`; inactive elements are 0).
+#[derive(Debug, Clone)]
+pub struct StaticFields {
+    /// Element-centroid von Mises stress, MPa.
+    pub von_mises_mpa: Vec<f64>,
+    /// Displacement magnitude at the element centroid (mean of its 8
+    /// nodal displacement vectors), mm.
+    pub displacement_mm: Vec<f64>,
+    /// Element-centroid stress tensor, MPa, Voigt order
+    /// `[xx, yy, zz, xy, yz, xz]`. Linear in (loads, ΔT), so solutions
+    /// superpose — e.g. a reduced-order sweep over many thermal states.
+    pub stress_mpa: Vec<[f64; 6]>,
+}
+
+/// Von Mises equivalent of a Voigt stress `[xx, yy, zz, xy, yz, xz]`.
+pub fn von_mises(s: &[f64; 6]) -> f64 {
+    (0.5 * ((s[0] - s[1]).powi(2) + (s[1] - s[2]).powi(2) + (s[2] - s[0]).powi(2))
+        + 3.0 * (s[3] * s[3] + s[4] * s[4] + s[5] * s[5]))
+        .sqrt()
+}
+
+/// A thermal-expansion load: per-element temperature rise above the
+/// stress-free reference, applied as the isotropic initial strain
+/// `ε₀ = α·ΔT` (thermo-elastic coupling, one-way: the temperature field is
+/// an input, e.g. from vcad-kernel-thermal on the same grid).
+#[derive(Debug, Clone)]
+pub struct ThermalLoad {
+    /// ΔT per grid element (index `(iz * ny + iy) * nx + ix`), K. Entries
+    /// for inactive elements are ignored.
+    pub delta_t_k: Vec<f64>,
+    /// Linear expansion coefficient, 1/K (6061-T6: 23e-6).
+    pub alpha_per_k: f64,
+}
+
+/// [`analyze`], also returning the per-element stress and displacement
+/// fields (for field export / visualization).
+pub fn analyze_fields(
+    domain: &Domain,
+    spec: &AnalysisSpec,
+) -> Result<(StaticAnalysis, StaticFields), AnalyzeError> {
+    analyze_fields_thermal(domain, spec, None)
+}
+
+/// [`analyze_fields`] with an optional thermal-expansion load superposed on
+/// the mechanical loads. Stresses are `σ = C (ε − ε₀)`.
+///
+/// The equivalent nodal force of a uniform `ε₀` over a trilinear hex is
+/// exact with the centroid shape gradients: `∫ ∂N_k/∂x_a dV = s_k[a]·h²/4`,
+/// so `f_k,a = s_k[a]·h²/4 · E·(c1 + 2·c2)·α·ΔT` (the isotropic `C·ε₀`).
+pub fn analyze_fields_thermal(
+    domain: &Domain,
+    spec: &AnalysisSpec,
+    thermal: Option<&ThermalLoad>,
+) -> Result<(StaticAnalysis, StaticFields), AnalyzeError> {
+    analyze_fields_thermal_warm(domain, spec, thermal, &mut Vec::new())
+}
+
+/// [`analyze_fields_thermal`], warm-starting the PCG solve from `warm`
+/// (unit-E nodal displacements from a previous solve on the same domain
+/// and supports; resized/zeroed when it doesn't match) and leaving this
+/// solve's displacements there. For sequences of nearby load cases — the
+/// frames of a transient — this cuts iterations sharply; the converged
+/// answer is the same to solver tolerance.
+pub fn analyze_fields_thermal_warm(
+    domain: &Domain,
+    spec: &AnalysisSpec,
+    thermal: Option<&ThermalLoad>,
+    warm: &mut Vec<f64>,
+) -> Result<(StaticAnalysis, StaticFields), AnalyzeError> {
     validate(spec)?;
-    let sys = FeSystem::build(domain, spec.poisson, &spec.loads, &spec.supports)?;
+    if let Some(t) = thermal {
+        if t.delta_t_k.len() != domain.num_elements() || !t.alpha_per_k.is_finite() {
+            return Err(AnalyzeError::InvalidSpec(format!(
+                "thermal load needs one ΔT per grid element ({}), got {}",
+                domain.num_elements(),
+                t.delta_t_k.len()
+            )));
+        }
+    }
+    let mut sys = FeSystem::build(domain, spec.poisson, &spec.loads, &spec.supports)?;
+    // Isotropic C·ε₀ per unit (α·ΔT), unit E.
+    let c_iso = {
+        let nu = spec.poisson;
+        ((1.0 - nu) + 2.0 * nu) / ((1.0 + nu) * (1.0 - 2.0 * nu))
+    };
+    // ε₀ per active element (by position in `sys.edofs`).
+    let eps0: Vec<f64> = match thermal {
+        Some(t) => sys
+            .active_elems
+            .iter()
+            .map(|&e| t.alpha_per_k * t.delta_t_k[e as usize])
+            .collect(),
+        None => vec![0.0; sys.active_elems.len()],
+    };
+    if thermal.is_some() {
+        // Real thermal forces scaled into the unit-E system: the solve below
+        // divides every load by E, so add E·g here.
+        let w = spec.youngs_modulus_mpa * c_iso * domain.h * domain.h / 4.0;
+        for (ei, dofs) in sys.edofs.iter().enumerate() {
+            for (k, sg) in THERMAL_SIGNS.iter().enumerate() {
+                for a in 0..3 {
+                    let d = dofs[3 * k + a] as usize;
+                    if !sys.fixed[d] {
+                        sys.f[d] += sg[a] * w * eps0[ei];
+                    }
+                }
+            }
+        }
+    }
 
     // Solve at unit Young's modulus; linear elasticity lets us rescale.
     let scales = vec![1.0f64; sys.active_elems.len()];
-    let mut u = vec![0.0f64; sys.ndof];
-    let relres = sys.solve(&scales, &mut u, SOLVE_TOL, SOLVE_MAX_ITER);
+    if warm.len() != sys.ndof {
+        *warm = vec![0.0f64; sys.ndof];
+    }
+    let u: &mut [f64] = warm;
+    let relres = sys.solve(&scales, u, SOLVE_TOL, SOLVE_MAX_ITER);
     let e = spec.youngs_modulus_mpa;
     // u_real = u_unit / E; compliance_real = fᵀu / E.
-    let compliance = sys.f.iter().zip(&u).map(|(a, b)| a * b).sum::<f64>() / e;
+    let compliance = sys.f.iter().zip(u.iter()).map(|(a, b)| a * b).sum::<f64>() / e;
 
     // Max nodal displacement.
     let mut max_disp = 0.0f64;
@@ -183,6 +309,11 @@ pub fn analyze(domain: &Domain, spec: &AnalysisSpec) -> Result<StaticAnalysis, A
         [-1.0, 1.0, 1.0],
     ];
     let inv4h = 1.0 / (4.0 * domain.h);
+    let mut fields = StaticFields {
+        von_mises_mpa: vec![0.0; domain.num_elements()],
+        stress_mpa: vec![[0.0; 6]; domain.num_elements()],
+        displacement_mm: vec![0.0; domain.num_elements()],
+    };
     let mut max_vm = 0.0f64;
     let mut max_vm_elem = 0u32;
     for (ei, dofs) in sys.edofs.iter().enumerate() {
@@ -200,14 +331,27 @@ pub fn analyze(domain: &Domain, spec: &AnalysisSpec) -> Result<StaticAnalysis, A
             eps[4] += dz * uy + dy * uz;
             eps[5] += dz * ux + dx * uz;
         }
-        // Stress (the unit E cancels against 1/E on u, so this is real MPa).
-        let sx = c1 * eps[0] + c2 * (eps[1] + eps[2]);
-        let sy = c1 * eps[1] + c2 * (eps[0] + eps[2]);
-        let sz = c1 * eps[2] + c2 * (eps[0] + eps[1]);
+        // Stress (the unit E cancels against 1/E on u, so this is real MPa),
+        // minus the thermal initial stress E·C·ε₀ on the normal components.
+        let s0 = e * c_iso * eps0[ei];
+        let sx = c1 * eps[0] + c2 * (eps[1] + eps[2]) - s0;
+        let sy = c1 * eps[1] + c2 * (eps[0] + eps[2]) - s0;
+        let sz = c1 * eps[2] + c2 * (eps[0] + eps[1]) - s0;
         let (txy, tyz, txz) = (g * eps[3], g * eps[4], g * eps[5]);
         let vm = (0.5 * ((sx - sy).powi(2) + (sy - sz).powi(2) + (sz - sx).powi(2))
             + 3.0 * (txy * txy + tyz * tyz + txz * txz))
             .sqrt();
+        let grid_e = sys.active_elems[ei] as usize;
+        fields.von_mises_mpa[grid_e] = vm;
+        fields.stress_mpa[grid_e] = [sx, sy, sz, txy, tyz, txz];
+        let mut mean = [0.0f64; 3];
+        for k in 0..8 {
+            for (a, m) in mean.iter_mut().enumerate() {
+                *m += u[dofs[3 * k + a] as usize] / 8.0;
+            }
+        }
+        fields.displacement_mm[grid_e] =
+            (mean[0].powi(2) + mean[1].powi(2) + mean[2].powi(2)).sqrt() / e;
         if vm > max_vm {
             max_vm = vm;
             max_vm_elem = sys.active_elems[ei];
@@ -234,17 +378,20 @@ pub fn analyze(domain: &Domain, spec: &AnalysisSpec) -> Result<StaticAnalysis, A
         domain.origin[2] + (eiz as f64 + 0.5) * domain.h,
     ];
 
-    Ok(StaticAnalysis {
-        compliance_n_mm: compliance,
-        max_displacement_mm,
-        max_displacement_at: domain.node_pos(nix, niy, niz),
-        max_von_mises_mpa: max_vm,
-        max_stress_at: ecenter,
-        grid: [domain.nx, domain.ny, domain.nz],
-        voxel_size_mm: domain.h,
-        relative_residual: relres,
-        converged: relres < 1e-6,
-    })
+    Ok((
+        StaticAnalysis {
+            compliance_n_mm: compliance,
+            max_displacement_mm,
+            max_displacement_at: domain.node_pos(nix, niy, niz),
+            max_von_mises_mpa: max_vm,
+            max_stress_at: ecenter,
+            grid: [domain.nx, domain.ny, domain.nz],
+            voxel_size_mm: domain.h,
+            relative_residual: relres,
+            converged: relres < 1e-6,
+        },
+        fields,
+    ))
 }
 
 /// Analyze an axis-aligned solid box.

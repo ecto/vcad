@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-coupled-multiphysics-bracket",
+  "version": "undefined",
+  "date": "2026-10-20",
+  "category": "feat",
+  "title": "Thermal-expansion stress in voxel FEA",
+  "summary": "analyze_fields_thermal adds α·ΔT initial strain to static voxel FEA; the bracket demo now chains busbar Joule heat → temperature → thermal + load stress.",
+  "features": ["fea", "thermal", "em", "simulation"]
+}

@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-multiphysics-field-stack",
+  "version": "undefined",
+  "date": "2026-10-20",
+  "category": "feat",
+  "title": "Multiphysics field stacks on the part",
+  "summary": "View thermal, stress, displacement and EM fields on one part, compressed 70x with per-layer error bounds; surface, slice and probe views in web and macOS.",
+  "features": ["viewport", "simulation", "thermal", "fea", "em", "compression", "native"]
+}

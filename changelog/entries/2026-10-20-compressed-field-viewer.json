@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-compressed-field-viewer",
+  "version": "undefined",
+  "date": "2026-10-20",
+  "category": "feat",
+  "title": "View error-bounded compressed solver fields",
+  "summary": "Load a tang-compress field (?field=...), decode it in-browser on WebGPU or WASM, and view a colormapped slice with its max-error bound and native hash check.",
+  "features": ["viewport", "simulation", "thermal", "compression"]
+}

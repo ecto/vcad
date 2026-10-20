@@ -1,0 +1,1 @@
+{"field":"temperature_c","source":"vcad-kernel-thermal hot_chip h=10 k=[15,15,0.4]","dims_zyx":[16,128,128],"origin_mm":[0.0, 0.0, 0.0],"voxel_mm":[0.78125, 0.78125, 0.1625],"min":25,"max":74.62377,"t_max_c":74.62377300835479,"energy_residual_rel":3.286149130588001e-12}
