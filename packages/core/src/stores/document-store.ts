@@ -881,11 +881,12 @@ function setCrdtConstraints(
 ): Partial<DocumentState> {
   const fid = getOrCreateConstraintsFeature(state);
   if (!fid) return {};
-  const result = state._crdtEngine!.set_param(
-    fid,
-    "constraints",
-    JSON.stringify(crdtStr(JSON.stringify(constraints))),
-  );
+  const result = applyCommand(state._crdtEngine!, {
+    type: "set_param",
+    id: fid,
+    key: "constraints",
+    value: crdtStr(JSON.stringify(constraints)),
+  });
   return applyLegacyResult(result);
 }
 
@@ -920,14 +921,14 @@ function getPcbBoardFeatureId(state: DocumentState): string {
 /** Write the entire schematic sheet back to the CRDT feature. */
 function setCrdtSchematic(state: DocumentState, schematic: NonNullable<Document["schematic"]>): void {
   const schId = getOrCreateSchematicFeature(state);
-  state._crdtEngine!.set_param(schId, "sheet", JSON.stringify(crdtStr(JSON.stringify(schematic))));
+  applyCommand(state._crdtEngine!, { type: "set_param", id: schId, key: "sheet", value: crdtStr(JSON.stringify(schematic)) });
 }
 
 /** Write the entire PCB board back to the CRDT pcb-board feature. */
 function setCrdtPcb(state: DocumentState, pcb: Pcb): Partial<DocumentState> {
   const pcbFid = getPcbBoardFeatureId(state);
   if (!pcbFid) return {};
-  const result = state._crdtEngine!.set_param(pcbFid, "board", JSON.stringify(crdtStr(JSON.stringify(pcb))));
+  const result = applyCommand(state._crdtEngine!, { type: "set_param", id: pcbFid, key: "board", value: crdtStr(JSON.stringify(pcb)) });
   return applyLegacyResult(result);
 }
 
@@ -2171,7 +2172,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const state = get();
     const schId = getOrCreateSchematicFeature(state);
     const sheet = { title: title ?? "Sheet 1", components: [], wires: [], junctions: [], labels: [] };
-    const result = state._crdtEngine!.set_param(schId, "sheet", JSON.stringify(crdtStr(JSON.stringify(sheet))));
+    const result = applyCommand(state._crdtEngine!, { type: "set_param", id: schId, key: "sheet", value: crdtStr(JSON.stringify(sheet)) });
     set(applyLegacyResult(result));
   },
 
