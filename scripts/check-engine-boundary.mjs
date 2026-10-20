@@ -15,10 +15,26 @@
 import { readdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { join, relative, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const baselinePath = join(root, "scripts", "engine-boundary-baseline.json");
 const update = process.argv.includes("--update");
+
+// Count only git-tracked sources. Gitignored build outputs (e.g.
+// `*.generated.ts`) otherwise inflate the counts on any checkout that has
+// built, so a local `--update` wrote a baseline CI could never reproduce.
+let tracked = null;
+try {
+  tracked = new Set(
+    execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" })
+      .split("\0")
+      .filter(Boolean)
+      .map((f) => join(root, f)),
+  );
+} catch {
+  // Not a git checkout (e.g. a tarball): fall back to the filesystem walk.
+}
 
 function walk(dir, out = []) {
   if (!existsSync(dir)) return out;
@@ -32,6 +48,7 @@ function walk(dir, out = []) {
       continue; // dangling symlink (e.g. core/src/CHANGELOG.json before the changelog build)
     }
     if (isDir) walk(p, out);
+    else if (tracked && !tracked.has(p)) continue;
     else if (/\.(ts|tsx)$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name) && !name.endsWith(".d.ts")) out.push(p);
   }
   return out;
