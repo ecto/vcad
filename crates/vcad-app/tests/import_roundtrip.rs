@@ -98,6 +98,20 @@ fn every_fixture_round_trips() {
             );
         } else {
             assert_eq!(back.roots.len(), original.roots.len(), "{name}: root count");
+            let looks = |d: &vcad_ir::Document| {
+                let mut v: Vec<(String, Option<bool>)> = d
+                    .roots
+                    .iter()
+                    .map(|r| (r.material.clone(), r.visible.filter(|v| !v)))
+                    .collect();
+                v.sort();
+                v
+            };
+            assert_eq!(
+                looks(&back),
+                looks(&original),
+                "{name}: root materials/visibility"
+            );
             let (got, want) = (volumes(&back), volumes(&original));
             assert_eq!(got.len(), want.len(), "{name}: solid count");
             for (g, w) in got.iter().zip(&want) {
