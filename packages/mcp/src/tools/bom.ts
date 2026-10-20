@@ -30,6 +30,7 @@ import { ownerId, type FabricateStore } from "../fabricate/store.js";
 import { estimateLandedCost } from "../fabricate/pricing.js";
 import { PROCESSES } from "../fabricate/types.js";
 import { mechCatalog, type MechPart } from "./mech-parts.js";
+import { setBomLinesResolver } from "./part-stock.js";
 import { documents } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
@@ -130,6 +131,22 @@ export function clearBoms(): void {
 function getBom(owner: string, bomId: string): Bom | null {
   return memBoms.get(bomKey(owner, bomId)) ?? null;
 }
+
+// bom_check_stock reads a BOM's COTS lines (MPN = example_pn, else spec).
+setBomLinesResolver((bomId, ctx) => {
+  const user = (ctx as { user?: AuthUser | null } | undefined)?.user ?? null;
+  const bom = getBom(ownerId(user), bomId);
+  if (!bom) return null;
+  return bom.lines
+    .filter((l): l is BomLineCots => l.kind === "cots")
+    .filter((l) => (l.example_pn ?? l.spec ?? "").trim() !== "")
+    .map((l) => ({
+      name: l.name,
+      part: (l.example_pn ?? l.spec) as string,
+      qty: l.qty,
+      noted_lcsc: l.notes?.match(/\bLCSC\s+(C\d+)/i)?.[1] ?? null,
+    }));
+});
 
 // ── money helpers ────────────────────────────────────────────────────────────
 

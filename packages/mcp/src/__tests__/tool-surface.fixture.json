@@ -783,6 +783,89 @@
     }
   },
   {
+    "name": "check_part_stock",
+    "title": "Check Part Stock",
+    "description": "Live stock + price check for electronic parts against public LCSC and JLCPCB listings (no credentials). Accepts an MPN, an LCSC#, or a passive spec line ('RES 10k 0603'). Returns LCSC and JLC-assembly stock, the USD price ladder, the JLC basic/extended library tier, lifecycle/EOL, and, when the part is in vcad's curated orderable DB, its verified LCSC#, footprint, verification record, and alternatives. Cached (15 min), rate-limited, and with timeouts. When offline it falls back to the DB's identity data and reports no stock.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "MPN (e.g. 'TPS48110AQDGXRQ1'), LCSC# (e.g. 'C7519'), or a passive spec line ('RES 10k 0603', 'CAP 100nF 50V 0603')."
+        },
+        "queries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Several queries at once (rate-limited, cached)."
+        },
+        "qty": {
+          "type": "integer",
+          "description": "Quantity needed — spec queries prefer a candidate with at least this much stock. Default 1."
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
+    "name": "bom_check_stock",
+    "title": "Check BOM Stock",
+    "description": "Annotate a BOM with live LCSC/JLCPCB stock and price. Takes a bom_id, BOM CSV text, or inline lines (MPN / LCSC# / passive spec + qty per board). Returns per-line stock, price ladder, and extended cost at each build quantity (default 5 and 100 boards, honouring LCSC minimum order), totals, and flags: missing, out_of_stock, low_stock, eol, db_flagged/db_corrected (the curated DB found the MPN wrong or unorderable), lcsc_mismatch (the line's noted LCSC# is a different part), footprint_placeholder. Flagged lines include alternatives.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "bom_id": {
+          "type": "string",
+          "description": "A BOM from bom_create (its COTS lines are checked)."
+        },
+        "csv": {
+          "type": "string",
+          "description": "BOM CSV text in the bom_export csv shape (kind,name,…,example_pn,…,qty,…,notes)."
+        },
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "part": {
+                "type": "string"
+              },
+              "qty": {
+                "type": "number"
+              },
+              "noted_lcsc": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "part",
+              "qty"
+            ]
+          },
+          "description": "Inline lines: part = MPN / LCSC# / passive spec, qty per board."
+        },
+        "builds": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "description": "Board build quantities to cost (default [5, 100])."
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
+    }
+  },
+  {
     "name": "share_session",
     "title": "Share Session",
     "description": "Share this session as a live, watchable link (mcp.vcad.io/live/<id>). Sessions are PRIVATE by default — this is the explicit opt-in that makes one viewable. Anyone with the returned link can watch the geometry + full event log (read-only) and drop annotations, so the result includes a clear public-link warning. Revoke anytime with unshare_session.",

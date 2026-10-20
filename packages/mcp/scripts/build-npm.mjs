@@ -44,6 +44,7 @@ const buildTime = new Date().toISOString();
 run("node", [join(mcpDir, "scripts", "wrap-viewer.mjs")]);
 run("node", [join(mcpDir, "scripts", "wrap-live.mjs")]);
 run("node", [join(mcpDir, "scripts", "gen-mech-catalog.mjs")]);
+run("node", [join(mcpDir, "scripts", "gen-orderable-catalog.mjs")]);
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });

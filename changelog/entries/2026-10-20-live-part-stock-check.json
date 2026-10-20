@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-20-live-part-stock-check",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "feat",
+  "title": "Orderable parts DB + live LCSC/JLCPCB stock check",
+  "summary": "Curated MPN DB with verified LCSC numbers and footprint mapping; check_part_stock and bom_check_stock fetch live stock, price breaks and basic/extended status, and flag missing parts.",
+  "features": ["parts", "bom", "ecad", "sourcing"],
+  "mcpTools": ["check_part_stock", "bom_check_stock", "search_electronic_parts", "resolve_part", "find_alternatives"]
+}

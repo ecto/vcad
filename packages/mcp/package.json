@@ -21,7 +21,7 @@
   "scripts": {
     "build:viewer": "vite build --config vite.viewer.config.ts && node scripts/wrap-viewer.mjs",
     "build:live": "vite build --config vite.live.config.ts && node scripts/wrap-live.mjs",
-    "build:mech-catalog": "node scripts/gen-mech-catalog.mjs",
+    "build:mech-catalog": "node scripts/gen-mech-catalog.mjs && node scripts/gen-orderable-catalog.mjs",
     "build": "npm run build:viewer && npm run build:live && npm run build:mech-catalog && tsc --noCheck",
     "typecheck": "npm run build:viewer && npm run build:live && npm run build:mech-catalog && tsc --noEmit",
     "test": "npm run build:mech-catalog && vitest run",

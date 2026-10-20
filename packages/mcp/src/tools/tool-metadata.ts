@@ -102,6 +102,8 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   bom_add_line: { title: "Add BOM Line", annotations: RW },
   bom_export: { title: "Export BOM", annotations: RW },
   search_mechanical_parts: { title: "Search Mechanical Parts", annotations: RO_NET },
+  check_part_stock: { title: "Check Part Stock", annotations: RO_NET },
+  bom_check_stock: { title: "Check BOM Stock", annotations: RO_NET },
 
   // ── Live review window ─────────────────────────────────────────────────
   share_session: { title: "Share Session", annotations: RW },
