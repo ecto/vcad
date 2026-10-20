@@ -11,6 +11,8 @@ function makeMockDocStore(parts: MockPart[] = []) {
     partIndex,
     parts,
     document: { nodes: {} as Record<string, unknown>, roots: [] },
+    // Pre-apply_tool kernel: exercises the TS fallback path.
+    applyTool: () => null,
     addPrimitive: (kind: string) => {
       const id = `mock:${nextId++}`;
       partIndex.set(id, { id, name: kind, kind });
@@ -478,5 +480,64 @@ describe("CommandRegistry", () => {
       expect(result.status).toBe("error");
       expect(result.display).toBeUndefined();
     });
+  });
+});
+
+describe("executeCrud via the Rust engine (applyTool)", () => {
+  function engineDoc(envelope: unknown) {
+    const calls: Array<[string, unknown]> = [];
+    const doc = makeMockDocStore() as unknown as Record<string, unknown>;
+    doc.applyTool = (tool: string, args: unknown) => {
+      calls.push([tool, args]);
+      return envelope;
+    };
+    return { doc: doc as never, calls };
+  }
+  const ok = (createdFeatureId?: string) => ({
+    ok: true,
+    result: { document: { nodes: {}, roots: [] }, parts: [], consumedPartIds: [], createdFeatureId },
+  });
+
+  it("routes create through applyTool and selects the new part", () => {
+    const { doc, calls } = engineDoc(ok("5:0"));
+    const ui = makeMockUiStore() as unknown as { selectedPartIds: Set<string> };
+    const result = executeCrud("create", { type: "cube", params: { size: { x: 1, y: 2, z: 3 } } }, doc, ui as never);
+    expect(result.status).toBe("success");
+    expect(result.partId).toBe("5:0");
+    expect(ui.selectedPartIds.has("5:0")).toBe(true);
+    expect(calls[0]![0]).toBe("create");
+    expect(result.display!.fields).toContainEqual({ label: "size", value: "(1, 2, 3)" });
+  });
+
+  it("fills boolean operands from a two-part selection", () => {
+    const { doc, calls } = engineDoc(ok("9:0"));
+    const ui = makeMockUiStore() as unknown as { select: (id: string) => void };
+    ui.select("a");
+    ui.select("b");
+    executeCrud("create", { type: "difference", params: {} }, doc, ui as never);
+    expect((calls[0]![1] as { params: unknown }).params).toEqual({ left: "a", right: "b" });
+  });
+
+  it("surfaces engine refusals as errors", () => {
+    const { doc } = engineDoc({ ok: false, error: { kind: "unknown_id", id: "x", message: "no feature with id `x`" } });
+    const result = executeCrud("mirror", { child: "x", plane: "XY" }, doc, makeMockUiStore());
+    expect(result).toMatchObject({ status: "error", result: "no feature with id `x`" });
+  });
+
+  it("routes edits through the engine and clears selection on delete", () => {
+    const { doc, calls } = engineDoc(ok());
+    const ui = makeMockUiStore() as unknown as { select: (id: string) => void; selectedPartIds: Set<string> };
+    ui.select("p1");
+    const res = executeCrud("delete", { part_id: "p1" }, doc, ui as never);
+    expect(res).toMatchObject({ status: "success", result: "Applied delete to p1" });
+    expect(ui.selectedPartIds.size).toBe(0);
+    executeCrud("set_material", { selector: { by: "kind", value: "cube" }, material: "steel" }, doc, ui as never);
+    expect(calls.map((c) => c[0])).toEqual(["delete", "set_material"]);
+  });
+
+  it("falls through to the TS path for tools the engine reports unsupported", () => {
+    const { doc } = engineDoc({ ok: false, error: { kind: "unsupported", tool: "tube", message: "" } });
+    const result = executeCrud("create", { type: "tube", params: {} }, doc, makeMockUiStore());
+    expect(result.result).toBe("tube requires start and end points");
   });
 });

@@ -9,6 +9,7 @@ description = "CRDT document model for vcad — conflict-free replicated data ty
 publish = false
 
 [dependencies]
+ts-rs = { version = "10", optional = true }
 serde.workspace = true
 serde_json.workspace = true
 
@@ -16,3 +17,6 @@ serde_json.workspace = true
 js-sys = "0.3"
 
 [dev-dependencies]
+
+[features]
+ts-rs = ["dep:ts-rs"]

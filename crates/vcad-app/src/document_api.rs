@@ -209,7 +209,14 @@ impl DocumentApi {
     /// Reorder a feature to a new position.
     pub fn reorder_feature(&mut self, stable_id: &str, new_index: u32) -> ApiResult {
         if let Some(fid) = self.stable_ids.resolve(stable_id) {
-            let ordered = self.crdt.ordered_features();
+            // Neighbours are computed without the moving feature, so `index`
+            // is its final position in the list.
+            let ordered: Vec<_> = self
+                .crdt
+                .ordered_features()
+                .into_iter()
+                .filter(|(id, _)| *id != fid)
+                .collect();
             let idx = new_index as usize;
 
             let before = if idx > 0 {
@@ -311,6 +318,69 @@ impl DocumentApi {
         Ok(api)
     }
 
+    /// Replace the document contents with a snapshot from [`save`](Self::save),
+    /// keeping the name. Used to roll back a failed command batch.
+    pub(crate) fn restore(&mut self, bytes: &[u8]) {
+        if let Ok(crdt) = CrdtDocument::load(bytes) {
+            self.crdt = crdt;
+            self.stable_ids.rebuild(&self.crdt);
+        }
+    }
+
+    /// Whether `stable_id` names a live (not deleted) feature.
+    pub fn feature_exists(&self, stable_id: &str) -> bool {
+        self.stable_ids.resolve(stable_id).is_some_and(|fid| {
+            self.crdt
+                .ordered_features()
+                .iter()
+                .any(|(id, _)| *id == fid)
+        })
+    }
+
+    /// A feature's `Vec3` param (e.g. `offset`, `rotation`), if set.
+    pub fn feature_vec3(&self, stable_id: &str, key: &str) -> Option<[f64; 3]> {
+        let fid = self.stable_ids.resolve(stable_id)?;
+        let ordered = self.crdt.ordered_features();
+        let (_, feature) = ordered.iter().find(|(id, _)| *id == fid)?;
+        match &feature.params.get(key)?.0 {
+            Value::Vec3(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// World-space bounding box `(min, max)` of a part, by evaluating its
+    /// root node with the full `vcad-eval` evaluator (transforms included).
+    /// `None` for an unknown id or a part that produces no solid.
+    pub fn part_world_bbox(&self, stable_id: &str) -> Option<([f64; 3], [f64; 3])> {
+        let state = self.get_state();
+        let part = state.parts.iter().find(|p| p.id() == stable_id)?;
+        let mut cache = HashMap::new();
+        let solid = vcad_eval::evaluate::evaluate_node(
+            part.root_node_id(),
+            &state.document.nodes,
+            &mut cache,
+        )
+        .ok()??;
+        Some(solid.bounding_box())
+    }
+
+    /// Deterministic fingerprint of the materialized state (IR document +
+    /// parts): FNV-1a 64 over key-sorted JSON, as 16 hex digits. The parity
+    /// harness compares it across native, WASM and C-ABI hosts, so it must
+    /// not depend on map iteration order or serde feature unification.
+    pub fn state_hash(&self) -> String {
+        let state = self.get_state();
+        let value = serde_json::json!({ "document": state.document, "parts": state.parts });
+        let mut canonical = String::new();
+        write_canonical(&value, &mut canonical);
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in canonical.bytes() {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        format!("{h:016x}")
+    }
+
     /// Import IR JSON into the document.
     pub fn import_ir(&mut self, ir_json: &str) -> ApiResult {
         if let Ok(doc) = serde_json::from_str::<vcad_ir::Document>(ir_json) {
@@ -403,6 +473,38 @@ impl DocumentApi {
     fn build_result(&self, created_id: Option<String>) -> ApiResult {
         let result = materialize(&self.crdt);
         ApiResult::from_materialize(result, created_id)
+    }
+}
+
+/// Serialize `v` as JSON with object keys sorted.
+fn write_canonical(v: &serde_json::Value, out: &mut String) {
+    use serde_json::Value as J;
+    match v {
+        J::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, k) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&J::String(k.clone()).to_string());
+                out.push(':');
+                write_canonical(&map[k], out);
+            }
+            out.push('}');
+        }
+        J::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_canonical(item, out);
+            }
+            out.push(']');
+        }
+        other => out.push_str(&other.to_string()),
     }
 }
 

@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-ai-update-targets-owner",
+  "version": "undefined",
+  "date": "2026-10-20",
+  "category": "fix",
+  "title": "AI edits change the part you asked for",
+  "summary": "AI update calls now change the part that owns the given node instead of the first part in the document, and bulk material changes refuse unknown parts instead of half-applying.",
+  "features": ["ai", "chat"]
+}

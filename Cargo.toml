@@ -91,7 +91,6 @@ members = [
     "crates/vcad-embroidery",
     "crates/vcad-embroidery-pes",
     "crates/vcad-embroidery-dst",
-    "crates/vcad-desktop",
     "crates/vcad-ffi",
     "crates/vcad-tool-derive",
     "crates/vcad-i18n",
@@ -99,10 +98,6 @@ members = [
     "mecheval/graders",
 ]
 
-# vcad-desktop pulls in tauri/gtk/atk which requires system dev libraries
-# on Linux. Keep it out of the default build set so bare `cargo build`,
-# `cargo test`, and `cargo clippy` work on stock dev boxes; CI or whoever
-# is actually working on the desktop shell opts in with `-p vcad-desktop`.
 default-members = [
     "crates/vcad-ir",
     "crates/vcad-receipt",

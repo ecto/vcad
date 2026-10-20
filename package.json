@@ -10,12 +10,9 @@
     "dev": "turbo dev",
     "build:mecheval": "npm run build -w @mecheval/harness && npm run build -w @mecheval/leaderboard",
     "changelog:build": "node scripts/build-changelog.mjs",
-    "ir:gen": "cargo test -p vcad-ir -p vcad-receipt --features vcad-ir/ts-rs,vcad-receipt/ts-rs export_bindings -- --ignored && node scripts/gen-ir-types.mjs",
-    "ir:check": "cargo test -p vcad-ir -p vcad-receipt --features vcad-ir/ts-rs,vcad-receipt/ts-rs export_bindings -- --ignored && node scripts/gen-ir-types.mjs --check",
+    "ir:gen": "cargo test -p vcad-ir -p vcad-receipt -p vcad-app --features vcad-ir/ts-rs,vcad-receipt/ts-rs,vcad-app/ts-rs export_bindings -- --ignored && node scripts/gen-ir-types.mjs",
+    "ir:check": "cargo test -p vcad-ir -p vcad-receipt -p vcad-app --features vcad-ir/ts-rs,vcad-receipt/ts-rs,vcad-app/ts-rs export_bindings -- --ignored && node scripts/gen-ir-types.mjs --check",
     "build:ecad-diff-wasm": "wasm-pack build crates/vcad-ecad-diff-wasm --target nodejs --out-dir pkg",
-    "tauri": "cd crates/vcad-desktop && tauri",
-    "tauri:dev": "cd crates/vcad-desktop && tauri dev",
-    "tauri:build": "cd crates/vcad-desktop && tauri build",
     "version:sync": "node scripts/sync-version.mjs",
     "version:check": "node scripts/sync-version.mjs --check",
     "publish:crates": "node scripts/publish-crates.mjs",
@@ -23,7 +20,6 @@
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
-    "@tauri-apps/cli": "^2",
     "turbo": "^2"
   },
   "overrides": {

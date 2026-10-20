@@ -79,7 +79,7 @@ jobs:
           cargo metadata --no-deps --format-version 1 \
             | python3 -c "import json,sys; d=json.load(sys.stdin); print('\n'.join(p['name'] for p in d['packages']))" \
             | xargs -n 1 -I{} cargo fmt -p {} --check
-      - run: cargo clippy --workspace --exclude vcad-desktop -- -D warnings
+      - run: cargo clippy --workspace -- -D warnings
       - name: Install nextest
         uses: taiki-e/install-action@v2
         with:
@@ -88,18 +88,18 @@ jobs:
       # actual bottleneck. Keep optimized test builds: the numerics tests are
       # dramatically slower without them.
       - name: Compile Rust tests
-        run: cargo nextest run --workspace --exclude vcad-desktop --profile ci --no-run --timings
+        run: cargo nextest run --workspace --profile ci --no-run --timings
       # Schedule tests across binaries instead of serializing entire binaries.
       # Keep collecting failures across the full workspace, with no retries.
       - name: Run Rust tests
         id: rust-tests
-        run: cargo nextest run --workspace --exclude vcad-desktop --profile ci --no-fail-fast
+        run: cargo nextest run --workspace --profile ci --no-fail-fast
       # nextest does not execute doctests; retain cargo's coverage explicitly.
       - name: Rust doctests
         if: ${{ !cancelled() && (success() || steps.rust-tests.outcome == 'failure') }}
-        run: cargo test --workspace --exclude vcad-desktop --doc --no-fail-fast
-      - run: cargo build --workspace --exclude vcad-desktop --examples
-      - run: cargo doc --workspace --exclude vcad-desktop --no-deps
+        run: cargo test --workspace --doc --no-fail-fast
+      - run: cargo build --workspace --examples
+      - run: cargo doc --workspace --no-deps
       # packages/ir/src/generated.ts is generated from the Rust `vcad-ir` types
       # via ts-rs (`npm run ir:gen`). Fail if the committed file has drifted —
       # i.e. an IR type changed without regenerating. Unlike the wasm-bindgen

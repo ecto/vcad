@@ -292,8 +292,7 @@ async function fetchDocumentData(): Promise<DocumentBootData> {
     }
 
     // The doc the user had open last session. This is the primary fallback for
-    // Tauri (where the webview always reloads `/`) and for web users who land
-    // back on `/`. We only fall through to "most recent by modifiedAt" when
+    // web users who land back on `/`. We only fall through to "most recent by modifiedAt" when
     // the slot is empty or its target was deleted, so a sync write that
     // bumps another doc's modifiedAt can no longer steal startup.
     const lastOpenedId = getLastOpenedDocId();

@@ -29,6 +29,8 @@ vcad-kernel-raytrace = { workspace = true, features = ["gpu"] }
 vcad-kernel-gpu = { workspace = true }
 pollster = { workspace = true }
 vcad-eval = { workspace = true }
+vcad-app = { workspace = true }
+vcad-crdt = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-loon = { workspace = true }
 vcad-ecad-pcb = { workspace = true }

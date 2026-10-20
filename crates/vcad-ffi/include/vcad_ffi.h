@@ -18,6 +18,22 @@ extern "C" {
 char *vcad_cam_generate(const char *request_json);
 void vcad_cam_free(char *json);
 
+/* Document engine: the shared DocCommand vocabulary (see vcad_app::command).
+ * vcad_engine_apply takes a UTF-8 JSON command and returns an owned JSON
+ * envelope {"ok":true,"result":{...}} or {"ok":false,"error":{...}};
+ * null only for a null argument or panic (read vcad_last_error).
+ * Free results with vcad_engine_string_free, engines with vcad_engine_free. */
+typedef struct VcadEngine VcadEngine;
+VcadEngine *vcad_engine_new(uint64_t replica_id);
+char *vcad_engine_apply(VcadEngine *engine, const char *command_json);
+/* Lower an AI tool call (create, translate, linear_pattern, ...) in Rust and
+ * apply it; same envelope. Unhandled tools report error kind "unsupported". */
+char *vcad_engine_apply_tool(VcadEngine *engine, const char *tool, const char *args_json);
+/* Deterministic state fingerprint (16 hex digits); free with vcad_engine_string_free. */
+char *vcad_engine_state_hash(const VcadEngine *engine);
+void vcad_engine_string_free(char *json);
+void vcad_engine_free(VcadEngine *engine);
+
 
 typedef struct VcadSolid VcadSolid;
 typedef struct VcadMesh VcadMesh;

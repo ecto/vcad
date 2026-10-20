@@ -6,17 +6,9 @@
  * panel's scrub inputs and the document store's mutation path.
  */
 
-/**
- * CRDT parameter value — matches Rust vcad_crdt::Value enum.
- */
-export type CrdtValue =
-  | { F64: number }
-  | { Vec3: [number, number, number] }
-  | { Bool: boolean }
-  | { String: string }
-  | { FeatureRef: string }
-  | { FeatureRefList: string[] }
-  | { Sketch: string };
+import type { CrdtValue } from "@vcad/ir";
+
+export type { CrdtValue };
 
 /** Helper to create CrdtValue from a number */
 export const f64 = (v: number): CrdtValue => ({ F64: v });

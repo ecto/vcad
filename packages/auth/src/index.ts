@@ -4,17 +4,11 @@ export {
   getAuthRedirectUrl,
   getSupabase,
   isAuthEnabled,
-  isTauriRuntime,
   requireSupabase,
 } from "./client";
 
-// Desktop deep-link auth bridge
-export {
-  applyAuthCallback,
-  handleAuthDeepLink,
-  isAuthDeepLink,
-  type AuthDeepLinkResult,
-} from "./auth-deep-link";
+// Auth callback handling (used by the popup OAuth flow)
+export { applyAuthCallback, type AuthCallbackResult } from "./auth-callback";
 
 // Web popup OAuth flow
 export {

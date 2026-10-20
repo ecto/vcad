@@ -6,7 +6,7 @@ import {
   ArrowRight,
   CircleNotch,
 } from "@phosphor-icons/react";
-import { getAuthRedirectUrl, getSupabase, isTauriRuntime } from "../client";
+import { getAuthRedirectUrl, getSupabase } from "../client";
 import { signInWithOAuthPopup } from "../oauth-popup";
 import type { GatedFeature } from "../hooks/useRequireAuth";
 
@@ -71,38 +71,7 @@ export function AuthModal({ open, onOpenChange, feature }: AuthModalProps) {
       setLoading(false);
     };
 
-    if (isTauriRuntime()) {
-      // Desktop: open the OS browser and let the deep-link bridge
-      // complete the flow. Embedded webviews would be rejected by
-      // Google/GitHub as "insecure".
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: {
-          redirectTo: getAuthRedirectUrl(),
-          skipBrowserRedirect: true,
-        },
-      });
-      if (error) {
-        reportFailure(error.message);
-        return;
-      }
-      if (!data?.url) {
-        reportFailure("OAuth provider did not return a redirect URL");
-        return;
-      }
-      try {
-        const { openUrl } = await import("@tauri-apps/plugin-opener");
-        await openUrl(data.url);
-        setLoading(false);
-      } catch (err) {
-        reportFailure(
-          err instanceof Error ? err.message : "Failed to open browser",
-        );
-      }
-      return;
-    }
-
-    // Web: drive the OAuth dance inside a popup so the user keeps
+    // Drive the OAuth dance inside a popup so the user keeps
     // their place. `signInWithOAuthPopup` must run synchronously
     // enough that the click gesture still authorizes window.open —
     // it does (only state setters and the supabase call run before
