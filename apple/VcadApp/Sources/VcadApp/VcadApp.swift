@@ -74,9 +74,13 @@ struct VcadApp: App {
     var body: some Scene {
         WindowGroup {
             EditorView(model: model, intent: intent)
+                .task { FieldOverlayStore.shared.loadFromEnvironment() }
         }
         .windowStyle(.automatic)
-        .commands { DocumentCommands(model: model, intent: intent) }
+        .commands {
+            DocumentCommands(model: model, intent: intent)
+            FieldCommands()
+        }
 
         Settings {
             SettingsView()

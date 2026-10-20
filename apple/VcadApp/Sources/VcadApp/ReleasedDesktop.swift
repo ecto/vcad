@@ -863,6 +863,12 @@ struct ReleasedOverlayView: View {
             // Labels an agent pinned over the MCP bridge (AgentBridge.swift).
             AgentAnnotationOverlay(model: model)
         }
+        .overlay(alignment: .topLeading) {
+            // Decoded compressed scalar field (FieldOverlay.swift).
+            FieldHud(store: FieldOverlayStore.shared)
+                .padding(Theme.Space.l)
+                .modifier(ChromeRegion(key: "fieldHud"))
+        }
         .overlay(alignment: .bottomLeading) {
             // Orientation triad: which way X, Y and Z point right now.
             if Prefs.showsTriad {
@@ -1260,6 +1266,9 @@ struct ReleasedARView: NSViewRepresentable {
     let cncRevision: Int
     let cncOrigin: CNCVector
     let cncOverlay: Bool
+    /// Compressed-field overlay revision (FieldOverlay.swift) — an input so a
+    /// load or slice change runs `updateNSView`.
+    let fieldRevision: Int
     let cncStock: Double
     let poseTick: Int
     /// The model's own "the geometry changed" flag, the same one the studio
@@ -1378,6 +1387,7 @@ struct ReleasedARView: NSViewRepresentable {
         }
         if let parent = ReleaseWindowController.shared.centeringEntity {
             syncCNCOverlay(model.cnc, in: parent, model: model)
+            syncFieldOverlay(FieldOverlayStore.shared, in: parent)
             if model.workspace == .manufacture && model.cnc.autoFit && !model.cnc.followSpindle && context.coordinator.framedCNCRevision != cncRevision {
                 context.coordinator.framedCNCRevision = cncRevision
                 Task { @MainActor in
@@ -1861,6 +1871,7 @@ struct ReleasedScene: View {
                        cncRevision: model.cnc.revision,
                        cncOrigin: model.cnc.origin,
                        cncOverlay: model.cnc.overlay,
+                       fieldRevision: FieldOverlayStore.shared.revision,
                        cncStock: model.cnc.stockThickness,
                        poseTick: model.poseTick,
                        geometryDirty: model.geometryDirty,

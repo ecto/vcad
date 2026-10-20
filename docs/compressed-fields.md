@@ -166,3 +166,23 @@ The stream is `hot_chip.tc` (TCG3-static, 23,480 B for 262,144 cells, 45×).
   overflows on 32-bit `usize`. The pkg used here was built from a scratch
   worktree with that comparison done in `u64`. The fix belongs on
   `claude/tang-compress-qtt`.
+
+## Native app (macOS, `apple/VcadApp`)
+
+| piece | where |
+|---|---|
+| decoder | `apple/VcadApp/tang-compress-ffi/`: a tiny Rust staticlib with a C ABI (`tc_decode_cpu` / `tc_field_free` / `tc_string_free`) over tang-compress's CPU integer reference decoder (TCG1 + TCG3). |
+| how it's built | `apple/VcadApp/build-tc-ffi.sh [tang-compress dir]` fills `Cargo.toml.in` with the tang-compress checkout path and builds outside the vcad cargo workspace. It stages `Libs/libtang_compress_ffi.a` (gitignored, next to `libvcad_ffi.a`) and refuses to copy through a symlinked `Libs/`. |
+| how it's linked | Same mechanism as the kernel: a SwiftPM `.systemLibrary(name: "CTangCompress")` target (`Sources/CTangCompress/{tang_compress.h,module.modulemap}`, with `link "tang_compress_ffi"`) plus the existing `-L Libs`. The two Rust staticlibs link side by side with no duplicate-symbol problems. |
+| UI | `Sources/VcadApp/FieldOverlay.swift`: a colormapped z-slice plane plus a faint domain box in the kernel-mm frame of the released viewport (`syncFieldOverlay`, called next to `syncCNCOverlay`), and a HUD (slice image, legend, z slider, error bound, hash vs native, timings) at top-left. Open it from File ▸ Open Compressed Field…, or launch with `VCAD_FIELD=/path/hot_chip` (no extension). |
+| visionOS | Untouched. The field code is VcadApp-only and hangs off a `FieldOverlayStore.shared` singleton, not `EditorModel`, because `Editor.swift`/`Shell.swift` are symlinked into VcadVision. |
+
+**Native gate (2026-10-20, M4): PASS.**
+- `FieldOverlayTests` decodes the same `hot_chip.tc` and gets FNV-1a `e1a3021ce69b8d0d`, which equals the native Rust `corpus` decode hash (and the browser's).
+- Values span 25.00 → 74.62 °C, with the hottest cell over the die.
+- Decode takes **13.0 ms** (best of 5, release Rust lib called from Swift). A full load (read + parse sidecar + decode) takes 0.3 + 18.7 ms.
+- The full native suite passes: 80 tests, 0 failures, 6 skipped (opt-in). Snapshots are taken with `VCAD_CNC_SNAPSHOTS=1 swift test --filter FieldOverlayTests` and written to `/tmp/vcad-field/`.
+
+![native viewport overlay](assets/native-field-viewport.png) ![native HUD](assets/native-field-hud.png)
+
+GPU decode (wgpu/Metal) is deliberately **not** wired. At this field size, CPU decode is already faster than WebGPU was in the browser (13 ms vs 55 ms warm), so it can wait until there's a large-field case that needs it. It must stay byte-identical when it is added.

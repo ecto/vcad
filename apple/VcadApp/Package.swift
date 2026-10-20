@@ -19,9 +19,12 @@ let package = Package(
         .systemLibrary(name: "CVcadFFI", path: "Sources/CVcadFFI"),
         // irys's C types (no link: the dylib is loaded at runtime when present).
         .systemLibrary(name: "CIrys", path: "Sources/CIrys"),
+        // tang-compress field decoder (C ABI staticlib, built by build-tc-ffi.sh
+        // into Libs/ from a tang-compress checkout).
+        .systemLibrary(name: "CTangCompress", path: "Sources/CTangCompress"),
         .executableTarget(
             name: "VcadApp",
-            dependencies: ["CVcadFFI", "CIrys"],
+            dependencies: ["CVcadFFI", "CIrys", "CTangCompress"],
             path: "Sources/VcadApp",
             linkerSettings: [
                 .unsafeFlags(["-L", ffiLibDir]),
@@ -33,7 +36,7 @@ let package = Package(
         // localizes the bug to the marshalling layer rather than the kernel.
         .testTarget(
             name: "VcadAppTests",
-            dependencies: ["VcadApp", "CVcadFFI"],
+            dependencies: ["VcadApp", "CVcadFFI", "CTangCompress"],
             path: "Tests/VcadAppTests",
             linkerSettings: [
                 .unsafeFlags(["-L", ffiLibDir]),
