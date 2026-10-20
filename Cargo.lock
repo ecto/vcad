@@ -4583,6 +4583,8 @@ dependencies = [
  "pollster",
  "serde",
  "serde_json",
+ "vcad-app",
+ "vcad-crdt",
  "vcad-ecad-pcb",
  "vcad-eval",
  "vcad-ir",

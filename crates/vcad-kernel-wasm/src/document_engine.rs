@@ -58,6 +58,14 @@ impl WasmDocumentEngine {
         self.serialize_api_result(&result)
     }
 
+    /// Apply a JSON `DocCommand` (see `vcad_app::command`). Returns the
+    /// shared JSON envelope: `{"ok":true,"result":{…}}` or
+    /// `{"ok":false,"error":{"kind":…,"message":…}}`. Unlike the per-method
+    /// calls, unknown ids and malformed input are reported, not ignored.
+    pub fn apply(&mut self, command_json: &str) -> String {
+        self.api.apply_json_envelope(command_json)
+    }
+
     /// Update a feature with new params from a JSON-serialized `FeatureInput`.
     pub fn update_feature(&mut self, stable_id: &str, input_json: &str) -> JsValue {
         let input: FeatureInput = match serde_json::from_str(input_json) {

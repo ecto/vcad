@@ -6,6 +6,7 @@
 //! eliminating behavioral drift.
 
 pub mod camera;
+pub mod command;
 pub mod commands;
 pub mod context;
 pub mod document_api;
@@ -21,6 +22,7 @@ pub mod registry;
 pub mod selection;
 
 pub use camera::Camera;
+pub use command::{CommandError, DocCommand};
 pub use commands::{Command, CommandCategory, ToolbarTab};
 pub use context::{WhenContext, WhenExpr, WhenParseError};
 pub use document_api::{ApiResult, DocumentApi, StableIdMap};
