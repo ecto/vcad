@@ -33,6 +33,16 @@ pub enum DocCommand {
         #[cfg_attr(feature = "ts-rs", ts(optional))]
         name: Option<String>,
     },
+    /// Append a feature of a raw CRDT kind (`pcb-board`, `scene-settings`,
+    /// …) for kinds without a typed [`FeatureInput`].
+    CreateFeature {
+        /// CRDT feature kind.
+        kind: String,
+        /// Initial params.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "Record<string, CrdtValue>", optional))]
+        params: Option<std::collections::HashMap<String, Value>>,
+    },
     /// Replace an existing feature's params.
     UpdateFeature {
         /// Stable id of the feature.
@@ -280,6 +290,9 @@ impl DocumentApi {
                     _ => result,
                 }
             }
+            DocCommand::CreateFeature { kind, params } => {
+                self.create_feature_raw(&kind, params.unwrap_or_default())
+            }
             DocCommand::UpdateFeature { id, feature } => self.update_feature(&id, feature),
             DocCommand::SetParam { id, key, value } => self.set_param(&id, &key, value),
             DocCommand::DeleteFeature { id } => self.delete_feature(&id),
@@ -503,6 +516,48 @@ mod tests {
                 .unwrap_err(),
             CommandError::UnknownId { id }
         );
+    }
+
+    #[test]
+    fn create_feature_raw_then_set_param() {
+        let mut api = api();
+        let id = api
+            .apply_json(r#"{"type":"create_feature","kind":"scene-settings"}"#)
+            .unwrap()
+            .created_feature_id
+            .unwrap();
+        api.apply_json(&format!(
+            r#"{{"type":"set_param","id":"{id}","key":"background","value":{{"String":"white"}}}}"#
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn reorder_moves_down_to_the_requested_index() {
+        let mut api = api();
+        let ids: Vec<String> = (0..3)
+            .map(|_| {
+                api.apply(DocCommand::AddFeature {
+                    feature: cube(),
+                    name: None,
+                })
+                .unwrap()
+                .created_feature_id
+                .unwrap()
+            })
+            .collect();
+        api.apply(DocCommand::Reorder {
+            id: ids[0].clone(),
+            index: 1,
+        })
+        .unwrap();
+        let order: Vec<String> = api
+            .crdt()
+            .ordered_features()
+            .iter()
+            .map(|(fid, _)| api.stable_ids().stable_id(*fid).unwrap().to_string())
+            .collect();
+        assert_eq!(order, [ids[1].clone(), ids[0].clone(), ids[2].clone()]);
     }
 
     #[test]

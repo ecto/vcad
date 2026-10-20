@@ -1647,7 +1647,15 @@ feature: FeatureInput,
 /**
  * Optional display name.
  */
-name?: string, } | { "type": "update_feature", 
+name?: string, } | { "type": "create_feature", 
+/**
+ * CRDT feature kind.
+ */
+kind: string, 
+/**
+ * Initial params.
+ */
+params?: Record<string, CrdtValue>, } | { "type": "update_feature", 
 /**
  * Stable id of the feature.
  */
