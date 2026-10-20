@@ -295,6 +295,22 @@ mod tests {
     }
 
     #[test]
+    fn cone_materializes() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let res = api
+            .apply(
+                lower(
+                    "create",
+                    &json!({"type": "cone", "params": {"radius_bottom": 5, "height": 8}}),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(res.parts.len(), 1);
+        assert!(res.warnings.is_empty(), "{:?}", res.warnings);
+    }
+
+    #[test]
     fn apply_tool_envelope_runs_end_to_end() {
         let mut api = DocumentApi::new(ReplicaId(1));
         let v: Value = serde_json::from_str(
