@@ -131,6 +131,8 @@ fn lower_update(args: &Value, doc: &DocumentApi) -> Result<DocCommand, CommandEr
         .and_then(Value::as_object)
         .filter(|m| !m.is_empty())
         .ok_or_else(|| invalid("update requires non-empty `params`".into()))?;
+    let node_num = node.parse::<u64>().ok();
+    let is_node = |v: &Value| node_num.is_some() && v.as_u64() == node_num;
     let owner = parts_json(doc)
         .into_iter()
         .find(|p| {
@@ -138,9 +140,7 @@ fn lower_update(args: &Value, doc: &DocumentApi) -> Result<DocCommand, CommandEr
                 || p.as_object().is_some_and(|m| {
                     m.iter().any(|(k, v)| {
                         k.ends_with("NodeId")
-                            && (v.to_string() == node
-                                || v.as_array()
-                                    .is_some_and(|a| a.iter().any(|x| x.to_string() == node)))
+                            && (is_node(v) || v.as_array().is_some_and(|a| a.iter().any(is_node)))
                     })
                 })
         })
