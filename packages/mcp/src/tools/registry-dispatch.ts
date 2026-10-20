@@ -489,6 +489,7 @@ interface EngineEnvelope {
   ok: boolean;
   result?: {
     document: import("@vcad/ir").Document;
+    parts?: Array<{ id: string; name?: string | null; primitiveNodeId?: number }>;
     consumedPartIds?: string[];
     warnings?: string[];
     createdFeatureId?: string;
@@ -510,10 +511,37 @@ function toStableId(doc: import("@vcad/ir").Document, v: unknown): unknown {
   return rootForPartId(doc, v)?.partId ?? String(v);
 }
 
-/** Root NodeId operand (left/right/child after normalizeNodeRefs) → stable id. */
+/** Index of the scene root whose subtree contains `nodeId` (an exact root
+ *  match wins). Roots don't share subtrees — a boolean consumes its operand
+ *  roots — so containment names the one owning part. */
+function owningRootIndex(doc: import("@vcad/ir").Document, nodeId: string): number {
+  const exact = doc.roots.findIndex((r) => String(r.root) === nodeId);
+  if (exact >= 0) return exact;
+  return doc.roots.findIndex((r) => {
+    const stack: unknown[] = [r.root];
+    const seen = new Set<string>();
+    while (stack.length) {
+      const id = String(stack.pop());
+      if (id === nodeId) return true;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const op = (doc.nodes[id] as { op?: Record<string, unknown> } | undefined)?.op;
+      if (!op) continue;
+      for (const k of ["child", "left", "right"]) if (op[k] !== undefined) stack.push(op[k]);
+      if (Array.isArray(op.children)) stack.push(...op.children);
+    }
+    return false;
+  });
+}
+
+/** NodeId operand (left/right/child/parent after normalizeNodeRefs, or an
+ *  `update` node_id) → the stable id of the part that owns that node. The
+ *  engine addresses features by stable id and renumbers nodes on every
+ *  materialize, so NodeIds are only meaningful against the session doc —
+ *  resolve them here, before the engine sees them. */
 function nodeRefToStableId(doc: import("@vcad/ir").Document, v: unknown): unknown {
   if (typeof v === "number" || (typeof v === "string" && /^\d+$/.test(v))) {
-    const idx = doc.roots.findIndex((r) => String(r.root) === String(v));
+    const idx = owningRootIndex(doc, String(v));
     if (idx >= 0) return partIdForRoot(doc, idx);
   }
   return toStableId(doc, v);
@@ -528,6 +556,12 @@ function engineArgs(
   if ("part_id" in out) out.part_id = toStableId(doc, out.part_id);
   if (Array.isArray(out.part_ids)) out.part_ids = out.part_ids.map((v) => toStableId(doc, v));
   if (out.parent_part_id !== undefined) out.parent_part_id = nodeRefToStableId(doc, out.parent_part_id);
+  // `lower_update` accepts the owning part's stable id as `node_id` and sets
+  // the params on that feature; a session NodeId would be looked up against
+  // the engine's renumbered nodes instead.
+  if (toolName === "update" && out.node_id !== undefined) {
+    out.node_id = nodeRefToStableId(doc, out.node_id);
+  }
   if (toolName === "create" && out.params && typeof out.params === "object") {
     const params = { ...(out.params as Record<string, unknown>) };
     for (const key of ["left", "right", "child"]) {
@@ -539,12 +573,17 @@ function engineArgs(
 }
 
 /** Engine `error.kind` → the error text style the legacy MCP path throws. */
-function engineErrorMessage(toolName: string, err: NonNullable<EngineEnvelope["error"]>): string {
+function engineErrorMessage(
+  toolName: string,
+  args: Record<string, unknown>,
+  err: NonNullable<EngineEnvelope["error"]>,
+): string {
   switch (err.kind) {
     case "unknown_id":
       return `${toolName}: no part with id "${err.id ?? "?"}"`;
     case "invalid":
-      return `${toolName}: ${err.message ?? "invalid arguments"}`;
+      // Same per-type param hints the legacy planner errors carry.
+      return enrichPlannerError(toolName, args, `${toolName}: ${err.message ?? "invalid arguments"}`);
     default:
       return `${toolName}: ${err.message ?? err.kind}`;
   }
@@ -589,9 +628,19 @@ function runMutationViaEngine(
     if (!envelope.ok || !envelope.result) {
       const err = envelope.error ?? { kind: "invalid", message: "engine returned no result" };
       if (err.kind === "unsupported") return null;
-      throw new Error(engineErrorMessage(toolName, err));
+      throw new Error(engineErrorMessage(toolName, args, err));
     }
     const next = envelope.result.document;
+    const parts = envelope.result.parts ?? [];
+    // The materializer names the primitive node and leaves the part's
+    // wrapper root (Translate) unnamed; part listings read the root's name,
+    // so carry the part name up to keep listings/`changed` stable.
+    for (const p of parts) {
+      if (!p.name) continue;
+      const rootIdx = next.roots.findIndex((_, i) => next.partIds?.[String(next.roots[i]!.root)] === p.id);
+      const rootNode = rootIdx >= 0 ? (next.nodes[String(next.roots[rootIdx]!.root)] as { name?: string | null }) : undefined;
+      if (rootNode && !rootNode.name) rootNode.name = p.name;
+    }
     for (const k of Object.keys(doc)) delete (doc as unknown as Record<string, unknown>)[k];
     Object.assign(doc, next);
 
@@ -609,8 +658,12 @@ function runMutationViaEngine(
         (typeof args.part_id === "string" ? args.part_id : undefined);
       if (partId) {
         payload.part_id = partId;
+        // Legacy returned the created op's node: the primitive (or the
+        // feature's own node) in the NEW materialized doc, else the root.
+        const part = parts.find((p) => p.id === partId);
         const root = rootForPartId(doc, partId);
-        if (root) payload.node_id = root.entry.root;
+        const nodeId = part?.primitiveNodeId ?? root?.entry.root;
+        if (nodeId !== undefined) payload.node_id = nodeId;
       }
     }
     if (envelope.result.consumedPartIds?.length) {
@@ -629,10 +682,13 @@ export function runMutation(
   rawArgs: Record<string, unknown>,
   doc: import("@vcad/ir").Document,
   documentId: string,
+  opts: { engine?: boolean } = {},
 ): { content: Array<{ type: "text"; text: string }> } {
   const toolArgs = normalizeNodeRefs(toolName, rawArgs, doc);
-  const viaEngine = runMutationViaEngine(toolName, toolArgs, doc, documentId);
-  if (viaEngine) return viaEngine;
+  if (opts.engine !== false) {
+    const viaEngine = runMutationViaEngine(toolName, toolArgs, doc, documentId);
+    if (viaEngine) return viaEngine;
+  }
   // ---- Legacy vcad-chat planner path ----
   // Reached only when the engine path declined: the tool is outside
   // ENGINE_LOWERED_TOOLS (today no dispatchable mutation is — every registry
@@ -640,7 +696,10 @@ export function runMutation(
   // mirror builders are still DEFERRED_TOOLS and not exposed at all), the
   // kernel WASM predates `WasmDocumentEngine.apply_tool` (the checked-in
   // artifacts, until wasm-refresh lands), the engine answered `unsupported`,
-  // or VCAD_MCP_ENGINE_APPLY=0.
+  // VCAD_MCP_ENGINE_APPLY=0, or the caller passed `engine: false`
+  // (`apply_edits`, whose "@N" / raw-NodeId child refs are defined against
+  // the legacy planner's wrapper-free node numbering and in-batch root
+  // consumption — the engine instead edits a part's own transform in place).
   // `delete` and `set_material` go directly to applyToolOutcome — the
   // Rust planner expects CRDT stable_ids, but the IR-direct MCP path
   // uses stringified NodeIds for part_id. The args are already
