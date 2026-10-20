@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-mac-editor-engine",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "feat",
+  "title": "Mac app edits documents through the shared engine",
+  "summary": "The native Mac editor now sends add, delete, combine, material, rename, transform and undo/redo through the Rust document engine, the same one the web app uses.",
+  "features": ["native-app", "document-engine", "undo"]
+}

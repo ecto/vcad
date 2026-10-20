@@ -263,6 +263,12 @@ impl DocumentApi {
         envelope(lowered.and_then(|cmd| self.apply(cmd)))
     }
 
+    /// The current state in the same envelope as
+    /// [`apply_json_envelope`](Self::apply_json_envelope) (always `ok`).
+    pub fn state_envelope(&self) -> String {
+        envelope(Ok(self.get_state()))
+    }
+
     fn check(&self, cmd: &DocCommand) -> Result<(), CommandError> {
         for id in cmd.required_ids() {
             if !self.feature_exists(id) {

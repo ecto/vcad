@@ -318,6 +318,27 @@ impl DocumentApi {
         Ok(api)
     }
 
+    /// Build a fresh document (empty history) from an IR `Document` JSON —
+    /// how a native host opens a `.vcad` file. Fails closed on JSON that
+    /// isn't an IR document, unlike [`import_ir`](Self::import_ir).
+    pub fn from_ir(ir_json: &str, replica_id: ReplicaId) -> Result<Self, String> {
+        serde_json::from_str::<vcad_ir::Document>(ir_json).map_err(|e| e.to_string())?;
+        let mut api = Self::new(replica_id);
+        api.import_ir(ir_json);
+        api.dirty = false;
+        Ok(api)
+    }
+
+    /// Replace the document contents (including undo/redo history) with a
+    /// snapshot from [`save`](Self::save). Fails closed on bad bytes.
+    pub fn restore_snapshot(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let crdt = CrdtDocument::load(bytes).map_err(|e| e.to_string())?;
+        self.crdt = crdt;
+        self.stable_ids.rebuild(&self.crdt);
+        self.dirty = true;
+        Ok(())
+    }
+
     /// Replace the document contents with a snapshot from [`save`](Self::save),
     /// keeping the name. Used to roll back a failed command batch.
     pub(crate) fn restore(&mut self, bytes: &[u8]) {

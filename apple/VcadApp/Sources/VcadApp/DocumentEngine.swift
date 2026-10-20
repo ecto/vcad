@@ -20,10 +20,39 @@ final class DocumentEngine {
     struct Result {
         /// IR `Document` JSON.
         let documentJSON: Data
+        /// The same document, parsed — what the editor renders and reads.
+        let document: [String: Any]
+        /// `PartInfo` per materialized feature (`id`, `kind`, `*NodeId`s).
+        let parts: [[String: Any]]
         /// Stable id of the feature the command created, if any.
         let createdFeatureId: String?
-        let partCount: Int
+        var partCount: Int { parts.count }
         let warnings: [String]
+
+        /// Stable part id (`"replica:seq"`) of a scene root node, via the
+        /// document's `partIds` map. Node ids are renumbered on every
+        /// materialize; part ids survive, so they are what commands carry.
+        func partId(forRootNode node: Int) -> String? {
+            (document["partIds"] as? [String: Any])?[String(node)] as? String
+        }
+
+        /// The part that owns `node` and the node's role in its transform
+        /// chain: `translate`, `rotate`, `scale`, or `primitive` (the leaf —
+        /// primitive, boolean, fillet, …).
+        func owner(ofNode node: Int) -> (part: [String: Any], role: String)? {
+            for part in parts {
+                for (key, value) in part where key.hasSuffix("NodeId") {
+                    guard (value as? NSNumber)?.intValue == node else { continue }
+                    switch key {
+                    case "translateNodeId": return (part, "translate")
+                    case "rotateNodeId": return (part, "rotate")
+                    case "scaleNodeId": return (part, "scale")
+                    default: return (part, "primitive")
+                    }
+                }
+            }
+            return nil
+        }
     }
 
     private let handle: OpaquePointer
@@ -48,6 +77,45 @@ final class DocumentEngine {
         return try Self.unwrap(tool.withCString { t in json.withCString { vcad_engine_apply_tool(handle, t, $0) } })
     }
 
+    /// The current state (no mutation).
+    func state() throws -> Result { try Self.unwrap(vcad_engine_state(handle)) }
+
+    /// Replace the document with an IR `Document` (a `.vcad` file's
+    /// contents); the undo history starts fresh. Throws, leaving the engine
+    /// untouched, when the JSON isn't an IR document.
+    @discardableResult
+    func loadIR(_ document: [String: Any]) throws -> Result {
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: document), as: UTF8.self)
+        return try Self.unwrap(json.withCString { vcad_engine_load_ir(handle, $0) })
+    }
+
+    /// Snapshot of document + undo/redo history, for `restore`.
+    func save() -> Data {
+        var len = 0
+        guard let bytes = vcad_engine_save(handle, &len) else { return Data() }
+        defer { vcad_engine_bytes_free(bytes, len) }
+        return Data(bytes: bytes, count: len)
+    }
+
+    /// Put back a `save` snapshot (document and history).
+    @discardableResult
+    func restore(_ snapshot: Data) throws -> Result {
+        try Self.unwrap(snapshot.withUnsafeBytes {
+            vcad_engine_restore(handle, $0.bindMemory(to: UInt8.self).baseAddress, snapshot.count)
+        })
+    }
+
+    var canUndo: Bool { vcad_engine_can_undo(handle) }
+    var canRedo: Bool { vcad_engine_can_redo(handle) }
+
+    /// Deterministic fingerprint of the materialized state — equal hashes
+    /// mean equal documents (the editor's "unsaved changes" test).
+    var stateHash: String {
+        guard let raw = vcad_engine_state_hash(handle) else { return "" }
+        defer { vcad_engine_string_free(raw) }
+        return String(cString: raw)
+    }
+
     private static func unwrap(_ raw: UnsafeMutablePointer<CChar>?) throws -> Result {
         guard let raw else {
             var count = 0
@@ -60,10 +128,12 @@ final class DocumentEngine {
             let error = envelope["error"] as? [String: Any] ?? [:]
             throw Refusal(kind: error["kind"] as? String ?? "unknown", message: error["message"] as? String ?? "command refused")
         }
+        let document = result["document"] as? [String: Any] ?? [:]
         return Result(
-            documentJSON: try JSONSerialization.data(withJSONObject: result["document"] ?? [:]),
+            documentJSON: try JSONSerialization.data(withJSONObject: document),
+            document: document,
+            parts: result["parts"] as? [[String: Any]] ?? [],
             createdFeatureId: result["createdFeatureId"] as? String,
-            partCount: (result["parts"] as? [Any])?.count ?? 0,
             warnings: result["warnings"] as? [String] ?? []
         )
     }
