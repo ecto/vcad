@@ -25,7 +25,13 @@ function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     if (name === "node_modules" || name === "dist" || name === "__tests__") continue;
     const p = join(dir, name);
-    if (statSync(p).isDirectory()) walk(p, out);
+    let isDir;
+    try {
+      isDir = statSync(p).isDirectory();
+    } catch {
+      continue; // dangling symlink (e.g. core/src/CHANGELOG.json before the changelog build)
+    }
+    if (isDir) walk(p, out);
     else if (/\.(ts|tsx)$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name) && !name.endsWith(".d.ts")) out.push(p);
   }
   return out;
