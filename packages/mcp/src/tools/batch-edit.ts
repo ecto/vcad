@@ -204,6 +204,9 @@ function applyOps(
         resolveSymbolicRefs(args, createdIds, i, doc),
         doc,
         documentId,
+        // Legacy planner: "@N" and raw numeric child refs address the
+        // planner's node numbering (see runMutation).
+        { engine: false },
       );
     } catch (err) {
       throw new BatchOpError(i, name, err);
