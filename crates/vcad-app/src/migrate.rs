@@ -80,8 +80,20 @@ pub fn migrate_v1_mapped(doc: &Document) -> (CrdtDocument, MigrationMap) {
     let mut crdt = CrdtDocument::new(ReplicaId(0));
     let mut ctx = MigrationCtx::new();
 
+    // Root feature → the stable id the materializer stamped on it, if any.
+    let mut wanted: Vec<(FeatureId, FeatureId)> = Vec::new();
     for entry in &doc.roots {
-        let _ = migrate_node(&mut crdt, &mut ctx, doc, entry.root);
+        let fid = migrate_node(&mut crdt, &mut ctx, doc, entry.root);
+        let claim = doc
+            .part_ids
+            .as_ref()
+            .and_then(|m| m.get(&entry.root.to_string()))
+            .and_then(|s| parse_fid(s));
+        if let (Some(fid), Some(claim)) = (fid, claim) {
+            if !wanted.iter().any(|(f, c)| *f == fid || *c == claim) {
+                wanted.push((fid, claim));
+            }
+        }
     }
 
     migrate_assembly(&mut crdt, &mut ctx, doc);
@@ -107,6 +119,16 @@ pub fn migrate_v1_mapped(doc: &Document) -> (CrdtDocument, MigrationMap) {
     }
 
     migrate_doc_extras(&mut crdt, &mut ctx, doc);
+
+    if wanted.iter().any(|(f, c)| f != c) {
+        let remap = assign_ids(&crdt, &wanted);
+        crdt = rekey(&crdt, &remap);
+        for m in &mut ctx.node_roles {
+            if let Some(to) = parse_fid(&m.feature_id).and_then(|f| remap.get(&f)) {
+                m.feature_id = fid_to_stable(*to);
+            }
+        }
+    }
 
     let map = MigrationMap {
         mappings: std::mem::take(&mut ctx.node_roles),
@@ -726,6 +748,75 @@ fn create(
     fid
 }
 
+/// Parse a stable `"replica:seq"` id.
+fn parse_fid(s: &str) -> Option<FeatureId> {
+    let (r, q) = s.split_once(':')?;
+    Some(FeatureId(ReplicaId(r.parse().ok()?), q.parse().ok()?))
+}
+
+/// The full old → new id map for [`rekey`]: claimed roots get their claimed
+/// id; every other feature keeps its own unless a claim took it, in which
+/// case it moves to the next id no one holds.
+fn assign_ids(
+    crdt: &CrdtDocument,
+    wanted: &[(FeatureId, FeatureId)],
+) -> HashMap<FeatureId, FeatureId> {
+    let mut remap: HashMap<FeatureId, FeatureId> = wanted.iter().copied().collect();
+    let mut taken: std::collections::HashSet<FeatureId> = wanted.iter().map(|(_, c)| *c).collect();
+    let features = crdt.ordered_features();
+    let mut displaced = Vec::new();
+    for (fid, _) in &features {
+        if remap.contains_key(fid) {
+            continue;
+        }
+        if taken.insert(*fid) {
+            remap.insert(*fid, *fid);
+        } else {
+            displaced.push(*fid);
+        }
+    }
+    let mut seq = 0;
+    for fid in displaced {
+        while taken.contains(&FeatureId(ReplicaId(0), seq)) {
+            seq += 1;
+        }
+        let to = FeatureId(ReplicaId(0), seq);
+        taken.insert(to);
+        remap.insert(fid, to);
+    }
+    remap
+}
+
+/// Rebuild a freshly migrated document under new feature ids, rewriting
+/// every feature reference to match. Only valid on a migration result (no
+/// history worth keeping, every feature live).
+fn rekey(crdt: &CrdtDocument, remap: &HashMap<FeatureId, FeatureId>) -> CrdtDocument {
+    let map_ref = |s: &str| {
+        parse_fid(s)
+            .and_then(|f| remap.get(&f))
+            .map_or_else(|| s.to_string(), |f| fid_to_stable(*f))
+    };
+    let mut out = CrdtDocument::new(ReplicaId(0));
+    for (fid, state) in crdt.ordered_features() {
+        let params = state
+            .params
+            .iter()
+            .map(|(k, (v, _))| {
+                let v = match v {
+                    Value::FeatureRef(r) => Value::FeatureRef(map_ref(r)),
+                    Value::FeatureRefList(rs) => {
+                        Value::FeatureRefList(rs.iter().map(|r| map_ref(r)).collect())
+                    }
+                    other => other.clone(),
+                };
+                (k.clone(), v)
+            })
+            .collect();
+        out.create_feature_with_id(remap[&fid], &state.kind, state.position.clone(), params);
+    }
+    out
+}
+
 /// Format a `FeatureId` as the stable `"replica:seq"` string used throughout
 /// the higher-level API (see `document_api::StableIdMap`).
 fn fid_to_stable(fid: FeatureId) -> String {
@@ -742,7 +833,11 @@ fn migrate_assembly(crdt: &mut CrdtDocument, ctx: &mut MigrationCtx, doc: &Docum
 
     // partDef id (string in v1) -> stable feature id of the `part-def` feature.
     let mut part_def_stable: HashMap<String, String> = HashMap::new();
-    for (key, pd) in part_defs {
+    // Sorted so feature ids are a pure function of the IR: an engine rebuilt
+    // from the same document hands out the same stable part ids.
+    let mut sorted: Vec<_> = part_defs.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    for (key, pd) in sorted {
         let Some(source_fid) = migrate_node(crdt, ctx, doc, pd.root) else {
             continue;
         };

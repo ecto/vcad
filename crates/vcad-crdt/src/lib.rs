@@ -224,9 +224,29 @@ impl CrdtDocument {
         position: FractionalIndex,
         params: HashMap<String, Value>,
     ) -> (FeatureId, ChangeSet) {
-        let feat_count = self.features.len() as u64;
-        let fid = FeatureId(self.replica_id, feat_count);
+        // `len()` keeps ids dense for ordinary documents; skip ahead past any
+        // id already taken by `create_feature_with_id` so the two never collide.
+        let mut seq = self.features.len() as u64;
+        while self.features.contains_key(&FeatureId(self.replica_id, seq)) {
+            seq += 1;
+        }
+        self.create_feature_with_id(FeatureId(self.replica_id, seq), kind, position, params)
+    }
 
+    /// [`create_feature`](Self::create_feature) with a caller-chosen id — used
+    /// by import to give a part back the stable id it had when it was
+    /// materialized. The caller guarantees `fid` is not already present.
+    pub fn create_feature_with_id(
+        &mut self,
+        fid: FeatureId,
+        kind: &str,
+        position: FractionalIndex,
+        params: HashMap<String, Value>,
+    ) -> (FeatureId, ChangeSet) {
+        debug_assert!(
+            !self.features.contains_key(&fid),
+            "feature id {fid:?} taken"
+        );
         let create_op = self.alloc_op(Action::CreateFeature {
             id: fid,
             kind: kind.to_string(),

@@ -2251,6 +2251,14 @@ pub struct Document {
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub timeline: Option<animation::Timeline>,
 
+    /// Stable part ids, keyed by scene-root node id (stringified). Written by
+    /// the document engine's materializer and honored on import, so a part's
+    /// `"replica:seq"` id survives any round trip through IR — the id MCP
+    /// tools and the app hand out as `part_id`. Absent for hand-written IR.
+    #[serde(rename = "partIds", default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "partIds", optional))]
+    pub part_ids: Option<std::collections::BTreeMap<String, String>>,
+
     // Hardware rollup (optional, zero-cost when empty)
     /// Off-the-shelf hardware contributed by the geometry itself — every
     /// fastener form placed in the model emits a line here, so a BOM is
@@ -2577,6 +2585,7 @@ impl Default for Document {
             analysis_studies: Vec::new(),
             drawing: None,
             timeline: None,
+            part_ids: None,
             hardware: Vec::new(),
             source: None,
         }
