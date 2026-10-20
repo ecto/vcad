@@ -28,6 +28,26 @@ final class FieldOverlayTests: XCTestCase {
         XCTAssert((44...56).contains(x) && (44...56).contains(y), "hot spot at (\(x), \(y))")
     }
 
+    static let stackDir = base.deletingLastPathComponent().appendingPathComponent("bracket")
+
+    /// Every layer of the multiphysics stack decodes to its native Rust hash.
+    func testStackMatchesNativeHashes() throws {
+        let (stack, layers, ms) = try loadFieldStack(dir: Self.stackDir)
+        XCTAssertEqual(layers.map(\.id), ["thermal", "stress", "displacement", "busbar"])
+        let want = ["thermal": "885c6c38b04aa965", "stress": "7e7509c29c235505",
+                    "displacement": "647b1b6f2ac39355", "busbar": "2a433f8f79030415"]
+        for l in layers {
+            XCTAssertEqual(l.field.hash, want[l.id], l.id)
+            XCTAssertEqual(l.field.hashMatch, true, l.id)
+        }
+        XCTAssertEqual(layers.last?.field.isPlane, true)
+        // Solid-only range: the wall is held at 40 °C, so the part never reads ambient.
+        XCTAssertEqual(layers[0].range.0, 40, accuracy: 0.1)
+        let skin = FieldSkin(meta: layers[0].field.meta, mask: solidMask(layers[0].field.meta, stack.geometry!.boxes))
+        XCTAssertGreaterThan(skin.cells.count, 10_000)
+        print("[field] native stack load (4 layers, read+decode+range): \(String(format: "%.1f", ms)) ms; skin quads \(skin.cells.count)")
+    }
+
     func testRejectsGarbage() {
         XCTAssertThrowsError(try tcDecode(Data("nope, not a stream".utf8)))
     }
@@ -61,7 +81,6 @@ final class FieldOverlayTests: XCTestCase {
         let bitmap = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
         try XCTUnwrap(bitmap.representation(using: .png, properties: [:])).write(to: dir.appendingPathComponent("hud.png"))
-        w1.orderOut(nil)
 
         // The 3D overlay entity, in an ARView with the viewport's Z-up → Y-up wrap.
         let ar = ARView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
@@ -83,6 +102,30 @@ final class FieldOverlayTests: XCTestCase {
         let tiff = try XCTUnwrap(image?.tiffRepresentation)
         try XCTUnwrap(NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]))
             .write(to: dir.appendingPathComponent("viewport.png"))
+
+        // The multiphysics stack: every layer (surface for volumes, plane for 2D),
+        // plus a y-slice of the thermal layer.
+        store.loadStack(dir: Self.stackDir)
+        camera.look(at: [0.48, 0.12, -0.24], from: [1.25, 0.95, 0.75], relativeTo: nil)
+        var shots: [(String, () -> Void)] = store.layers.map { l in (l.id, { store.setActive(l.id); store.setMode(.surface) }) }
+        shots.append(("thermal-slice", { store.setActive("thermal"); store.setMode(.slice); store.setAxis(.y) }))
+        for (name, apply) in shots {
+            apply()
+            syncFieldOverlay(store, in: kernel)
+            try? await Task.sleep(for: .milliseconds(600))
+            let shot: NSImage? = await withCheckedContinuation { c in ar.snapshot(saveToHDR: false) { c.resume(returning: $0) } }
+            try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(shot?.tiffRepresentation))?.representation(using: .png, properties: [:]))
+                .write(to: dir.appendingPathComponent("stack-\(name).png"))
+        }
+        store.setActive("thermal"); store.setMode(.surface)
+        let stackHud = NSHostingView(rootView: FieldHud(store: store).padding(12)
+            .background(Color(nsColor: .windowBackgroundColor)))
+        w1.contentView = stackHud; w1.orderFront(nil)
+        try? await Task.sleep(for: .milliseconds(300))
+        let hb = try XCTUnwrap(stackHud.bitmapImageRepForCachingDisplay(in: stackHud.bounds))
+        stackHud.cacheDisplay(in: stackHud.bounds, to: hb)
+        try XCTUnwrap(hb.representation(using: .png, properties: [:])).write(to: dir.appendingPathComponent("stack-hud.png"))
+        w1.orderOut(nil)
         w2.orderOut(nil)
     }
 }

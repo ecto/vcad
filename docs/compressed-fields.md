@@ -186,3 +186,59 @@ The stream is `hot_chip.tc` (TCG3-static, 23,480 B for 262,144 cells, 45×).
 ![native viewport overlay](assets/native-field-viewport.png) ![native HUD](assets/native-field-hud.png)
 
 GPU decode (wgpu/Metal) is deliberately **not** wired. At this field size, CPU decode is already faster than WebGPU was in the browser (13 ms vs 55 ms warm), so it can wait until there's a large-field case that needs it. It must stay byte-identical when it is added.
+
+## Multiphysics stack demo (bracket)
+
+The bracket is one part with four co-registered fields, all compressed with
+the same contract and viewable in both apps.
+
+| | |
+|---|---|
+| part | Aluminum motor-controller L-bracket (6061-T6): a 96×48×12 mm base plate plus a 9×48×36 mm wall flange. The geometry boxes live in `stack.json`. |
+| grid | 128×64×48 cells at 0.75 mm, the same for every volume layer. |
+| thermal | `vcad-kernel-thermal --example bracket_field`. A 6 W MOSFET heats the far end; the flange is bolted to a 40 °C wall; every other face convects at h = 12 W/m²K. Result: 39.98 → 44.55 °C. |
+| stress / displacement | `vcad-kernel-topopt --example bracket_field`, using the new additive `analyze_fields()`. The wall is fixed and a 60 N load hangs off the tip. Peak von Mises is 5.49 MPa (the beam hand calc Mc/I gives 4.7). Tip deflection is 30.4 µm. |
+| busbar | `vcad-kernel-em --example bracket_field`. The base plate also carries 200 A DC. This layer is the planar \|B\| on the plate's YZ cross-section: a **2D** layer (`"plane":"yz"`) placed at x = 48 mm. Peak 2.39 mT (hand calc µ₀I/2w gives 2.6). It treats the bar as infinitely long; the flange, bolt end and return conductor are not modeled. |
+| streams | TCG3-static at max-abs 1e-4 × range each: 20.4 + 32.8 + 13.5 + 3.1 KB = **68 KB for 4.8 MB raw (70×)**. |
+
+**Viewers.**
+- **Web:** `?fields=/fields/bracket`.
+- **Native:** File ▸ Open Compressed Field… (pick the folder), or `VCAD_FIELDS=…/bracket`.
+- **Surface mode** colors the part's exposed voxel faces by the active layer. The skin has 27k quads; the native app colors it by giving each quad a UV into a 256×1 colormap texture.
+- **Slice mode** cuts along x, y or z and masks the void cells out.
+- 2D layers sit on their own plane inside a ghosted part.
+- The web app adds a hover probe that reads value ± bound at a point (e.g. `43.499 ± 2.0e-3 °C @ (85.1, 44.6, 11.6) mm`). There is no native probe yet.
+- Color ranges are taken over solid cells only. That's how the thermal layer reads 40–44.5 °C rather than starting at the 25 °C void fill.
+
+**Gate (2026-10-20, M4): PASS on every layer, every path.**
+
+| layer | native Rust (`corpus`) | web WebGPU | web WASM-CPU | native app (Swift → C ABI) | measured \|Δ\| ≤ bound |
+|---|---|---|---|---|---|
+| thermal | `885c6c38b04aa965` | ✓ | ✓ | ✓ | 1.953e-3 ≤ 1.955e-3 °C |
+| stress | `7e7509c29c235505` | ✓ | ✓ | ✓ | 5.491e-4 ≤ 5.492e-4 MPa |
+| displacement | `647b1b6f2ac39355` | ✓ | ✓ | ✓ | 3.044e-3 ≤ 3.045e-3 µm |
+| busbar (2D) | `2a433f8f79030415` | ✓ | ✓ | ✓ | 2.375e-4 ≤ 2.377e-4 mT |
+
+**Timings** (decode only unless noted):
+
+| path | thermal / stress / displacement / busbar | whole stack |
+|---|---|---|
+| web WASM-CPU | 40 / 32 / 31 / 5 ms | cold page load 1.06 s, of which ~0.9 s is the 4.8 MB uncompressed reference download for error checking |
+| web WebGPU (warm) | 155 / 152 / 140 / 44 ms | — |
+| native app (release Rust lib, debug Swift) | 18 / 20 / 18 / 1.4 ms | read + decode + solid mask + range: 210 ms |
+
+At 393k cells, WebGPU loses to CPU on fixed per-dispatch costs. So the web
+decoder now **picks automatically**: CPU below 4M cells, GPU above. Pass
+`&fieldgpu` or `&fieldcpu` to force one.
+
+Web: ![thermal](assets/stack-web-thermal.jpg) ![stress](assets/stack-web-stress.jpg)
+![displacement](assets/stack-web-displacement.jpg) ![busbar](assets/stack-web-busbar.jpg)
+![slice](assets/stack-web-slice.jpg)
+
+Native: ![thermal](assets/stack-native-thermal.png) ![busbar](assets/stack-native-busbar.png)
+![slice](assets/stack-native-thermal-slice.png) ![HUD](assets/stack-native-hud.png)
+
+**Not modeled / next:**
+- **No coupling between layers.** Joule heat from the busbar current (I²R ≈ 0.2 W here) does not feed the thermal solve, and there is no thermal-expansion stress. Each layer is an independent solve on shared geometry.
+- **No native hover probe.**
+- **The geometry is boxes in `stack.json`,** not the document's BRep. Wiring stacks to `.vcad` parts is the `fields`-schema work proposed above.
