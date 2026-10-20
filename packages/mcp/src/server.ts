@@ -836,10 +836,10 @@ export async function createServer(
   };
 
   // Wire the kernel WASM's chat helpers into the shared commandRegistry so
-  // `toAnthropicTools` and `planCrud` work on the server too. Same bootstrap
+  // `toAnthropicTools` works on the server too. Same bootstrap
   // as `initEngineLifecycle` in @vcad/core, minus the docstore subscription
   // — we don't have a docstore here. Without this, registryToolDescriptors
-  // returns the static-schemas fallback and planCrud returns null.
+  // returns the static-schemas fallback.
   let kernelPrompt: string | null = null;
   try {
     const wasm = (await getKernelWasm()) as unknown as Record<string, unknown>;

@@ -2,21 +2,17 @@
  * Generic dispatcher for the kernel-tier chat tools (the ones in
  * `commandRegistry.toAnthropicTools()`). The MCP server registers these
  * under their original names — the schema is identical to what the in-app
- * chat sends to Anthropic — and routes each call through the Rust planner
- * (`commandRegistry.planCrud`) and `applyToolOutcome`.
+ * chat sends to Anthropic — and routes each mutation through the Rust
+ * document engine (`WasmDocumentEngine.apply_tool`).
  *
  * Result: schema and behavior come from the kernel; the MCP wrapper is a
  * thin session-aware shell. No tool definitions duplicated in this package.
  */
 
 import type { AnthropicTool } from "@vcad/core";
-import {
-  commandRegistry,
-  applyToolOutcome,
-  listPartsFromDocument,
-} from "@vcad/core";
+import { commandRegistry, listPartsFromDocument } from "@vcad/core";
 import { getSession, recordLastChanged, recordTriangles } from "./session.js";
-import { markDocumentWritten, storeEngine, takeCachedEngine } from "./session-core.js";
+import { storeEngine, takeCachedEngine } from "./session-core.js";
 import {
   isStablePartId,
   partIdDeprecation,
@@ -595,9 +591,8 @@ function engineErrorMessage(
  * the session IR into a fresh `WasmDocumentEngine`, `apply_tool`, and replace
  * the session document — in place, so the caller's reference and the
  * `changed` diff keep working — with the engine's `result.document`, which
- * carries `partIds`. Returns `null` (legacy fallback) when the tool isn't
- * lowered, the WASM lacks `apply_tool`, the engine answers `unsupported`, or
- * VCAD_MCP_ENGINE_APPLY=0.
+ * carries `partIds`. Throws when the tool isn't engine-lowered, the kernel
+ * WASM lacks `WasmDocumentEngine.apply_tool`, or the engine refuses the call.
  *
  * One engine is cached per session (session-core `takeCachedEngine` /
  * `storeEngine`): it is reused while the session still holds exactly the IR
@@ -608,21 +603,30 @@ function runMutationViaEngine(
   toolArgs: Record<string, unknown>,
   doc: import("@vcad/ir").Document,
   documentId: string,
-): { content: Array<{ type: "text"; text: string }> } | null {
-  if (!ENGINE_LOWERED_TOOLS.has(toolName)) return null;
-  if (process.env.VCAD_MCP_ENGINE_APPLY === "0") return null;
+): { content: Array<{ type: "text"; text: string }> } {
+  if (!ENGINE_LOWERED_TOOLS.has(toolName)) {
+    throw new Error(`Tool "${toolName}" is not lowered by the document engine.`);
+  }
   const wasm = getKernelWasmSync() as unknown as {
     WasmDocumentEngine?: { withReplica?(id: number): ToolEngine };
   } | null;
   const factory = wasm?.WasmDocumentEngine;
-  if (!factory || typeof factory.withReplica !== "function") return null;
+  if (!factory || typeof factory.withReplica !== "function") {
+    throw new Error(
+      `${toolName}: kernel WASM has no WasmDocumentEngine — ensure the kernel is initialized and up to date.`,
+    );
+  }
   const cachedEngine = takeCachedEngine<ToolEngine>(documentId, doc);
   const engine = cachedEngine ?? factory.withReplica(0);
   // Ownership: until handed back to the cache on success, `engine` is freed
   // in `finally`, so an error or decline never leaves a stale engine cached.
   let keep = false;
   try {
-    if (typeof engine.apply_tool !== "function") return null;
+    if (typeof engine.apply_tool !== "function") {
+      throw new Error(
+        `${toolName}: kernel WASM predates WasmDocumentEngine.apply_tool — rebuild the kernel WASM.`,
+      );
+    }
     const deprecation =
       typeof toolArgs.part_id === "string"
         ? partIdDeprecation(toolArgs.part_id, rootForPartId(doc, toolArgs.part_id))
@@ -632,7 +636,6 @@ function runMutationViaEngine(
     const envelope = JSON.parse(engine.apply_tool(toolName, JSON.stringify(args))) as EngineEnvelope;
     if (!envelope.ok || !envelope.result) {
       const err = envelope.error ?? { kind: "invalid", message: "engine returned no result" };
-      if (err.kind === "unsupported") return null;
       throw new Error(engineErrorMessage(toolName, args, err));
     }
     const next = envelope.result.document;
@@ -661,9 +664,13 @@ function runMutationViaEngine(
       payload.material = toolArgs.material;
     } else {
       // Prefer the engine's createdFeatureId as the new part_id.
+      // In-place edits (translate/rotate/scale) create no feature: report
+      // the part they edited.
+      const params = args.params as Record<string, unknown> | undefined;
+      const edited = args.part_id ?? args.child ?? params?.child;
       const partId =
         envelope.result.createdFeatureId ??
-        (typeof args.part_id === "string" ? args.part_id : undefined);
+        (typeof edited === "string" ? edited : undefined);
       if (partId) {
         payload.part_id = partId;
         // Legacy returned the created op's node: the primitive (or the
@@ -684,130 +691,17 @@ function runMutationViaEngine(
   }
 }
 
-/** Execute a mutating registry tool against an open session document. */
+/** Execute a mutating registry tool against an open session document.
+ *  Every mutation runs through the Rust document engine; there is no
+ *  TS-side fallback, so an engine refusal is the tool's answer. */
 export function runMutation(
   toolName: string,
   rawArgs: Record<string, unknown>,
   doc: import("@vcad/ir").Document,
   documentId: string,
-  opts: { engine?: boolean } = {},
 ): { content: Array<{ type: "text"; text: string }> } {
   const toolArgs = normalizeNodeRefs(toolName, rawArgs, doc);
-  if (opts.engine !== false) {
-    const viaEngine = runMutationViaEngine(toolName, toolArgs, doc, documentId);
-    if (viaEngine) return viaEngine;
-  }
-  // ---- Legacy vcad-chat planner path ----
-  // Writes the doc in place, bypassing the engine: invalidate its cache.
-  if (documentId) markDocumentWritten(documentId);
-  // Reached only when the engine path declined: the tool is outside
-  // ENGINE_LOWERED_TOOLS (today no dispatchable mutation is — every registry
-  // mutation MCP exposes is engine-lowered; `place` and the tube / pattern /
-  // mirror builders are still DEFERRED_TOOLS and not exposed at all), the
-  // kernel WASM predates `WasmDocumentEngine.apply_tool` (the checked-in
-  // artifacts, until wasm-refresh lands), the engine answered `unsupported`,
-  // VCAD_MCP_ENGINE_APPLY=0, or the caller passed `engine: false`
-  // (`apply_edits`, whose "@N" / raw-NodeId child refs are defined against
-  // the legacy planner's wrapper-free node numbering and in-batch root
-  // consumption — the engine instead edits a part's own transform in place).
-  // `delete` and `set_material` go directly to applyToolOutcome — the
-  // Rust planner expects CRDT stable_ids, but the IR-direct MCP path
-  // uses stringified NodeIds for part_id. The args are already
-  // outcome-shaped, so the planner adds nothing. (`update` still needs
-  // the planner for field-name validation; `create` needs it to lower
-  // chat-tool args to a CsgOp.)
-  if (toolName === "delete") {
-    const partId = String((toolArgs as { part_id?: unknown }).part_id ?? "");
-    if (!partId) throw new Error("delete: missing `part_id`");
-    const deprecation = partIdDeprecation(partId, rootForPartId(doc, partId));
-    const applied = applyToolOutcome(doc, {
-      kind: "remove_part",
-      part_id: partId,
-    });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            document_id: documentId,
-            removed: applied.partId,
-            ...(deprecation ? { warnings: [deprecation] } : {}),
-          }),
-        },
-      ],
-    };
-  }
-  if (toolName === "set_material") {
-    const partId = String((toolArgs as { part_id?: unknown }).part_id ?? "");
-    const material = String(
-      (toolArgs as { material?: unknown }).material ?? "",
-    );
-    if (!partId) throw new Error("set_material: missing `part_id` (bulk forms not yet supported via MCP)");
-    if (!material) throw new Error("set_material: missing `material`");
-    const deprecation = partIdDeprecation(partId, rootForPartId(doc, partId));
-    const applied = applyToolOutcome(doc, {
-      kind: "set_part_material",
-      part_id: partId,
-      material,
-    });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            document_id: documentId,
-            part_id: applied.partId,
-            material,
-            ...(deprecation ? { warnings: [deprecation] } : {}),
-          }),
-        },
-      ],
-    };
-  }
-
-  const plannerArgs =
-    toolName === "create" ? applyParamDefaults(toolArgs) : toolArgs;
-  const planned = commandRegistry.planCrud(
-    toolName,
-    plannerArgs,
-    JSON.stringify(doc),
-  );
-  if (!planned) {
-    throw new Error(
-      `Tool "${toolName}" — Rust planner unavailable. Ensure commandRegistry.setWasm() has been called during MCP server boot.`,
-    );
-  }
-  if (planned.status === "error") {
-    throw new Error(enrichPlannerError(toolName, plannerArgs, planned.result));
-  }
-  if (!planned.outcome) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            document_id: documentId,
-            result: planned.result,
-          }),
-        },
-      ],
-    };
-  }
-
-  const applied = applyToolOutcome(doc, planned.outcome);
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({
-          document_id: documentId,
-          result: planned.result,
-          part_id: applied.partId,
-          node_id: applied.nodeId,
-        }),
-      },
-    ],
-  };
+  return runMutationViaEngine(toolName, toolArgs, doc, documentId);
 }
 
 /**

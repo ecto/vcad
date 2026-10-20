@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { Document } from "@vcad/ir";
 import {
   ensurePartIds,
+  forgetPartId,
+  movePartId,
   partIdDeprecation,
   partIdForRoot,
   rootForPartId,
 } from "../commands/part-ids.js";
-import { applyToolOutcome, listPartsFromDocument } from "../commands/document-mutations.js";
+import { listPartsFromDocument } from "../commands/document-mutations.js";
 
 function cube(id: number, name: string) {
   return { id, name, op: { type: "Cube", size: { x: 1, y: 1, z: 1 } } };
@@ -41,7 +43,7 @@ describe("part ids", () => {
   it("ids of later parts do not shift when an earlier part is deleted", () => {
     const doc = ensurePartIds(threeParts());
     const before = listPartsFromDocument(doc).map((p) => p.id);
-    applyToolOutcome(doc, { kind: "remove_part", part_id: before[0]! });
+    doc.roots.splice(0, 1);
     ensurePartIds(doc);
     const after = listPartsFromDocument(doc).map((p) => p.id);
     expect(after).toEqual([before[1], before[2]]);
@@ -53,22 +55,24 @@ describe("part ids", () => {
     doc.partIds = { "4": "1:7", "9": "0:3" };
     expect(partIdForRoot(doc, 2)).toBe("0:12");
     // A new part after a delete does not reuse the freed id.
-    applyToolOutcome(doc, { kind: "remove_part", part_id: "0:12" });
-    const added = applyToolOutcome(doc, {
-      kind: "add_feature",
-      op: { type: "Sphere", radius: 1 },
-    } as never);
-    expect(added.partId).toBe("0:10");
+    doc.roots.splice(2, 1);
+    ensurePartIds(doc);
+    doc.nodes["13"] = { id: 13, name: "d", op: { type: "Sphere", radius: 1 } } as never;
+    doc.roots.push({ root: 13, material: "default" } as never);
+    const minted = partIdForRoot(doc, 2);
+    expect(minted).not.toBe("0:12");
+    expect(Number(minted.split(":")[1])).toBeGreaterThan(12);
     expect(new Set(Object.values(doc.partIds!)).size).toBe(Object.keys(doc.partIds!).length);
   });
 
   it("a part keeps its id when a feature consumes and re-roots it", () => {
     const doc = ensurePartIds(threeParts());
-    const added = applyToolOutcome(doc, {
-      kind: "add_feature",
-      op: { type: "Union", left: 4, right: 9 },
-    } as never);
-    expect(added.partId).toBe("0:4");
+    // Union(4, 9) re-roots part "0:4" at the new node and consumes "0:9".
+    doc.nodes["13"] = { id: 13, name: "u", op: { type: "Union", left: 4, right: 9 } } as never;
+    movePartId(doc, 4, 13);
+    forgetPartId(doc, 9);
+    doc.roots.splice(0, 2, { root: 13, material: "default" } as never);
+    ensurePartIds(doc);
     expect(doc.roots.map((r) => partIdForRoot(doc, r))).toEqual(["0:4", "0:12"]);
   });
 

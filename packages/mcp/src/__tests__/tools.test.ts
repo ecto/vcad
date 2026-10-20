@@ -61,8 +61,8 @@ function makeCubeDoc(): Document {
   };
 }
 
-/** Wire the kernel WASM into the registry. Required for `planCrud` to
- *  work — same bootstrap createServer does at startup. */
+/** Wire the kernel WASM into the registry (kernel-authored tool schemas) —
+ *  same bootstrap createServer does at startup. */
 async function bootstrapRegistry(): Promise<void> {
   const wasm = (await getKernelWasm()) as unknown as Record<string, unknown>;
   const getToolSchemas = wasm.get_tool_schemas as (() => string) | undefined;

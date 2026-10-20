@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Document } from "@vcad/ir";
+import { Engine } from "@vcad/engine";
 import { dispatchRegistryTool } from "../tools/registry-dispatch.js";
 import { documents, getSession, registerSession } from "../tools/session.js";
-import { findPartCandidate, migrateLegacyPartId } from "../tools/part-ids.js";
+import { findPartCandidate, migrateLegacyPartId, rootForPartId } from "../tools/part-ids.js";
 
 function cubes(): Document {
   const cube = (id: number, name: string) => ({
@@ -32,6 +33,10 @@ const listIds = (id: string) =>
   );
 
 describe("MCP stable part ids", () => {
+  // Mutations run through the kernel's document engine.
+  beforeAll(async () => {
+    await Engine.init();
+  });
   beforeEach(() => documents.clear());
 
   it("assigns ids when a session is registered (migrated on load)", () => {
@@ -50,7 +55,9 @@ describe("MCP stable part ids", () => {
     // The surviving part is still addressed by the same id.
     const read = json(dispatchRegistryTool("read", { document_id: id, part_id: third }));
     expect(read.part_id).toBe(third);
-    expect(read.node_id).toBe("3");
+    // The engine renumbers nodes when it materializes; the id still names
+    // the part's current root.
+    expect(read.node_id).toBe(String(rootForPartId(getSession(id), third!)!.entry.root));
   });
 
   it("accepts a legacy digit id with a deprecation warning", () => {

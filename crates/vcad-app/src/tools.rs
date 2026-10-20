@@ -8,7 +8,8 @@
 //!
 //! Lowering reads the document where a tool needs it: rotate pivots about
 //! the part's evaluated world bbox centre, and refs are checked by `apply`.
-//! Tools still handled by hosts (`place`, reads, bulk edits) return
+//! `place` resolves its anchors against evaluated bboxes the same way. Tools
+//! still handled by hosts (reads, bulk edits) return
 //! [`CommandError::Unsupported`].
 
 use serde_json::Value;
@@ -46,8 +47,101 @@ pub fn lower(tool: &str, args: &Value, doc: &DocumentApi) -> Result<DocCommand, 
         }),
         "set_material" => lower_set_material(args, doc),
         "update" => lower_update(args, doc),
+        "place" => lower_place(args, doc),
         other => Err(unsupported(other)),
     }
+}
+
+/// Named bbox anchors `place` accepts.
+const ANCHOR_NAMES: [&str; 9] = [
+    "center", "min", "max", "top", "bottom", "front", "back", "left", "right",
+];
+
+/// `place {part_id, from?, to}`: translate the part so its `from` anchor
+/// (default `center`) lands on `to`. An anchor is a named bbox anchor on
+/// this part, `{part, anchor}` on another part, or a world `{x, y, z}`.
+/// Only the part's offset changes, so rotation and scale are kept.
+fn lower_place(args: &Value, doc: &DocumentApi) -> Result<DocCommand, CommandError> {
+    let id = str_arg(args, "part_id", "place")?.to_string();
+    if doc.stable_ids().resolve(&id).is_none() {
+        return Err(CommandError::UnknownId { id });
+    }
+    let center = Value::String("center".into());
+    let from = args.get("from").filter(|v| !v.is_null()).unwrap_or(&center);
+    let to = args.get("to").filter(|v| !v.is_null()).ok_or_else(|| {
+        invalid("place requires a `to` anchor ({x,y,z}, named anchor, or {part, anchor})".into())
+    })?;
+    let from_world = resolve_anchor(from, &id, doc, "from")?;
+    let to_world = resolve_anchor(to, &id, doc, "to")?;
+    let offset = doc.feature_vec3(&id, "offset").unwrap_or([0.0; 3]);
+    Ok(DocCommand::SetTranslation {
+        id,
+        offset: [
+            offset[0] + to_world[0] - from_world[0],
+            offset[1] + to_world[1] - from_world[1],
+            offset[2] + to_world[2] - from_world[2],
+        ],
+    })
+}
+
+fn resolve_anchor(
+    anchor: &Value,
+    self_id: &str,
+    doc: &DocumentApi,
+    which: &str,
+) -> Result<[f64; 3], CommandError> {
+    match anchor {
+        Value::String(name) => anchor_on_part(self_id, name, doc, which),
+        Value::Object(o) if o.contains_key("part") => {
+            let part = str_arg(anchor, "part", &format!("place `{which}`"))?;
+            if doc.stable_ids().resolve(part).is_none() {
+                return Err(CommandError::UnknownId {
+                    id: part.to_string(),
+                });
+            }
+            let name = str_arg(anchor, "anchor", &format!("place `{which}`"))?;
+            anchor_on_part(part, name, doc, which)
+        }
+        Value::Object(_) => vec3(&serde_json::json!({ which: anchor }), which, "place"),
+        _ => Err(invalid(format!(
+            "place `{which}` must be a named anchor, {{x, y, z}}, or {{part, anchor}}"
+        ))),
+    }
+}
+
+fn anchor_on_part(
+    part: &str,
+    name: &str,
+    doc: &DocumentApi,
+    which: &str,
+) -> Result<[f64; 3], CommandError> {
+    if !ANCHOR_NAMES.contains(&name) {
+        return Err(invalid(format!(
+            "place `{which}`: unknown anchor {name:?} (expected one of {})",
+            ANCHOR_NAMES.join(", ")
+        )));
+    }
+    let (lo, hi) = doc.part_world_bbox(part).ok_or_else(|| {
+        invalid(format!(
+            "place `{which}`: part {part} has no evaluated geometry to anchor on"
+        ))
+    })?;
+    let c = [
+        (lo[0] + hi[0]) / 2.0,
+        (lo[1] + hi[1]) / 2.0,
+        (lo[2] + hi[2]) / 2.0,
+    ];
+    Ok(match name {
+        "min" => lo,
+        "max" => hi,
+        "top" => [c[0], c[1], hi[2]],
+        "bottom" => [c[0], c[1], lo[2]],
+        "front" => [c[0], lo[1], c[2]],
+        "back" => [c[0], hi[1], c[2]],
+        "left" => [lo[0], c[1], c[2]],
+        "right" => [hi[0], c[1], c[2]],
+        _ => c,
+    })
 }
 
 /// `set_material` with one of `part_id`, `part_ids[]` or
@@ -753,9 +847,9 @@ mod tests {
     }
 
     #[test]
-    fn geometry_dependent_tools_are_unsupported() {
+    fn unknown_tools_are_unsupported() {
         assert!(matches!(
-            lower_empty("place", &json!({})),
+            lower_empty("describe_scene", &json!({})),
             Err(CommandError::Unsupported { .. })
         ));
         assert!(matches!(
@@ -825,6 +919,116 @@ mod tests {
         }
         let (lo, hi) = api.part_world_bbox(&id).unwrap();
         assert!(((hi[0] - lo[0]) - 4.0).abs() < 1e-6 && ((hi[1] - lo[1]) - 10.0).abs() < 1e-6);
+    }
+
+    fn bbox(api: &DocumentApi, id: &str) -> ([f64; 3], [f64; 3]) {
+        api.part_world_bbox(id).unwrap()
+    }
+
+    fn assert_close(a: [f64; 3], b: [f64; 3]) {
+        for k in 0..3 {
+            assert!((a[k] - b[k]).abs() < 1e-6, "{a:?} vs {b:?}");
+        }
+    }
+
+    #[test]
+    fn place_moves_anchor_onto_world_point() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let id = apply_ok(
+            &mut api,
+            "create",
+            json!({"type": "cube", "params": {"size": {"x": 10, "y": 4, "z": 2}}}),
+        )["result"]["createdFeatureId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        // Default `from` is the bbox centre.
+        apply_ok(
+            &mut api,
+            "place",
+            json!({"part_id": id, "to": {"x": 100, "y": 0, "z": 0}}),
+        );
+        let (lo, hi) = bbox(&api, &id);
+        assert_close(lo, [95.0, -2.0, -1.0]);
+        assert_close(hi, [105.0, 2.0, 1.0]);
+        // Placing is absolute: repeating it is a no-op, not a second move.
+        apply_ok(
+            &mut api,
+            "place",
+            json!({"part_id": id, "from": "min", "to": {"x": 0, "y": 0, "z": 0}}),
+        );
+        apply_ok(
+            &mut api,
+            "place",
+            json!({"part_id": id, "from": "min", "to": {"x": 0, "y": 0, "z": 0}}),
+        );
+        assert_close(bbox(&api, &id).0, [0.0; 3]);
+    }
+
+    #[test]
+    fn place_stacks_on_another_parts_anchor() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let created = |api: &mut DocumentApi, size: f64| {
+            apply_ok(
+                api,
+                "create",
+                json!({"type": "cube", "params": {"size": {"x": size, "y": size, "z": size}}}),
+            )["result"]["createdFeatureId"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let base = created(&mut api, 20.0);
+        let lid = created(&mut api, 4.0);
+        apply_ok(
+            &mut api,
+            "translate",
+            json!({"child": base, "offset": {"x": 5, "y": 5, "z": 3}}),
+        );
+        apply_ok(
+            &mut api,
+            "place",
+            json!({"part_id": lid, "from": "bottom", "to": {"part": base, "anchor": "top"}}),
+        );
+        let (blo, bhi) = bbox(&api, &base);
+        let (llo, lhi) = bbox(&api, &lid);
+        assert!((llo[2] - bhi[2]).abs() < 1e-6, "lid sits on base top");
+        assert!(((llo[0] + lhi[0]) / 2.0 - (blo[0] + bhi[0]) / 2.0).abs() < 1e-6);
+        assert!(((llo[1] + lhi[1]) / 2.0 - (blo[1] + bhi[1]) / 2.0).abs() < 1e-6);
+        // The target part did not move.
+        assert_close(blo, [5.0, 5.0, 3.0]);
+    }
+
+    #[test]
+    fn place_bad_args_fail_closed() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let id = apply_ok(&mut api, "create", json!({"type": "cube"}))["result"]
+            ["createdFeatureId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let before = bbox(&api, &id);
+        let err = |args: Value| lower("place", &args, &api).unwrap_err();
+        assert!(matches!(
+            err(json!({"part_id": "9:9", "to": "top"})),
+            CommandError::UnknownId { .. }
+        ));
+        assert!(matches!(
+            err(json!({"part_id": id, "to": {"part": "9:9", "anchor": "top"}})),
+            CommandError::UnknownId { .. }
+        ));
+        for bad in [
+            json!({"part_id": id}),
+            json!({"part_id": id, "to": "middle"}),
+            json!({"part_id": id, "to": {"x": 1, "y": 2}}),
+            json!({"part_id": id, "to": 7}),
+        ] {
+            assert!(
+                matches!(err(bad.clone()), CommandError::Invalid { .. }),
+                "{bad}"
+            );
+        }
+        assert_eq!(bbox(&api, &id), before);
     }
 
     #[test]
@@ -1046,7 +1250,8 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(v["ok"], true);
-        let v: Value = serde_json::from_str(&api.apply_tool_envelope("place", "{}")).unwrap();
+        let v: Value =
+            serde_json::from_str(&api.apply_tool_envelope("describe_scene", "{}")).unwrap();
         assert_eq!(v["error"]["kind"], "unsupported");
     }
 }
