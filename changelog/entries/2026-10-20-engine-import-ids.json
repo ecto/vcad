@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-engine-import-ids",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "fix",
+  "title": "Imported and collaborator parts are editable by id",
+  "summary": "Parts arriving through IR import or a collaborator's edits could not be addressed by id in the browser engine, so edits to them failed as unknown parts.",
+  "features": ["engine", "collaboration", "import"]
+}

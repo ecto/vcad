@@ -69,3 +69,36 @@ describe("engine parity (WASM)", () => {
     }
   });
 });
+
+describe("WASM import_ir", () => {
+  // Regression: the binding re-implemented import without rebuilding the
+  // stable-id map, so every imported part was `unknown_id` to apply_tool —
+  // fatal for MCP, which imports the session IR before each mutation.
+  it("imported parts are addressable by their claimed stable id", () => {
+    const Cls = Engine as (EngineClass & { withReplica(id: number): ParityEngine & { import_ir(j: string): unknown } }) | undefined;
+    if (typeof Cls?.withReplica !== "function") {
+      if (process.env.CI) throw new Error("kernel WASM lacks WasmDocumentEngine.withReplica");
+      return;
+    }
+    const engine = Cls.withReplica(0);
+    try {
+      engine.import_ir(
+        JSON.stringify({
+          version: "0.1",
+          nodes: { "1": { id: 1, name: "c", op: { type: "Cube", size: { x: 1, y: 1, z: 1 } } } },
+          materials: {},
+          part_materials: {},
+          roots: [{ root: 1, material: "default" }],
+          partIds: { "1": "0:1" },
+        }),
+      );
+      const env = JSON.parse(
+        engine.apply_tool("set_material", JSON.stringify({ part_id: "0:1", material: "aluminum" })),
+      ) as { ok: boolean; error?: unknown };
+      expect(env.error).toBeUndefined();
+      expect(env.ok).toBe(true);
+    } finally {
+      engine.free();
+    }
+  });
+});

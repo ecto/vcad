@@ -12,7 +12,7 @@ use serde::Serialize;
 use vcad_app::document_api::{ApiResult, DocumentApi};
 use vcad_app::feature::FeatureInput;
 use vcad_app::materializer::materialize;
-use vcad_app::migrate::{detect_format, migrate_v1, FileFormat};
+use vcad_app::migrate::{detect_format, FileFormat};
 use vcad_crdt::{CrdtDocument, FeatureId, FractionalIndex, ReplicaId, Value};
 use wasm_bindgen::prelude::*;
 
@@ -305,13 +305,10 @@ impl WasmDocumentEngine {
 
     /// Import IR JSON into the current document (e.g. AI-generated geometry).
     pub fn import_ir(&mut self, ir_json: &str) -> JsValue {
-        let doc: vcad_ir::Document = match serde_json::from_str(ir_json) {
-            Ok(d) => d,
-            Err(_) => return self.build_result(None),
-        };
-        let migrated = migrate_v1(&doc);
-        let ops = migrated.ops_since(&std::collections::BTreeMap::new());
-        self.api.crdt_mut().merge(ops);
+        // Delegate: `DocumentApi::import_ir` also rebuilds the stable-id
+        // map. A local copy of the merge skipped that, so every imported
+        // feature was unresolvable by id (`apply_tool` → `unknown_id`).
+        self.api.import_ir(ir_json);
         self.build_result(None)
     }
 
@@ -345,6 +342,8 @@ impl WasmDocumentEngine {
     pub fn merge_remote(&mut self, ops_json: &str) -> JsValue {
         if let Ok(ops) = serde_json::from_str(ops_json) {
             self.api.crdt_mut().merge(ops);
+            // Remote creates must be addressable by stable id here too.
+            self.api.rebuild_stable_ids();
         }
         self.build_result(None)
     }
