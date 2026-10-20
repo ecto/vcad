@@ -441,9 +441,27 @@ describe("registry-driven tool surface", () => {
       getDocumentTool({ document_id }).content[0].text,
     ) as Document;
     expect(after.roots[0].material).toBe("aluminum");
-    expect(after.part_materials["1"]).toBe("aluminum");
+    // The material lives on the part (its scene root), not a node-id-keyed
+    // `part_materials` entry — engine edits renumber nodes. What matters is
+    // that it survives the next engine round trip.
+    const sphere = JSON.parse(
+      dispatchRegistryTool("create", {
+        document_id,
+        type: "sphere",
+        params: { radius: 1 },
+      }).content[0].text,
+    );
+    const later = JSON.parse(
+      getDocumentTool({ document_id }).content[0].text,
+    ) as Document;
+    expect(later.roots.map((r) => r.material).sort()).toEqual(["aluminum", "default"]);
+    dispatchRegistryTool("delete", { document_id, part_id: sphere.part_id });
 
-    dispatchRegistryTool("delete", { document_id, part_id: "1" });
+    // The seeded part's stable id ("1" as a legacy NodeId no longer names a
+    // node once the engine has renumbered the document).
+    const cubeId = after.partIds?.[String(after.roots[0].root)];
+    expect(cubeId).toBeTruthy();
+    dispatchRegistryTool("delete", { document_id, part_id: cubeId! });
     const final = JSON.parse(
       getDocumentTool({ document_id }).content[0].text,
     ) as Document;
