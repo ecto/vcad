@@ -16,6 +16,8 @@ pub type FeatureParams = HashMap<String, (Value, HLC)>;
 /// Boolean operation type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum BooleanType {
     /// Union (add).
     Union,
@@ -50,6 +52,8 @@ impl BooleanType {
 /// This is THE schema — encoding, decoding, validation, and the WASM API
 /// are all derived from this enum.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 #[serde(tag = "type")]
 pub enum FeatureInput {
     /// Box primitive.

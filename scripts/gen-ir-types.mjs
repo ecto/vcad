@@ -25,7 +25,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Crates whose ts-rs bindings feed generated.ts. Each has its own
 // `export_bindings` test; type names must be unique across all of them.
-const SOURCE_CRATES = ["vcad-ir", "vcad-receipt"];
+const SOURCE_CRATES = ["vcad-ir", "vcad-receipt", "vcad-app"];
 const outIdx = process.argv.indexOf("--out");
 const outPath =
   outIdx !== -1 && process.argv[outIdx + 1]

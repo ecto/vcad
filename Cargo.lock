@@ -4269,6 +4269,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "ts-rs",
  "vcad-crdt",
  "vcad-i18n",
  "vcad-ir",
@@ -4356,6 +4357,7 @@ dependencies = [
  "js-sys",
  "serde",
  "serde_json",
+ "ts-rs",
 ]
 
 [[package]]

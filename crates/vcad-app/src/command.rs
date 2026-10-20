@@ -20,6 +20,8 @@ use crate::feature::FeatureInput;
 ///
 /// JSON shape: `{"type": "set_material", "id": "123:4", "material": "steel"}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DocCommand {
     /// Append a new feature.
@@ -28,6 +30,7 @@ pub enum DocCommand {
         feature: FeatureInput,
         /// Optional display name.
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
         name: Option<String>,
     },
     /// Replace an existing feature's params.
@@ -115,6 +118,7 @@ pub enum DocCommand {
     /// Merge an IR document into this one.
     ImportIr {
         /// IR `Document` as JSON.
+        #[cfg_attr(feature = "ts-rs", ts(type = "Document"))]
         document: serde_json::Value,
     },
     /// Undo the last change.
@@ -130,6 +134,8 @@ pub enum DocCommand {
 
 /// Why a command was refused.
 #[derive(Debug, Clone, PartialEq, Error, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CommandError {
     /// No feature has this stable id.
@@ -307,6 +313,24 @@ impl DocumentApi {
             }
         }
         Ok(last)
+    }
+}
+
+#[cfg(all(test, feature = "ts-rs"))]
+mod ts_export {
+    use super::*;
+    use ts_rs::TS;
+
+    /// Generate TypeScript definitions for the command vocabulary
+    /// (bundled into `packages/ir/src/generated.ts` by `npm run ir:gen`).
+    #[test]
+    #[ignore = "requires --features ts-rs; produces bindings/ output, opt-in only"]
+    fn export_bindings() {
+        DocCommand::export_all().expect("DocCommand export failed");
+        CommandError::export_all().expect("CommandError export failed");
+        FeatureInput::export_all().expect("FeatureInput export failed");
+        crate::feature::BooleanType::export_all().expect("BooleanType export failed");
+        Value::export_all().expect("Value export failed");
     }
 }
 

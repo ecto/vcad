@@ -372,6 +372,11 @@ b: number,
 order?: number, };
 
 /**
+ * Boolean operation type.
+ */
+export type BooleanType = "union" | "difference" | "intersection";
+
+/**
  * An axis-aligned 3D bounding box (millimeters), used for component bodies
  * and courtyards.
  */
@@ -664,6 +669,31 @@ to: number,
 steps: number, };
 
 /**
+ * Why a command was refused.
+ */
+export type CommandError = { "kind": "unknown_id", 
+/**
+ * The id that didn't resolve.
+ */
+id: string, } | { "kind": "nothing_to", 
+/**
+ * `undo` or `redo`.
+ */
+action: string, } | { "kind": "invalid", 
+/**
+ * Parser message.
+ */
+message: string, } | { "kind": "batch", 
+/**
+ * Index of the failing command.
+ */
+index: number, 
+/**
+ * The underlying error.
+ */
+source: CommandError, };
+
+/**
  * The geometric relationship a [`DesignConstraint`] asserts.
  *
  * Dimensional variants carry an [`Expr`] value (literal number or a formula
@@ -822,6 +852,11 @@ value: Expr, };
  * autorouted, matching the rip-up behavior those documents already had.
  */
 export type CopperSource = "autoroute" | "manual";
+
+/**
+ * A parameter value in the CRDT document.
+ */
+export type CrdtValue = { "F64": number } | { "Vec3": [number, number, number] } | { "Bool": boolean } | { "String": string } | { "FeatureRef": string } | { "FeatureRefList": Array<string> } | { "Sketch": string };
 
 /**
  * CSG operation — the core building block of the IR DAG.
@@ -1596,6 +1631,121 @@ allowStackedMicrovias?: boolean,
 ruleAreas?: Array<RuleArea>, };
 
 /**
+ * One document mutation (or history step).
+ *
+ * JSON shape: `{"type": "set_material", "id": "123:4", "material": "steel"}`.
+ */
+export type DocCommand = { "type": "add_feature", 
+/**
+ * Typed feature payload.
+ */
+feature: FeatureInput, 
+/**
+ * Optional display name.
+ */
+name?: string, } | { "type": "update_feature", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * New typed payload.
+ */
+feature: FeatureInput, } | { "type": "set_param", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Param key.
+ */
+key: string, 
+/**
+ * New value.
+ */
+value: CrdtValue, } | { "type": "delete_feature", 
+/**
+ * Stable id of the feature.
+ */
+id: string, } | { "type": "set_translation", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Offset along X, Y, Z.
+ */
+offset: [number, number, number], } | { "type": "set_rotation", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Euler angles.
+ */
+angles: [number, number, number], } | { "type": "set_scale", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Per-axis factor.
+ */
+factor: [number, number, number], } | { "type": "set_material", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Material key.
+ */
+material: string, } | { "type": "set_visible", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Visibility.
+ */
+visible: boolean, } | { "type": "rename", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * New name.
+ */
+name: string, } | { "type": "reorder", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Target index.
+ */
+index: number, } | { "type": "duplicate", 
+/**
+ * Stable ids to copy.
+ */
+ids: Array<string>, } | { "type": "set_joint_state", 
+/**
+ * Stable id of the joint feature.
+ */
+id: string, 
+/**
+ * New state.
+ */
+state: number, } | { "type": "import_ir", 
+/**
+ * IR `Document` as JSON.
+ */
+document: Document, } | { "type": "undo" } | { "type": "redo" } | { "type": "batch", 
+/**
+ * Commands, applied in order.
+ */
+commands: Array<DocCommand>, };
+
+/**
  * A vcad document — the `.vcad` file format.
  *
  * Contains the full IR DAG, material definitions, and scene assembly.
@@ -1992,6 +2142,378 @@ export type EnvironmentPreset = "studio" | "warehouse" | "apartment" | "park" | 
  * while old numeric docs remain wire-compatible.
  */
 export type Expr = number | string;
+
+/**
+ * Every feature kind and its typed parameters.
+ *
+ * This is THE schema — encoding, decoding, validation, and the WASM API
+ * are all derived from this enum.
+ */
+export type FeatureInput = { "type": "Cube", 
+/**
+ * Width (X).
+ */
+size_x: number, 
+/**
+ * Depth (Y).
+ */
+size_y: number, 
+/**
+ * Height (Z).
+ */
+size_z: number, } | { "type": "Cylinder", 
+/**
+ * Radius.
+ */
+radius: number, 
+/**
+ * Height along Z.
+ */
+height: number, 
+/**
+ * Tessellation segments.
+ */
+segments: number | null, } | { "type": "Sphere", 
+/**
+ * Radius.
+ */
+radius: number, 
+/**
+ * Tessellation segments.
+ */
+segments: number | null, } | { "type": "Cone", 
+/**
+ * Bottom radius.
+ */
+radius_bottom: number, 
+/**
+ * Top radius (0 for a point).
+ */
+radius_top: number, 
+/**
+ * Height along Z.
+ */
+height: number, 
+/**
+ * Tessellation segments.
+ */
+segments: number | null, } | { "type": "Boolean", 
+/**
+ * Union, difference, or intersection.
+ */
+boolean_type: BooleanType, 
+/**
+ * First input feature ID.
+ */
+input_a: string, 
+/**
+ * Second input feature ID.
+ */
+input_b: string, } | { "type": "Extrude", 
+/**
+ * Sketch data (JSON-serialized CsgOp::Sketch2D).
+ */
+sketch: string, 
+/**
+ * Extrusion depth.
+ */
+depth: number, 
+/**
+ * Extrusion direction (unit vector).
+ */
+direction: [number, number, number], 
+/**
+ * Optional twist angle (degrees).
+ */
+twist_angle: number | null, 
+/**
+ * Optional end scale factor.
+ */
+scale_end: number | null, } | { "type": "Revolve", 
+/**
+ * Sketch data (JSON-serialized CsgOp::Sketch2D).
+ */
+sketch: string, 
+/**
+ * Axis origin point.
+ */
+axis_origin: [number, number, number], 
+/**
+ * Axis direction vector.
+ */
+axis_dir: [number, number, number], 
+/**
+ * Angle of revolution (degrees).
+ */
+angle_deg: number, } | { "type": "Sweep", 
+/**
+ * Sketch data (JSON-serialized CsgOp::Sketch2D).
+ */
+sketch: string, 
+/**
+ * Path curve (JSON-serialized PathCurve).
+ */
+path: string | null, 
+/**
+ * Optional twist angle.
+ */
+twist_angle: number | null, 
+/**
+ * Optional start scale.
+ */
+scale_start: number | null, 
+/**
+ * Optional end scale.
+ */
+scale_end: number | null, } | { "type": "Loft", 
+/**
+ * Sketch data for each profile (JSON-serialized CsgOp::Sketch2D).
+ */
+profiles: Array<string>, 
+/**
+ * Whether the loft is closed (wraps around).
+ */
+closed: boolean | null, } | { "type": "Fillet", 
+/**
+ * Source feature ID.
+ */
+input: string, 
+/**
+ * Fillet radius.
+ */
+radius: number, } | { "type": "Chamfer", 
+/**
+ * Source feature ID.
+ */
+input: string, 
+/**
+ * Chamfer distance.
+ */
+distance: number, } | { "type": "Shell", 
+/**
+ * Source feature ID.
+ */
+input: string, 
+/**
+ * Wall thickness.
+ */
+thickness: number, } | { "type": "LinearPattern", 
+/**
+ * Source feature ID.
+ */
+input: string, 
+/**
+ * Pattern direction vector.
+ */
+direction: [number, number, number], 
+/**
+ * Number of copies.
+ */
+count: number, 
+/**
+ * Spacing between copies.
+ */
+spacing: number, } | { "type": "CircularPattern", 
+/**
+ * Source feature ID.
+ */
+input: string, 
+/**
+ * Axis origin point.
+ */
+axis_origin: [number, number, number], 
+/**
+ * Axis direction vector.
+ */
+axis_dir: [number, number, number], 
+/**
+ * Number of copies.
+ */
+count: number, 
+/**
+ * Total angle (degrees).
+ */
+angle_deg: number, } | { "type": "Mirror", 
+/**
+ * Source feature ID.
+ */
+input: string, 
+/**
+ * Mirror plane ("XY", "XZ", or "YZ").
+ */
+plane: string, } | { "type": "Text", 
+/**
+ * The text content.
+ */
+text: string, 
+/**
+ * Font height.
+ */
+height: number, 
+/**
+ * Extrusion depth.
+ */
+depth: number, 
+/**
+ * Text alignment ("left", "center", "right").
+ */
+alignment: string | null, 
+/**
+ * Letter spacing multiplier.
+ */
+letter_spacing: number | null, 
+/**
+ * Line spacing multiplier.
+ */
+line_spacing: number | null, } | { "type": "ImportedMesh", 
+/**
+ * Vertex positions as JSON array of f64.
+ */
+positions_json: string, 
+/**
+ * Triangle indices as JSON array of u32.
+ */
+indices_json: string, 
+/**
+ * Vertex normals as JSON array of f64.
+ */
+normals_json: string | null, 
+/**
+ * Source filename.
+ */
+source: string | null, } | { "type": "PcbBoard", 
+/**
+ * Board data (JSON-serialized Pcb).
+ */
+board: string | null, } | { "type": "EmbroideryPattern", 
+/**
+ * Design data (JSON-serialized EmbroideryDesign).
+ */
+design: string | null, 
+/**
+ * Source filename.
+ */
+source: string | null, } | { "type": "PartInstance", 
+/**
+ * Part source path, e.g. `"std:fastener.bolt.socket-head"`.
+ */
+path: string, 
+/**
+ * Pinned version string, e.g. `"1.0"`.
+ */
+version: string, 
+/**
+ * Parameters as a JSON-serialized object.
+ */
+params_json: string, } | { "type": "PartDef", 
+/**
+ * Source feature ID that defines the geometry.
+ */
+source_feature: string, 
+/**
+ * Optional human-readable name.
+ */
+name: string | null, } | { "type": "Instance", 
+/**
+ * Part definition feature ID.
+ */
+part_def: string, 
+/**
+ * Optional name.
+ */
+name: string | null, 
+/**
+ * Transform data (JSON-serialized Transform3D).
+ */
+transform: string | null, } | { "type": "Joint", 
+/**
+ * Joint kind ("Fixed", "Revolute", "Slider", "Cylindrical", "Ball").
+ */
+kind: string, 
+/**
+ * Child instance feature ID.
+ */
+child_instance: string, 
+/**
+ * Parent instance feature ID.
+ */
+parent_instance: string | null, 
+/**
+ * Parent anchor point.
+ */
+anchor_a: [number, number, number], 
+/**
+ * Child anchor point.
+ */
+anchor_b: [number, number, number], 
+/**
+ * Joint axis (for revolute/slider/cylindrical).
+ */
+axis: [number, number, number] | null, 
+/**
+ * Optional name.
+ */
+name: string | null, 
+/**
+ * Joint limits (JSON-serialized JointLimits).
+ */
+limits: string | null, } | { "type": "SceneSettings", 
+/**
+ * Environment settings (JSON).
+ */
+environment: string | null, 
+/**
+ * Light definitions (JSON).
+ */
+lights: string | null, 
+/**
+ * Background settings (JSON).
+ */
+background: string | null, 
+/**
+ * Post-processing settings (JSON).
+ */
+post_processing: string | null, 
+/**
+ * Camera presets (JSON).
+ */
+camera_presets: string | null, } | { "type": "Schematic", 
+/**
+ * Sheet title.
+ */
+title: string | null, 
+/**
+ * Sheet data (JSON-serialized SchematicSheet).
+ */
+sheet: string | null, } | { "type": "DrawingSettings", 
+/**
+ * Title block fields (JSON-serialized `DrawingTitleBlock`).
+ */
+title_block: string | null, 
+/**
+ * Section lines (JSON-serialized `Vec<DrawingSectionLine>`).
+ */
+sections: string | null, 
+/**
+ * BOM table visibility (JSON bool).
+ */
+show_bom: string | null, } | { "type": "Molecule", 
+/**
+ * System data (JSON-serialized `MoleculeSystem`).
+ */
+system: string | null, } | { "type": "AnalysisStudies", 
+/**
+ * Studies data (JSON-serialized `Vec<AnalysisStudy>`).
+ */
+studies: string | null, } | { "type": "DesignConstraints", 
+/**
+ * Constraints data (JSON-serialized `Vec<DesignConstraint>`).
+ */
+constraints: string | null, } | { "type": "Timeline", 
+/**
+ * Timeline data (JSON-serialized `vcad_ir::Timeline`).
+ */
+timeline: string | null, };
 
 /**
  * Parameters controlling how a stitch group is filled.
