@@ -20,7 +20,6 @@ import { RaytraceChip } from "@/components/footer/RaytraceChip";
 import { DfmChip } from "@/components/footer/DfmChip";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { useCapabilities } from "@/lib/capabilities";
 
 const LOCALE_LABELS: Record<string, string> = {
   cs: "Čeština",
@@ -145,12 +144,9 @@ export function StatusBar() {
     return parts2.join(", ");
   })();
   const levelColor = latest ? LEVEL_COLOR[latest.level] : "";
-  const { tauri, platform } = useCapabilities();
-  const macOverlay = tauri && platform === "mac";
 
   return (
     <div
-      data-tauri-drag-region={macOverlay ? "" : undefined}
       className={cn(
         "vcad-footer flex h-6 items-stretch bg-surface select-none",
         "border-t border-border/40",

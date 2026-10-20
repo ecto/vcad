@@ -1,25 +1,16 @@
 /**
- * Desktop auth deep-link bridge.
+ * Auth callback handling.
  *
- * The desktop app cannot complete a magic-link sign-in by itself —
- * Supabase emails a URL the user clicks in their external browser, and
- * that browser has no path back into the Tauri window. We solve this
- * with a static bridge page on vcad.io (`/auth/desktop`) that forwards
- * the click to the `vcad://auth/callback` custom scheme, which the OS
- * routes to a running (or freshly-launched) vcad desktop instance via
- * the Tauri deep-link plugin.
- *
- * `handleAuthDeepLink` parses whatever Supabase put on the URL (query
+ * `applyAuthCallback` parses whatever Supabase put on a callback URL (query
  * `?code=...` for PKCE, query `?token_hash=...&type=...` for the OTP
  * magic-link, or hash `#access_token=...&refresh_token=...` for the
- * implicit flow) and turns it into an active Supabase session. The
- * bridge page deliberately does not load supabase-js so the one-shot
- * token isn't burned in the browser before reaching the desktop.
+ * implicit flow) and turns it into an active Supabase session. Used by the
+ * web popup OAuth flow.
  */
 
 import { getSupabase } from "./client";
 
-export interface AuthDeepLinkResult {
+export interface AuthCallbackResult {
   /** True when the URL produced an active session. */
   ok: boolean;
   /** Populated on failure; safe to surface to the user. */
@@ -27,28 +18,8 @@ export interface AuthDeepLinkResult {
 }
 
 /**
- * Returns true when `url` is the deep-link vcad emits for a completed
- * sign-in (e.g. `vcad://auth/callback?...`). The caller should check
- * this before invoking `handleAuthDeepLink` to avoid swallowing other
- * `vcad://` URLs (shared documents, catalog jumps, etc.).
- */
-export function isAuthDeepLink(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "vcad:") return false;
-    // `vcad://auth/callback` parses as host=auth, pathname=/callback.
-    // Accept either shape so the bridge page can use whichever feels
-    // cleaner without breaking the desktop.
-    const path = `${parsed.host}${parsed.pathname}`.replace(/\/+$/, "");
-    return path === "auth/callback" || path === "auth";
-  } catch {
-    return false;
-  }
-}
-
-/**
  * Materialize a Supabase session from any auth callback URL — used by
- * both the desktop deep-link bridge and the web popup flow. Handles
+ * the web popup flow. Handles
  * three shapes Supabase can return:
  *
  *   - `?code=…`            PKCE / OAuth code exchange
@@ -60,7 +31,7 @@ export function isAuthDeepLink(url: string): boolean {
  */
 export async function applyAuthCallback(
   url: string,
-): Promise<AuthDeepLinkResult> {
+): Promise<AuthCallbackResult> {
   const supabase = getSupabase();
   if (!supabase) {
     return { ok: false, error: "Auth is not configured" };
@@ -133,14 +104,4 @@ export async function applyAuthCallback(
   }
 
   return { ok: false, error: "Callback URL had no auth parameters" };
-}
-
-/**
- * Materialize a Supabase session from a `vcad://auth/callback` URL.
- * Thin wrapper over `applyAuthCallback` retained for API stability.
- */
-export async function handleAuthDeepLink(
-  url: string,
-): Promise<AuthDeepLinkResult> {
-  return applyAuthCallback(url);
 }

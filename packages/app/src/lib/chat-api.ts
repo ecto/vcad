@@ -97,8 +97,7 @@ export async function streamChat(
   }));
 
   try {
-    const { apiUrl } = await import("@/lib/api-origin");
-    const url = apiUrl("/api/chat");
+    const url = "/api/chat";
     const requestBody = JSON.stringify({
       messages,
       context: { selectedParts },
