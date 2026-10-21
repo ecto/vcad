@@ -1,8 +1,8 @@
 //! Every example document in `examples/` opens the way the native app opens
-//! it — loon compiled with its own directory for `[use]`/mesh paths, JSON
-//! loaded into the document engine, vendored meshes resolved against the
-//! file's directory, then evaluated with the app's kernel-direct evaluator —
-//! without a panic and with non-empty geometry.
+//! it: any `.vcad` format (JSON, loon, VCode) loaded through
+//! `vcad_ffi::load_document_file` (mesh paths resolved against the file's
+//! directory), opened in the document engine, then evaluated with the app's
+//! kernel-direct evaluator, without a panic and with non-empty geometry.
 //!
 //! New examples are picked up automatically; a file that can't meet the bar
 //! fails here instead of in front of a user on the Open Example menu.
@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use vcad_app::DocumentApi;
 use vcad_crdt::ReplicaId;
 use vcad_eval::{evaluate_document_with_sheet_metal, EvalOptions};
-use vcad_ir::Document;
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -38,18 +37,16 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// Open + evaluate one example; `Ok(triangles)` or a reason.
 fn open(path: &Path) -> Result<usize, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("read: {e}"))?;
-    let dir = path.parent().unwrap_or(Path::new("."));
-    let is_json = text.trim_start().starts_with('{');
-    let mut doc: Document = if is_json {
-        // The editor opens JSON documents in the engine; a refusal there is
-        // a document that can only be viewed, which examples must not be.
-        DocumentApi::from_ir(&text, ReplicaId(1)).map_err(|e| format!("engine open: {e}"))?;
-        Document::from_json(&text).map_err(|e| format!("parse: {e}"))?
-    } else {
-        vcad_loon::eval_vcad(&text, Some(dir)).map_err(|e| format!("loon: {e}"))?
-    };
-    vcad_eval::resolve_mesh_paths(&mut doc, dir);
+    // The app's Open: any .vcad format (JSON, loon, VCode) to IR.
+    let doc = vcad_ffi::load_document_file(path)?;
+    // The editor opens documents in the engine; a refusal there means a
+    // view-only document, which an example must not be. Electronics
+    // documents are edited outside the engine by design.
+    let electronics = doc.schematic.is_some() || doc.pcb.is_some();
+    if !electronics {
+        let json = serde_json::to_string(&doc).map_err(|e| format!("serialize: {e}"))?;
+        DocumentApi::from_ir(&json, ReplicaId(1)).map_err(|e| format!("engine open: {e}"))?;
+    }
     let scene = evaluate_document_with_sheet_metal(&doc, &EvalOptions::default())
         .map_err(|e| format!("evaluate: {e}"))?;
     let parts: usize = scene.parts.iter().map(|p| p.mesh.indices.len() / 3).sum();
