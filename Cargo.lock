@@ -4265,8 +4265,10 @@ name = "vcad-app"
 version = "0.10.0"
 dependencies = [
  "anyhow",
+ "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
  "ts-rs",
  "vcad-crdt",
@@ -5401,13 +5403,16 @@ dependencies = [
  "md5",
  "quick-xml 0.36.2",
  "rumqttc",
+ "rustls 0.22.4",
  "rustls 0.23.36",
  "serde",
  "serde_json",
  "suppaftp",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-test",
+ "toml",
  "uuid",
  "vcad-slicer",
  "vcad-slicer-gcode",
@@ -5423,6 +5428,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "vcad-kernel-math",
+ "vcad-kernel-tessellate",
  "vcad-slicer",
 ]
 

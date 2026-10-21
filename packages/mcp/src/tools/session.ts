@@ -39,7 +39,7 @@ import {
   addDocumentEnterHook,
   runDocumentEnterHooks,
 } from "./session-core.js";
-import { attachLoonSource, sourceStatus } from "./source-provenance.js";
+import { sourceStatus } from "./source-provenance.js";
 import { assetNote, resolveLoonAssets } from "./loon-assets.js";
 
 // The browser-safe core of the session layer (document cache, ids, undo
@@ -727,19 +727,13 @@ async function loadDocumentFromPath(
   const modules = composeLoonModules({ source: raw, base_dir: baseDir });
   let doc: Document | null;
   try {
-    doc = engine.evalVcadSourceWithModules(raw, modules) ?? null;
+    doc = engine.evalLoonDocument(raw, modules, { baseDir, path: abs });
   } catch (e) {
     return fail(`Loon evaluation of ${abs} failed: ${(e as Error).message}`);
   }
   if (!doc) return fail(`Loon evaluation of ${abs} produced no document.`);
   const imports = assetNote(resolveLoonAssets(doc, { base_dir: baseDir }, engine));
 
-  attachLoonSource(doc, {
-    text: raw,
-    modules,
-    base_dir: baseDir,
-    path: abs,
-  });
   const id = registerSession(doc);
   return {
     content: [

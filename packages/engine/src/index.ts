@@ -761,6 +761,8 @@ export interface KernelModule {
   evalVcadSource?: (source: string) => string;
   /** Evaluate loon source with an in-memory `[use ...]` module map. */
   evalVcadSourceWithModules?: (source: string, modulesJson: string) => string;
+  /** Evaluate loon to a document stamped with its provenance. */
+  evalLoonDocument?: (source: string, modulesJson: string, baseDir?: string, path?: string) => string;
   evalVcadSourceParametric?: (
     source: string,
     modulesJson: string | undefined,
@@ -1371,6 +1373,7 @@ export class Engine {
       evaluateDocument: (wasmModule as Record<string, unknown>).evaluateDocument as KernelModule["evaluateDocument"],
       evalVcadSource: (wasmModule as Record<string, unknown>).evalVcadSource as KernelModule["evalVcadSource"],
       evalVcadSourceWithModules: (wasmModule as Record<string, unknown>).evalVcadSourceWithModules as KernelModule["evalVcadSourceWithModules"],
+      evalLoonDocument: (wasmModule as Record<string, unknown>).evalLoonDocument as KernelModule["evalLoonDocument"],
       evalVcadSourceParametric: (wasmModule as Record<string, unknown>).evalVcadSourceParametric as KernelModule["evalVcadSourceParametric"],
       documentParameterGradient: (wasmModule as Record<string, unknown>).documentParameterGradient as KernelModule["documentParameterGradient"],
       documentSensitivities: (wasmModule as Record<string, unknown>).documentSensitivities as KernelModule["documentSensitivities"],
@@ -2602,6 +2605,30 @@ export class Engine {
    * With an empty map this is exactly {@link evalVcadSource}. Returns null
    * if the kernel doesn't support module-aware loon evaluation.
    */
+  /**
+   * Evaluate loon source to a session document stamped with its provenance
+   * (`doc.source`: program, modules, origin dir/file, SHA-256), in the kernel.
+   * Null on kernels predating the export.
+   */
+  evalLoonDocument(
+    source: string,
+    modules: Record<string, string>,
+    origin: { baseDir?: string; path?: string } = {},
+  ): Document | null {
+    if (typeof this.kernel.evalLoonDocument !== "function") return null;
+    const doc = JSON.parse(
+      this.kernel.evalLoonDocument(source, JSON.stringify(modules), origin.baseDir, origin.path),
+    ) as Document;
+    // The wire format omits serde-default fields; restore them so the source
+    // reads explicitly fresh (`diverged: false`) to session bookkeeping.
+    if (doc.source) {
+      doc.source.diverged ??= false;
+      doc.source.diverged_by ??= [];
+      doc.source.modules ??= {};
+    }
+    return doc;
+  }
+
   evalVcadSourceWithModules(
     source: string,
     modules: Record<string, string>,

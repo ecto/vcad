@@ -32,6 +32,10 @@
 //! next to the seam value. It never feeds the optimizer.
 //!
 //! The step is projected gradient descent with box bounds on `t` and `h`.
+//! The penalty leaves δ slightly above δmax, so the run ends with a
+//! feasibility projection: `t` held, Newton steps on `δ(h) = δmax` driven by
+//! the seam's `dδ/dh` (logged with `phase = projection`, FD-checked like the
+//! descent rows).
 //!
 //! ```text
 //! cargo run --release -p vcad-eval --example gradient_clip_v2 -- <out_dir>
@@ -71,6 +75,11 @@ const ALPHA_H: f64 = 0.16;
 const T_BOUNDS: (f64, f64) = (2.0, 12.0);
 const H_MAX: f64 = 60.0;
 const ITERS: usize = 100;
+/// Newton feasibility-projection steps after the penalty descent.
+const PROJ_STEPS: usize = 4;
+/// Projection target, just inside the limit so the final design is
+/// strictly feasible (the penalty alone leaves δ slightly above δmax).
+const DELTA_TARGET: f64 = DELTA_MAX * 0.9995;
 /// FD check step, mm.
 const EPS: f64 = 1e-4;
 
@@ -137,11 +146,12 @@ fn main() {
         "iter,t_mm,h_mm,mass_g,I_mm4,delta_mm,delta_max_mm,objective,\
          dJ_dt_seam,dJ_dt_fd,dJ_dt_rel_err,dJ_dh_seam,dJ_dh_fd,dJ_dh_rel_err,\
          ddelta_dt_seam,ddelta_dt_fd,ddelta_dt_rel_err,\
-         ddelta_dh_seam,ddelta_dh_fd,ddelta_dh_rel_err\n",
+         ddelta_dh_seam,ddelta_dh_fd,ddelta_dh_rel_err,phase\n",
     );
     let mut worst = [0.0_f64; 4];
 
-    for k in 0..ITERS {
+    for k in 0..ITERS + PROJ_STEPS {
+        let projecting = k >= ITERS;
         let at = with_params(&doc, t, h);
         let gt = document_parameter_gradient(&at, "t", DENSITY, &tess(), 1e-4).expect("seam t");
         let gh = document_parameter_gradient(&at, "h", DENSITY, &tess(), 1e-4).expect("seam h");
@@ -193,7 +203,7 @@ fn main() {
         writeln!(
             csv,
             "{k},{t:.6},{h:.6},{m:.6},{i_area:.6},{delta:.6},{DELTA_MAX},{j:.6},\
-             {:.9},{:.9},{:.3e},{:.9},{:.9},{:.3e},{:.9e},{:.9e},{:.3e},{:.9e},{:.9e},{:.3e}",
+             {:.9},{:.9},{:.3e},{:.9},{:.9},{:.3e},{:.9e},{:.9e},{:.3e},{:.9e},{:.9e},{:.3e},{}",
             seam[0],
             fd[0],
             rel[0],
@@ -205,7 +215,8 @@ fn main() {
             rel[2],
             seam[3],
             fd[3],
-            rel[3]
+            rel[3],
+            if projecting { "projection" } else { "descent" }
         )
         .unwrap();
         println!(
@@ -214,8 +225,16 @@ fn main() {
             rel[0], rel[1]
         );
 
-        t = (t - ALPHA_T * dj_dt).clamp(T_BOUNDS.0, T_BOUNDS.1);
-        h = (h - ALPHA_H * dj_dh).clamp(t + 5.0, H_MAX);
+        if projecting {
+            // Feasibility projection: hold t, one Newton step on
+            // δ(h) = δtarget using the seam's dδ/dh. δ is convex and
+            // decreasing in h, so the iterates approach the root from the
+            // infeasible side and converge quadratically.
+            h = (h - (delta - DELTA_TARGET) / dd_dh).clamp(t + 5.0, H_MAX);
+        } else {
+            t = (t - ALPHA_T * dj_dt).clamp(T_BOUNDS.0, T_BOUNDS.1);
+            h = (h - ALPHA_H * dj_dh).clamp(t + 5.0, H_MAX);
+        }
     }
 
     std::fs::write(out.join("log.csv"), csv).expect("write log");
