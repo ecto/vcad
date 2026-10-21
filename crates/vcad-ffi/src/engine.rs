@@ -360,6 +360,105 @@ mod tests {
         vcad_engine_free(engine);
     }
 
+    /// Rust-produced JSON for every engine type the Mac app's generated
+    /// Swift Codable mirrors (`apple/VcadApp/Sources/VcadApp/Generated/`)
+    /// decode. `DocumentEngineCodegenTests` round-trips each value through
+    /// Swift; this test keeps the fixture byte-identical to what Rust emits
+    /// (`VCAD_UPDATE_FIXTURES=1` rewrites it).
+    #[test]
+    fn swift_codegen_fixture_matches_rust_output() {
+        use serde_json::{json, Value};
+        let engine = vcad_engine_new(5);
+        let mut envelopes = Vec::new();
+        let mut run = |cmd: Value| {
+            let c = CString::new(cmd.to_string()).unwrap();
+            let out: Value =
+                serde_json::from_str(&take(vcad_engine_apply(engine, c.as_ptr()))).unwrap();
+            envelopes.push(out.clone());
+            out
+        };
+        let cube = run(json!({"type":"add_feature","name":"Plate",
+            "feature":{"type":"Cube","size_x":40.0,"size_y":20.0,"size_z":5.0}}));
+        let a = cube["result"]["createdFeatureId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let pin = run(json!({"type":"add_feature",
+            "feature":{"type":"Cylinder","radius":3.0,"height":12.0,"segments":32}}));
+        let b = pin["result"]["createdFeatureId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let both = run(json!({"type":"add_feature","feature":{"type":"Boolean",
+            "boolean_type":"difference","input_a":a,"input_b":b}}));
+        let c = both["result"]["createdFeatureId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        run(json!({"type":"add_feature","feature":{"type":"Fillet","input":c,"radius":1.5}}));
+        run(json!({"type":"delete_feature","id":"9:9"}));
+        run(
+            json!({"type":"batch","commands":[{"type":"undo"},{"type":"rename","id":"9:9","name":"x"}]}),
+        );
+        run(json!({"type":"set_param","id":a,"key":"size_x","value":"oops"}));
+        vcad_engine_free(engine);
+
+        let feat = json!({"type":"Cube","size_x":1.0,"size_y":2.0,"size_z":3.0});
+        let commands: Vec<Value> = [
+            json!({"type":"add_feature","feature":feat,"name":"Box"}),
+            json!({"type":"add_feature","feature":{"type":"Sphere","radius":2.0}}),
+            json!({"type":"create_feature","kind":"scene-settings","params":{"lights":{"String":"[]"}}}),
+            json!({"type":"update_feature","id":"1:0","feature":{"type":"Extrude","sketch":"{}","depth":4.0,"direction":[0.0,0.0,1.0],"twist_angle":5.0}}),
+            json!({"type":"set_param","id":"1:0","key":"radius","value":{"F64":2.5}}),
+            json!({"type":"set_param","id":"1:0","key":"axis","value":{"Vec3":[0.0,1.0,0.0]}}),
+            json!({"type":"set_param","id":"1:0","key":"inputs","value":{"FeatureRefList":["1:1","1:2"]}}),
+            json!({"type":"delete_feature","id":"1:0"}),
+            json!({"type":"set_translation","id":"1:0","offset":[1.0,2.0,3.0]}),
+            json!({"type":"set_rotation","id":"1:0","angles":[0.0,90.0,0.0]}),
+            json!({"type":"set_scale","id":"1:0","factor":[2.0,2.0,2.0]}),
+            json!({"type":"set_material","id":"1:0","material":"steel"}),
+            json!({"type":"define_material","key":"glass","definition":{"name":"glass","color":[0.9,0.95,1.0],"metallic":0.0,"roughness":0.05,"transmission":0.9,"ior":1.5}}),
+            json!({"type":"set_visible","id":"1:0","visible":false}),
+            json!({"type":"rename","id":"1:0","name":"Base"}),
+            json!({"type":"reorder","id":"1:0","index":2}),
+            json!({"type":"duplicate","ids":["1:0","1:1"]}),
+            json!({"type":"set_joint_state","id":"1:3","state":45.0}),
+            json!({"type":"import_ir","document":{"version":"0.1","nodes":{},"materials":{},"part_materials":{},"roots":[]}}),
+            json!({"type":"undo"}),
+            json!({"type":"redo"}),
+            json!({"type":"batch","commands":[{"type":"undo"},{"type":"add_feature","feature":{"type":"Boolean","boolean_type":"union","input_a":"1:0","input_b":"1:1"}}]}),
+        ]
+        .into_iter()
+        // Through the Rust type and back, so the fixture is Rust's own output.
+        .map(|v| {
+            let cmd: vcad_app::DocCommand = serde_json::from_value(v).unwrap();
+            serde_json::to_value(cmd).unwrap()
+        })
+        .collect();
+        let tool: vcad_app::command::ToolCall = serde_json::from_value(json!({
+            "tool":"create","args":{"type":"fillet","parent_part_id":"1:0","params":{"radius":1}}
+        }))
+        .unwrap();
+        let fixture = json!({
+            "commands": commands,
+            "envelopes": envelopes,
+            "toolCalls": [serde_json::to_value(tool).unwrap()],
+        });
+        let text = serde_json::to_string_pretty(&fixture).unwrap() + "\n";
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../apple/VcadApp/Tests/Fixtures/engine-types.json");
+        if std::env::var_os("VCAD_UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &text).unwrap();
+        }
+        let committed = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            committed == text,
+            "{} is stale; rerun with VCAD_UPDATE_FIXTURES=1",
+            path.display()
+        );
+    }
+
     #[test]
     fn apply_round_trips_through_c_abi() {
         let engine = vcad_engine_new(7);

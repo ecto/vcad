@@ -192,6 +192,58 @@ impl DocumentApi {
         self.set_str_param(stable_id, "material", material)
     }
 
+    /// Add (or replace) the definition of material `key` in the document's
+    /// `materials` table, so a preset picked by key renders and survives a
+    /// save/reload. The table lives on a `doc-extras` feature (see
+    /// `materialize_doc_extras`); one is created when the document has none.
+    pub fn define_material(&mut self, key: &str, def: &vcad_ir::MaterialDef) -> ApiResult {
+        let def = serde_json::to_value(def).unwrap_or_default();
+        let extras_of = |f: &vcad_crdt::FeatureState| match f.params.get("extras") {
+            Some((Value::String(s), _)) => serde_json::from_str::<serde_json::Value>(s)
+                .ok()
+                .and_then(|v| match v {
+                    serde_json::Value::Object(m) => Some(m),
+                    _ => None,
+                }),
+            _ => None,
+        };
+        // The materializer fills `materials` from the first doc-extras that
+        // carries the key, so that is the one to edit.
+        let ordered = self.crdt.ordered_features();
+        let candidates: Vec<_> = ordered
+            .iter()
+            .filter(|(_, f)| f.kind == "doc-extras")
+            .map(|(fid, f)| (*fid, extras_of(f).unwrap_or_default()))
+            .collect();
+        let target = candidates
+            .iter()
+            .find(|(_, m)| m.contains_key("materials"))
+            .or(candidates.first())
+            .cloned();
+        match target {
+            Some((fid, mut extras)) => {
+                let materials = extras
+                    .entry("materials")
+                    .or_insert_with(|| serde_json::Value::Object(Default::default()));
+                if !materials.is_object() {
+                    *materials = serde_json::Value::Object(Default::default());
+                }
+                materials[key] = def;
+                let blob = serde_json::Value::Object(extras).to_string();
+                self.crdt.set_param(fid, "extras", Value::String(blob));
+                self.dirty = true;
+                self.build_result(None)
+            }
+            None => {
+                let blob = serde_json::json!({ "materials": { key: def } }).to_string();
+                let params = HashMap::from([("extras".to_string(), Value::String(blob))]);
+                let mut r = self.create_feature_raw("doc-extras", params);
+                r.created_feature_id = None;
+                r
+            }
+        }
+    }
+
     /// Set visibility.
     pub fn set_visible(&mut self, stable_id: &str, visible: bool) -> ApiResult {
         if let Some(fid) = self.stable_ids.resolve(stable_id) {

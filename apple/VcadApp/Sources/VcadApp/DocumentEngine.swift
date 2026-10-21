@@ -5,14 +5,19 @@ import Foundation
 ///
 /// Speaks the same `DocCommand` vocabulary as the web app's
 /// `WasmDocumentEngine.apply`, so a mutation means the same thing on every
-/// client. Commands and results are JSON; the materialized IR document comes
-/// back as raw JSON for the existing `vcad_scene_from_json` path.
+/// client. Commands, part info and the result envelope are the typed Swift
+/// mirrors in `Generated/EngineTypes.swift`, generated from the Rust types
+/// (`npm run swift:gen`); the materialized IR document stays raw JSON for the
+/// existing `vcad_scene_from_json` path.
 final class DocumentEngine {
     /// A command the engine refused (`CommandError` in Rust).
     struct Refusal: Error, CustomStringConvertible {
-        /// `unknown_id`, `invalid`, `nothing_to`, `unsupported` or `batch`.
+        /// `unknown_id`, `invalid`, `nothing_to`, `unsupported`, `batch`, or
+        /// `ffi` when the call itself failed.
         let kind: String
         let message: String
+        /// The structured error, when the engine sent one.
+        var error: CommandError? = nil
         var description: String { message }
     }
 
@@ -22,8 +27,8 @@ final class DocumentEngine {
         let documentJSON: Data
         /// The same document, parsed — what the editor renders and reads.
         let document: [String: Any]
-        /// `PartInfo` per materialized feature (`id`, `kind`, `*NodeId`s).
-        let parts: [[String: Any]]
+        /// Per materialized feature: its stable id, kind and IR node ids.
+        let parts: [EnginePartInfo]
         /// Stable id of the feature the command created, if any.
         let createdFeatureId: String?
         var partCount: Int { parts.count }
@@ -39,19 +44,36 @@ final class DocumentEngine {
         /// The part that owns `node` and the node's role in its transform
         /// chain: `translate`, `rotate`, `scale`, or `primitive` (the leaf —
         /// primitive, boolean, fillet, …).
-        func owner(ofNode node: Int) -> (part: [String: Any], role: String)? {
+        func owner(ofNode node: Int) -> (part: EnginePartInfo, role: String)? {
             for part in parts {
-                for (key, value) in part where key.hasSuffix("NodeId") {
-                    guard (value as? NSNumber)?.intValue == node else { continue }
-                    switch key {
-                    case "translateNodeId": return (part, "translate")
-                    case "rotateNodeId": return (part, "rotate")
-                    case "scaleNodeId": return (part, "scale")
-                    default: return (part, "primitive")
-                    }
-                }
+                if part.translateNodeId == node { return (part, "translate") }
+                if part.rotateNodeId == node { return (part, "rotate") }
+                if part.scaleNodeId == node { return (part, "scale") }
+                if part.leafNodeIds.contains(node) { return (part, "primitive") }
             }
             return nil
+        }
+
+        /// Material key of the scene root whose part id is `id`.
+        func material(ofPart id: String) -> String? {
+            let ids = document["partIds"] as? [String: Any] ?? [:]
+            let roots = document["roots"] as? [[String: Any]] ?? []
+            return roots.first { r in
+                (r["root"] as? NSNumber).map { ids[$0.stringValue] as? String == id } ?? false
+            }?["material"] as? String
+        }
+
+        /// The material new parts get: the document's first defined material,
+        /// else the first part's, else `default` (the pre-engine editor rule).
+        var defaultMaterial: String {
+            if let m = (document["materials"] as? [String: Any])?.keys.sorted().first { return m }
+            if let r = (document["roots"] as? [[String: Any]])?.first?["material"] as? String { return r }
+            return "default"
+        }
+
+        /// Whether the document's `materials` table defines `key`.
+        func definesMaterial(_ key: String) -> Bool {
+            (document["materials"] as? [String: Any])?[key] != nil
         }
     }
 
@@ -63,18 +85,18 @@ final class DocumentEngine {
 
     deinit { vcad_engine_free(handle) }
 
-    /// Apply one `DocCommand`, e.g. `["type": "set_material", "id": id, "material": "steel"]`.
+    /// Apply one `DocCommand`, e.g. `.setMaterial(id: id, material: "steel")`.
     @discardableResult
-    func apply(_ command: [String: Any]) throws -> Result {
-        let json = String(decoding: try JSONSerialization.data(withJSONObject: command), as: UTF8.self)
+    func apply(_ command: DocCommand) throws -> Result {
+        let json = String(decoding: try JSONEncoder().encode(command), as: UTF8.self)
         return try Self.unwrap(json.withCString { vcad_engine_apply(handle, $0) })
     }
 
     /// Lower and apply an AI tool call (`create`, `translate`, …) in Rust.
     @discardableResult
-    func applyTool(_ tool: String, _ args: [String: Any]) throws -> Result {
-        let json = String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
-        return try Self.unwrap(tool.withCString { t in json.withCString { vcad_engine_apply_tool(handle, t, $0) } })
+    func applyTool(_ call: ToolCall) throws -> Result {
+        let json = String(decoding: try JSONEncoder().encode(call.args), as: UTF8.self)
+        return try Self.unwrap(call.tool.withCString { t in json.withCString { vcad_engine_apply_tool(handle, t, $0) } })
     }
 
     /// The current state (no mutation).
@@ -123,18 +145,65 @@ final class DocumentEngine {
             throw Refusal(kind: "ffi", message: message ?? "engine call failed")
         }
         defer { vcad_engine_string_free(raw) }
-        let envelope = try JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Any] ?? [:]
-        guard envelope["ok"] as? Bool == true, let result = envelope["result"] as? [String: Any] else {
-            let error = envelope["error"] as? [String: Any] ?? [:]
-            throw Refusal(kind: error["kind"] as? String ?? "unknown", message: error["message"] as? String ?? "command refused")
+        return try result(from: Data(String(cString: raw).utf8))
+    }
+
+    /// Decode an `EngineEnvelope`: a `Result`, or the `Refusal` it carries.
+    static func result(from envelope: Data) throws -> Result {
+        let decoded = try JSONDecoder().decode(EngineEnvelope.self, from: envelope)
+        guard decoded.ok, let result = decoded.result else {
+            let error = decoded.error
+            throw Refusal(kind: error?.commandError.kind ?? "unknown",
+                          message: error?.message ?? "command refused",
+                          error: error?.commandError)
         }
-        let document = result["document"] as? [String: Any] ?? [:]
+        let document = result.document.foundationValue as? [String: Any] ?? [:]
         return Result(
             documentJSON: try JSONSerialization.data(withJSONObject: document),
             document: document,
-            parts: result["parts"] as? [[String: Any]] ?? [],
-            createdFeatureId: result["createdFeatureId"] as? String,
-            warnings: result["warnings"] as? [String] ?? []
+            parts: result.parts,
+            createdFeatureId: result.createdFeatureId,
+            warnings: result.warnings
         )
+    }
+}
+
+extension EnginePartInfo {
+    /// The IR node ids of this part's leaf (everything but the transform
+    /// chain): the primitive, boolean, fillet, sketch, … nodes.
+    var leafNodeIds: [Int] {
+        guard let payload = Mirror(reflecting: self).children.first?.value else { return [] }
+        return Mirror(reflecting: payload).children.flatMap { child -> [Int] in
+            guard let label = child.label,
+                  label.hasSuffix("NodeId") || label.hasSuffix("NodeIds"),
+                  !["translateNodeId", "rotateNodeId", "scaleNodeId"].contains(label) else { return [] }
+            return (child.value as? Int).map { [$0] } ?? (child.value as? [Int]) ?? []
+        }
+    }
+}
+
+extension EngineJSON {
+    /// The Foundation (`JSONSerialization`) form.
+    var foundationValue: Any {
+        switch self {
+        case .null: return NSNull()
+        case .bool(let v): return v
+        case .number(let v): return v
+        case .string(let v): return v
+        case .array(let v): return v.map(\.foundationValue)
+        case .object(let v): return v.mapValues(\.foundationValue)
+        }
+    }
+}
+
+extension EngineJSON: ExpressibleByStringLiteral, ExpressibleByFloatLiteral, ExpressibleByIntegerLiteral,
+    ExpressibleByBooleanLiteral, ExpressibleByArrayLiteral, ExpressibleByDictionaryLiteral {
+    public init(stringLiteral value: String) { self = .string(value) }
+    public init(floatLiteral value: Double) { self = .number(value) }
+    public init(integerLiteral value: Int) { self = .number(Double(value)) }
+    public init(booleanLiteral value: Bool) { self = .bool(value) }
+    public init(arrayLiteral elements: EngineJSON...) { self = .array(elements) }
+    public init(dictionaryLiteral elements: (String, EngineJSON)...) {
+        self = .object(Dictionary(elements, uniquingKeysWith: { _, last in last }))
     }
 }

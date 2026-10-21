@@ -1,0 +1,941 @@
+{
+  "commands": [
+    {
+      "feature": {
+        "size_x": 1.0,
+        "size_y": 2.0,
+        "size_z": 3.0,
+        "type": "Cube"
+      },
+      "name": "Box",
+      "type": "add_feature"
+    },
+    {
+      "feature": {
+        "radius": 2.0,
+        "type": "Sphere"
+      },
+      "type": "add_feature"
+    },
+    {
+      "kind": "scene-settings",
+      "params": {
+        "lights": {
+          "String": "[]"
+        }
+      },
+      "type": "create_feature"
+    },
+    {
+      "feature": {
+        "depth": 4.0,
+        "direction": [
+          0.0,
+          0.0,
+          1.0
+        ],
+        "sketch": "{}",
+        "twist_angle": 5.0,
+        "type": "Extrude"
+      },
+      "id": "1:0",
+      "type": "update_feature"
+    },
+    {
+      "id": "1:0",
+      "key": "radius",
+      "type": "set_param",
+      "value": {
+        "F64": 2.5
+      }
+    },
+    {
+      "id": "1:0",
+      "key": "axis",
+      "type": "set_param",
+      "value": {
+        "Vec3": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "id": "1:0",
+      "key": "inputs",
+      "type": "set_param",
+      "value": {
+        "FeatureRefList": [
+          "1:1",
+          "1:2"
+        ]
+      }
+    },
+    {
+      "id": "1:0",
+      "type": "delete_feature"
+    },
+    {
+      "id": "1:0",
+      "offset": [
+        1.0,
+        2.0,
+        3.0
+      ],
+      "type": "set_translation"
+    },
+    {
+      "angles": [
+        0.0,
+        90.0,
+        0.0
+      ],
+      "id": "1:0",
+      "type": "set_rotation"
+    },
+    {
+      "factor": [
+        2.0,
+        2.0,
+        2.0
+      ],
+      "id": "1:0",
+      "type": "set_scale"
+    },
+    {
+      "id": "1:0",
+      "material": "steel",
+      "type": "set_material"
+    },
+    {
+      "definition": {
+        "color": [
+          0.9,
+          0.95,
+          1.0
+        ],
+        "ior": 1.5,
+        "metallic": 0.0,
+        "name": "glass",
+        "roughness": 0.05,
+        "transmission": 0.9
+      },
+      "key": "glass",
+      "type": "define_material"
+    },
+    {
+      "id": "1:0",
+      "type": "set_visible",
+      "visible": false
+    },
+    {
+      "id": "1:0",
+      "name": "Base",
+      "type": "rename"
+    },
+    {
+      "id": "1:0",
+      "index": 2,
+      "type": "reorder"
+    },
+    {
+      "ids": [
+        "1:0",
+        "1:1"
+      ],
+      "type": "duplicate"
+    },
+    {
+      "id": "1:3",
+      "state": 45.0,
+      "type": "set_joint_state"
+    },
+    {
+      "document": {
+        "materials": {},
+        "nodes": {},
+        "part_materials": {},
+        "roots": [],
+        "version": "0.1"
+      },
+      "type": "import_ir"
+    },
+    {
+      "type": "undo"
+    },
+    {
+      "type": "redo"
+    },
+    {
+      "commands": [
+        {
+          "type": "undo"
+        },
+        {
+          "feature": {
+            "boolean_type": "union",
+            "input_a": "1:0",
+            "input_b": "1:1",
+            "type": "Boolean"
+          },
+          "type": "add_feature"
+        }
+      ],
+      "type": "batch"
+    }
+  ],
+  "envelopes": [
+    {
+      "ok": true,
+      "result": {
+        "consumedPartIds": [],
+        "createdFeatureId": "5:0",
+        "document": {
+          "materials": {},
+          "nodes": {
+            "1": {
+              "id": 1,
+              "name": "Plate",
+              "op": {
+                "size": {
+                  "x": 40.0,
+                  "y": 20.0,
+                  "z": 5.0
+                },
+                "type": "Cube"
+              }
+            },
+            "2": {
+              "id": 2,
+              "name": null,
+              "op": {
+                "child": 1,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "3": {
+              "id": 3,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 2,
+                "type": "Rotate"
+              }
+            },
+            "4": {
+              "id": 4,
+              "name": null,
+              "op": {
+                "child": 3,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            }
+          },
+          "partIds": {
+            "4": "5:0"
+          },
+          "part_materials": {},
+          "roots": [
+            {
+              "material": "default",
+              "root": 4
+            }
+          ],
+          "version": "0.1"
+        },
+        "parts": [
+          {
+            "id": "5:0",
+            "kind": "cube",
+            "name": "Plate",
+            "primitiveNodeId": 1,
+            "rotateNodeId": 3,
+            "scaleNodeId": 2,
+            "translateNodeId": 4
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "consumedPartIds": [],
+        "createdFeatureId": "5:1",
+        "document": {
+          "materials": {},
+          "nodes": {
+            "1": {
+              "id": 1,
+              "name": "Plate",
+              "op": {
+                "size": {
+                  "x": 40.0,
+                  "y": 20.0,
+                  "z": 5.0
+                },
+                "type": "Cube"
+              }
+            },
+            "2": {
+              "id": 2,
+              "name": null,
+              "op": {
+                "child": 1,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "3": {
+              "id": 3,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 2,
+                "type": "Rotate"
+              }
+            },
+            "4": {
+              "id": 4,
+              "name": null,
+              "op": {
+                "child": 3,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            },
+            "5": {
+              "id": 5,
+              "name": "cylinder",
+              "op": {
+                "height": 12.0,
+                "radius": 3.0,
+                "segments": 32,
+                "type": "Cylinder"
+              }
+            },
+            "6": {
+              "id": 6,
+              "name": null,
+              "op": {
+                "child": 5,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "7": {
+              "id": 7,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 6,
+                "type": "Rotate"
+              }
+            },
+            "8": {
+              "id": 8,
+              "name": null,
+              "op": {
+                "child": 7,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            }
+          },
+          "partIds": {
+            "4": "5:0",
+            "8": "5:1"
+          },
+          "part_materials": {},
+          "roots": [
+            {
+              "material": "default",
+              "root": 4
+            },
+            {
+              "material": "default",
+              "root": 8
+            }
+          ],
+          "version": "0.1"
+        },
+        "parts": [
+          {
+            "id": "5:0",
+            "kind": "cube",
+            "name": "Plate",
+            "primitiveNodeId": 1,
+            "rotateNodeId": 3,
+            "scaleNodeId": 2,
+            "translateNodeId": 4
+          },
+          {
+            "id": "5:1",
+            "kind": "cylinder",
+            "name": "cylinder",
+            "primitiveNodeId": 5,
+            "rotateNodeId": 7,
+            "scaleNodeId": 6,
+            "translateNodeId": 8
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "consumedPartIds": [
+          "5:0",
+          "5:1"
+        ],
+        "createdFeatureId": "5:2",
+        "document": {
+          "materials": {},
+          "nodes": {
+            "1": {
+              "id": 1,
+              "name": "Plate",
+              "op": {
+                "size": {
+                  "x": 40.0,
+                  "y": 20.0,
+                  "z": 5.0
+                },
+                "type": "Cube"
+              }
+            },
+            "10": {
+              "id": 10,
+              "name": null,
+              "op": {
+                "child": 9,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "11": {
+              "id": 11,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 10,
+                "type": "Rotate"
+              }
+            },
+            "12": {
+              "id": 12,
+              "name": null,
+              "op": {
+                "child": 11,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            },
+            "2": {
+              "id": 2,
+              "name": null,
+              "op": {
+                "child": 1,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "3": {
+              "id": 3,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 2,
+                "type": "Rotate"
+              }
+            },
+            "4": {
+              "id": 4,
+              "name": null,
+              "op": {
+                "child": 3,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            },
+            "5": {
+              "id": 5,
+              "name": "cylinder",
+              "op": {
+                "height": 12.0,
+                "radius": 3.0,
+                "segments": 32,
+                "type": "Cylinder"
+              }
+            },
+            "6": {
+              "id": 6,
+              "name": null,
+              "op": {
+                "child": 5,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "7": {
+              "id": 7,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 6,
+                "type": "Rotate"
+              }
+            },
+            "8": {
+              "id": 8,
+              "name": null,
+              "op": {
+                "child": 7,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            },
+            "9": {
+              "id": 9,
+              "name": "boolean",
+              "op": {
+                "left": 4,
+                "right": 8,
+                "type": "Difference"
+              }
+            }
+          },
+          "partIds": {
+            "12": "5:2"
+          },
+          "part_materials": {},
+          "roots": [
+            {
+              "material": "default",
+              "root": 12
+            }
+          ],
+          "version": "0.1"
+        },
+        "parts": [
+          {
+            "id": "5:0",
+            "kind": "cube",
+            "name": "Plate",
+            "primitiveNodeId": 1,
+            "rotateNodeId": 3,
+            "scaleNodeId": 2,
+            "translateNodeId": 4
+          },
+          {
+            "id": "5:1",
+            "kind": "cylinder",
+            "name": "cylinder",
+            "primitiveNodeId": 5,
+            "rotateNodeId": 7,
+            "scaleNodeId": 6,
+            "translateNodeId": 8
+          },
+          {
+            "booleanNodeId": 9,
+            "booleanType": "difference",
+            "id": "5:2",
+            "kind": "boolean",
+            "name": "boolean",
+            "rotateNodeId": 11,
+            "scaleNodeId": 10,
+            "sourcePartIds": [
+              "5:0",
+              "5:1"
+            ],
+            "translateNodeId": 12
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "consumedPartIds": [
+          "5:0",
+          "5:1",
+          "5:2"
+        ],
+        "createdFeatureId": "5:3",
+        "document": {
+          "materials": {},
+          "nodes": {
+            "1": {
+              "id": 1,
+              "name": "Plate",
+              "op": {
+                "size": {
+                  "x": 40.0,
+                  "y": 20.0,
+                  "z": 5.0
+                },
+                "type": "Cube"
+              }
+            },
+            "10": {
+              "id": 10,
+              "name": null,
+              "op": {
+                "child": 9,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "11": {
+              "id": 11,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 10,
+                "type": "Rotate"
+              }
+            },
+            "12": {
+              "id": 12,
+              "name": null,
+              "op": {
+                "child": 11,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            },
+            "13": {
+              "id": 13,
+              "name": "fillet",
+              "op": {
+                "child": 12,
+                "radius": 1.5,
+                "type": "Fillet"
+              }
+            },
+            "14": {
+              "id": 14,
+              "name": null,
+              "op": {
+                "child": 13,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "15": {
+              "id": 15,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 14,
+                "type": "Rotate"
+              }
+            },
+            "16": {
+              "id": 16,
+              "name": null,
+              "op": {
+                "child": 15,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            },
+            "2": {
+              "id": 2,
+              "name": null,
+              "op": {
+                "child": 1,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "3": {
+              "id": 3,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 2,
+                "type": "Rotate"
+              }
+            },
+            "4": {
+              "id": 4,
+              "name": null,
+              "op": {
+                "child": 3,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            },
+            "5": {
+              "id": 5,
+              "name": "cylinder",
+              "op": {
+                "height": 12.0,
+                "radius": 3.0,
+                "segments": 32,
+                "type": "Cylinder"
+              }
+            },
+            "6": {
+              "id": 6,
+              "name": null,
+              "op": {
+                "child": 5,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "7": {
+              "id": 7,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 6,
+                "type": "Rotate"
+              }
+            },
+            "8": {
+              "id": 8,
+              "name": null,
+              "op": {
+                "child": 7,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            },
+            "9": {
+              "id": 9,
+              "name": "boolean",
+              "op": {
+                "left": 4,
+                "right": 8,
+                "type": "Difference"
+              }
+            }
+          },
+          "partIds": {
+            "16": "5:3"
+          },
+          "part_materials": {},
+          "roots": [
+            {
+              "material": "default",
+              "root": 16
+            }
+          ],
+          "version": "0.1"
+        },
+        "parts": [
+          {
+            "id": "5:0",
+            "kind": "cube",
+            "name": "Plate",
+            "primitiveNodeId": 1,
+            "rotateNodeId": 3,
+            "scaleNodeId": 2,
+            "translateNodeId": 4
+          },
+          {
+            "id": "5:1",
+            "kind": "cylinder",
+            "name": "cylinder",
+            "primitiveNodeId": 5,
+            "rotateNodeId": 7,
+            "scaleNodeId": 6,
+            "translateNodeId": 8
+          },
+          {
+            "booleanNodeId": 9,
+            "booleanType": "difference",
+            "id": "5:2",
+            "kind": "boolean",
+            "name": "boolean",
+            "rotateNodeId": 11,
+            "scaleNodeId": 10,
+            "sourcePartIds": [
+              "5:0",
+              "5:1"
+            ],
+            "translateNodeId": 12
+          },
+          {
+            "filletNodeId": 13,
+            "id": "5:3",
+            "kind": "fillet",
+            "name": "fillet",
+            "rotateNodeId": 15,
+            "scaleNodeId": 14,
+            "sourcePartId": "5:2",
+            "translateNodeId": 16
+          }
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "error": {
+        "id": "9:9",
+        "kind": "unknown_id",
+        "message": "no feature with id `9:9`"
+      },
+      "ok": false
+    },
+    {
+      "error": {
+        "index": 1,
+        "kind": "batch",
+        "message": "batch command 1 failed: no feature with id `9:9`",
+        "source": {
+          "id": "9:9",
+          "kind": "unknown_id"
+        }
+      },
+      "ok": false
+    },
+    {
+      "error": {
+        "kind": "invalid",
+        "message": "invalid command: unknown variant `oops`, expected one of `F64`, `Vec3`, `Bool`, `String`, `FeatureRef`, `FeatureRefList`, `Sketch`"
+      },
+      "ok": false
+    }
+  ],
+  "toolCalls": [
+    {
+      "args": {
+        "params": {
+          "radius": 1
+        },
+        "parent_part_id": "1:0",
+        "type": "fillet"
+      },
+      "tool": "create"
+    }
+  ]
+}

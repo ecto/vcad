@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-20-mac-new-part-materials",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "fix",
+  "title": "Mac app keeps materials on new parts and saves",
+  "summary": "New parts in the Mac editor take the document's first material again (combines and fillets keep the base part's), and a picked preset's definition is saved into the file's materials.",
+  "features": ["mac", "materials", "engine"],
+  "mcpTools": []
+}

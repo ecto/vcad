@@ -40,9 +40,9 @@ final class EditorEngineTests: XCTestCase {
     /// Op of the leaf node under part `i`'s transform chain.
     private func leafOp(_ m: EditorModel, part i: Int) -> [String: Any]? {
         guard let id = m.partId(forPart: i),
-              let part = m.engineState?.parts.first(where: { $0["id"] as? String == id }) else { return nil }
-        let leaf = part.first { $0.key.hasSuffix("NodeId") && !["translateNodeId", "rotateNodeId", "scaleNodeId"].contains($0.key) }
-        return (leaf?.value as? NSNumber).flatMap { DocEdit.op(m.documentJSON ?? [:], nodeId: $0.intValue) }
+              let part = m.engineState?.parts.first(where: { $0.id == id }),
+              let leaf = part.leafNodeIds.first else { return nil }
+        return DocEdit.op(m.documentJSON ?? [:], nodeId: leaf)
     }
 
     func testMaterialUndoRedoAndDirtyTrackTheEngine() throws {
@@ -89,12 +89,12 @@ final class EditorEngineTests: XCTestCase {
 
     func testFieldScrubsMapOntoFeatureParams() throws {
         let m = try open()
-        let cubeLeaf = try XCTUnwrap(m.engineState?.parts.first { $0["kind"] as? String == "cube" })
-        let cubeNode = try XCTUnwrap((cubeLeaf["primitiveNodeId"] as? NSNumber)?.intValue)
+        let cubeLeaf = try XCTUnwrap(m.engineState?.parts.first { $0.kind == "cube" })
+        let cubeNode = try XCTUnwrap(cubeLeaf.leafNodeIds.first)
         // One gesture: first event snapshots, the rest continue it.
         m.editVec(nodeId: cubeNode, key: "size", axis: "x", value: 25, snapshot: true)
-        let after = try XCTUnwrap(m.engineState?.parts.first { $0["kind"] as? String == "cube" })
-        let node2 = try XCTUnwrap((after["primitiveNodeId"] as? NSNumber)?.intValue)
+        let after = try XCTUnwrap(m.engineState?.parts.first { $0.kind == "cube" })
+        let node2 = try XCTUnwrap(after.leafNodeIds.first)
         m.editVec(nodeId: node2, key: "size", axis: "x", value: 30, snapshot: false)
         let size = leafOp(m, part: 0)?["size"] as? [String: Any]
         XCTAssertEqual((size?["x"] as? NSNumber)?.doubleValue, 30)
@@ -103,26 +103,57 @@ final class EditorEngineTests: XCTestCase {
         m.undo()
         XCTAssertEqual(((leafOp(m, part: 0)?["size"] as? [String: Any])?["x"] as? NSNumber)?.doubleValue, 20)
 
-        let pin = try XCTUnwrap(m.engineState?.parts.first { $0["kind"] as? String == "cylinder" })
-        let pinNode = try XCTUnwrap((pin["primitiveNodeId"] as? NSNumber)?.intValue)
+        let pin = try XCTUnwrap(m.engineState?.parts.first { $0.kind == "cylinder" })
+        let pinNode = try XCTUnwrap(pin.leafNodeIds.first)
         m.editScalar(nodeId: pinNode, key: "radius", value: 4.5, snapshot: true)
         XCTAssertEqual((leafOp(m, part: 1)?["radius"] as? NSNumber)?.doubleValue, 4.5)
         // The pin keeps its placement through the edit.
-        let pin2 = try XCTUnwrap(m.engineState?.parts.first { $0["kind"] as? String == "cylinder" })
-        let tn = try XCTUnwrap((pin2["translateNodeId"] as? NSNumber)?.intValue)
+        let pin2 = m.engineState?.parts.first { $0.kind == "cylinder" }
+        let tn = try XCTUnwrap(pin2?.translateNodeId)
         let offset = DocEdit.op(m.documentJSON ?? [:], nodeId: tn)?["offset"] as? [String: Any]
         XCTAssertEqual((offset?["x"] as? NSNumber)?.doubleValue, 40)
     }
 
     func testRenameAndUnsupportedFieldFallBackThroughTheEngine() throws {
         let m = try open()
-        let cube = try XCTUnwrap(m.engineState?.parts.first { $0["kind"] as? String == "cube" })
-        let node = try XCTUnwrap((cube["primitiveNodeId"] as? NSNumber)?.intValue)
+        let cube = try XCTUnwrap(m.engineState?.parts.first { $0.kind == "cube" })
+        let node = try XCTUnwrap(cube.leafNodeIds.first)
         m.renameFeature(node, to: "Base Plate")
-        let renamed = try XCTUnwrap(m.engineState?.parts.first { $0["kind"] as? String == "cube" })
-        XCTAssertEqual(renamed["name"] as? String, "Base Plate")
+        let renamed = try XCTUnwrap(m.engineState?.parts.first { $0.kind == "cube" })
+        XCTAssertEqual(renamed.name, "Base Plate")
         m.undo()
-        XCTAssertNotEqual(m.engineState?.parts.first { $0["kind"] as? String == "cube" }?["name"] as? String, "Base Plate")
+        XCTAssertNotEqual(m.engineState?.parts.first { $0.kind == "cube" }?.name, "Base Plate")
+    }
+
+    /// Pre-engine behavior, restored: new parts take the document's first
+    /// material, combines/modifiers keep the base part's, and a picked preset
+    /// is defined in `materials` so it survives save/reload.
+    func testNewPartsAndSavesKeepMaterials() throws {
+        let m = try open()
+        m.addPrimitive(.sphere)
+        // No `materials` table yet → the first part's material.
+        XCTAssertEqual(roots(m)[2]["material"] as? String, "aluminum")
+        XCTAssertEqual(m.undoActionName, "Add Sphere")
+        m.undo()
+        XCTAssertEqual(roots(m).count, 2, "add + material is one undo step")
+
+        m.setPartMaterial(1, "brass")
+        let materials = m.documentJSON?["materials"] as? [String: Any]
+        XCTAssertNotNil(materials?["brass"], "a picked preset is defined in the document")
+        m.addPrimitive(.cube, at: SIMD3(5, 0, 0))
+        XCTAssertEqual(roots(m)[2]["material"] as? String, "brass", "first defined material wins")
+
+        m.multiSelectedParts = [1, 0]
+        m.combineSelected(.union)
+        XCTAssertEqual(roots(m).first(where: { ($0["material"] as? String) == "brass" }) != nil, true)
+        let combined = try XCTUnwrap(m.engineState?.parts.first { $0.kind == "boolean" })
+        XCTAssertEqual(m.engineState?.material(ofPart: combined.id), "brass", "the combine keeps the base part's material")
+
+        m.saveDocument()
+        let reopened = EditorModel()
+        reopened.openDocument(url)
+        XCTAssertNotNil((reopened.documentJSON?["materials"] as? [String: Any])?["brass"])
+        XCTAssertEqual(reopened.engineState?.material(ofPart: try XCTUnwrap(reopened.partId(forPart: 0))) != nil, true)
     }
 
     func testSaveWritesTheEngineDocumentAndClearsDirty() throws {
