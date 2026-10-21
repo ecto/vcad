@@ -366,6 +366,21 @@ fn evaluate_inner(
                     continue;
                 }
 
+                // Incremental: an unchanged part def reuses its mesh.
+                let def_hash = hashes.as_ref().and_then(|h| h.get(&part_def.root).copied());
+                if let (Some(i), Some(h)) = (inc.as_deref_mut(), def_hash) {
+                    if matches!(cache.get(&part_def.root), Some(Some(_))) {
+                        if let Some(mesh) = i.mesh(part_def.root, h) {
+                            part_def_meshes.insert(id.clone(), mesh.clone());
+                            eval_part_defs.push(EvaluatedPartDef {
+                                id: id.clone(),
+                                mesh,
+                            });
+                            continue;
+                        }
+                    }
+                }
+
                 let outcome =
                     catch_unwind(AssertUnwindSafe(|| -> Result<EvaluatedMesh, EvalError> {
                         match evaluate_node_timed(
@@ -389,6 +404,11 @@ fn evaluate_inner(
                 let mesh = match outcome {
                     Ok(Ok(m)) => {
                         store(&cache_key, &m);
+                        if let (Some(i), Some(h)) = (inc.as_deref_mut(), def_hash) {
+                            if matches!(cache.get(&part_def.root), Some(Some(_))) {
+                                i.put_mesh(part_def.root, h, &m);
+                            }
+                        }
                         m
                     }
                     Ok(Err(err)) => {
