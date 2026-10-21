@@ -3644,6 +3644,19 @@ pub fn urdf_commented_floating_joint(data: &[u8]) -> Option<String> {
     vcad_kernel_urdf::commented_out_floating_joint(xml)
 }
 
+/// Build a sheet-metal IR document from a `sheet_metal_create` request
+/// (base flange + ordered flanges/hems/jogs/bend relief) via
+/// `vcad_eval::sheet_build`. Returns the document JSON.
+#[wasm_bindgen(js_name = buildSheetMetalDocument)]
+pub fn build_sheet_metal_document(args_json: &str) -> Result<String, JsError> {
+    let args: serde_json::Value =
+        serde_json::from_str(args_json).map_err(|e| JsError::new(&format!("args: {e}")))?;
+    let doc = vcad_eval::sheet_build::build_sheet_metal_document(&args)
+        .map_err(|e| JsError::new(&format!("sheet_metal_create: {e}")))?;
+    doc.to_json()
+        .map_err(|e| JsError::new(&format!("serialize: {e}")))
+}
+
 /// Rewrite `MeshImport` nodes to inline `ImportedMesh` geometry from STL
 /// bytes the host read (metres → mm, URDF `<mesh scale>` applied), via
 /// `vcad_eval::mesh_inline`. `keys[i]` is the node id whose STL is

@@ -27,8 +27,7 @@ signed `dist/vcad.app`, no update key, updater idle.
 Signing and notarization use the **shared ecto org setup**, the same
 certificate and API key as ecto/tang (see tang's
 `docs/release/macos-signing.md`). If those org secrets already exist on
-ecto, steps 1 and 2 are done; vcad only needs the Sparkle and
-tang-compress items.
+ecto, steps 1 and 2 are done; vcad only needs the Sparkle items.
 
 ### 1. Developer ID Application certificate (shared)
 
@@ -81,11 +80,10 @@ key. The private key never leaves the Keychain and is never committed.
   Back up the Keychain item — losing it means shipped apps can never verify
   another update.
 
-### 4. tang-compress source for CI
+### 4. Field decoder source
 
-The app links tang-compress's decoder (`build-tc-ffi.sh`). Set repository
-variable `TANG_COMPRESS_REPO` (`owner/name`); if that repo is private, add a
-read-only token as secret `TANG_COMPRESS_TOKEN`.
+Nothing to configure: the app's field decoder (`build-tc-ffi.sh`) builds from
+the `crates/cram-codec` crate on ecto/tang main, which CI already checks out.
 
 ### Secrets and variables summary
 
@@ -99,8 +97,6 @@ read-only token as secret `TANG_COMPRESS_TOKEN`.
 | `ASC_KEY_P8` | ecto org secret (shared) | base64 of `AuthKey_<id>.p8` |
 | `SPARKLE_ED_PRIVATE_KEY` | vcad repo secret | `generate_keys -x` output |
 | `SPARKLE_PUBLIC_ED_KEY` | vcad repo variable | `generate_keys -p` output |
-| `TANG_COMPRESS_REPO` | variable | `owner/name` of tang-compress |
-| `TANG_COMPRESS_TOKEN` | secret (optional) | read token if that repo is private |
 
 ## Cutting a release
 

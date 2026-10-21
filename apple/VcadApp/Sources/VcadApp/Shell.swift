@@ -241,7 +241,7 @@ struct DocumentCommands: Commands {
         }
         CommandGroup(after: .sidebar) {
             Divider()
-            ForEach(Workspace.allCases) { ws in
+            ForEach(Workspace.available.count > 1 ? Workspace.available : []) { ws in
                 Toggle(ws.label, isOn: Binding(
                     get: { model.workspace == ws },
                     set: { if $0 { model.workspace = ws } }))

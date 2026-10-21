@@ -4,7 +4,7 @@
 //! gated against its FNV-1a hash.
 
 use std::ffi::{c_char, CString};
-use tang_compress::{gpuwav, gpuwav3};
+use cram_codec::{gpuwav, gpuwav3};
 
 fn decode_bits(bytes: &[u8]) -> Result<(Vec<u32>, [usize; 3]), String> {
     let e = |e| format!("{e:?}");
@@ -14,7 +14,7 @@ fn decode_bits(bytes: &[u8]) -> Result<(Vec<u32>, [usize; 3]), String> {
             let bits = gpuwav::decode_box_parsed(&ps, bytes, [0; 3], ps.d3, 1).map_err(e)?;
             Ok((bits, ps.d3))
         }
-        Some(m) if m == gpuwav3::MAGIC3 || m == tang_compress::shipdec::MAGIC => {
+        Some(m) if m == gpuwav3::MAGIC3 || m == cram_codec::shipdec::MAGIC => {
             let ps = gpuwav3::parse3(bytes).map_err(e)?;
             let bits = gpuwav3::decode3_box_parsed(&ps, bytes, [0; 3], ps.d3, 1).map_err(e)?.bits;
             Ok((bits, ps.d3))
