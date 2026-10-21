@@ -71,7 +71,7 @@ impl PrinterCommand {
 
             PrinterCommand::PrintStart {
                 file,
-                plate_index: _,
+                plate_index,
                 use_ams,
                 ams_mapping,
                 bed_leveling,
@@ -83,7 +83,9 @@ impl PrinterCommand {
                     "print": {
                         "sequence_id": "0",
                         "command": "project_file",
-                        "param": file,
+                        // The printer reads the plate's G-code out of the
+                        // uploaded archive; `param` names that entry.
+                        "param": format!("Metadata/plate_{}.gcode", plate_index + 1),
                         "subtask_name": file,
                         "url": format!("ftp://{}", file),
                         "bed_type": "auto",
@@ -212,6 +214,24 @@ impl PrinterCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn print_start_names_the_plate_gcode_entry() {
+        let cmd = PrinterCommand::PrintStart {
+            file: "/sdcard/cube.gcode.3mf".into(),
+            plate_index: 1,
+            use_ams: false,
+            ams_mapping: vec![],
+            bed_leveling: true,
+            flow_calibration: false,
+            vibration_calibration: false,
+            skip_objects: vec![],
+        };
+        let j = cmd.to_json();
+        assert_eq!(j["print"]["command"], "project_file");
+        assert_eq!(j["print"]["param"], "Metadata/plate_2.gcode");
+        assert_eq!(j["print"]["subtask_name"], "/sdcard/cube.gcode.3mf");
+    }
 
     #[test]
     fn test_push_all_command() {
