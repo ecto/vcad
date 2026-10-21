@@ -51,6 +51,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)] // parsed once at startup; boxing buys nothing
 enum Commands {
     /// Open the interactive TUI editor
     Tui {
@@ -272,6 +273,15 @@ enum Commands {
         /// Seamless cyclorama backdrop (floor curving into a back wall)
         #[arg(long, requires = "photoreal")]
         cyclorama: bool,
+        /// Material overrides for `--photoreal`: a JSON look file keyed by
+        /// material name / part label (colours, roughness, emission, oak,
+        /// fabric and image textures)
+        #[arg(long, requires = "photoreal", value_name = "LOOK.json")]
+        look: Option<PathBuf>,
+        /// Fraction of the frame the framed subject (or `--focus-part`)
+        /// fills, 0..1 (default 0.6)
+        #[arg(long, requires = "photoreal")]
+        fill: Option<f64>,
         /// Image width in pixels
         #[arg(long, default_value = "1920")]
         width: u32,
@@ -850,6 +860,8 @@ fn run_command(cli: Cli) -> Result<()> {
             focus_part,
             lighting,
             cyclorama,
+            look,
+            fill,
             width,
             height,
             azimuth,
@@ -884,6 +896,13 @@ fn run_command(cli: Cli) -> Result<()> {
                     focus_part,
                     lighting,
                     cyclorama,
+                    fill,
+                    look: look
+                        .as_deref()
+                        .map(vcad_render::look::Look::load)
+                        .transpose()
+                        .map_err(|e| anyhow::anyhow!(e))?
+                        .map(std::sync::Arc::new),
                 };
                 let doc = load_posed_document(&input, &pose)?;
                 return photoreal::render_document(&doc, &output, &req);
