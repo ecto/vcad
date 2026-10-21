@@ -1,0 +1,9 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>vcad</title>
+        <link>https://vcad.io/desktop/</link>
+        <description>vcad for Mac updates</description>
+        <language>en</language>
+    </channel>
+</rss>
