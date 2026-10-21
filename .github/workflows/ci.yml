@@ -393,3 +393,47 @@ jobs:
             exit 1
           fi
           echo "no generated artifacts committed — ok"
+
+  swift-mac:
+    name: Swift (macOS)
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - name: Clone sibling repos
+        run: |
+          git clone --depth 1 https://github.com/ecto/tang.git ../tang
+          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
+          git clone --depth 1 https://github.com/ecto/loon.git ../loon
+          # The field-overlay decoder (CTangCompress) links libtang_compress_ffi,
+          # built from tang's tang-compress branch by build-tc-ffi.sh.
+          git clone --depth 1 --branch claude/tang-compress-qtt https://github.com/ecto/tang.git ../tang-compress
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: swift-mac
+          cache-workspace-crates: true
+          cache-on-failure: true
+          workspaces: |
+            . -> target
+            ../tang-compress -> target/tc-ffi
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: apple/VcadApp/.build
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('apple/VcadApp/Package.swift', 'apple/VcadApp/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ hashFiles('apple/VcadApp/Package.swift', 'apple/VcadApp/Package.resolved') }}-
+      - name: Toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Build vcad-ffi
+        run: apple/VcadApp/build-ffi.sh
+      - name: Build tang-compress-ffi
+        run: apple/VcadApp/build-tc-ffi.sh ../tang-compress
+      - name: swift test
+        run: swift test --package-path apple/VcadApp
+

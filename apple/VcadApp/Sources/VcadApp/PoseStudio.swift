@@ -27,10 +27,18 @@ extension EditorModel {
     /// by the kernel, with its modules and relative mesh imports resolved
     /// against its own directory; anything else is read as-is.
     nonisolated static func documentBytes(path: String) -> Data? {
-        guard path.lowercased().hasSuffix(".loon") else {
-            return try? Data(contentsOf: URL(fileURLWithPath: path))
-        }
         let bytes = Array(path.utf8)
+        guard path.lowercased().hasSuffix(".loon") else {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+            // JSON passes straight through; VCode (`# vcad 0.2`) and loon-source
+            // `.vcad` files go through the kernel's format-aware loader.
+            let first = data.first { !($0 == 0x20 || $0 == 0x0A || $0 == 0x0D || $0 == 0x09) }
+            if first == UInt8(ascii: "{") || first == nil { return data }
+            guard let c = bytes.withUnsafeBufferPointer({ vcad_document_file_to_json($0.baseAddress, $0.count) })
+            else { return nil }
+            defer { vcad_cam_free(c) }
+            return Data(bytes: c, count: strlen(c))
+        }
         guard let c = bytes.withUnsafeBufferPointer({ vcad_loon_file_to_json($0.baseAddress, $0.count) })
         else { return nil }
         defer { vcad_cam_free(c) }
