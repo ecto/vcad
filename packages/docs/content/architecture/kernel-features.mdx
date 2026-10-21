@@ -366,6 +366,8 @@ Honesty: **kinematic degrees of freedom are out of scope for mates.** A mate nev
 
 The seam reaches authored documents too: `vcad_eval::diff::document_parameter_gradient` returns d(mass properties)/d(named parameter) for any `.vcad` with a `defparam`. The `gradient_clip` example (`cargo run --release -p vcad-eval --example gradient_clip -- out/`) runs plain gradient descent on the wall thickness `t` of a loon L-bracket, minimizing J = ½(m − 55 g)². It goes from t = 9.0 mm to 4.49 mm in 30 steps. Every step's dm/dt comes from the seam, and a rebuild central finite difference, logged only as a check, agrees to within 10⁻¹⁰ relative error. The example writes one `.vcad` per iteration for `vcad-render`, plus a CSV log.
 
+The `gradient_clip_v2` example (`cargo run --release -p vcad-eval --example gradient_clip_v2 -- out/`) is nonlinear and has two parameters. It minimizes the mass of a cantilevered L-beam over wall thickness `t` and flange height `h`, subject to a tip-deflection limit δ = PL³/3EI ≤ 0.5 mm. That limit is enforced as a quadratic penalty, and the section moment `I` is read off the seam's centroidal inertia tensor. Both dJ/dt and dJ/dh are chain-ruled from seam derivatives. Rebuild finite differences, logged only as a check, agree to within 2×10⁻⁷ relative error. δ comes from beam theory, not a 3D FEA solve.
+
 ```clojure
 [defparam t 9.0]
 

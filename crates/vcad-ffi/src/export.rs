@@ -378,11 +378,23 @@ fn options(
         height_px: Some(p.height),
         ..Default::default()
     };
-    // Only what differs from the renderer's defaults, so a new photoreal
-    // option never breaks this build again (it did, twice, in one day).
     let pr = vcad_render::photoreal::PhotorealOptions {
+        environment: vcad_render::envmap::parse_env_arg("gradient"),
+        env_rotation_deg: 0.0,
         spp: p.samples,
+        max_depth: 6,
+        exposure: 1.0,
+        fov_deg: 34.0,
+        orthographic: false,
+        aperture_frac: 0.0,
+        focus_dist: None,
+        backdrop: vcad_render::photoreal::Backdrop::Studio,
+        seed: 0x5eed_1234,
         denoise: cpu,
+        adaptive: true,
+        exact: false,
+        // Options added to the renderer later take its defaults, so a new
+        // field cannot break this crate the way focus_dist and lighting did.
         ..Default::default()
     };
     Ok((ro, pr))
