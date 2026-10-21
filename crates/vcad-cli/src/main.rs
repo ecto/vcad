@@ -270,6 +270,11 @@ enum Commands {
         /// Seamless cyclorama backdrop (floor curving into a back wall)
         #[arg(long, requires = "photoreal")]
         cyclorama: bool,
+        /// Material overrides for `--photoreal`: a JSON look file keyed by
+        /// material name / part label (colours, roughness, emission, oak,
+        /// fabric and image textures)
+        #[arg(long, requires = "photoreal", value_name = "LOOK.json")]
+        look: Option<PathBuf>,
         /// Image width in pixels
         #[arg(long, default_value = "1920")]
         width: u32,
@@ -839,6 +844,7 @@ fn run_command(cli: Cli) -> Result<()> {
             focus_part,
             lighting,
             cyclorama,
+            look,
             width,
             height,
             azimuth,
@@ -873,6 +879,12 @@ fn run_command(cli: Cli) -> Result<()> {
                     focus_part,
                     lighting,
                     cyclorama,
+                    look: look
+                        .as_deref()
+                        .map(vcad_render::look::Look::load)
+                        .transpose()
+                        .map_err(|e| anyhow::anyhow!(e))?
+                        .map(std::sync::Arc::new),
                 };
                 let doc = load_posed_document(&input, &pose)?;
                 return photoreal::render_document(&doc, &output, &req);
