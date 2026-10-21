@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-mac-sim-teardown-race",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "fix",
+  "title": "Stopping a simulation no longer leaves a stale frame",
+  "summary": "In the Mac app, a physics frame already in flight when the simulation was torn down could repopulate its state; such frames are now dropped.",
+  "features": ["simulation", "mac"]
+}
