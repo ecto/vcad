@@ -230,6 +230,45 @@ final class FrogAgentTests: XCTestCase {
         XCTAssertTrue(tool.contains("sphere"), tool)
     }
 
+    // MARK: - prompt cache
+
+    func testCacheablePrefixIsIdenticalAcrossSessions() async throws {
+        func firstRequest() async throws -> (prefix: Data, key: String) {
+            let transport = MockFrogTransport([{ _ in SSE.text(["hi"]) }])
+            try await agent(transport, engine: DocumentEngine(replicaId: UInt64.random(in: 1...999)))
+                .send("session-specific text \(UUID())") { _ in }
+            let body = try XCTUnwrap(transport.bodies.first)
+            let messages = try XCTUnwrap(body["messages"] as? [[String: Any]])
+            let prefix: [String: Any] = ["system": messages[0], "tools": body["tools"] ?? []]
+            return (try JSONSerialization.data(withJSONObject: prefix, options: [.sortedKeys]),
+                    try XCTUnwrap(body["prompt_cache_key"] as? String))
+        }
+        let a = try await firstRequest()
+        let b = try await firstRequest()
+        XCTAssertEqual(a.prefix, b.prefix, "system + tools must be byte-identical across sessions")
+        XCTAssertEqual(a.key, b.key, "prompt_cache_key is stable across sessions")
+        XCTAssertEqual(a.prefix, FrogManifest.load().prefixBytes(supportsImages: false))
+        XCTAssertTrue(a.key.hasPrefix(FrogManifest.load().cacheKey))
+        // The system message is exactly the manifest's, nothing appended.
+        let sys = try XCTUnwrap(try JSONSerialization.jsonObject(with: a.prefix) as? [String: Any])["system"] as? [String: Any]
+        XCTAssertEqual(sys?["content"] as? String, FrogManifest.load().system)
+    }
+
+    func testRequestBodyIsKeySortedAndCarriesUserAgent() throws {
+        let req = try FrogClient(config: config()).request(
+            messages: [["role": "system", "content": "s"]], tools: FrogManifest.load().tools, cacheKey: "k")
+        let body = try XCTUnwrap(req.httpBody)
+        let resorted = try JSONSerialization.data(withJSONObject: JSONSerialization.jsonObject(with: body), options: [.sortedKeys])
+        XCTAssertEqual(body, resorted)
+        XCTAssertTrue(req.value(forHTTPHeaderField: "user-agent")?.hasPrefix("vcad/") == true)
+    }
+
+    func testZRangeParsesDescribeScene() {
+        let line = "1 part(s), units mm, Z up:\n- 1:1 \"cube\" [cube] material=default bbox min (0.00, 0.00, 10.00) max (20.00, 20.00, 30.00)\n"
+        let r = FrogLiveE2ETests.zRange(line)
+        XCTAssertEqual(r?.0, 10); XCTAssertEqual(r?.1, 30)
+    }
+
     // MARK: - config + manifest
 
     func testManifestMatchesEngineTools() {

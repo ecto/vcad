@@ -16,7 +16,7 @@
  * cannot be resolved without a filesystem.
  */
 
-import type { Document, Node, NodeId } from "@vcad/ir";
+import type { Document } from "@vcad/ir";
 import type { Engine } from "@vcad/engine";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
@@ -100,59 +100,6 @@ export const importUrdfSchema = {
   },
 };
 
-/** Minimal mesh payload swapped into the document for a resolved reference. */
-export interface LoadedMesh {
-  positions: number[];
-  indices: number[];
-}
-
-/**
- * Parse an STL file (binary or ASCII) into a triangle soup. Vertices are in
- * meters (the ROS convention) and are converted to mm here, matching the
- * kernel's ×1000 on URDF primitive dimensions and the browser mesh loader.
- */
-export function parseStl(buf: Buffer): LoadedMesh {
-  const positions: number[] = [];
-  // Binary layout: 80-byte header, uint32 triangle count, 50 bytes/triangle.
-  const looksBinary =
-    buf.length >= 84 && buf.length === 84 + buf.readUInt32LE(80) * 50;
-  if (looksBinary) {
-    const count = buf.readUInt32LE(80);
-    for (let t = 0; t < count; t++) {
-      const base = 84 + t * 50 + 12; // skip the facet normal
-      for (let v = 0; v < 3; v++) {
-        const off = base + v * 12;
-        positions.push(
-          buf.readFloatLE(off) * 1000,
-          buf.readFloatLE(off + 4) * 1000,
-          buf.readFloatLE(off + 8) * 1000,
-        );
-      }
-    }
-  } else {
-    const text = buf.toString("utf8");
-    if (!/^\s*solid/.test(text)) {
-      throw new Error("not a recognizable STL file (neither binary nor ASCII)");
-    }
-    const vertexRe =
-      /vertex\s+([-+eE0-9.]+)\s+([-+eE0-9.]+)\s+([-+eE0-9.]+)/g;
-    let m: RegExpExecArray | null;
-    while ((m = vertexRe.exec(text)) !== null) {
-      positions.push(
-        parseFloat(m[1]) * 1000,
-        parseFloat(m[2]) * 1000,
-        parseFloat(m[3]) * 1000,
-      );
-    }
-    if (positions.length === 0 || positions.length % 9 !== 0) {
-      throw new Error("malformed ASCII STL");
-    }
-  }
-  const indices = new Array(positions.length / 3);
-  for (let i = 0; i < indices.length; i++) indices[i] = i;
-  return { positions, indices };
-}
-
 /**
  * Resolve a URDF `<mesh filename="...">` value to an absolute on-disk path,
  * mirroring the Rust `UrdfReadOptions::resolve_mesh`. Every candidate is
@@ -194,75 +141,42 @@ function resolveMeshPath(
 }
 
 /**
- * Swap every resolvable `MeshImport` node for an inline `ImportedMesh`
- * (the Node-side analogue of the app's `inlineMeshImports`). Returns the
- * inlined count and the references that could not be resolved or parsed.
+ * Read every resolvable `MeshImport` node's STL (path resolution and the
+ * filesystem jail stay here, on the host) and hand the bytes to the kernel,
+ * which rewrites those nodes to inline `ImportedMesh` geometry
+ * (`vcad_eval::mesh_inline`). Returns the inlined count and the references
+ * that could not be resolved or parsed.
  */
 function inlineMeshImports(
   doc: Document,
+  engine: Engine,
   urdfDir: string | null,
   packageRoots: string[],
   confineRoot: string,
 ): { inlined: number; unresolved: Array<{ path: string; reason: string }> } {
-  let inlined = 0;
   const unresolved: Array<{ path: string; reason: string }> = [];
-  for (const key of Object.keys(doc.nodes)) {
-    const node = doc.nodes[key] as Node;
-    // MeshImport serializes as `"type": "mesh_import"` (the IR's one serde
-    // rename); it isn't in the TS CsgOp union since it only exists en route
-    // to being swapped, so go through a structural cast.
-    const opLoose = node.op as unknown as {
-      type: string;
-      path?: string;
-      scale?: { x: number; y: number; z: number } | null;
-    };
-    if (opLoose.type !== "mesh_import" && opLoose.type !== "MeshImport") {
-      continue;
-    }
-    const ref = opLoose.path ?? "";
+  const meshes = new Map<string, Uint8Array>();
+  const refs = new Map<string, string>();
+  for (const [key, node] of Object.entries(doc.nodes)) {
+    // MeshImport serializes as `"type": "mesh_import"`; it isn't in the TS
+    // CsgOp union, so go through a structural cast.
+    const op = node.op as unknown as { type: string; path?: string };
+    if (op.type !== "mesh_import" && op.type !== "MeshImport") continue;
+    const ref = op.path ?? "";
     const filepath = resolveMeshPath(ref, urdfDir, packageRoots, confineRoot);
     if (!filepath) {
       unresolved.push({ path: ref, reason: "file not found" });
-      continue;
-    }
-    if (!/\.stl$/i.test(filepath)) {
-      unresolved.push({
-        path: ref,
-        reason: "unsupported mesh format (only STL is inlined server-side)",
-      });
-      continue;
-    }
-    if (statSync(filepath).size > MAX_MESH_BYTES) {
+    } else if (!/\.stl$/i.test(filepath)) {
+      unresolved.push({ path: ref, reason: "unsupported mesh format (only STL is inlined server-side)" });
+    } else if (statSync(filepath).size > MAX_MESH_BYTES) {
       unresolved.push({ path: ref, reason: "mesh exceeds size limit" });
-      continue;
+    } else {
+      meshes.set(key, readFileSync(filepath));
+      refs.set(key, ref);
     }
-    let mesh: LoadedMesh;
-    try {
-      mesh = parseStl(readFileSync(filepath));
-    } catch (e) {
-      unresolved.push({ path: ref, reason: `parse error: ${e}` });
-      continue;
-    }
-    const scale = opLoose.scale;
-    let positions = mesh.positions;
-    if (scale && (scale.x !== 1 || scale.y !== 1 || scale.z !== 1)) {
-      positions = positions.map((v, i) =>
-        i % 3 === 0 ? v * scale.x : i % 3 === 1 ? v * scale.y : v * scale.z,
-      );
-    }
-    doc.nodes[key] = {
-      id: node.id as NodeId,
-      name: node.name,
-      op: {
-        type: "ImportedMesh",
-        positions,
-        indices: mesh.indices,
-        source: ref,
-        // biome-ignore lint/suspicious/noExplicitAny: bridging IR shape
-      } as any,
-    };
-    inlined++;
   }
+  const { inlined, errors } = engine.inlineMeshImports(doc, meshes);
+  for (const [key, reason] of errors) unresolved.push({ path: refs.get(key) ?? key, reason });
   return { inlined, unresolved };
 }
 
@@ -351,7 +265,7 @@ export function importUrdf(
     ? undefined
     : engine.urdfCommentedFloatingJoint(arrayBuffer);
 
-  const meshes = inlineMeshImports(doc, urdfDir, packageRoots, confineRoot);
+  const meshes = inlineMeshImports(doc, engine, urdfDir, packageRoots, confineRoot);
 
   const robotName =
     name ?? basename(sourceLabel).replace(/\.(urdf|xml)$/i, "");

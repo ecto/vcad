@@ -30,9 +30,23 @@ pub struct MaterializeResult {
     pub warnings: Vec<String>,
 }
 
+/// Node ids come in per-feature blocks: `slot << BLOCK_BITS` plus a local
+/// counter, so a feature's ids stay put when *other* features change.
+const BLOCK_BITS: u32 = 14;
+/// Slots available: `2^17 × 2^14 = 2^31` ids, so every id still fits an
+/// `i32`/`u32` (the CLI's pick buffer is `u32`) and `max + 1` stays exact.
+const SLOT_MASK: u64 = (1 << 17) - 1;
+
 /// Materialization context — tracks node ID allocation and feature-to-node mapping.
 struct Context {
+    /// Next id in the current block.
     next_node_id: NodeId,
+    /// Last id the current block can hand out.
+    block_end: NodeId,
+    /// Slot the current block came from (overflow probes after it).
+    slot: u64,
+    /// Slots handed out this materialize.
+    used_slots: std::collections::HashSet<u64>,
     /// Maps feature IDs to their root (translate) node ID.
     feature_roots: HashMap<String, NodeId>,
     /// Non-fatal warnings accumulated during materialization.
@@ -43,12 +57,47 @@ impl Context {
     fn new() -> Self {
         Self {
             next_node_id: 1,
+            block_end: 0,
+            slot: 0,
+            used_slots: std::collections::HashSet::new(),
             feature_roots: HashMap::new(),
             warnings: Vec::new(),
         }
     }
 
+    /// Start allocating for `fid`. Its block sits at a slot derived from the
+    /// feature id alone (FNV-1a), so node ids survive edits elsewhere in the
+    /// document — which keeps command deltas small. Collisions and overflow
+    /// probe forward deterministically.
+    fn begin_feature(&mut self, fid: FeatureId) {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in fid
+            .0
+             .0
+            .to_le_bytes()
+            .into_iter()
+            .chain(fid.1.to_le_bytes())
+        {
+            h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+        }
+        self.claim_slot(h & SLOT_MASK);
+    }
+
+    fn claim_slot(&mut self, mut slot: u64) {
+        // Slot 0 would hand out id 0; keep ids positive.
+        while slot == 0 || self.used_slots.contains(&slot) {
+            slot = (slot + 1) & SLOT_MASK;
+        }
+        self.used_slots.insert(slot);
+        self.slot = slot;
+        self.next_node_id = slot << BLOCK_BITS;
+        self.block_end = self.next_node_id + (1 << BLOCK_BITS) - 1;
+    }
+
     fn alloc(&mut self) -> NodeId {
+        if self.next_node_id > self.block_end {
+            self.claim_slot((self.slot + 1) & SLOT_MASK);
+        }
         let id = self.next_node_id;
         self.next_node_id += 1;
         id
@@ -122,6 +171,7 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
     let mut extras = Vec::new();
 
     for (fid, feature) in crdt.ordered_features() {
+        ctx.begin_feature(fid);
         // Non-geometry features: assembly metadata, scene settings.
         match feature.kind.as_str() {
             "part-def" => {

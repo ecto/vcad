@@ -240,15 +240,61 @@ pub fn vision_tools() -> Vec<Value> {
     )]
 }
 
+/// The agent manifest hosts load (`vcad_agent_manifest`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct AgentManifest {
+    /// Manifest schema version.
+    pub version: u32,
+    /// Prompt-cache key; changes with the version.
+    pub cache_key: String,
+    /// System prompt.
+    pub system: String,
+    /// Tool definitions (JSON-schema tool specs).
+    #[cfg_attr(feature = "ts-rs", ts(type = "Array<Record<string, unknown>>"))]
+    pub tools: Vec<Value>,
+    /// Tools only offered to vision-capable models.
+    #[cfg_attr(feature = "ts-rs", ts(type = "Array<Record<string, unknown>>"))]
+    pub vision_tools: Vec<Value>,
+}
+
+/// Text answer of a read tool inside an [`AgentReadEnvelope`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct AgentReadResult {
+    /// The answer, as plain text for the model.
+    pub text: String,
+}
+
+/// The read-tool envelope: `{"ok":true,"result":{"text":…}}` or an error.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct AgentReadEnvelope {
+    /// Whether the read succeeded.
+    pub ok: bool,
+    /// Present when `ok`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub result: Option<AgentReadResult>,
+    /// Present when not `ok`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub error: Option<crate::command::EngineError>,
+}
+
 /// The full manifest: version, system prompt, tools, vision-only tools.
 pub fn manifest() -> Value {
-    json!({
-        "version": MANIFEST_VERSION,
-        "cache_key": format!("vcad-agent-v{MANIFEST_VERSION}"),
-        "system": SYSTEM_PROMPT,
-        "tools": tools(),
-        "vision_tools": vision_tools(),
+    serde_json::to_value(AgentManifest {
+        version: MANIFEST_VERSION,
+        cache_key: format!("vcad-agent-v{MANIFEST_VERSION}"),
+        system: SYSTEM_PROMPT.to_string(),
+        tools: tools(),
+        vision_tools: vision_tools(),
     })
+    .expect("manifest serializes")
 }
 
 /// Pretty JSON for the checked-in file (trailing newline).
@@ -285,14 +331,19 @@ pub fn read_tool_envelope(doc: &DocumentApi, tool: &str, args_json: &str) -> Str
             message: e.to_string(),
         })
         .and_then(|args| read_tool(tool, &args, doc));
-    match out {
-        Ok(text) => json!({"ok": true, "result": {"text": text}}).to_string(),
-        Err(e) => {
-            let mut error = serde_json::to_value(&e).unwrap_or_default();
-            error["message"] = e.to_string().into();
-            json!({"ok": false, "error": error}).to_string()
-        }
-    }
+    let env = match out {
+        Ok(text) => AgentReadEnvelope {
+            ok: true,
+            result: Some(AgentReadResult { text }),
+            error: None,
+        },
+        Err(e) => AgentReadEnvelope {
+            ok: false,
+            result: None,
+            error: Some(e.into()),
+        },
+    };
+    serde_json::to_value(env).unwrap_or_default().to_string()
 }
 
 fn part_field(doc: &DocumentApi, id: &str, key: &str) -> Option<String> {
@@ -553,6 +604,38 @@ mod tests {
             crate::tools::lower("render_view", &json!({}), &api),
             Err(CommandError::Unsupported { .. })
         ));
+    }
+
+    #[test]
+    fn observed_model_call_shapes_lower() {
+        // Verbatim argument shapes a live model emitted for "create a 20mm
+        // cube, move it +10mm in Z, inspect it" (create nests type + params
+        // one level down).
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let created = apply(
+            &mut api,
+            "create",
+            json!({"name": "cube", "params": {"type": "cube", "params": {"size": {"x": 20, "y": 20, "z": 20}}}}),
+        );
+        let id = created["result"]["createdFeatureId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        apply(
+            &mut api,
+            "translate",
+            json!({"child": id, "offset": {"x": 0, "y": 0, "z": 10}}),
+        );
+        let text = read_tool("inspect", &json!({"part_id": id}), &api).unwrap();
+        assert!(text.contains("volume 8000.000"), "{text}");
+        let (lo, hi) = api.part_world_bbox(&id).unwrap();
+        assert!(
+            (lo[2] - 10.0).abs() < 1e-9 && (hi[2] - 30.0).abs() < 1e-9,
+            "{lo:?} {hi:?}"
+        );
+        assert_eq!(api.get_state().parts.len(), 1);
+        let name = serde_json::to_value(&api.get_state().parts[0]).unwrap()["name"].clone();
+        assert_eq!(name, "cube");
     }
 
     #[test]
