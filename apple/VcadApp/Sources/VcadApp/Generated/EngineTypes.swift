@@ -46,6 +46,102 @@ public enum EngineJSON: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - AgentManifest
+
+/// The agent manifest hosts load (`vcad_agent_manifest`).
+public struct AgentManifest: Codable, Equatable, Sendable {
+    /// Manifest schema version.
+    public var version: Double
+    /// Prompt-cache key; changes with the version.
+    public var cacheKey: String
+    /// System prompt.
+    public var system: String
+    /// Tool definitions (JSON-schema tool specs).
+    public var tools: [[String: EngineJSON]]
+    /// Tools only offered to vision-capable models.
+    public var visionTools: [[String: EngineJSON]]
+
+    public init(version: Double, cacheKey: String, system: String, tools: [[String: EngineJSON]], visionTools: [[String: EngineJSON]]) {
+        self.version = version
+        self.cacheKey = cacheKey
+        self.system = system
+        self.tools = tools
+        self.visionTools = visionTools
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: GenKey.self)
+        version = try c.decode(Double.self, forKey: "version")
+        cacheKey = try c.decode(String.self, forKey: "cache_key")
+        system = try c.decode(String.self, forKey: "system")
+        tools = try c.decode([[String: EngineJSON]].self, forKey: "tools")
+        visionTools = try c.decode([[String: EngineJSON]].self, forKey: "vision_tools")
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: GenKey.self)
+        try c.encode(version, forKey: "version")
+        try c.encode(cacheKey, forKey: "cache_key")
+        try c.encode(system, forKey: "system")
+        try c.encode(tools, forKey: "tools")
+        try c.encode(visionTools, forKey: "vision_tools")
+    }
+}
+
+// MARK: - AgentReadEnvelope
+
+/// The read-tool envelope: `{"ok":true,"result":{"text":…}}` or an error.
+public struct AgentReadEnvelope: Codable, Equatable, Sendable {
+    /// Whether the read succeeded.
+    public var ok: Bool
+    /// Present when `ok`.
+    public var result: AgentReadResult?
+    /// Present when not `ok`.
+    public var error: EngineError?
+
+    public init(ok: Bool, result: AgentReadResult? = nil, error: EngineError? = nil) {
+        self.ok = ok
+        self.result = result
+        self.error = error
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: GenKey.self)
+        ok = try c.decode(Bool.self, forKey: "ok")
+        result = try c.decodeIfPresent(AgentReadResult.self, forKey: "result")
+        error = try c.decodeIfPresent(EngineError.self, forKey: "error")
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: GenKey.self)
+        try c.encode(ok, forKey: "ok")
+        try c.encodeIfPresent(result, forKey: "result")
+        try c.encodeIfPresent(error, forKey: "error")
+    }
+}
+
+// MARK: - AgentReadResult
+
+/// Text answer of a read tool inside an [`AgentReadEnvelope`].
+public struct AgentReadResult: Codable, Equatable, Sendable {
+    /// The answer, as plain text for the model.
+    public var text: String
+
+    public init(text: String) {
+        self.text = text
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: GenKey.self)
+        text = try c.decode(String.self, forKey: "text")
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: GenKey.self)
+        try c.encode(text, forKey: "text")
+    }
+}
+
 // MARK: - BooleanType
 
 /// Boolean operation type.
@@ -63,8 +159,8 @@ public indirect enum CommandError: Codable, Equatable, Sendable {
     case unknownId(id: String)
     /// - action: `undo` or `redo`.
     case nothingTo(action: String)
-    /// - message: Parser message.
-    case invalid(message: String)
+    /// - detail: Parser message. On the wire it is `detail`: the envelope's `message` (the display text) shares the error object.
+    case invalid(detail: String)
     /// - tool: Tool or feature kind.
     case unsupported(tool: String)
     /// - index: Index of the failing command.
@@ -95,7 +191,7 @@ public indirect enum CommandError: Codable, Equatable, Sendable {
             )
         case "invalid":
             self = .invalid(
-                message: try c.decode(String.self, forKey: "message")
+                detail: try c.decode(String.self, forKey: "detail")
             )
         case "unsupported":
             self = .unsupported(
@@ -120,9 +216,9 @@ public indirect enum CommandError: Codable, Equatable, Sendable {
         case .nothingTo(let action):
             try c.encode("nothing_to", forKey: "kind")
             try c.encode(action, forKey: "action")
-        case .invalid(let message):
+        case .invalid(let detail):
             try c.encode("invalid", forKey: "kind")
-            try c.encode(message, forKey: "message")
+            try c.encode(detail, forKey: "detail")
         case .unsupported(let tool):
             try c.encode("unsupported", forKey: "kind")
             try c.encode(tool, forKey: "tool")
@@ -427,6 +523,114 @@ public indirect enum DocCommand: Codable, Equatable, Sendable {
             try c.encode("batch", forKey: "type")
             try c.encode(commands, forKey: "commands")
         }
+    }
+}
+
+// MARK: - DocumentDelta
+
+/// A patch from one materialized IR document to the next.
+public struct DocumentDelta: Codable, Equatable, Sendable {
+    /// Per-key patches for object-valued top-level fields that are objects
+    /// on both sides: `nodes`, `materials`, `parameters`, `partIds`, ….
+    public var maps: [String: MapPatch]
+    /// Other top-level fields that changed, replaced wholesale (`roots`, …).
+    public var fields: [String: EngineJSON]
+    /// Top-level fields that disappeared.
+    public var removedFields: [String]
+
+    public init(maps: [String: MapPatch], fields: [String: EngineJSON], removedFields: [String]) {
+        self.maps = maps
+        self.fields = fields
+        self.removedFields = removedFields
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: GenKey.self)
+        maps = try c.decode([String: MapPatch].self, forKey: "maps")
+        fields = try c.decode([String: EngineJSON].self, forKey: "fields")
+        removedFields = try c.decode([String].self, forKey: "removedFields")
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: GenKey.self)
+        try c.encode(maps, forKey: "maps")
+        try c.encode(fields, forKey: "fields")
+        try c.encode(removedFields, forKey: "removedFields")
+    }
+}
+
+// MARK: - EngineDelta
+
+/// Successful delta result inside an [`EngineDeltaEnvelope`].
+public struct EngineDelta: Codable, Equatable, Sendable {
+    /// Patch for the previous IR document.
+    public var document: DocumentDelta
+    /// Parts added, updated and removed.
+    public var parts: PartsDelta
+    /// Stable ids of parts consumed by other features (full list; small).
+    public var consumedPartIds: [String]
+    /// Non-fatal materialize issues.
+    public var warnings: [String]
+    /// Stable id of the feature the command created, if any.
+    public var createdFeatureId: String?
+
+    public init(document: DocumentDelta, parts: PartsDelta, consumedPartIds: [String], warnings: [String], createdFeatureId: String? = nil) {
+        self.document = document
+        self.parts = parts
+        self.consumedPartIds = consumedPartIds
+        self.warnings = warnings
+        self.createdFeatureId = createdFeatureId
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: GenKey.self)
+        document = try c.decode(DocumentDelta.self, forKey: "document")
+        parts = try c.decode(PartsDelta.self, forKey: "parts")
+        consumedPartIds = try c.decode([String].self, forKey: "consumedPartIds")
+        warnings = try c.decode([String].self, forKey: "warnings")
+        createdFeatureId = try c.decodeIfPresent(String.self, forKey: "createdFeatureId")
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: GenKey.self)
+        try c.encode(document, forKey: "document")
+        try c.encode(parts, forKey: "parts")
+        try c.encode(consumedPartIds, forKey: "consumedPartIds")
+        try c.encode(warnings, forKey: "warnings")
+        try c.encodeIfPresent(createdFeatureId, forKey: "createdFeatureId")
+    }
+}
+
+// MARK: - EngineDeltaEnvelope
+
+/// The delta counterpart of [`crate::command::EngineEnvelope`]:
+/// `{"ok":true,"result":EngineDelta}` or `{"ok":false,"error":…}`.
+public struct EngineDeltaEnvelope: Codable, Equatable, Sendable {
+    /// Whether the command succeeded.
+    public var ok: Bool
+    /// Present when `ok`.
+    public var result: EngineDelta?
+    /// Present when not `ok`.
+    public var error: EngineError?
+
+    public init(ok: Bool, result: EngineDelta? = nil, error: EngineError? = nil) {
+        self.ok = ok
+        self.result = result
+        self.error = error
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: GenKey.self)
+        ok = try c.decode(Bool.self, forKey: "ok")
+        result = try c.decodeIfPresent(EngineDelta.self, forKey: "result")
+        error = try c.decodeIfPresent(EngineError.self, forKey: "error")
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: GenKey.self)
+        try c.encode(ok, forKey: "ok")
+        try c.encodeIfPresent(result, forKey: "result")
+        try c.encodeIfPresent(error, forKey: "error")
     }
 }
 
@@ -1782,6 +1986,33 @@ public enum FeatureInput: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - MapPatch
+
+/// Per-key changes to one object-valued document field.
+public struct MapPatch: Codable, Equatable, Sendable {
+    /// Keys added or changed, with their new values.
+    public var set: [String: EngineJSON]
+    /// Keys removed.
+    public var remove: [String]
+
+    public init(set: [String: EngineJSON], remove: [String]) {
+        self.set = set
+        self.remove = remove
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: GenKey.self)
+        set = try c.decode([String: EngineJSON].self, forKey: "set")
+        remove = try c.decode([String].self, forKey: "remove")
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: GenKey.self)
+        try c.encode(set, forKey: "set")
+        try c.encode(remove, forKey: "remove")
+    }
+}
+
 // MARK: - MaterialDef
 
 /// PBR material definition.
@@ -1877,6 +2108,44 @@ public struct MaterialDef: Codable, Equatable, Sendable {
         try c.encodeIfPresent(clearcoat, forKey: "clearcoat")
         try c.encodeIfPresent(clearcoatRoughness, forKey: "clearcoatRoughness")
         try c.encodeIfPresent(anisotropy, forKey: "anisotropy")
+    }
+}
+
+// MARK: - PartsDelta
+
+/// Which parts a command added, updated or removed, by stable id.
+public struct PartsDelta: Codable, Equatable, Sendable {
+    /// New parts.
+    public var added: [EnginePartInfo]
+    /// Parts whose info or geometry (any node in their subtree) changed.
+    /// Hosts re-tessellate exactly these plus `added`.
+    public var updated: [EnginePartInfo]
+    /// Stable ids of parts that no longer exist.
+    public var removed: [String]
+    /// The full part order (stable ids), present when it changed.
+    public var order: [String]?
+
+    public init(added: [EnginePartInfo], updated: [EnginePartInfo], removed: [String], order: [String]? = nil) {
+        self.added = added
+        self.updated = updated
+        self.removed = removed
+        self.order = order
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: GenKey.self)
+        added = try c.decode([EnginePartInfo].self, forKey: "added")
+        updated = try c.decode([EnginePartInfo].self, forKey: "updated")
+        removed = try c.decode([String].self, forKey: "removed")
+        order = try c.decodeIfPresent([String].self, forKey: "order")
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: GenKey.self)
+        try c.encode(added, forKey: "added")
+        try c.encode(updated, forKey: "updated")
+        try c.encode(removed, forKey: "removed")
+        try c.encodeIfPresent(order, forKey: "order")
     }
 }
 

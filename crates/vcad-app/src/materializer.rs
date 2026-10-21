@@ -33,9 +33,9 @@ pub struct MaterializeResult {
 /// Node ids come in per-feature blocks: `slot << BLOCK_BITS` plus a local
 /// counter, so a feature's ids stay put when *other* features change.
 const BLOCK_BITS: u32 = 14;
-/// Slots available (`2^26 × 2^14 = 2^40` ids — exact as JS numbers, with
-/// headroom for hosts that append `max + 1`).
-const SLOT_MASK: u64 = (1 << 26) - 1;
+/// Slots available: `2^17 × 2^14 = 2^31` ids, so every id still fits an
+/// `i32`/`u32` (the CLI's pick buffer is `u32`) and `max + 1` stays exact.
+const SLOT_MASK: u64 = (1 << 17) - 1;
 
 /// Materialization context — tracks node ID allocation and feature-to-node mapping.
 struct Context {
@@ -71,7 +71,13 @@ impl Context {
     /// probe forward deterministically.
     fn begin_feature(&mut self, fid: FeatureId) {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        for b in fid.0 .0.to_le_bytes().into_iter().chain(fid.1.to_le_bytes()) {
+        for b in fid
+            .0
+             .0
+            .to_le_bytes()
+            .into_iter()
+            .chain(fid.1.to_le_bytes())
+        {
             h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
         }
         self.claim_slot(h & SLOT_MASK);
@@ -90,7 +96,7 @@ impl Context {
 
     fn alloc(&mut self) -> NodeId {
         if self.next_node_id > self.block_end {
-            self.claim_slot(self.slot + 1);
+            self.claim_slot((self.slot + 1) & SLOT_MASK);
         }
         let id = self.next_node_id;
         self.next_node_id += 1;

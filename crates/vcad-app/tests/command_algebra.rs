@@ -161,3 +161,46 @@ fn replicas_converge_in_any_merge_order() {
         );
     }
 }
+
+/// Deltas are exact: applying each command's delta to the previous document
+/// and part list reproduces the full materialize, and refusals change nothing.
+#[test]
+fn deltas_reproduce_the_full_materialize() {
+    use vcad_app::delta::EngineDeltaEnvelope;
+    for seed in 1..=cases() {
+        let mut rng = Rng(seed.wrapping_mul(0xd1b5_4a32_d192_ed03) | 1);
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let start = api.get_state();
+        let mut doc = serde_json::to_value(&start.document).unwrap();
+        let mut parts = start.parts;
+        for i in 0..14 {
+            let s = match rng.below(8) {
+                0 => (false, r#"{"type":"undo"}"#.to_string(), String::new()),
+                1 => (false, r#"{"type":"redo"}"#.to_string(), String::new()),
+                _ => step(&mut rng, &api),
+            };
+            let raw = if s.0 {
+                api.apply_tool_delta_envelope(&s.1, &s.2)
+            } else {
+                api.apply_json_delta_envelope(&s.1)
+            };
+            let env: EngineDeltaEnvelope = serde_json::from_str(&raw)
+                .unwrap_or_else(|e| panic!("seed {seed} step {i}: {e}: {raw}"));
+            if let Some(delta) = env.result {
+                delta.document.apply(&mut doc);
+                delta.parts.apply(&mut parts);
+            }
+            let full = api.get_state();
+            assert_eq!(
+                doc,
+                serde_json::to_value(&full.document).unwrap(),
+                "seed {seed} step {i}: document drifted after {s:?}"
+            );
+            assert_eq!(
+                serde_json::to_value(&parts).unwrap(),
+                serde_json::to_value(&full.parts).unwrap(),
+                "seed {seed} step {i}: parts drifted after {s:?}"
+            );
+        }
+    }
+}

@@ -172,7 +172,9 @@ pub enum CommandError {
     /// The payload didn't parse.
     #[error("invalid command: {message}")]
     Invalid {
-        /// Parser message.
+        /// Parser message. On the wire it is `detail`: the envelope's
+        /// `message` (the display text) shares the error object.
+        #[serde(rename = "detail")]
         message: String,
     },
     /// The host asked for a tool the engine can't lower yet.
@@ -429,6 +431,15 @@ pub struct ToolCall {
     pub args: serde_json::Value,
 }
 
+impl From<CommandError> for EngineError {
+    fn from(error: CommandError) -> Self {
+        Self {
+            message: error.to_string(),
+            error,
+        }
+    }
+}
+
 impl From<Result<ApiResult, CommandError>> for EngineEnvelope {
     fn from(result: Result<ApiResult, CommandError>) -> Self {
         match result {
@@ -446,10 +457,7 @@ impl From<Result<ApiResult, CommandError>> for EngineEnvelope {
             Err(e) => Self {
                 ok: false,
                 result: None,
-                error: Some(EngineError {
-                    message: e.to_string(),
-                    error: e,
-                }),
+                error: Some(EngineError::from(e)),
             },
         }
     }
@@ -481,6 +489,9 @@ mod ts_export {
         Value::export_all().expect("Value export failed");
         EngineEnvelope::export_all().expect("EngineEnvelope export failed");
         ToolCall::export_all().expect("ToolCall export failed");
+        crate::delta::EngineDeltaEnvelope::export_all().expect("EngineDeltaEnvelope export failed");
+        crate::agent::AgentManifest::export_all().expect("AgentManifest export failed");
+        crate::agent::AgentReadEnvelope::export_all().expect("AgentReadEnvelope export failed");
     }
 }
 
@@ -742,6 +753,29 @@ mod tests {
             env.error.unwrap().error,
             CommandError::UnknownId { .. }
         ));
+    }
+
+    #[test]
+    fn invalid_error_round_trips_through_the_envelope() {
+        let mut api = api();
+        let raw = api.apply_json_envelope(r#"{"type":"nope"}"#);
+        let env: EngineEnvelope = serde_json::from_str(&raw).unwrap();
+        let err = env.error.unwrap();
+        let CommandError::Invalid { message } = &err.error else {
+            panic!("expected invalid, got {err:?}");
+        };
+        assert!(err.message.starts_with("invalid command: "));
+        assert_eq!(err.message, format!("invalid command: {message}"));
+        let again = serde_json::to_value(EngineEnvelope {
+            ok: false,
+            result: None,
+            error: Some(err),
+        })
+        .unwrap();
+        assert_eq!(
+            again,
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap()
+        );
     }
 
     #[test]

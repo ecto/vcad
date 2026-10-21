@@ -91,6 +91,53 @@ pub extern "C" fn vcad_engine_apply_tool(
     }
 }
 
+/// `vcad_engine_apply`, answered with an `EngineDeltaEnvelope` (what changed
+/// since the state before the command) instead of the whole document.
+#[no_mangle]
+pub extern "C" fn vcad_engine_apply_delta(
+    engine: *mut VcadEngine,
+    command_json: *const c_char,
+) -> *mut c_char {
+    crate::err::clear_error();
+    if engine.is_null() || command_json.is_null() {
+        crate::err::set_error("vcad_engine_apply_delta: null argument");
+        return std::ptr::null_mut();
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let json = unsafe { CStr::from_ptr(command_json) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let engine = unsafe { &mut *engine };
+        Ok::<_, String>(engine.api.apply_json_delta_envelope(json))
+    }));
+    finish(result, "vcad_engine_apply_delta")
+}
+
+/// `vcad_engine_apply_tool`, answered with an `EngineDeltaEnvelope`.
+#[no_mangle]
+pub extern "C" fn vcad_engine_apply_tool_delta(
+    engine: *mut VcadEngine,
+    tool: *const c_char,
+    args_json: *const c_char,
+) -> *mut c_char {
+    crate::err::clear_error();
+    if engine.is_null() || tool.is_null() || args_json.is_null() {
+        crate::err::set_error("vcad_engine_apply_tool_delta: null argument");
+        return std::ptr::null_mut();
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let tool = unsafe { CStr::from_ptr(tool) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let args = unsafe { CStr::from_ptr(args_json) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let engine = unsafe { &mut *engine };
+        Ok::<_, String>(engine.api.apply_tool_delta_envelope(tool, args))
+    }));
+    finish(result, "vcad_engine_apply_tool_delta")
+}
+
 /// Deterministic state fingerprint (16 hex digits, owned; free with
 /// `vcad_engine_string_free`). Matches `WasmDocumentEngine.stateHash`.
 #[no_mangle]
@@ -402,12 +449,18 @@ mod tests {
     fn swift_codegen_fixture_matches_rust_output() {
         use serde_json::{json, Value};
         let engine = vcad_engine_new(5);
+        // A twin answers the same commands as deltas.
+        let twin = vcad_engine_new(5);
         let mut envelopes = Vec::new();
+        let mut deltas = Vec::new();
         let mut run = |cmd: Value| {
             let c = CString::new(cmd.to_string()).unwrap();
             let out: Value =
                 serde_json::from_str(&take(vcad_engine_apply(engine, c.as_ptr()))).unwrap();
+            let delta: Value =
+                serde_json::from_str(&take(vcad_engine_apply_delta(twin, c.as_ptr()))).unwrap();
             envelopes.push(out.clone());
+            deltas.push(delta);
             out
         };
         let cube = run(json!({"type":"add_feature","name":"Plate",
@@ -435,6 +488,7 @@ mod tests {
         );
         run(json!({"type":"set_param","id":a,"key":"size_x","value":"oops"}));
         vcad_engine_free(engine);
+        vcad_engine_free(twin);
 
         let feat = json!({"type":"Cube","size_x":1.0,"size_y":2.0,"size_z":3.0});
         let commands: Vec<Value> = [
@@ -475,6 +529,7 @@ mod tests {
         let fixture = json!({
             "commands": commands,
             "envelopes": envelopes,
+            "deltas": deltas,
             "toolCalls": [serde_json::to_value(tool).unwrap()],
         });
         let text = serde_json::to_string_pretty(&fixture).unwrap() + "\n";
