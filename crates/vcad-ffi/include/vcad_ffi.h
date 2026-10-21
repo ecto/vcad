@@ -29,6 +29,11 @@ char *vcad_engine_apply(VcadEngine *engine, const char *command_json);
 /* Lower an AI tool call (create, translate, linear_pattern, ...) in Rust and
  * apply it; same envelope. Unhandled tools report error kind "unsupported". */
 char *vcad_engine_apply_tool(VcadEngine *engine, const char *tool, const char *args_json);
+/* Same as vcad_engine_apply / vcad_engine_apply_tool, answered with an
+ * EngineDeltaEnvelope (what changed since the state before the command:
+ * a document patch + parts added/updated/removed by stable id). */
+char *vcad_engine_apply_delta(VcadEngine *engine, const char *command_json);
+char *vcad_engine_apply_tool_delta(VcadEngine *engine, const char *tool, const char *args_json);
 /* Deterministic state fingerprint (16 hex digits); free with vcad_engine_string_free. */
 char *vcad_engine_state_hash(const VcadEngine *engine);
 /* Current state as an ok envelope; free with vcad_engine_string_free. */

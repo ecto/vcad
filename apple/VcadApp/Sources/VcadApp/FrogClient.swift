@@ -207,6 +207,12 @@ struct FrogClient {
     var config: FrogConfig
     var transport: FrogTransport = URLSessionFrogTransport()
 
+    /// `vcad/<version>`: the edge rejects some default user agents.
+    nonisolated static var userAgent: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        return "vcad/\(version ?? "dev")"
+    }
+
     /// The model id to use: the configured one, else the first id the
     /// endpoint's `GET /models` lists. Throws `notConfigured` when neither.
     func resolveModel() async throws -> String {
@@ -214,6 +220,7 @@ struct FrogClient {
         guard let url = config.modelsURL else { throw FrogError.notConfigured("endpoint URL") }
         var req = URLRequest(url: url)
         req.timeoutInterval = 20
+        req.setValue(Self.userAgent, forHTTPHeaderField: "user-agent")
         if let key = config.apiKey { req.setValue("Bearer \(key)", forHTTPHeaderField: "authorization") }
         let (data, status) = try await transport.data(for: req)
         guard (200..<300).contains(status) else { throw FrogError.from(status: status, body: data, retryAfter: nil) }
@@ -231,6 +238,7 @@ struct FrogClient {
         req.timeoutInterval = 300
         req.setValue("application/json", forHTTPHeaderField: "content-type")
         req.setValue("text/event-stream", forHTTPHeaderField: "accept")
+        req.setValue(Self.userAgent, forHTTPHeaderField: "user-agent")
         if let key = config.apiKey { req.setValue("Bearer \(key)", forHTTPHeaderField: "authorization") }
         var body: [String: Any] = [
             "model": config.model,
@@ -240,7 +248,9 @@ struct FrogClient {
             "prompt_cache_key": cacheKey,
         ]
         if !tools.isEmpty { body["tools"] = tools; body["tool_choice"] = "auto" }
-        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+        // Sorted keys: the system message and tools serialize byte-identically
+        // on every request (dictionary order is randomized per process).
+        req.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
         return req
     }
 

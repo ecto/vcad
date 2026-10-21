@@ -3470,6 +3470,96 @@ pub fn import_step_buffer_with_report(data: &[u8]) -> Result<JsValue, JsError> {
     serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
 }
 
+/// Document for a B-rep STEP import: one lazy `step_import` node per solid
+/// of the file registered under `path` (`vcad_eval::step_doc`). Returns the
+/// document JSON.
+#[module("step")]
+#[wasm_bindgen(js_name = stepImportDocument)]
+pub fn step_import_document(
+    path: &str,
+    solid_indices: Vec<u32>,
+    part_name: &str,
+    material: &str,
+) -> Result<String, JsError> {
+    use vcad_eval::step_doc::StepBody;
+    let bodies = solid_indices
+        .into_iter()
+        .map(|solid_index| StepBody::Brep {
+            path: path.to_string(),
+            solid_index,
+        })
+        .collect();
+    vcad_eval::step_doc::step_import_document(part_name, material, bodies)
+        .to_json()
+        .map_err(|e| JsError::new(&format!("serialize: {e}")))
+}
+
+/// Widen an `f32` to the `f64` with the same shortest decimal form, so
+/// `0.3f32` serializes as `0.3` instead of `0.30000001192092896` — which
+/// roughly halves the size of a mesh document.
+fn f32_shortest(v: f32) -> f64 {
+    v.to_string().parse().unwrap_or(f64::from(v))
+}
+
+/// Tessellated STEP import straight to a document: parse, mesh every solid
+/// and build one `ImportedMesh` root per body in Rust, so the meshes never
+/// cross into JS as separate buffers. Returns `{document (JSON string),
+/// report, summary, triangles, vertices}`.
+#[module("step")]
+#[wasm_bindgen(js_name = importStepMeshDocument)]
+pub fn import_step_mesh_document(
+    data: &[u8],
+    part_name: &str,
+    material: &str,
+    source: &str,
+) -> Result<JsValue, JsError> {
+    use vcad_eval::step_doc::StepBody;
+    let (solids, report) = vcad_kernel::Solid::from_step_buffer_all_with_report(data)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    if solids.is_empty() {
+        return Err(JsError::new("No geometry found in STEP file"));
+    }
+    let (mut triangles, mut vertices) = (0usize, 0usize);
+    let bodies = solids
+        .iter()
+        .map(|s| {
+            let mesh = s.to_mesh(16);
+            triangles += mesh.indices.len() / 3;
+            vertices += mesh.vertices.len() / 3;
+            // Normals are left out, as the TS import did: the viewer derives
+            // them, and they would add half again to an already large doc.
+            StepBody::Mesh {
+                positions: mesh.vertices.iter().map(|&v| f32_shortest(v)).collect(),
+                indices: mesh.indices,
+                normals: None,
+                source: source.to_string(),
+            }
+        })
+        .collect();
+    let doc = vcad_eval::step_doc::step_import_document(part_name, material, bodies);
+    #[derive(serde::Serialize)]
+    struct Out {
+        document: String,
+        report: Vec<WasmSolidImportReport>,
+        summary: Option<String>,
+        triangles: usize,
+        vertices: usize,
+        bodies: usize,
+    }
+    let summary = report.summary();
+    let out = Out {
+        bodies: doc.roots.len(),
+        document: doc
+            .to_json()
+            .map_err(|e| JsError::new(&format!("serialize: {e}")))?,
+        report: to_wasm_report(report),
+        summary,
+        triangles,
+        vertices,
+    };
+    serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// Import a URDF (Unified Robot Description Format) file and return a
 /// serialised vcad `Document`.
 ///
