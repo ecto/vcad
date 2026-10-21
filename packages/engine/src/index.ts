@@ -2503,6 +2503,25 @@ export class Engine {
    * With an empty map this is exactly {@link evalVcadSource}. Returns null
    * if the kernel doesn't support module-aware loon evaluation.
    */
+  /**
+   * Evaluate loon source to a session document stamped with its provenance
+   * (`doc.source`: program, modules, origin dir/file, SHA-256), in the kernel.
+   * Null on kernels predating the export.
+   */
+  evalLoonDocument(
+    source: string,
+    modules: Record<string, string>,
+    origin: { baseDir?: string; path?: string } = {},
+  ): Document | null {
+    const k = this.kernel as unknown as {
+      evalLoonDocument?: (s: string, m: string, b?: string, p?: string) => string;
+    };
+    if (typeof k.evalLoonDocument !== "function") return null;
+    return JSON.parse(
+      k.evalLoonDocument(source, JSON.stringify(modules), origin.baseDir, origin.path),
+    ) as Document;
+  }
+
   evalVcadSourceWithModules(
     source: string,
     modules: Record<string, string>,

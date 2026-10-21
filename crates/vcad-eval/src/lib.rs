@@ -23,6 +23,7 @@ pub mod evaluate;
 pub mod kinematics;
 pub mod mesh_inline;
 pub mod pcb_preview;
+pub mod provenance;
 pub mod sensitivity;
 pub mod step_sources;
 
