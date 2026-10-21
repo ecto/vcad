@@ -110,6 +110,42 @@ describe("document-store blob edits run on the engine", () => {
     ]);
   });
 
+  it("creates boards, syncs the schematic and commits solves through the engine", () => {
+    reply = {
+      ok: true,
+      result: {
+        document: doc("after"),
+        parts: [{ id: "1:1", kind: "pcb-board", boardNodeId: 7 }],
+        consumedPartIds: [],
+        createdFeatureId: "1:1",
+      },
+    };
+    const s = useDocumentStore.getState();
+    expect(s.initPcb({ width: 40, layers: 4, traceWidth: 0.2 })).toBe(7);
+    expect(calls[0]).toEqual({
+      tool: "pcb_init",
+      args: { width: 40, layers: 4, trace_width: 0.2 },
+    });
+    s.importPcb({ footprints: [] } as never);
+    expect(calls[1]).toEqual({ tool: "pcb_import", args: { board: { footprints: [] }, name: "Imported PCB" } });
+
+    useDocumentStore.setState({ document: { ...doc("x"), pcb: {}, schematic: {} } as never });
+    const netlist = { nets: [] };
+    useDocumentStore.getState().syncSchematicToPcb(0, netlist, { placeUnplaced: false });
+    expect(calls[2]).toEqual({ tool: "pcb_sync_schematic", args: { netlist, place_unplaced: false } });
+  });
+
+  it("throws when the engine refuses a board (unsupported layer count)", () => {
+    reply = { ok: false, error: { kind: "invalid", message: "unsupported PCB layer count 3" } };
+    expect(() => useDocumentStore.getState().initPcb({ layers: 3 })).toThrow(/layer count 3/);
+    expect(tag()).toBe("before");
+  });
+
+  it("skips the schematic sync without a board and schematic", () => {
+    useDocumentStore.getState().syncSchematicToPcb(0, { nets: [] });
+    expect(calls).toEqual([]);
+  });
+
   it("leaves the document untouched when the engine refuses an edit", () => {
     reply = { ok: false, error: { kind: "invalid", message: "index 9 out of range" } };
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
