@@ -9,6 +9,7 @@ struct SettingsView: View {
     @AppStorage(Prefs.triadKey) private var showsTriad = true
     @AppStorage(Prefs.soundsKey) private var playsSounds = true
     @AppStorage(Prefs.hapticsKey) private var haptics = true
+    @AppStorage(Prefs.labsKey) private var labs = false
 
     var body: some View {
         TabView {
@@ -43,6 +44,17 @@ struct SettingsView: View {
             Form { AgentSettingsForm() }
                 .formStyle(.grouped)
                 .tabItem { Label("Agent", systemImage: "sparkles") }
+
+            Form {
+                Section {
+                    Toggle("Enable Labs workspaces and tools", isOn: $labs)
+                } footer: {
+                    Text("Adds the Electronics and Manufacture (CNC Studio) workspaces and physics simulation. They are still in development.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .formStyle(.grouped)
+            .tabItem { Label("Labs", systemImage: "flask") }
 
             Form { RendererSettingsForm() }
                 .formStyle(.grouped)
