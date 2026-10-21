@@ -2841,7 +2841,14 @@ fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Resul
 /// Read a .vcad file and return the materialized IR document.
 /// Auto-detects CRDT (v0.4) vs legacy v1 JSON shapes. A `.loon` input is
 /// evaluated to a document first.
+#[allow(clippy::ptr_arg)] // callers all hold PathBufs
 fn load_vcad_document(file: &PathBuf) -> Result<vcad_ir::Document> {
+    // Work from the absolute path. `.loon` evaluation already anchors
+    // `import-mesh` paths to the file's directory; with a relative input that
+    // anchor is itself relative, and re-anchoring it below doubled the
+    // directory (`a/b/a/b/m.stl`), silently dropping every mesh part.
+    let abs = file.canonicalize().unwrap_or_else(|_| file.clone());
+    let file = &abs;
     let mut doc = load_vcad_document_raw(file)?;
     // Anchor relative mesh references to the document's own directory — see
     // the note in `load_doc`. Without this, a committed URDF import evaluates
@@ -4081,6 +4088,39 @@ fn parse_vec3(s: &str) -> Result<vcad_ir::Vec3> {
 mod tests {
     use super::*;
     use vcad_ir::{CsgOp, Document, Node, SceneEntry, Vec3};
+
+    /// A `.loon` given by a *relative* path keeps its `import-mesh` paths
+    /// valid: resolved once against the file's directory, never twice.
+    #[test]
+    fn relative_loon_mesh_paths_resolve_once() {
+        let dir = tempfile::tempdir_in(".").unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir_all(sub.join("stl")).unwrap();
+        std::fs::write(
+            sub.join("stl/m.stl"),
+            "solid m\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid m\n",
+        )
+        .unwrap();
+        std::fs::write(sub.join("part.loon"), r#"[import-mesh "stl/m.stl"]"#).unwrap();
+        let rel = PathBuf::from(".")
+            .join(dir.path().file_name().unwrap())
+            .join("sub/part.loon");
+        let doc = load_vcad_document(&rel).unwrap();
+        let paths: Vec<String> = doc
+            .nodes
+            .values()
+            .filter_map(|n| match &n.op {
+                CsgOp::MeshImport { path, .. } => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paths.len(), 1);
+        assert!(
+            std::path::Path::new(&paths[0]).exists(),
+            "mesh path does not exist: {}",
+            paths[0]
+        );
+    }
 
     const ARM_LOON: &str = r#"
 [assembly
