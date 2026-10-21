@@ -10,6 +10,7 @@ pub mod camera;
 pub mod command;
 pub mod commands;
 pub mod context;
+pub mod doc_edits;
 pub mod document_api;
 pub mod engine;
 pub mod evaluate;
