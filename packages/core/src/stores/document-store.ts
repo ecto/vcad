@@ -1,6 +1,13 @@
 import { create } from "zustand";
 import { getKernelWasmSync } from "../wasm-singleton.js";
 import { applyCommand, applyToolCall, type Envelope } from "./engine-command.js";
+import {
+  DocumentEngineClient,
+  sharedEngineTransport,
+  type CommandOutcome,
+  type HostedEngine,
+} from "@vcad/engine";
+import type { DocCommand } from "@vcad/ir";
 import type { FeatureInput } from "./feature-input.js";
 import { mergeSketchConstraints } from "../sketch-constraint-persist.js";
 import type {
@@ -228,6 +235,16 @@ export interface DocumentState {
   _crdtEngine: WasmDocumentEngine | null;
   /** The CRDT engine constructor (stored for creating new engines). */
   _crdtEngineClass: WasmDocumentEngineConstructor | null;
+  /**
+   * Async command client over `_crdtEngine` (store-as-view). Actions moved
+   * to it return promises and fold engine deltas instead of re-reading the
+   * whole document; the rest still call the engine synchronously, and the
+   * client's state-hash check resyncs its view after those.
+   */
+  _engineClient: DocumentEngineClient;
+  /** Apply `command` through the client and fold the result into the store.
+   *  Resolves to the created feature id, if any; rejects on refusal. */
+  dispatch: (command: DocCommand) => Promise<string | undefined>;
   /** Initialize the CRDT engine. Called once after WASM loads. */
   _initCrdt: (EngineClass: WasmDocumentEngineConstructor) => void;
   /** Save CRDT document to bytes (returns null if engine not initialized). */
@@ -261,7 +278,7 @@ export interface DocumentState {
     version: string,
     params: Record<string, unknown>,
   ) => string;
-  removePart: (partId: string) => void;
+  removePart: (partId: string) => Promise<void>;
   setTranslation: (partId: string, offset: Vec3, skipUndo?: boolean) => void;
   setRotation: (partId: string, angles: Vec3, skipUndo?: boolean) => void;
   setScale: (partId: string, factor: Vec3, skipUndo?: boolean) => void;
@@ -278,12 +295,12 @@ export interface DocumentState {
     value: CrdtValue,
     skipUndo?: boolean,
   ) => void;
-  renamePart: (partId: string, name: string) => void;
+  renamePart: (partId: string, name: string) => Promise<void>;
   updateBooleanType: (
     partId: string,
     newType: BooleanType,
     skipUndo?: boolean,
-  ) => void;
+  ) => Promise<void>;
   applyBoolean: (
     type: BooleanType,
     partIdA: string,
@@ -330,7 +347,7 @@ export interface DocumentState {
     }>,
     options?: { closed?: boolean },
   ) => string | null;
-  setPartMaterial: (partId: string, materialKey: string) => void;
+  setPartMaterial: (partId: string, materialKey: string) => Promise<void>;
   /** No-op — CRDT undo handles granularity automatically. */
   pushUndoSnapshot: () => void;
   undo: () => void;
@@ -349,7 +366,7 @@ export interface DocumentState {
     transform: Transform3D,
     skipUndo?: boolean,
   ) => void;
-  setInstanceMaterial: (instanceId: string, materialKey: string) => void;
+  setInstanceMaterial: (instanceId: string, materialKey: string) => Promise<void>;
   setJointState: (jointId: string, state: number, skipUndo?: boolean) => void;
   createPartDef: (partId: string, name?: string) => string | null;
   createInstance: (
@@ -366,9 +383,9 @@ export interface DocumentState {
     name?: string;
   }) => string;
   deleteInstance: (instanceId: string) => void;
-  deleteJoint: (jointId: string) => void;
+  deleteJoint: (jointId: string) => Promise<void>;
   setGroundInstance: (instanceId: string) => void;
-  renameInstance: (instanceId: string, name: string) => void;
+  renameInstance: (instanceId: string, name: string) => Promise<void>;
   addImportedMesh: (
     positions: Float32Array,
     indices: Uint32Array,
@@ -390,8 +407,8 @@ export interface DocumentState {
     alignment?: "left" | "center" | "right";
   }) => Promise<{ partId: string; result: Record<string, unknown> } | null>;
   // Embroidery editing mutations
-  setThreadColor: (nodeId: NodeId, threadIdx: number, color: [number, number, number]) => void;
-  setThreadName: (nodeId: NodeId, threadIdx: number, name: string) => void;
+  setThreadColor: (nodeId: NodeId, threadIdx: number, color: [number, number, number]) => Promise<void>;
+  setThreadName: (nodeId: NodeId, threadIdx: number, name: string) => Promise<void>;
   setStitchGroupFillParams: (nodeId: NodeId, groupIdx: number, params: Partial<FillParams>) => void;
   optimizeJumpStitches: (nodeId: NodeId) => void;
   // Modify operations (wrap existing part)
@@ -433,7 +450,7 @@ export interface DocumentState {
   setParameterDragging: (dragging: boolean) => void;
   setTransientEval: (active: boolean) => void;
   // Visibility toggle
-  setPartVisible: (partId: string, visible: boolean) => void;
+  setPartVisible: (partId: string, visible: boolean) => Promise<void>;
   /** Run an AI tool call through the Rust lowering (`vcad_app::tools`).
    *  `null` when the kernel predates it; see `applyToolCall`. */
   applyTool: (tool: string, args: unknown) => Envelope | null;
@@ -946,6 +963,33 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   _crdtEngine: null,
   _crdtEngineClass: null,
 
+  _engineClient: new DocumentEngineClient(
+    sharedEngineTransport(() => get()._crdtEngine as unknown as HostedEngine | null),
+  ),
+
+  dispatch: async (command) => {
+    const readOnly = useUiStore.getState().readOnlyShare;
+    if (readOnly) {
+      // Same contract as the engine proxy's read-only guard: prompt to fork,
+      // leave the document alone.
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("vcad:fork-prompt", { detail: readOnly }));
+      }
+      return undefined;
+    }
+    const client = get()._engineClient;
+    if (!client.state) await client.init();
+    const outcome: CommandOutcome = await client.apply(command);
+    for (const w of outcome.warnings) console.warn(`[vcad] ${w}`);
+    set(
+      applyLegacyResult({
+        document: outcome.state.document,
+        parts: outcome.state.parts as unknown as PartInfo[],
+      }),
+    );
+    return outcome.createdFeatureId;
+  },
+
   _initCrdt: (EngineClass) => {
     // Guard against double-initialization. React StrictMode fires effects
     // twice in dev, and without this guard we'd construct two independent
@@ -1073,10 +1117,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  removePart: (partId) => {
-    const engine = get()._crdtEngine!;
-    const result = applyCommand(engine, { type: "delete_feature", id: partId });
-    set(applyApiResult(result));
+  removePart: async (partId) => {
+    await get().dispatch({ type: "delete_feature", id: partId });
   },
 
   setTranslation: (partId, offset) => {
@@ -1168,10 +1210,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set(applyLegacyResult(result));
   },
 
-  updateBooleanType: (partId, newType) => {
-    const engine = get()._crdtEngine!;
-    const result = applyCommand(engine, { type: "set_param", id: partId, key: "boolean_type", value: crdtStr(newType) });
-    set(applyLegacyResult(result));
+  updateBooleanType: async (partId, newType) => {
+    await get().dispatch({ type: "set_param", id: partId, key: "boolean_type", value: crdtStr(newType) });
   },
 
   applyBoolean: (type, partIdA, partIdB) => {
@@ -1503,30 +1543,26 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
 
-  setThreadColor: (nodeId, threadIdx, color) => {
+  setThreadColor: async (nodeId, threadIdx, color) => {
     const state = get();
-    const engine = state._crdtEngine!;
     const part = state.parts.find((p) => p.kind === "embroidery-pattern" && (p as EmbroideryPatternPartInfo).patternNodeId === nodeId);
     if (!part) return;
     const design = getNodeEmbroideryDesign(state.document, nodeId);
     if (!design) return;
     const d = structuredClone(design);
     if (d.threads[threadIdx]) d.threads[threadIdx]!.color = color;
-    const result = applyCommand(engine, { type: "set_param", id: part.id, key: "design", value: crdtStr(JSON.stringify(d)) });
-    set(applyLegacyResult(result));
+    await get().dispatch({ type: "set_param", id: part.id, key: "design", value: crdtStr(JSON.stringify(d)) });
   },
 
-  setThreadName: (nodeId, threadIdx, name) => {
+  setThreadName: async (nodeId, threadIdx, name) => {
     const state = get();
-    const engine = state._crdtEngine!;
     const part = state.parts.find((p) => p.kind === "embroidery-pattern" && (p as EmbroideryPatternPartInfo).patternNodeId === nodeId);
     if (!part) return;
     const design = getNodeEmbroideryDesign(state.document, nodeId);
     if (!design) return;
     const d = structuredClone(design);
     if (d.threads[threadIdx]) d.threads[threadIdx]!.name = name;
-    const result = applyCommand(engine, { type: "set_param", id: part.id, key: "design", value: crdtStr(JSON.stringify(d)) });
-    set(applyLegacyResult(result));
+    await get().dispatch({ type: "set_param", id: part.id, key: "design", value: crdtStr(JSON.stringify(d)) });
   },
 
   setStitchGroupFillParams: (nodeId, groupIdx, params) => {
@@ -1765,16 +1801,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     return result.createdFeatureId ?? null;
   },
 
-  setPartMaterial: (partId, materialKey) => {
-    const engine = get()._crdtEngine!;
-    const result = applyCommand(engine, { type: "set_material", id: partId, material: materialKey });
-    set(applyApiResult(result));
+  setPartMaterial: async (partId, materialKey) => {
+    await get().dispatch({ type: "set_material", id: partId, material: materialKey });
   },
 
-  renamePart: (partId, name) => {
-    const engine = get()._crdtEngine!;
-    const result = applyCommand(engine, { type: "rename", id: partId, name: name });
-    set(applyApiResult(result));
+  renamePart: async (partId, name) => {
+    await get().dispatch({ type: "rename", id: partId, name: name });
   },
 
   undo: () => {
@@ -1814,10 +1846,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set(applyLegacyResult(result));
   },
 
-  setInstanceMaterial: (instanceId, materialKey) => {
-    const engine = get()._crdtEngine!;
-    const result = applyCommand(engine, { type: "set_param", id: instanceId, key: "material", value: crdtStr(materialKey) });
-    set(applyLegacyResult(result));
+  setInstanceMaterial: async (instanceId, materialKey) => {
+    await get().dispatch({ type: "set_param", id: instanceId, key: "material", value: crdtStr(materialKey) });
   },
 
   setJointState: (jointId, jointState) => {
@@ -1890,10 +1920,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set(applyApiResult(result));
   },
 
-  deleteJoint: (jointId) => {
-    const engine = get()._crdtEngine!;
-    const result = applyCommand(engine, { type: "delete_feature", id: jointId });
-    set(applyApiResult(result));
+  deleteJoint: async (jointId) => {
+    await get().dispatch({ type: "delete_feature", id: jointId });
   },
 
   setGroundInstance: (instanceId) => {
@@ -1912,10 +1940,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set(applyLegacyResult(result));
   },
 
-  renameInstance: (instanceId, name) => {
-    const engine = get()._crdtEngine!;
-    const result = applyCommand(engine, { type: "set_param", id: instanceId, key: "name", value: crdtStr(name) });
-    set(applyLegacyResult(result));
+  renameInstance: async (instanceId, name) => {
+    await get().dispatch({ type: "set_param", id: instanceId, key: "name", value: crdtStr(name) });
   },
 
   setDocumentMeta: (id, name) => {
@@ -1982,10 +2008,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     return envelope;
   },
 
-  setPartVisible: (partId, visible) => {
-    const engine = get()._crdtEngine!;
-    const result = applyCommand(engine, { type: "set_visible", id: partId, visible: visible });
-    set(applyApiResult(result));
+  setPartVisible: async (partId, visible) => {
+    await get().dispatch({ type: "set_visible", id: partId, visible: visible });
   },
 
   reorderPart: (partId, newIndex) => {

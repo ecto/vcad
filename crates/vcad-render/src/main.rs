@@ -464,6 +464,12 @@ struct Cli {
     #[arg(long, default_value = "studio", requires = "photoreal")]
     lighting: vcad_render::photoreal::Lighting,
 
+    /// Material overrides for `--photoreal`: a JSON "look" file keyed by
+    /// material name and part label (colours, roughness, emission, oak /
+    /// fabric / image textures). See `vcad_render::look`.
+    #[arg(long, requires = "photoreal", value_name = "LOOK.json")]
+    look: Option<std::path::PathBuf>,
+
     /// Backdrop for `--photoreal`: studio sweep, shadow-catcher (transparent
     /// but keeps the contact shadow), or none.
     #[arg(long, value_enum, default_value_t = BackdropArg::Studio, requires = "photoreal")]
@@ -683,6 +689,12 @@ fn photoreal_options(cli: &Cli) -> vcad_render::photoreal::PhotorealOptions {
             BackdropArg::Cyclorama => Backdrop::Cyclorama,
         },
         lighting: cli.lighting,
+        look: cli.look.as_deref().map(|p| {
+            std::sync::Arc::new(vcad_render::look::Look::load(p).unwrap_or_else(|e| {
+                eprintln!("error: {e}");
+                std::process::exit(2)
+            }))
+        }),
         seed: cli.seed,
         denoise: !cli.no_denoise,
         adaptive: !cli.no_adaptive,

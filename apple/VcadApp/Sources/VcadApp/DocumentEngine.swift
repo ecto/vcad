@@ -307,3 +307,31 @@ extension PartsDelta {
         return ids.compactMap { byId[$0] }
     }
 }
+
+/// One open document's incremental kernel evaluation (`VcadEvalSession`):
+/// each `scene(data:dir:)` re-evaluates only the nodes whose subtree changed
+/// since the previous call and re-tessellates only changed roots. The scene
+/// equals `vcad_scene_from_json_in`.
+final class EvalSession {
+    private let handle: OpaquePointer
+
+    init() { handle = vcad_eval_session_new() }
+    deinit { vcad_eval_session_free(handle) }
+
+    /// Evaluate a document (IR JSON bytes); caller frees with `vcad_scene_free`.
+    func scene(data: Data, dir: [UInt8]) -> OpaquePointer? {
+        data.withUnsafeBytes { raw in
+            dir.withUnsafeBufferPointer { d in
+                vcad_scene_from_json_session(handle, raw.bindMemory(to: UInt8.self).baseAddress, data.count,
+                                             d.baseAddress, d.count)
+            }
+        }
+    }
+
+    /// Reuse counts from the last evaluation.
+    var stats: (reusedSolids: Int, evaluatedSolids: Int, reusedMeshes: Int) {
+        var r = 0, e = 0, m = 0
+        vcad_eval_session_stats(handle, &r, &e, &m)
+        return (r, e, m)
+    }
+}

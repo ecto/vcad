@@ -350,9 +350,6 @@ pub extern "C" fn vcad_render_photoreal_png(
 }
 
 /// The options `vcad render --photoreal` uses, at the app's camera.
-// The trailing `..Default::default()` is deliberate (future renderer fields
-// default) even while every field happens to be listed.
-#[allow(clippy::needless_update)]
 fn options(
     p: &VcadPhotorealParams,
     cpu: bool,
@@ -392,7 +389,6 @@ fn options(
         aperture_frac: 0.0,
         focus_dist: None,
         backdrop: vcad_render::photoreal::Backdrop::Studio,
-        lighting: vcad_render::photoreal::Lighting::Studio,
         seed: 0x5eed_1234,
         denoise: cpu,
         adaptive: true,
