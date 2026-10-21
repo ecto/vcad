@@ -1,0 +1,12 @@
+out/pad1d.f32 1000000 mixed 40 bpv=0.0018 psnr=40.47 modes= 12 tensor= 1000000 enc=0.0s
+out/pad1d.f32 1000000 mixed 60 bpv=0.0033 psnr=60.04 modes= 12 tensor= 1000000 enc=0.0s
+out/pad1d.f32 1000000 mixed 80 bpv=0.0052 psnr=80.13 modes= 12 tensor= 1000000 enc=0.0s
+out/pad1d.f32 1000000 pow2 40 bpv=0.0021 psnr=41.56 modes= 20 tensor= 1048576 enc=0.1s
+out/pad1d.f32 1000000 pow2 60 bpv=0.0039 psnr=60.33 modes= 20 tensor= 1048576 enc=0.1s
+out/pad1d.f32 1000000 pow2 80 bpv=0.0064 psnr=80.10 modes= 20 tensor= 1048576 enc=0.1s
+out/pad3d.f32 64x96x96 mixed 40 bpv=0.1984 psnr=40.08 modes= 18 tensor= 589824 enc=0.3s
+out/pad3d.f32 64x96x96 mixed 60 bpv=1.0538 psnr=60.00 modes= 18 tensor= 589824 enc=0.8s
+out/pad3d.f32 64x96x96 mixed 80 bpv=3.0911 psnr=80.10 modes= 18 tensor= 589824 enc=1.3s
+out/pad3d.f32 64x96x96 pow2 40 bpv=0.6011 psnr=40.42 modes= 20 tensor= 1048576 enc=1.0s
+out/pad3d.f32 64x96x96 pow2 60 bpv=2.2043 psnr=60.31 modes= 20 tensor= 1048576 enc=2.8s
+out/pad3d.f32 64x96x96 pow2 80 bpv=5.3784 psnr=80.20 modes= 20 tensor= 1048576 enc=4.2s

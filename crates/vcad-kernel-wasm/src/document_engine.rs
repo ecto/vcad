@@ -89,6 +89,26 @@ impl WasmDocumentEngine {
         self.api.apply_tool_envelope(tool, args_json)
     }
 
+    /// `apply`, answered with an `EngineDeltaEnvelope` (what changed since
+    /// the state before the command) instead of the whole document.
+    #[wasm_bindgen(js_name = applyDelta)]
+    pub fn apply_delta(&mut self, command_json: &str) -> String {
+        self.api.apply_json_delta_envelope(command_json)
+    }
+
+    /// `apply_tool`, answered with an `EngineDeltaEnvelope`.
+    #[wasm_bindgen(js_name = applyToolDelta)]
+    pub fn apply_tool_delta(&mut self, tool: &str, args_json: &str) -> String {
+        self.api.apply_tool_delta_envelope(tool, args_json)
+    }
+
+    /// The current state as a full-document envelope (always `ok`) — the
+    /// base a host applies deltas to.
+    #[wasm_bindgen(js_name = stateEnvelope)]
+    pub fn state_envelope(&self) -> String {
+        self.api.state_envelope()
+    }
+
     /// Update a feature with new params from a JSON-serialized `FeatureInput`.
     pub fn update_feature(&mut self, stable_id: &str, input_json: &str) -> JsValue {
         let input: FeatureInput = match serde_json::from_str(input_json) {
