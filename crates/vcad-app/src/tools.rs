@@ -71,6 +71,7 @@ pub fn lower(tool: &str, args: &Value, doc: &DocumentApi) -> Result<DocCommand, 
         "update" => lower_update(args, doc),
         "place" => lower_place(args, doc),
         "place_part" => lower_place_part(args),
+        "add_mesh_part" => lower_add_mesh_part(args, doc),
         other => crate::doc_edits::lower(other, args, doc)
             .or_else(|| crate::ecad_tools::lower(other, args, doc))
             .unwrap_or_else(|| Err(unsupported(other))),
@@ -101,6 +102,66 @@ fn lower_place_part(args: &Value) -> Result<DocCommand, CommandError> {
         },
         name,
     })
+}
+
+/// `add_mesh_part {positions, indices, normals?, source?, name?, material?,
+/// hide_part_id?}`: freeze a triangle mesh (e.g. a topology-optimization
+/// result) into the document as its own part, optionally hiding the part it
+/// was derived from — one batch, one undo step.
+fn lower_add_mesh_part(args: &Value, doc: &DocumentApi) -> Result<DocCommand, CommandError> {
+    let ctx = "add_mesh_part";
+    let array = |key: &str| -> Result<&Vec<Value>, CommandError> {
+        args.get(key)
+            .and_then(Value::as_array)
+            .ok_or_else(|| invalid(format!("{ctx}: `{key}` must be an array")))
+    };
+    let positions = array("positions")?;
+    let indices = array("indices")?;
+    if positions.len() % 3 != 0 || indices.is_empty() || indices.len() % 3 != 0 {
+        return Err(invalid(format!(
+            "{ctx}: positions must be xyz triples and indices non-empty triangles"
+        )));
+    }
+    let n = (positions.len() / 3) as u64;
+    if indices.iter().any(|i| i.as_u64().is_none_or(|i| i >= n)) {
+        return Err(invalid(format!("{ctx}: index out of range")));
+    }
+    let normals = match args.get("normals") {
+        None | Some(Value::Null) => None,
+        Some(v @ Value::Array(a)) if a.len() == positions.len() => Some(v.to_string()),
+        Some(_) => return Err(invalid(format!("{ctx}: normals must match positions"))),
+    };
+    let feature = FeatureInput::ImportedMesh {
+        positions_json: Value::Array(positions.clone()).to_string(),
+        indices_json: Value::Array(indices.clone()).to_string(),
+        normals_json: normals,
+        source: args
+            .get("source")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    };
+    let (kind, mut params) = feature.to_crdt_params();
+    for key in ["name", "material"] {
+        if let Some(v) = args.get(key).and_then(Value::as_str) {
+            params.insert(key.to_string(), vcad_crdt::Value::String(v.to_string()));
+        }
+    }
+    let mut commands = vec![DocCommand::CreateFeature {
+        kind: kind.to_string(),
+        params: Some(params),
+    }];
+    if let Some(hide) = args.get("hide_part_id").and_then(Value::as_str) {
+        if doc.stable_ids().resolve(hide).is_none() {
+            return Err(CommandError::UnknownId {
+                id: hide.to_string(),
+            });
+        }
+        commands.push(DocCommand::SetVisible {
+            id: hide.to_string(),
+            visible: false,
+        });
+    }
+    Ok(DocCommand::Batch { commands })
 }
 
 /// Named bbox anchors `place` accepts.
@@ -1151,6 +1212,70 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(api.stable_ids().resolve(&id).is_some());
+    }
+
+    #[test]
+    fn add_mesh_part_creates_a_named_mesh_and_hides_its_source() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let src = apply_ok(&mut api, "create", json!({"type": "cube"}))["result"]
+            ["createdFeatureId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let out = apply_ok(
+            &mut api,
+            "add_mesh_part",
+            json!({
+                "positions": [0, 0, 0, 1, 0, 0, 0, 1, 0],
+                "indices": [0, 1, 2],
+                "source": "topology_optimize",
+                "name": "bracket (optimized)",
+                "material": "aluminum",
+                "hide_part_id": src
+            }),
+        );
+        let doc = &out["result"]["document"];
+        let roots = doc["roots"].as_array().unwrap();
+        assert_eq!(roots.len(), 2);
+        assert!(roots.iter().any(|r| r["visible"] == json!(false)));
+        assert!(roots.iter().any(|r| r["material"] == "aluminum"));
+        let mesh = doc["nodes"]
+            .as_object()
+            .unwrap()
+            .values()
+            .find(|n| n["op"]["type"] == "ImportedMesh")
+            .expect("mesh node");
+        assert_eq!(mesh["op"]["indices"], json!([0, 1, 2]));
+        assert_eq!(mesh["op"]["source"], "topology_optimize");
+        let parts = out["result"]["parts"].as_array().unwrap();
+        assert!(
+            parts.iter().any(|p| p["name"] == "bracket (optimized)"),
+            "{parts:?}"
+        );
+    }
+
+    #[test]
+    fn add_mesh_part_bad_args_fail_closed() {
+        let api = DocumentApi::new(ReplicaId(1));
+        for bad in [
+            json!({"positions": [0, 0], "indices": [0, 1, 2]}),
+            json!({"positions": [0, 0, 0], "indices": [0, 0, 1]}),
+            json!({"positions": [0, 0, 0, 1, 0, 0, 0, 1, 0], "indices": []}),
+            json!({"positions": [0, 0, 0, 1, 0, 0, 0, 1, 0], "indices": [0, 1, 2], "normals": [1]}),
+        ] {
+            assert!(
+                matches!(
+                    lower("add_mesh_part", &bad, &api),
+                    Err(CommandError::Invalid { .. })
+                ),
+                "{bad}"
+            );
+        }
+        let hide = json!({"positions": [0, 0, 0, 1, 0, 0, 0, 1, 0], "indices": [0, 1, 2], "hide_part_id": "9:9"});
+        assert!(matches!(
+            lower("add_mesh_part", &hide, &api),
+            Err(CommandError::UnknownId { .. })
+        ));
     }
 
     #[test]

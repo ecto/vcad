@@ -13,7 +13,7 @@
  * re-solves on every evaluation.
  */
 
-import type { Document, ImportedMeshOp, Node } from "@vcad/ir";
+import type { Document } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import type {
   Engine,
@@ -23,7 +23,8 @@ import type {
 } from "@vcad/engine";
 import { getSession, registerSession } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
-import { partIdForNode, rootForPartId } from "./part-ids.js";
+import { rootForPartId } from "./part-ids.js";
+import { runMutation } from "./registry-dispatch.js";
 
 const regionSchema = {
   type: "object" as const,
@@ -263,28 +264,25 @@ export function topologyOptimizeTool(
   // Freeze the result into the document as an ImportedMesh part.
   const partName =
     a.name ?? (sourceName ? `${sourceName} (optimized)` : "topopt");
-  const op: ImportedMeshOp = {
-    type: "ImportedMesh",
-    positions: Array.from(result.mesh.positions),
-    indices: Array.from(result.mesh.indices),
-    normals: result.mesh.normals ? Array.from(result.mesh.normals) : undefined,
-    source: "topology_optimize",
-  };
-  const existingIds = Object.keys(doc.nodes).map(Number);
-  const nodeId = (existingIds.length ? Math.max(...existingIds) : 0) + 1;
-  const node: Node = { id: nodeId, name: partName, op };
-  doc.nodes[String(nodeId)] = node;
-  doc.roots.push({
-    root: nodeId,
-    material: a.material ?? sourceMaterial ?? "default",
-  });
-
-  if (a.part && sourceRootIndex >= 0 && a.hide_source !== false) {
-    doc.roots[sourceRootIndex] = {
-      ...doc.roots[sourceRootIndex],
-      visible: false,
-    };
-  }
+  // The engine freezes the mesh into the document as its own part and hides
+  // the source part (one undo step) — no direct session-document writes.
+  const hide = a.part && sourceRootIndex >= 0 && a.hide_source !== false;
+  const created = JSON.parse(
+    runMutation(
+      "add_mesh_part",
+      {
+        positions: Array.from(result.mesh.positions),
+        indices: Array.from(result.mesh.indices),
+        ...(result.mesh.normals ? { normals: Array.from(result.mesh.normals) } : {}),
+        source: "topology_optimize",
+        name: partName,
+        material: a.material ?? sourceMaterial ?? "default",
+        ...(hide ? { hide_part_id: a.part } : {}),
+      },
+      doc,
+      documentId,
+    ).content[0]!.text,
+  ) as { part_id?: string };
 
   const history = result.complianceHistory.map(round5);
   return {
@@ -294,7 +292,7 @@ export function topologyOptimizeTool(
         text: JSON.stringify(
           {
             document_id: documentId,
-            part_id: partIdForNode(doc, nodeId),
+            part_id: created.part_id,
             name: partName,
             iterations: result.iterations,
             converged: result.converged,

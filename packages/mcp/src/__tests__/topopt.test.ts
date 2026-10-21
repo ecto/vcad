@@ -5,6 +5,20 @@ import { topologyOptimizeTool } from "../tools/topopt.js";
 import { documents, getSession, openDocument } from "../tools/session.js";
 import { rootForPartId } from "../tools/part-ids.js";
 
+/** The ImportedMesh node of a part: its root, or reached through the
+ *  engine's transform wrapper nodes (Translate/Rotate/Scale) above it.
+ *  Fails the test when the part has no mesh at all. */
+function meshNodeOfPart(doc: Document, partId: string): Document["nodes"][string] {
+  let id: unknown = rootForPartId(doc, partId)!.entry.root;
+  for (let hops = 0; hops < 8; hops++) {
+    const node = doc.nodes[String(id)]!;
+    if (node.op.type === "ImportedMesh") return node;
+    id = (node.op as { child?: unknown }).child;
+    if (id === undefined) break;
+  }
+  throw new Error(`part ${partId} has no ImportedMesh node`);
+}
+
 let engine: Engine;
 
 beforeAll(async () => {
@@ -68,7 +82,7 @@ describe("topology_optimize", () => {
     // The optimized part landed in the session document as a frozen mesh.
     const doc = getSession(result.document_id);
     expect(doc.roots).toHaveLength(1);
-    const node = doc.nodes[String(rootForPartId(doc, result.part_id)!.entry.root)];
+    const node = meshNodeOfPart(doc, result.part_id);
     expect(node.op.type).toBe("ImportedMesh");
   });
 
@@ -104,7 +118,7 @@ describe("topology_optimize", () => {
     expect(doc.roots[1].material).toBe("steel"); // material carried over
 
     // Optimized geometry stays inside the source part's bounding box.
-    const node = doc.nodes[String(rootForPartId(doc, result.part_id)!.entry.root)];
+    const node = meshNodeOfPart(doc, result.part_id);
     expect(node.op.type).toBe("ImportedMesh");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const positions = (node.op as any).positions as number[];

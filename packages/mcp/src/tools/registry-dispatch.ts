@@ -472,6 +472,8 @@ const ENGINE_LOWERED_TOOLS = new Set<string>([
   "place",
   // Reached via parts.ts (place_part handler), not registry dispatch.
   "place_part",
+  // Reached via topopt.ts (topology_optimize result), not registry dispatch.
+  "add_mesh_part",
 ]);
 
 interface EngineEnvelope {
@@ -551,6 +553,7 @@ function engineArgs(
   if (toolName === "update" && out.node_id !== undefined) {
     out.node_id = nodeRefToStableId(doc, out.node_id);
   }
+  if (out.hide_part_id !== undefined) out.hide_part_id = toStableId(doc, out.hide_part_id);
   if (toolName === "place") {
     for (const key of ["from", "to"]) {
       const ref = out[key];
