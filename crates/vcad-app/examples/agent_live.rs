@@ -64,7 +64,7 @@ fn main() {
     let poll = Duration::from_secs(env_secs("FROG_POLL_SECS", 15).max(1));
     let t0 = Instant::now();
     let mut polls = 0u32;
-    let mut last_status = Value::Null;
+    let mut last_status: Value;
     loop {
         polls += 1;
         let serving = match http.get(&status_url).send().and_then(|r| r.json::<Value>()) {
@@ -121,7 +121,10 @@ fn main() {
     let cache_key = format!(
         "{}-{}",
         manifest["cache_key"].as_str().unwrap_or("vcad-agent"),
-        digest[..8].iter().map(|b| format!("{b:02x}")).collect::<String>()
+        digest[..8]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
     );
 
     // 4. Tool loop on a fresh document.
@@ -156,7 +159,10 @@ fn main() {
         let code = resp.status().as_u16();
         let v: Value = resp.json().unwrap_or(Value::Null);
         if !(200..300).contains(&code) {
-            error = Some(format!("round {round}: HTTP {code}: {}", v.to_string().chars().take(500).collect::<String>()));
+            error = Some(format!(
+                "round {round}: HTTP {code}: {}",
+                v.to_string().chars().take(500).collect::<String>()
+            ));
             break;
         }
         let usage = &v["usage"];
