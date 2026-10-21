@@ -136,6 +136,10 @@ export type {
   HostedEvaluator,
 } from "./engine-host.js";
 
+/** Test infra: in-thread fake of the engine worker (real protocol, cloned messages). */
+export { inlineEngineWorker } from "./testing/inline-worker.js";
+export type { InlineEngineWorker } from "./testing/inline-worker.js";
+
 /** Spawn the document-engine worker (browser only). */
 export function createEngineWorker(): Worker {
   return new Worker(new URL("./engine-worker.js", import.meta.url), { type: "module" });

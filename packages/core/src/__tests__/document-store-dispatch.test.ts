@@ -40,4 +40,24 @@ describe("document store dispatch", () => {
     expect(st.parts.map((p) => p.id)).toEqual([b]);
     expect(st.isDirty).toBe(true);
   });
+
+  it("undo pressed while a command is in flight undoes that command", async () => {
+    if (!hasDeltas()) {
+      if (process.env.CI) throw new Error("kernel WASM lacks applyDelta");
+      return;
+    }
+    const s = useDocumentStore.getState();
+    const id = s.addPrimitive("cube");
+    // Not awaited: the rename is still queued when undo is pressed.
+    const rename = useDocumentStore.getState().renamePart(id, "Gone");
+    const undo = useDocumentStore.getState().undo();
+    await Promise.all([rename, undo]);
+    const st = useDocumentStore.getState();
+    expect(st.document).toEqual(JSON.parse(st._crdtEngine!.get_document_json()));
+    expect(JSON.stringify(st.document)).not.toContain('"Gone"');
+    expect(st.parts.map((p) => p.id)).toContain(id);
+    // Undo with nothing left is a quiet no-op, not a rejection.
+    while (st._crdtEngine!.can_undo()) await useDocumentStore.getState().undo();
+    await expect(useDocumentStore.getState().undo()).resolves.toBeUndefined();
+  });
 });

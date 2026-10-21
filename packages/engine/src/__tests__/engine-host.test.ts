@@ -10,8 +10,10 @@ import {
   DocumentEngineClient,
   inProcessTransport,
   sharedEngineTransport,
+  workerTransport,
   type HostedEngineClass,
 } from "../engine-host.js";
+import { inlineEngineWorker } from "../testing/inline-worker.js";
 import { getKernelWasm } from "../wasm-singleton.js";
 import { wasmResultToScene, type WasmEvaluatedScene } from "../scene-convert.js";
 
@@ -97,6 +99,30 @@ describe("DocumentEngineClient (in-process)", () => {
     await moved;
     expect(meshes(second)).toEqual(meshes(cold()));
     expect(first.parts).toHaveLength(2);
+    client.dispose();
+  });
+
+  it("across a worker boundary: undo lands after in-flight commands", async () => {
+    if (!hasDeltas()) {
+      if (process.env.CI) throw new Error("kernel WASM lacks applyDelta");
+      return;
+    }
+    const worker = inlineEngineWorker({ Engine: Engine!, engine: null });
+    const client = new DocumentEngineClient(workerTransport(worker as unknown as Worker));
+    await client.init(5);
+    // Fire-and-forget, as UI handlers do: add, add, undo.
+    const a = client.apply({ type: "add_feature", feature: { type: "Sphere", radius: 1 } });
+    const b = client.apply({ type: "add_feature", feature: { type: "Sphere", radius: 2 } });
+    const u = client.apply({ type: "undo" });
+    const [ra, rb] = await Promise.all([a, b, u]);
+    const ids = client.state!.parts.map((p) => (p as { id: string }).id);
+    expect(ids).toEqual([ra!.createdFeatureId]);
+    expect(ids).not.toContain(rb!.createdFeatureId);
+    expect(client.canRedo).toBe(true);
+    // The delta-folded view equals the worker's full state.
+    const folded = client.state;
+    expect(folded).toEqual(await client.refresh());
+    expect(worker.handled).toBeGreaterThanOrEqual(5);
     client.dispose();
   });
 
