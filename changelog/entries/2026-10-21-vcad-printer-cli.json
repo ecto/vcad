@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-vcad-printer-cli",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "vcad printer: LAN control of a Bambu P1S",
+  "summary": "New `vcad printer` CLI: discover, status, camera snapshot and upload test over LAN; printing refuses without --confirm-print and a passing printcheck and file/printer match.",
+  "features": ["printing", "bambu", "cli"]
+}
