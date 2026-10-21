@@ -2,15 +2,16 @@ import Foundation
 import Security
 
 // Transport for the built-in agent: an OpenAI-compatible Chat Completions
-// endpoint (tang cloud, or a local `tang-llm serve`). Tools always run here,
-// client-side; the endpoint only streams text and tool calls back. Endpoint,
-// model id and capabilities come from Settings (UserDefaults) with env
-// overrides; the API key lives only in the Keychain (or the env).
+// endpoint (frog api by default, or a local `tang-llm serve`). Tools always
+// run here, client-side; the endpoint only streams text and tool calls back.
+// Endpoint, model id and capabilities come from Settings (UserDefaults) with
+// env overrides; the API key lives only in the Keychain (or the env).
 
 /// Where and how the agent talks to its model.
 struct FrogConfig: Equatable {
     var baseURL: String
-    /// Model id sent as `model`; from config only — never a Swift literal.
+    /// Model id sent as `model`: from config, or discovered from the
+    /// endpoint's `/models` list. Never a Swift literal.
     var model: String
     var apiKey: String?
     /// Endpoint accepts `image_url` content parts (a vision model). Off by
@@ -20,26 +21,64 @@ struct FrogConfig: Equatable {
     static let baseKey = "vcad.agent.baseURL"
     static let modelKey = "vcad.agent.model"
     static let imagesKey = "vcad.agent.supportsImages"
+    /// frog api. Overridable in Settings or with `FROG_BASE_URL`.
+    static let defaultBaseURL = "https://api.frog.toys/v1"
+    static let keyPrefix = "frog_"
 
-    /// Settings, then env (`VCAD_ZEST_BASE`, `VCAD_ZEST_KEY`, `VCAD_ZEST_MODEL`,
-    /// `VCAD_ZEST_IMAGES=1`) on top.
+    /// Env names: current, then the deprecated `VCAD_ZEST_*` alias kept for
+    /// one release (it warns on stderr).
+    static let envNames: [(field: String, current: String, deprecated: String)] = [
+        ("base", "FROG_BASE_URL", "VCAD_ZEST_BASE"),
+        ("key", "FROG_API_KEY", "VCAD_ZEST_KEY"),
+        ("model", "FROG_MODEL", "VCAD_ZEST_MODEL"),
+        ("images", "FROG_SUPPORTS_IMAGES", "VCAD_ZEST_IMAGES"),
+    ]
+
+    /// Settings, then env (`FROG_BASE_URL`, `FROG_API_KEY`, `FROG_MODEL`,
+    /// `FROG_SUPPORTS_IMAGES=1`) on top.
     static func load(defaults: UserDefaults = .standard,
                      env: [String: String] = ProcessInfo.processInfo.environment,
-                     keychain: FrogKeychain = .shared) -> FrogConfig {
+                     keychain: FrogKeychain = .shared,
+                     warn: (String) -> Void = FrogConfig.stderr) -> FrogConfig {
         func nonEmpty(_ s: String?) -> String? { s.flatMap { $0.isEmpty ? nil : $0 } }
-        return FrogConfig(
-            baseURL: nonEmpty(env["VCAD_ZEST_BASE"]) ?? nonEmpty(defaults.string(forKey: baseKey)) ?? "",
-            model: nonEmpty(env["VCAD_ZEST_MODEL"]) ?? nonEmpty(defaults.string(forKey: modelKey)) ?? "",
-            apiKey: nonEmpty(env["VCAD_ZEST_KEY"]) ?? keychain.read(),
-            supportsImages: env["VCAD_ZEST_IMAGES"].map { $0 == "1" } ?? defaults.bool(forKey: imagesKey))
+        func value(_ field: String) -> String? {
+            guard let names = envNames.first(where: { $0.field == field }) else { return nil }
+            if let v = nonEmpty(env[names.current]) { return v }
+            if let v = nonEmpty(env[names.deprecated]) {
+                warn("vcad: \(names.deprecated) is deprecated; use \(names.current)")
+                return v
+            }
+            return nil
+        }
+        let config = FrogConfig(
+            baseURL: value("base") ?? nonEmpty(defaults.string(forKey: baseKey)) ?? defaultBaseURL,
+            model: value("model") ?? nonEmpty(defaults.string(forKey: modelKey)) ?? "",
+            apiKey: value("key") ?? keychain.read(),
+            supportsImages: value("images").map { $0 == "1" || $0.lowercased() == "true" }
+                ?? defaults.bool(forKey: imagesKey))
+        if let warning = keyWarning(config.apiKey) { warn("vcad: \(warning)") }
+        return config
     }
 
-    var completionsURL: URL? {
+    /// Soft check: frog api keys start with `frog_`. A warning, never a refusal
+    /// (local servers and other endpoints use other key shapes).
+    static func keyWarning(_ key: String?) -> String? {
+        guard let key, !key.isEmpty, !key.hasPrefix(keyPrefix) else { return nil }
+        return "API key doesn't start with \"\(keyPrefix)\" like frog api keys do; using it anyway."
+    }
+
+    static func stderr(_ line: String) {
+        FileHandle.standardError.write(Data((line + "\n").utf8))
+    }
+
+    private var trimmedBase: String? {
         guard !baseURL.isEmpty else { return nil }
         var base = baseURL
         while base.hasSuffix("/") { base.removeLast() }
-        return URL(string: base + "/chat/completions")
+        return base
     }
+    var completionsURL: URL? { trimmedBase.flatMap { URL(string: $0 + "/chat/completions") } }
+    var modelsURL: URL? { trimmedBase.flatMap { URL(string: $0 + "/models") } }
 }
 
 /// The API key in the login Keychain (generic password).
@@ -87,11 +126,11 @@ enum FrogError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .notConfigured(let what): return "Agent isn't set up: \(what). Open Settings ▸ Agent."
-        case .unauthorized: return "tang cloud rejected the API key. Check it in Settings ▸ Agent."
-        case .outOfCredit: return "Your tang cloud credit is used up."
+        case .unauthorized: return "frog api rejected the API key. Check it in Settings ▸ Agent."
+        case .outOfCredit: return "Your frog api credit is used up."
         case .rateLimited: return "Too many requests — try again in a moment."
         case .unavailable(let after):
-            return "tang cloud is unavailable right now\(after.map { " (retry in \(Int($0)) s)" } ?? "")."
+            return "frog api isn't serving right now (outside beta hours or no capacity). Try again \(after.map { "in \(Int($0)) s" } ?? "later")."
         case .http(let code, let message): return "Agent service error \(code): \(message)"
         case .transport(let m): return "Network error: \(m)"
         case .stream(let m): return "The model stream failed: \(m)"
@@ -117,10 +156,21 @@ enum FrogError: LocalizedError, Equatable {
 /// Sends one request and yields SSE lines. Mocked in tests.
 protocol FrogTransport: Sendable {
     func lines(for request: URLRequest) async throws -> AsyncThrowingStream<String, Error>
+    /// A plain (non-streaming) request: body and HTTP status.
+    func data(for request: URLRequest) async throws -> (Data, Int)
 }
 
 /// URLSession streaming transport.
 struct URLSessionFrogTransport: FrogTransport {
+    func data(for request: URLRequest) async throws -> (Data, Int) {
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+        } catch {
+            throw FrogError.transport(error.localizedDescription)
+        }
+    }
+
     func lines(for request: URLRequest) async throws -> AsyncThrowingStream<String, Error> {
         let bytes: URLSession.AsyncBytes
         let response: URLResponse
@@ -156,6 +206,22 @@ struct URLSessionFrogTransport: FrogTransport {
 struct FrogClient {
     var config: FrogConfig
     var transport: FrogTransport = URLSessionFrogTransport()
+
+    /// The model id to use: the configured one, else the first id the
+    /// endpoint's `GET /models` lists. Throws `notConfigured` when neither.
+    func resolveModel() async throws -> String {
+        if !config.model.isEmpty { return config.model }
+        guard let url = config.modelsURL else { throw FrogError.notConfigured("endpoint URL") }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 20
+        if let key = config.apiKey { req.setValue("Bearer \(key)", forHTTPHeaderField: "authorization") }
+        let (data, status) = try await transport.data(for: req)
+        guard (200..<300).contains(status) else { throw FrogError.from(status: status, body: data, retryAfter: nil) }
+        let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let ids = (obj?["data"] as? [[String: Any]] ?? []).compactMap { $0["id"] as? String }.filter { !$0.isEmpty }
+        guard let first = ids.first else { throw FrogError.notConfigured("model id (the endpoint lists none)") }
+        return first
+    }
 
     func request(messages: [[String: Any]], tools: [[String: Any]], cacheKey: String) throws -> URLRequest {
         guard let url = config.completionsURL else { throw FrogError.notConfigured("endpoint URL") }

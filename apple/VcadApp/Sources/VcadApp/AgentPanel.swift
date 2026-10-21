@@ -1,6 +1,6 @@
 import SwiftUI
 
-// The Agent panel: a chat over the open document. The model (tang cloud or a
+// The Agent panel: a chat over the open document. The model (frog api or a
 // local OpenAI-compatible server, see FrogClient.swift) edits through the
 // engine's tool lowering; each edit shows in the viewport as it lands, and a
 // whole turn is one undo step ("Agent Edit").
@@ -51,8 +51,8 @@ final class AgentSession {
     func submit(model: EditorModel) {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !running else { return }
-        guard let engine = model.engine else {
-            entries.append(Entry(role: .error, text: "Open an editable .vcad document first."))
+        guard let engine = model.agentEnsureEngine() else {
+            entries.append(Entry(role: .error, text: "This document is view-only; the agent can't edit it."))
             return
         }
         draft = ""
@@ -61,7 +61,10 @@ final class AgentSession {
         if agent == nil || agentEngine !== engine {
             let config = FrogConfig.load()
             let executor = FrogToolExecutor(engine: engine, supportsImages: config.supportsImages,
-                                            snapshot: { _ in await AgentTools.snapshotPNG() })
+                                            snapshot: { [weak model] view in
+                                                guard let model else { return nil }
+                                                return await Self.snapshot(view, model: model)
+                                            })
             agent = FrogAgent(client: FrogClient(config: config), manifest: .load(), executor: executor)
             agentEngine = engine
         }
@@ -79,6 +82,9 @@ final class AgentSession {
                 self?.appendToLast("(stopped)")
             } catch {
                 let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+                if let last = self?.entries.last, last.role == .assistant, last.text.isEmpty, last.tools.isEmpty {
+                    self?.entries.removeLast()
+                }
                 self?.entries.append(Entry(role: .error, text: message))
             }
             if mutated { model.agentEndTurn(before: before) }
@@ -101,6 +107,21 @@ final class AgentSession {
                 entries[last].tools[i].detail = outcome.content
             }
         }
+    }
+
+    /// Render `view` without leaving the user's camera moved: swing to the
+    /// requested angle, capture once the viewport has redrawn, swing back.
+    static func snapshot(_ view: FrogView, model: EditorModel) async -> Data? {
+        guard case let .angles(az, el) = view else { return await AgentTools.snapshotPNG() }
+        model.stopSpin()
+        let saved = (model.azimuth, model.elevation)
+        model.azimuth = Float(az * .pi / 180)
+        model.elevation = Float(el * .pi / 180)
+        try? await Task.sleep(for: .milliseconds(150))
+        let png = await AgentTools.snapshotPNG()
+        model.azimuth = saved.0
+        model.elevation = saved.1
+        return png
     }
 
     private func appendToLast(_ s: String) {
@@ -143,7 +164,7 @@ struct AgentPanel: View {
                     .onSubmit { session.submit(model: model) }
                     .padding(Theme.Space.s)
                     .controlWell(active: focused)
-                    .disabled(!model.canEditDocument)
+                    .disabled(!model.agentCanEdit)
                 if session.running {
                     Button { session.stop() } label: { Image(systemName: "stop.circle.fill").font(.title2) }
                         .buttonStyle(.borderless)
@@ -152,13 +173,13 @@ struct AgentPanel: View {
                 } else {
                     Button { session.submit(model: model) } label: { Image(systemName: "arrow.up.circle.fill").font(.title2) }
                         .buttonStyle(.borderless)
-                        .disabled(session.draft.trimmingCharacters(in: .whitespaces).isEmpty || !model.canEditDocument)
+                        .disabled(session.draft.trimmingCharacters(in: .whitespaces).isEmpty || !model.agentCanEdit)
                         .help("Send")
                         .accessibilityLabel("Send")
                 }
             }
-            if !model.canEditDocument {
-                Text("Open an editable .vcad document to use the agent.")
+            if !model.agentCanEdit {
+                Text("This document is view-only; the agent can't edit it.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -220,20 +241,23 @@ struct AgentSettingsForm: View {
 
     var body: some View {
         Section {
-            TextField("Endpoint", text: $baseURL, prompt: Text("https://…/v1"))
-            TextField("Model", text: $modelID)
+            TextField("Endpoint", text: $baseURL, prompt: Text(FrogConfig.defaultBaseURL))
+            TextField("Model", text: $modelID, prompt: Text("From the endpoint"))
             HStack {
-                SecureField("API key", text: $key, prompt: Text(keySaved ? "Saved in Keychain" : "Bearer key"))
+                SecureField("API key", text: $key, prompt: Text(keySaved ? "Saved in Keychain" : "frog_…"))
                 Button("Save") { keySaved = FrogKeychain.shared.write(key) && !key.isEmpty; key = "" }
                     .disabled(key.isEmpty)
                 Button("Remove") { FrogKeychain.shared.write(nil); keySaved = false }
                     .disabled(!keySaved)
             }
+            if let warning = FrogConfig.keyWarning(key) {
+                Label(warning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+            }
             Toggle("Endpoint accepts images (send viewport snapshots)", isOn: $supportsImages)
         } header: {
-            Text("tang cloud")
+            Text("frog api")
         } footer: {
-            Text("Any OpenAI-compatible endpoint works, including a local tang-llm server. The key is stored in your Keychain. Environment overrides: VCAD_ZEST_BASE, VCAD_ZEST_KEY, VCAD_ZEST_MODEL, VCAD_ZEST_IMAGES.")
+            Text("Any OpenAI-compatible endpoint works, including a local tang-llm server. The key is stored in your Keychain. Leave Model empty to use the one the endpoint lists. Environment overrides: FROG_BASE_URL, FROG_API_KEY, FROG_MODEL, FROG_SUPPORTS_IMAGES.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

@@ -9,7 +9,20 @@ final class MockFrogTransport: FrogTransport, @unchecked Sendable {
     private var scripts: [Script]
     private(set) var bodies: [[String: Any]] = []
 
-    init(_ scripts: [Script]) { self.scripts = scripts }
+    /// `GET /models` response (body, status); nil fails the request.
+    var models: (Data, Int)?
+    private(set) var plainRequests: [URLRequest] = []
+
+    init(_ scripts: [Script], models: (Data, Int)? = nil) {
+        self.scripts = scripts
+        self.models = models
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, Int) {
+        lock.withLock { plainRequests.append(request) }
+        guard let models else { throw FrogError.transport("no models response scripted") }
+        return models
+    }
 
     func lines(for request: URLRequest) async throws -> AsyncThrowingStream<String, Error> {
         let body = (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())) as? [String: Any] ?? [:]
@@ -26,7 +39,7 @@ final class MockFrogTransport: FrogTransport, @unchecked Sendable {
     }
 }
 
-/// SSE helpers shaped like tang cloud's output.
+/// SSE helpers shaped like frog api's output.
 enum SSE {
     static func chunk(_ delta: [String: Any], finish: String? = nil) -> String {
         var choice: [String: Any] = ["index": 0, "delta": delta]
@@ -79,7 +92,7 @@ final class FrogAgentTests: XCTestCase {
     }
 
     private func agent(_ transport: MockFrogTransport, engine: DocumentEngine, images: Bool = false,
-                       snapshot: ((String) async -> Data?)? = nil) -> FrogAgent {
+                       snapshot: ((FrogView) async -> Data?)? = nil) -> FrogAgent {
         let executor = FrogToolExecutor(engine: engine, snapshot: snapshot)
         return FrogAgent(client: FrogClient(config: config(images: images), transport: transport),
                          manifest: .load(), executor: executor)
@@ -253,11 +266,148 @@ final class FrogAgentTests: XCTestCase {
         defaults.set("http://settings/v1", forKey: FrogConfig.baseKey)
         defaults.set("m-settings", forKey: FrogConfig.modelKey)
         let none = FrogKeychain(service: "io.vcad.agent.test-\(UUID())", account: "none")
-        let c = FrogConfig.load(defaults: defaults, env: ["VCAD_ZEST_BASE": "http://env/v1", "VCAD_ZEST_KEY": "k"], keychain: none)
+        var warnings: [String] = []
+        let c = FrogConfig.load(defaults: defaults, env: ["FROG_BASE_URL": "http://env/v1", "FROG_API_KEY": "frog_abc"],
+                                keychain: none, warn: { warnings.append($0) })
         XCTAssertEqual(c.baseURL, "http://env/v1")
         XCTAssertEqual(c.model, "m-settings")
-        XCTAssertEqual(c.apiKey, "k")
+        XCTAssertEqual(c.apiKey, "frog_abc")
         XCTAssertFalse(c.supportsImages)
+        XCTAssertEqual(warnings, [])
+    }
+
+    func testDefaultsToFrogAPIWithNoModel() {
+        let defaults = UserDefaults(suiteName: "frog-test-\(UUID())")!
+        let none = FrogKeychain(service: "io.vcad.agent.test-\(UUID())", account: "none")
+        let c = FrogConfig.load(defaults: defaults, env: [:], keychain: none, warn: { _ in })
+        XCTAssertEqual(c.baseURL, "https://api.frog.toys/v1")
+        XCTAssertEqual(c.model, "", "the model id is never hardcoded")
+        XCTAssertNil(c.apiKey)
+    }
+
+    func testDeprecatedZestEnvStillWorksAndWarns() {
+        let defaults = UserDefaults(suiteName: "frog-test-\(UUID())")!
+        let none = FrogKeychain(service: "io.vcad.agent.test-\(UUID())", account: "none")
+        var warnings: [String] = []
+        let c = FrogConfig.load(defaults: defaults,
+                                env: ["VCAD_ZEST_BASE": "http://old/v1", "VCAD_ZEST_KEY": "frog_old", "VCAD_ZEST_IMAGES": "1"],
+                                keychain: none, warn: { warnings.append($0) })
+        XCTAssertEqual(c.baseURL, "http://old/v1")
+        XCTAssertEqual(c.apiKey, "frog_old")
+        XCTAssertTrue(c.supportsImages)
+        XCTAssertEqual(warnings.count, 3)
+        XCTAssertTrue(warnings.allSatisfy { $0.contains("deprecated") }, "\(warnings)")
+        // The new name wins over the alias, silently.
+        warnings = []
+        let d = FrogConfig.load(defaults: defaults, env: ["FROG_BASE_URL": "http://new/v1", "VCAD_ZEST_BASE": "http://old/v1"],
+                                keychain: none, warn: { warnings.append($0) })
+        XCTAssertEqual(d.baseURL, "http://new/v1")
+        XCTAssertEqual(warnings, [])
+    }
+
+    func testKeyPrefixIsAWarningNotARefusal() {
+        XCTAssertNil(FrogConfig.keyWarning("frog_abc"))
+        XCTAssertNil(FrogConfig.keyWarning(nil))
+        XCTAssertNotNil(FrogConfig.keyWarning("sk-other"))
+        let defaults = UserDefaults(suiteName: "frog-test-\(UUID())")!
+        let none = FrogKeychain(service: "io.vcad.agent.test-\(UUID())", account: "none")
+        var warnings: [String] = []
+        let c = FrogConfig.load(defaults: defaults, env: ["FROG_API_KEY": "sk-other"], keychain: none, warn: { warnings.append($0) })
+        XCTAssertEqual(c.apiKey, "sk-other", "a foreign key is still used")
+        XCTAssertEqual(warnings.count, 1)
+        let req = try? FrogClient(config: FrogConfig(baseURL: "http://x/v1", model: "m", apiKey: "sk-other", supportsImages: false))
+            .request(messages: [], tools: [], cacheKey: "k")
+        XCTAssertEqual(req?.value(forHTTPHeaderField: "authorization"), "Bearer sk-other")
+    }
+
+    // MARK: - model discovery
+
+    func testModelComesFromModelsListWhenUnset() async throws {
+        let models = Data(#"{"object":"list","data":[{"id":"listed-model","object":"model"}]}"#.utf8)
+        let transport = MockFrogTransport([{ _ in SSE.text(["hi"]) }], models: (models, 200))
+        var c = config(); c.model = ""
+        let a = FrogAgent(client: FrogClient(config: c, transport: transport), manifest: .load(),
+                          executor: FrogToolExecutor(engine: DocumentEngine(replicaId: 1)))
+        try await a.send("hello") { _ in }
+        XCTAssertEqual(transport.plainRequests.first?.url?.absoluteString, "http://127.0.0.1:9/v1/models")
+        XCTAssertEqual(transport.bodies.first?["model"] as? String, "listed-model")
+    }
+
+    func testConfiguredModelSkipsDiscovery() async throws {
+        let transport = MockFrogTransport([{ _ in SSE.text(["hi"]) }])
+        try await agent(transport, engine: DocumentEngine(replicaId: 1)).send("hello") { _ in }
+        XCTAssertTrue(transport.plainRequests.isEmpty)
+        XCTAssertEqual(transport.bodies.first?["model"] as? String, "test-model")
+    }
+
+    func testEmptyModelsListIsNotConfigured() async {
+        let transport = MockFrogTransport([], models: (Data(#"{"data":[]}"#.utf8), 200))
+        var c = config(); c.model = ""
+        do {
+            _ = try await FrogClient(config: c, transport: transport).resolveModel()
+            XCTFail("expected notConfigured")
+        } catch let e as FrogError {
+            guard case .notConfigured = e else { return XCTFail("\(e)") }
+        } catch { XCTFail("\(error)") }
+    }
+
+    // MARK: - render_view honours the requested view
+
+    func testRenderViewParsesPresetsAndAngles() {
+        XCTAssertEqual(FrogView([:]), .current)
+        XCTAssertEqual(FrogView(["view": "current"]), .current)
+        guard case let .angles(a, e) = FrogView(["view": "right"]) else { return XCTFail() }
+        XCTAssertEqual(a, 90, accuracy: 1e-9); XCTAssertEqual(e, 0, accuracy: 1e-9)
+        guard case let .angles(_, te) = FrogView(["view": "top"]) else { return XCTFail() }
+        XCTAssertGreaterThan(te, 80)
+        XCTAssertEqual(FrogView(["view": "top", "azimuth_deg": 10, "elevation_deg": 20]), .angles(azimuthDeg: 10, elevationDeg: 20))
+        guard case let .angles(_, clamped) = FrogView(["elevation_deg": 120]) else { return XCTFail() }
+        XCTAssertEqual(clamped, 85)
+    }
+
+    func testRenderViewPassesTheRequestedViewToTheRenderer() async {
+        var seen: [FrogView] = []
+        let ex = FrogToolExecutor(engine: DocumentEngine(replicaId: 1), supportsImages: true,
+                                  snapshot: { view in seen.append(view); return Data([1]) })
+        _ = await ex.execute(FrogToolCall(id: "1", name: "render_view", arguments: #"{"view":"front"}"#))
+        let o = await ex.execute(FrogToolCall(id: "2", name: "render_view", arguments: #"{"azimuth_deg":45,"elevation_deg":30}"#))
+        XCTAssertEqual(seen, [.angles(azimuthDeg: 0, elevationDeg: 0), .angles(azimuthDeg: 45, elevationDeg: 30)])
+        XCTAssertTrue(o.content.contains("azimuth 45"), o.content)
+        XCTAssertNotNil(o.image)
+    }
+}
+
+
+/// A blank Untitled canvas gets an engine document on first agent use.
+@MainActor
+final class AgentBlankCanvasTests: XCTestCase {
+    func testAgentEditsFromAnEmptyCanvas() async throws {
+        let m = EditorModel()
+        XCTAssertTrue(m.source.isSandbox)
+        XCTAssertNil(m.engine)
+        XCTAssertTrue(m.agentCanEdit)
+        let engine = try XCTUnwrap(m.agentEnsureEngine())
+        XCTAssertTrue(m.agentEnsureEngine() === engine, "idempotent")
+        XCTAssertTrue(m.canEditDocument)
+        let roots = { (m.documentJSON?["roots"] as? [Any])?.count ?? -1 }
+        XCTAssertEqual(roots(), 0)
+
+        let transport = MockFrogTransport([
+            { _ in SSE.toolCall(id: "a", name: "create", args: SSE.json(["type": "cube", "params": ["size": ["x": 5, "y": 5, "z": 5]]])) },
+            { _ in SSE.text(["made a cube"]) },
+        ])
+        let agent = FrogAgent(client: FrogClient(config: FrogConfig(baseURL: "http://127.0.0.1:9/v1", model: "m", apiKey: nil, supportsImages: false), transport: transport),
+                              manifest: .load(), executor: FrogToolExecutor(engine: engine))
+        let before = engine.save()
+        let mutated = try await agent.send("a cube") { event in
+            if case .toolFinished(_, let o) = event, let r = o.mutation { m.agentApplied(r) }
+        }
+        XCTAssertTrue(mutated)
+        m.agentEndTurn(before: before)
+        XCTAssertEqual(roots(), 1)
+        XCTAssertTrue(m.usesDocumentTree)
+        m.undo()
+        XCTAssertEqual(roots(), 0)
     }
 }
 

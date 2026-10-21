@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-desktop-agent-blank-canvas",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "Agent works from a blank canvas, defaults to frog api",
+  "summary": "The Mac app's Agent can start from an empty Untitled document, renders the views it asks for, and connects to frog api by default with the model picked from the endpoint.",
+  "features": ["desktop", "agent", "ai"]
+}
