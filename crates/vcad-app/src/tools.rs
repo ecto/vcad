@@ -146,10 +146,9 @@ fn lower_add_mesh_part(args: &Value, doc: &DocumentApi) -> Result<DocCommand, Co
             params.insert(key.to_string(), vcad_crdt::Value::String(v.to_string()));
         }
     }
-    let mut commands = vec![DocCommand::CreateFeature {
-        kind: kind.to_string(),
-        params: Some(params),
-    }];
+    // The create goes LAST: a batch reports the final command's
+    // `createdFeatureId`, which is how the host learns the new part's id.
+    let mut commands = Vec::new();
     if let Some(hide) = args.get("hide_part_id").and_then(Value::as_str) {
         if doc.stable_ids().resolve(hide).is_none() {
             return Err(CommandError::UnknownId {
@@ -161,6 +160,10 @@ fn lower_add_mesh_part(args: &Value, doc: &DocumentApi) -> Result<DocCommand, Co
             visible: false,
         });
     }
+    commands.push(DocCommand::CreateFeature {
+        kind: kind.to_string(),
+        params: Some(params),
+    });
     Ok(DocCommand::Batch { commands })
 }
 
@@ -1252,6 +1255,13 @@ mod tests {
             parts.iter().any(|p| p["name"] == "bracket (optimized)"),
             "{parts:?}"
         );
+        // The host reads the new part's id from the batch result.
+        let created = out["result"]["createdFeatureId"]
+            .as_str()
+            .expect("created id");
+        assert!(parts
+            .iter()
+            .any(|p| p["id"] == created && p["name"] == "bracket (optimized)"));
     }
 
     #[test]
