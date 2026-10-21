@@ -3,6 +3,7 @@ import { getKernelWasmSync } from "../wasm-singleton.js";
 import { applyCommand, applyToolCall, type Envelope } from "./engine-command.js";
 import {
   DocumentEngineClient,
+  EngineRefusal,
   sharedEngineTransport,
   type CommandOutcome,
   type HostedEngine,
@@ -350,8 +351,8 @@ export interface DocumentState {
   setPartMaterial: (partId: string, materialKey: string) => Promise<void>;
   /** No-op — CRDT undo handles granularity automatically. */
   pushUndoSnapshot: () => void;
-  undo: () => void;
-  redo: () => void;
+  undo: () => Promise<void>;
+  redo: () => Promise<void>;
   /** Whether the engine has undo history available. */
   canUndo: () => boolean;
   /** Whether the engine has redo history available. */
@@ -798,6 +799,17 @@ function applyLegacyResult(result: CrdtMutationResult): Partial<DocumentState> {
 // ---------------------------------------------------------------------------
 // Module-level helpers
 // ---------------------------------------------------------------------------
+
+/** Apply an undo/redo through the store's client; a refusal for lack of
+ *  history is swallowed (the button raced the last step). */
+async function historyStep(get: () => DocumentState, type: "undo" | "redo"): Promise<void> {
+  try {
+    await get().dispatch({ type });
+  } catch (e) {
+    if (e instanceof EngineRefusal && e.error.kind === "nothing_to") return;
+    throw e;
+  }
+}
 
 /** Cached singleton feature IDs (lazily created, cleared on engine init). */
 let _sceneSettingsFeatureId: string | null = null;
@@ -1809,21 +1821,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     await get().dispatch({ type: "rename", id: partId, name: name });
   },
 
-  undo: () => {
-    const engine = get()._crdtEngine!;
-    if (engine.can_undo()) {
-      const result = applyCommand(engine, { type: "undo" });
-      set(applyLegacyResult(result));
-    }
-  },
+  // History steps go through the client queue, so an undo pressed while
+  // commands are still in flight undoes the newest of them, not an older
+  // edit. Whether there is anything to undo is decided when the step runs:
+  // "nothing to undo" is a no-op, not an error.
+  undo: () => historyStep(get, "undo"),
 
-  redo: () => {
-    const engine = get()._crdtEngine!;
-    if (engine.can_redo()) {
-      const result = applyCommand(engine, { type: "redo" });
-      set(applyLegacyResult(result));
-    }
-  },
+  redo: () => historyStep(get, "redo"),
 
   canUndo: () => {
     const engine = get()._crdtEngine;
