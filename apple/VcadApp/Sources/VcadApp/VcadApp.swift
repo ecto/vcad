@@ -80,6 +80,7 @@ struct VcadApp: App {
         .commands {
             DocumentCommands(model: model, intent: intent)
             FieldCommands()
+            UpdateCommands()
         }
 
         Settings {

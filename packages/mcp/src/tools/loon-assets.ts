@@ -22,7 +22,6 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, normalize } from "node:path";
 import type { Document } from "@vcad/ir";
 import type { Engine } from "@vcad/engine";
-import { parseStl } from "./import-urdf.js";
 import { isRemoteDeployment } from "./remote.js";
 import { resolveWithinRoot } from "./safe-path.js";
 
@@ -97,14 +96,12 @@ export function resolveLoonAssets(
   engine: Engine,
 ): AssetReport {
   const report: AssetReport = { meshes: 0, steps: 0, unresolved: [] };
+  const meshes = new Map<string, Uint8Array>();
+  const refs = new Map<string, string>();
   for (const [id, node] of Object.entries(doc.nodes)) {
     // `mesh_import` isn't in the TS CsgOp union (it only exists en route to
     // being swapped), so go through a structural cast.
-    const op = node.op as unknown as {
-      type: string;
-      path?: string;
-      scale?: { x: number; y: number; z: number } | null;
-    };
+    const op = node.op as unknown as { type: string; path?: string };
     const isMesh = op.type === "mesh_import" || op.type === "MeshImport";
     const isStep = op.type === "step_import";
     if (!isMesh && !isStep) continue;
@@ -136,26 +133,14 @@ export function resolveLoonAssets(
       report.unresolved.push({ path, reason: "unsupported mesh format (STL only)" });
       continue;
     }
-    let mesh: ReturnType<typeof parseStl>;
-    try {
-      mesh = parseStl(got.bytes);
-    } catch (e) {
-      report.unresolved.push({ path, reason: `STL parse error: ${(e as Error).message}` });
-      continue;
-    }
-    // Same metres → mm convention and scale as the native evaluator's
-    // `load_mesh_import`, so MCP and the CLI agree on the same program.
-    const s = op.scale;
-    const positions =
-      s && (s.x !== 1 || s.y !== 1 || s.z !== 1)
-        ? mesh.positions.map((v, i) => v * (i % 3 === 0 ? s.x : i % 3 === 1 ? s.y : s.z))
-        : mesh.positions;
-    doc.nodes[id] = {
-      ...node,
-      op: { type: "ImportedMesh", positions, indices: mesh.indices, source: path },
-    } as Document["nodes"][string];
-    report.meshes++;
+    meshes.set(id, got.bytes);
+    refs.set(id, path);
   }
+  // The kernel inlines the STLs (metres -> mm, URDF scale) exactly as the
+  // native evaluator's `load_mesh_import` does, so MCP and the CLI agree.
+  const { inlined, errors } = engine.inlineMeshImports(doc, meshes);
+  report.meshes += inlined;
+  for (const [id, reason] of errors) report.unresolved.push({ path: refs.get(id) ?? id, reason });
   return report;
 }
 

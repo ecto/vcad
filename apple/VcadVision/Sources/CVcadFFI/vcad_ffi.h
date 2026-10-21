@@ -31,6 +31,11 @@ char *vcad_engine_apply(VcadEngine *engine, const char *command_json);
 /* Lower an AI tool call (create, translate, linear_pattern, ...) in Rust and
  * apply it; same envelope. Unhandled tools report error kind "unsupported". */
 char *vcad_engine_apply_tool(VcadEngine *engine, const char *tool, const char *args_json);
+/* Same as vcad_engine_apply / vcad_engine_apply_tool, answered with an
+ * EngineDeltaEnvelope (what changed since the state before the command:
+ * a document patch + parts added/updated/removed by stable id). */
+char *vcad_engine_apply_delta(VcadEngine *engine, const char *command_json);
+char *vcad_engine_apply_tool_delta(VcadEngine *engine, const char *tool, const char *args_json);
 /* Deterministic state fingerprint (16 hex digits); free with vcad_engine_string_free. */
 char *vcad_engine_state_hash(const VcadEngine *engine);
 /* Current state as an ok envelope; free with vcad_engine_string_free. */
@@ -117,6 +122,9 @@ VcadScene *vcad_scene_from_loon(const uint8_t *loon, size_t loon_len);
  * come back absolute), so the JSON evaluates like any .vcad document. Owned
  * string, free with vcad_cam_free; NULL + vcad_last_error on failure. */
 char *vcad_loon_file_to_json(const uint8_t *path, size_t path_len);
+/* Any .vcad format (JSON, loon source, VCode) -> IR document JSON, mesh paths
+ * resolved against the file's directory. Free with vcad_cam_free; null on error. */
+char *vcad_document_file_to_json(const uint8_t *path, size_t path_len);
 size_t vcad_scene_part_count(const VcadScene *scene);
 VcadMeshView vcad_scene_part_mesh(const VcadScene *scene, size_t index);
 

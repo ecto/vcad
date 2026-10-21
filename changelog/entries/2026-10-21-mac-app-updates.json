@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-mac-app-updates",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "Mac app checks for updates",
+  "summary": "The native Mac app checks for signed updates automatically and adds Check for Updates… to the app menu, ready for Developer ID–signed, notarized releases.",
+  "features": ["desktop", "mac", "updates"]
+}

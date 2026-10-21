@@ -108,6 +108,13 @@ final class DocumentEngineCodegenTests: XCTestCase {
         XCTAssertThrowsError(try DocumentEngine.result(from: JSONSerialization.data(withJSONObject: raw[4])))
     }
 
+    func testDeltaEnvelopesRoundTrip() throws {
+        let deltas = try assertRoundTrip(EngineDeltaEnvelope.self, try XCTUnwrap(fixture()["deltas"] as? [Any]))
+        let ok = deltas.compactMap(\.result)
+        XCTAssertEqual(ok.first?.parts.added.map(\.kind), ["cube"])
+        XCTAssertEqual(deltas.compactMap(\.error).map(\.commandError.kind), ["unknown_id", "batch", "invalid"])
+    }
+
     func testToolCallsRoundTrip() throws {
         let calls = try assertRoundTrip(ToolCall.self, try XCTUnwrap(fixture()["toolCalls"] as? [Any]))
         XCTAssertEqual(calls.first?.tool, "create")
