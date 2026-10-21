@@ -327,11 +327,11 @@ extension UTType {
 
 @MainActor func openPanel(_ model: EditorModel) {
     let panel = NSOpenPanel()
-    panel.allowedContentTypes = [.vcadDocument, .loonSource]
+    panel.allowedContentTypes = [.vcadDocument, .loonSource, .folder]
     // Several documents at once are several instances, so a multiple selection
     // is a perfectly good thing to ask for.
     panel.allowsMultipleSelection = true
-    panel.canChooseDirectories = false
+    panel.canChooseDirectories = true     // a loon project folder opens its main.loon
     panel.prompt = "Open"
     present(panel) {
         for (i, url) in panel.urls.enumerated() {

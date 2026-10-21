@@ -603,6 +603,12 @@ final class EditorModel {
     @ObservationIgnored var fileWatch: DispatchSourceFileSystemObject?
     @ObservationIgnored var fileWatchPath: String?
     @ObservationIgnored var reloadPending: DispatchWorkItem?
+    /// The loon loop (LoonLoop.swift): the open program's compile error, the
+    /// directory watch, and a just-compiled document awaiting adoption.
+    var loonDiagnostic: LoonDiagnostic?
+    @ObservationIgnored var loonWatcher: LoonWatcher?
+    @ObservationIgnored var loonWatchPath: String?
+    @ObservationIgnored var precompiledLoon: (path: String, data: Data)?
     /// When the open document last reloaded from disk (shown in the pose panel).
     var lastReload: Date?
     /// Photoreal snapshot state.
@@ -824,7 +830,7 @@ final class EditorModel {
         documentDirty = false
         savedSnapshot = nil
         if case let .document(path, _) = source,
-           let data = Self.documentBytes(path: path),
+           let data = loonAwareDocumentBytes(path: path),
            let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
            DocumentGraph.parse(dict) != nil {
             // The engine owns the document from here on. A file it can't
@@ -848,6 +854,26 @@ final class EditorModel {
         } else {
             documentGraph = nil
             featureNodes = []
+        }
+    }
+
+    /// The document's JSON; a loon program reports where it failed.
+    private func loonAwareDocumentBytes(path: String) -> Data? {
+        guard path.lowercased().hasSuffix(".loon") else {
+            loonDiagnostic = nil
+            return Self.documentBytes(path: path)
+        }
+        if let pre = precompiledLoon, pre.path == path {
+            precompiledLoon = nil
+            return pre.data
+        }
+        switch LoonCompiler.compile(path: path) {
+        case .success(let data):
+            loonDiagnostic = nil
+            return data
+        case .failure(let d):
+            loonDiagnostic = d
+            return nil
         }
     }
 
@@ -2680,11 +2706,20 @@ final class EditorModel {
         // against its own directory, so a generated assembly gets the full
         // document path — progressive solve, materials, joints, posing — and
         // is watched for regeneration. It is read-only: Save goes to Save As.
-        if url.pathExtension.lowercased() == "loon" {
-            guard Self.documentBytes(path: url.path) != nil else {
-                loadError = "\(label).loon did not compile: \(SimError.pending() ?? "unknown error")"
+        //
+        // A folder opens its entry program (`main.loon`, `<folder>.loon`, or
+        // its only `.loon`). A program that doesn't compile still opens: the
+        // error shows inline, and the next save that fixes it rebuilds.
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+            guard let entry = LoonCompiler.entryFile(inFolder: url) else {
+                loadError = "\(url.lastPathComponent) has no main.loon (or single .loon file) to open"
                 return
             }
+            openDocument(entry)
+            return
+        }
+        if url.pathExtension.lowercased() == "loon" {
             source = .document(path: url.path, label: label)
             rememberRecent(url)
             return

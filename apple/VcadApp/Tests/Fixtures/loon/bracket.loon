@@ -1,0 +1,2 @@
+[pub let plate [cube 40.0 20.0 4.0]]
+[pub let post [cylinder 3.0 12.0]]
