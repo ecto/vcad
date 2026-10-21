@@ -3494,6 +3494,13 @@ pub fn step_import_document(
         .map_err(|e| JsError::new(&format!("serialize: {e}")))
 }
 
+/// Widen an `f32` to the `f64` with the same shortest decimal form, so
+/// `0.3f32` serializes as `0.3` instead of `0.30000001192092896` — which
+/// roughly halves the size of a mesh document.
+fn f32_shortest(v: f32) -> f64 {
+    v.to_string().parse().unwrap_or(f64::from(v))
+}
+
 /// Tessellated STEP import straight to a document: parse, mesh every solid
 /// and build one `ImportedMesh` root per body in Rust, so the meshes never
 /// cross into JS as separate buffers. Returns `{document (JSON string),
@@ -3519,12 +3526,12 @@ pub fn import_step_mesh_document(
             let mesh = s.to_mesh(16);
             triangles += mesh.indices.len() / 3;
             vertices += mesh.vertices.len() / 3;
-            let normals = (mesh.normals.len() == mesh.vertices.len())
-                .then(|| mesh.normals.iter().map(|&v| v as f64).collect());
+            // Normals are left out, as the TS import did: the viewer derives
+            // them, and they would add half again to an already large doc.
             StepBody::Mesh {
-                positions: mesh.vertices.iter().map(|&v| v as f64).collect(),
+                positions: mesh.vertices.iter().map(|&v| f32_shortest(v)).collect(),
                 indices: mesh.indices,
-                normals,
+                normals: None,
                 source: source.to_string(),
             }
         })
