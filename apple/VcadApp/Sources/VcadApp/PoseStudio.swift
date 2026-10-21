@@ -17,7 +17,8 @@ import SwiftUI
 //  - hot reload: the open file is watched, a regenerate reloads it in place
 //    and keeps the pose, explode and camera;
 //  - a photoreal still of exactly what is on screen, path-traced by
-//    `vcad-render --photoreal` from a document with the pose baked in.
+//    `vcad render --photoreal`'s renderer (linked through vcad-ffi) from a
+//    document with the pose baked in.
 
 extension EditorModel {
 
@@ -225,39 +226,6 @@ extension EditorModel {
 
     // MARK: photoreal snapshot
 
-    /// The `vcad-render` binary: $VCAD_RENDER, then the shared cargo target,
-    /// then PATH.
-    static func vcadRenderBinary() -> String? {
-        var candidates: [String] = []
-        if let env = ProcessInfo.processInfo.environment["VCAD_RENDER"] { candidates.append(env) }
-        let home = NSHomeDirectory()
-        candidates += ["\(home)/Developer/vcad/target/release/vcad-render",
-                       "\(home)/.cargo/bin/vcad-render", "/opt/homebrew/bin/vcad-render",
-                       "/usr/local/bin/vcad-render"]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
-
-    /// Whether `bin` is a pre-#825 `vcad-render`, which path-traces BRep faces
-    /// analytically by default. On a polyline loft every flat strip then shows
-    /// as its own facet: jagged, shard-like rounds that the creased-normal
-    /// viewport never shows. Builds since then tessellate and smooth normals by
-    /// default, and they shipped the `--exact` opt-out in the same change. So
-    /// the flag's presence in `--help` is the capability probe (the version
-    /// number is not: 0.9.4 builds exist on both sides of it). The shared
-    /// cargo target is easily left built from an old branch.
-    static func vcadRenderIsStale(_ bin: String) -> Bool {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: bin)
-        p.arguments = ["--help"]
-        let out = Pipe()
-        p.standardOutput = out
-        p.standardError = FileHandle.nullDevice
-        guard (try? p.run()) != nil else { return false }   // let the real run report it
-        let help = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        p.waitUntilExit()
-        return !help.contains("--exact")
-    }
-
     /// The document with the on-screen pose + explode baked into every
     /// instance transform and the joints dropped, so any renderer draws
     /// exactly what the viewport shows.
@@ -301,76 +269,42 @@ extension EditorModel {
 
     #if os(macOS)
     /// Path-trace the current pose/explode from the current camera direction
-    /// and open the result. Runs `vcad-render --photoreal` off the main actor.
+    /// and open the result. The renderer is `vcad render --photoreal`'s,
+    /// linked through vcad-ffi and run off the main actor.
     func photorealSnapshot(spp: Int = 96, completion: (@MainActor @Sendable (_ path: String?, _ error: String?) -> Void)? = nil) {
         guard !photorealBusy else { completion?(nil, "A photoreal render is already running."); return }
-        guard let bin = Self.vcadRenderBinary() else {
-            photorealStatus = "vcad-render not found (build it: cargo build --release -p vcad-render, or set VCAD_RENDER)"
-            completion?(nil, photorealStatus); return
-        }
-        if Self.vcadRenderIsStale(bin) {
-            photorealStatus = "\(bin) is a stale build that traces lofts as flat facets "
-                + "(rebuild it: cargo build --release -p vcad-render from current main, or set VCAD_RENDER)"
-            completion?(nil, photorealStatus); return
-        }
         guard let posed = posedDocumentJSON() else {
             photorealStatus = "Nothing posed to render yet."
             completion?(nil, photorealStatus); return
         }
-        // Camera direction, kernel frame: azimuth CCW from +X, elevation above XY.
-        var az = 35.0, el = 20.0
-        if let (cam, target) = kernelCamera() {
-            let d = cam - target
-            let len = simd_length(d)
-            if len > 1e-9 {
-                az = atan2(d.y, d.x) * 180 / .pi
-                el = asin(d.z / len) * 180 / .pi
-            }
-        }
+        let (az, el) = photorealCameraAngles()
         let dir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Pictures/vcad", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let base = "\(documentName)-\(stamp)"
-        let docURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(base).vcad")
-        let outURL = dir.appendingPathComponent("\(base).png")
-        do { try posed.write(to: docURL) } catch {
-            photorealStatus = "Could not stage the posed document: \(error.localizedDescription)"
-            completion?(nil, photorealStatus); return
-        }
+        let outURL = dir.appendingPathComponent("\(documentName)-\(stamp).png")
+        let base = exportBaseDir
         photorealBusy = true
         photorealStatus = "Path tracing…"
-        let args = [docURL.path, "--photoreal", "--spp", "\(spp)",
-                    // `=` form: a negative angle as its own argv would parse as a flag.
-                    String(format: "--azimuth=%.2f", az), String(format: "--elevation=%.2f", el),
-                    "--size", "1600x1200", "-o", outURL.path]
         Task.detached {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: bin)
-            p.arguments = args
-            let errPipe = Pipe()
-            p.standardError = errPipe
-            p.standardOutput = FileHandle.nullDevice
             let started = Date()
             var failure: String?
-            do {
-                try p.run()
-                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                p.waitUntilExit()
-                if p.terminationStatus != 0 {
-                    let tail = String(decoding: errData, as: UTF8.self)
-                        .split(separator: "\n").suffix(2).joined(separator: " ")
-                    failure = "vcad-render failed (\(p.terminationStatus)): \(tail)"
-                }
-            } catch { failure = "Could not run vcad-render: \(error.localizedDescription)" }
-            try? FileManager.default.removeItem(at: docURL)
+            switch PhotorealJob().render(json: posed, baseDir: base, width: 1600, height: 1200,
+                                         samples: spp, azimuth: az, elevation: el) {
+            case .success(let png):
+                do { try png.write(to: outURL, options: .atomic) }
+                catch { failure = "Could not save \(outURL.lastPathComponent): \(error.localizedDescription)" }
+            case .failure(let error):
+                failure = error.message
+            }
             let secs = Date().timeIntervalSince(started)
+            let result = failure
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.photorealBusy = false
-                completion?(failure == nil ? outURL.path : nil, failure)
-                if let failure {
-                    self.photorealStatus = failure
+                completion?(result == nil ? outURL.path : nil, result)
+                if let result {
+                    self.photorealStatus = result
                 } else {
                     self.photorealStatus = String(format: "Saved %@ (%.0f s)", outURL.lastPathComponent, secs)
                     NSWorkspace.shared.open(outURL)
@@ -461,7 +395,7 @@ struct PoseStudioWindow: View {
             HStack(spacing: Theme.Space.s) {
                 Button {
                     // In-process irys when it's available: save the converged
-                    // frame on screen. Otherwise the vcad-render subprocess.
+                    // frame on screen. Otherwise the linked photoreal renderer.
                     if case .success = IrysLib.shared { model.requestPathTracedStill() }
                     else { model.photorealSnapshot() }
                 } label: {

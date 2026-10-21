@@ -319,9 +319,6 @@ final class SimController {
         engine.setSinks(
             frame: { [weak self] transforms, step, ret, rtf in
                 guard let self else { return }
-                // A frame already queued on the main actor when `teardown()`
-                // ran must not resurrect the released session's state.
-                guard self.isAvailable else { return }
                 if let transforms {
                     self.transforms = transforms
                     self.onTransforms?(transforms)

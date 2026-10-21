@@ -56,6 +56,7 @@ use vcad_kernel_tessellate::TriangleMesh;
 mod cam;
 pub mod engine;
 mod err;
+pub mod export;
 pub mod gym;
 pub mod train;
 

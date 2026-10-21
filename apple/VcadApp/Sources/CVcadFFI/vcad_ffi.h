@@ -464,6 +464,48 @@ const uint8_t *vcad_train_error(const VcadTrainer *trainer, size_t *out_len);
 /* Cancels, JOINS the worker, then frees. Blocks — deliberately. */
 void vcad_train_free(VcadTrainer *trainer);
 
+/* File > Export. Same writers as `vcad export`: STL (roots + posed instances,
+ * one soup), STEP (analytic B-rep; mesh-only parts refused by name), GLB (one
+ * named mesh per part). base_dir (nullable) resolves relative mesh paths.
+ * Writes atomically. Returns parts written (>= 1), or -1 + vcad_last_error. */
+#define VCAD_EXPORT_STL 0u
+#define VCAD_EXPORT_STEP 1u
+#define VCAD_EXPORT_GLB 2u
+int32_t vcad_export_document(const uint8_t *json, size_t json_len,
+                             const uint8_t *base_dir, size_t base_dir_len,
+                             const uint8_t *out_path, size_t out_path_len,
+                             uint32_t format);
+
+/* Owned byte buffer (e.g. an encoded PNG). */
+typedef struct VcadBytes VcadBytes;
+typedef struct VcadBytesView {
+    const uint8_t *data;
+    size_t len;
+} VcadBytesView;
+VcadBytesView vcad_bytes_view(const VcadBytes *bytes);
+void vcad_bytes_free(VcadBytes *bytes);
+
+/* File > Render Photoreal: the `vcad render --photoreal` renderer, linked in.
+ * GPU tracer, CPU fallback when no adapter (or force_cpu). Camera in the
+ * kernel Z-up frame: azimuth CCW from +X, elevation above XY, degrees. */
+typedef struct VcadPhotorealParams {
+    uint32_t width;
+    uint32_t height;
+    uint32_t samples;
+    double azimuth_deg;
+    double elevation_deg;
+    uint8_t force_cpu;
+} VcadPhotorealParams;
+/* Called from the rendering thread after each sample batch; return non-zero
+ * to cancel. */
+typedef uint8_t (*VcadRenderProgress)(void *ctx, uint32_t samples_done, uint32_t samples_total);
+/* Blocking — call off the main thread, and read vcad_last_error on that same
+ * thread. Returns an owned PNG, or NULL ("cancelled" after a cancel). */
+VcadBytes *vcad_render_photoreal_png(const uint8_t *json, size_t json_len,
+                                     const uint8_t *base_dir, size_t base_dir_len,
+                                     const VcadPhotorealParams *params,
+                                     VcadRenderProgress progress, void *ctx);
+
 #ifdef __cplusplus
 }
 #endif
