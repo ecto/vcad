@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-agent-nested-create",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "fix",
+  "title": "Agent accepts nested create calls",
+  "summary": "The Agent's create tool now accepts the nested argument shape models naturally emit, and repeat requests reuse the endpoint's prompt cache.",
+  "features": ["desktop", "agent"]
+}

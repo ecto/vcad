@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 // The built-in agent's turn loop: stream a completion, run every tool call it
@@ -25,6 +26,23 @@ struct FrogManifest {
     /// Tools offered to an endpoint; vision tools only when it takes images.
     func offered(supportsImages: Bool) -> [[String: Any]] {
         supportsImages ? tools + visionTools : tools
+    }
+
+    /// The cacheable prefix exactly as it goes on the wire: the system
+    /// message and the tools, key-sorted JSON. Nothing per-session (time,
+    /// scene state, ids) is ever part of it, so the server's KV cache — and a
+    /// node pre-warmed with this manifest — hits on every request.
+    func prefixBytes(supportsImages: Bool) -> Data {
+        let prefix: [String: Any] = ["system": ["role": "system", "content": system],
+                                     "tools": offered(supportsImages: supportsImages)]
+        return (try? JSONSerialization.data(withJSONObject: prefix, options: [.sortedKeys])) ?? Data()
+    }
+
+    /// `prompt_cache_key`: stable across sessions and launches — derived from
+    /// the manifest version and a hash of the prefix it caches.
+    func promptCacheKey(supportsImages: Bool) -> String {
+        let digest = SHA256.hash(data: prefixBytes(supportsImages: supportsImages))
+        return "\(cacheKey)-" + digest.prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -155,7 +173,7 @@ final class FrogAgent {
     /// The conversation so far (system message first).
     private(set) var messages: [[String: Any]]
     var maxRounds = 16
-    /// Stable for the session so the shared prefix stays in the KV cache.
+    /// Stable across sessions (manifest hash) so the shared prefix stays in the KV cache.
     let cacheKey: String
 
     init(client: FrogClient, manifest: FrogManifest, executor: FrogToolExecutor) {
@@ -164,7 +182,7 @@ final class FrogAgent {
         self.executor = executor
         executor.supportsImages = client.config.supportsImages
         messages = [["role": "system", "content": manifest.system]]
-        cacheKey = "\(manifest.cacheKey)-\(UUID().uuidString.prefix(8))"
+        cacheKey = manifest.promptCacheKey(supportsImages: client.config.supportsImages)
     }
 
     /// Run one user turn to completion. Returns true when the document changed.
