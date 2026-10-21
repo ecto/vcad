@@ -66,6 +66,10 @@ pub struct PhotorealOptions {
     /// Aperture radius as a fraction of the scene radius. 0 = pinhole.
     /// Around 0.02–0.05 gives a tasteful product-shot depth of field.
     pub aperture_frac: f64,
+    /// Distance from the camera to the plane of perfect focus, in mm.
+    /// `None` focuses on the framed subject's centre (the `--focus` part
+    /// when one is given). Only matters with a non-zero aperture.
+    pub focus_dist: Option<f64>,
     /// Backdrop treatment.
     pub backdrop: Backdrop,
     /// Random seed, for reproducible noise.
@@ -156,6 +160,7 @@ impl Default for PhotorealOptions {
             fov_deg: 34.0,
             orthographic: false,
             aperture_frac: 0.0,
+            focus_dist: None,
             backdrop: Backdrop::Studio,
             seed: 0x5eed_1234,
             denoise: true,
@@ -432,6 +437,14 @@ pub(crate) fn frame_view(
         distance,
     );
     camera.aperture = pr.aperture_frac * radius;
+    if let Some(d) = pr.focus_dist {
+        if !(d.is_finite() && d > 0.0) {
+            return Err(format!(
+                "focus distance must be a positive length in mm, got {d}"
+            ));
+        }
+        camera.focus_dist = d;
+    }
     camera.ortho_half_height = pr.orthographic.then_some(half_h_world);
     let _ = half_w_world;
 
@@ -871,6 +884,34 @@ mod tests {
             ..RasterOptions::default()
         };
         assert!(frame_scene(&solids, &objects, &bad, &pr).is_err());
+    }
+
+    /// `--focus-dist` moves the plane of focus; without it the camera
+    /// focuses on the framed subject (its distance to the target).
+    #[test]
+    fn focus_dist_sets_the_thin_lens_focus_plane() {
+        let solids = crate::evaluate_vcad(&cube_doc()).unwrap();
+        let mut pr = PhotorealOptions {
+            aperture_frac: 0.05,
+            ..PhotorealOptions::default()
+        };
+        let objects = build_objects(&solids, pr.mesh_segments()).unwrap();
+        let opts = RasterOptions::default();
+        let auto = frame_scene(&solids, &objects, &opts, &pr).unwrap();
+        let to_target = (auto.camera.eye - auto.center).norm();
+        assert!(
+            (auto.camera.focus_dist - to_target).abs() < 0.5 * auto.radius,
+            "default focus {} should sit on the subject (~{to_target})",
+            auto.camera.focus_dist
+        );
+        assert!(auto.camera.aperture > 0.0);
+
+        pr.focus_dist = Some(123.0);
+        let set = frame_scene(&solids, &objects, &opts, &pr).unwrap();
+        assert_eq!(set.camera.focus_dist, 123.0);
+
+        pr.focus_dist = Some(-1.0);
+        assert!(frame_scene(&solids, &objects, &opts, &pr).is_err());
     }
 
     #[test]

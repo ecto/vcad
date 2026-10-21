@@ -194,11 +194,18 @@ struct DocumentCommands: Commands {
                 .disabled(model.documentURL == nil)
             Divider()
             Menu("Export") {
-                Button("STL…") { exportSTLPanel(model) }
+                Button("STL…") { exportDocumentPanel(model, format: .stl) }
                     .keyboardShortcut("e").disabled(!model.canExport)
+                Button("STEP…") { exportDocumentPanel(model, format: .step) }
+                    .disabled(!model.canExportDocument)
+                Button("GLB…") { exportDocumentPanel(model, format: .glb) }
+                    .disabled(!model.canExportDocument)
                 Button("USDZ…") { exportUSDZPanel(model) }
                     .keyboardShortcut("e", modifiers: [.command, .shift]).disabled(!model.canExport)
             }
+            Button("Render Photoreal…") { PhotorealRenderController.shared.show(for: model) }
+                .keyboardShortcut("r", modifiers: [.command, .option, .shift])
+                .disabled(!model.canExportDocument)
         }
         CommandGroup(replacing: .undoRedo) {
             Button(model.undoActionName.map { "Undo \($0)" } ?? "Undo") { model.undo() }

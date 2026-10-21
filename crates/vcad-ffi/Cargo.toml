@@ -34,4 +34,7 @@ vcad-crdt = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-loon = { workspace = true }
 vcad-ecad-pcb = { workspace = true }
+vcad-kernel-export = { workspace = true }
+# `vcad render --photoreal`, linked in so the app needs no vcad-render binary.
+vcad-render = { path = "../vcad-render", default-features = false, features = ["photoreal-gpu"] }
 serde_json = { workspace = true }

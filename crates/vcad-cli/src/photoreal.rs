@@ -34,6 +34,12 @@ pub struct PhotorealRequest {
     pub seed: u64,
     /// Trace on the CPU reference integrator instead of the GPU.
     pub cpu: bool,
+    /// Thin-lens aperture radius as a fraction of the scene radius (0 = pinhole).
+    pub aperture: f64,
+    /// Plane-of-focus distance in mm; `None` focuses on the framed subject.
+    pub focus_dist: Option<f64>,
+    /// Frame (and so focus) on this part instead of the whole document.
+    pub focus_part: Option<String>,
 }
 
 /// Parse `WxH` (e.g. `1600x1000`).
@@ -73,6 +79,7 @@ fn options(req: &PhotorealRequest) -> (RasterOptions, PhotorealOptions) {
         view: req.view,
         size_px: req.width,
         height_px: Some(req.height),
+        focus: req.focus_part.clone(),
         ..RasterOptions::default()
     };
     let pr = PhotorealOptions {
@@ -83,7 +90,8 @@ fn options(req: &PhotorealRequest) -> (RasterOptions, PhotorealOptions) {
         exposure: req.exposure as f32,
         fov_deg: 34.0,
         orthographic: false,
-        aperture_frac: 0.0,
+        aperture_frac: req.aperture,
+        focus_dist: req.focus_dist,
         backdrop: Backdrop::Studio,
         seed: req.seed,
         // The GPU tracer reads back radiance only, so the guided denoiser has
@@ -98,6 +106,15 @@ fn options(req: &PhotorealRequest) -> (RasterOptions, PhotorealOptions) {
 /// Render raw `.vcad` JSON to an encoded image (PNG unless `jpeg`).
 pub fn render_bytes(raw_vcad: &str, req: &PhotorealRequest, jpeg: bool) -> Result<Vec<u8>> {
     let (ro, pr) = options(req);
+    // The GPU camera is a pinhole; depth of field is a CPU-integrator
+    // feature, so an aperture routes there rather than being refused.
+    if !req.cpu && req.aperture > 0.0 {
+        let cpu = PhotorealRequest {
+            cpu: true,
+            ..req.clone()
+        };
+        return render_bytes(raw_vcad, &cpu, jpeg);
+    }
     let out = if req.cpu {
         if jpeg {
             vcad_render::photoreal::render_photoreal_jpeg_str(raw_vcad, &ro, &pr)
@@ -206,6 +223,9 @@ mod tests {
             env: "gradient".into(),
             seed: 7,
             cpu,
+            aperture: 0.0,
+            focus_dist: None,
+            focus_part: None,
         }
     }
 
