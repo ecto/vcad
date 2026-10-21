@@ -1,0 +1,9 @@
+; L-bracket whose wall thickness `t` is a named, differentiable parameter.
+; gradient_clip.rs drives `t` by gradient descent toward a target mass.
+[defparam t 9.0]
+
+[root
+  [difference
+    [translate 40 20 -1 [cylinder 5 [+ t 2]]]
+    [union [cube 70 40 t] [cube t 40 50]]]
+  "aluminum"]
