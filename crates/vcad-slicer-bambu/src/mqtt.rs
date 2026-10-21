@@ -56,12 +56,10 @@ impl BambuMqttClient {
         mqtt_options.set_keep_alive(Duration::from_secs(30));
         mqtt_options.set_clean_session(true);
 
-        // Configure TLS (Bambu uses self-signed certificates)
-        let tls_config = TlsConfiguration::Simple {
-            ca: vec![], // Accept any certificate
-            alpn: None,
-            client_auth: None,
-        };
+        // Bambu's per-device CA isn't a public root. `Simple { ca: [] }`
+        // builds an EMPTY root store, which rejects the printer's cert every
+        // time; hand rumqttc a config that accepts it instead.
+        let tls_config = TlsConfiguration::Rustls(crate::tls::mqtt_client_config());
         mqtt_options.set_transport(Transport::tls_with_config(tls_config));
 
         // Create client

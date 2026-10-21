@@ -12,6 +12,8 @@ use loon_lang::module::{MapProvider, ModuleProvider};
 use vcad_ir::Document;
 
 mod convert;
+pub mod diag;
+pub use diag::{eval_vcad_file_diagnostic, LoonDiagnostic};
 pub mod fastener;
 pub mod gear;
 pub mod modules;
@@ -138,9 +140,17 @@ fn parse_program(source: &str) -> Result<Vec<loon_lang::ast::Expr>, String> {
     // several top-level value forms (e.g. two `[root ...]` statements) would
     // silently keep only the final one. Rewrite such programs so every
     // top-level value expression is collected into the document.
-    let user_source = collect_top_level_values(source);
+    let (user_source, segments) = collect_top_level_values(source);
     let full_source = format!("{VCAD_LIB_SOURCE}\n\n{user_source}");
-    let mut exprs = loon_lang::parser::parse(&full_source).map_err(|e| e.message.clone())?;
+    diag::set_map(diag::SourceMap {
+        prefix_len: VCAD_LIB_SOURCE.len() + 2,
+        segments,
+    });
+    diag::clear_failure();
+    let mut exprs = loon_lang::parser::parse(&full_source).map_err(|e| {
+        diag::record_failure([e.span.start]);
+        e.message.clone()
+    })?;
     // `[root wheel "steel"]` keeps the binding name on the root node.
     rootnames::capture(&mut exprs);
     Ok(exprs)
@@ -154,8 +164,17 @@ fn run_program(
 ) -> Result<Value, String> {
     // Imported modules get the vcad library too, so `[use ...]` code can
     // speak the same vocabulary as the root program.
+    diag::clear_failure();
     loon_lang::interp::eval_program_with_modules(exprs, base_dir, provider, Some(VCAD_LIB_SOURCE))
-        .map_err(|e| format!("{e}"))
+        .map_err(|e| {
+            diag::record_failure(
+                e.span
+                    .map(|sp| sp.start)
+                    .into_iter()
+                    .chain(e.stack.iter().rev().map(|f| f.call_site.start)),
+            );
+            format!("{e}")
+        })
 }
 
 /// Shared body of the raw-`Value` entry points. Declaration forms are still
@@ -352,9 +371,16 @@ fn split_top_level(source: &str) -> Option<Vec<TopForm>> {
 /// binding (statements pass through in order) and a final `#[…]` vector
 /// collects the bindings. Programs with zero or one value form are returned
 /// unchanged.
-fn collect_top_level_values(source: &str) -> String {
+fn collect_top_level_values(source: &str) -> (String, Vec<diag::Segment>) {
+    let identity = || {
+        vec![diag::Segment {
+            out_start: 0,
+            src_start: 0,
+            len: source.len(),
+        }]
+    };
     let Some(forms) = split_top_level(source) else {
-        return source.to_string();
+        return (source.to_string(), identity());
     };
     let is_value = |f: &TopForm| !STATEMENT_HEADS.contains(&f.head.as_str());
     let value_count = forms.iter().filter(|f| is_value(f)).count();
@@ -362,7 +388,7 @@ fn collect_top_level_values(source: &str) -> String {
     // the program's value is a trailing statement (a `let`, or a parametric
     // declaration) and the scene would be lost.
     if value_count == 0 || (value_count == 1 && forms.last().is_some_and(is_value)) {
-        return source.to_string();
+        return (source.to_string(), identity());
     }
     // Pick a binding prefix that can't shadow (or be shadowed by) anything
     // in the user's source.
@@ -372,17 +398,26 @@ fn collect_top_level_values(source: &str) -> String {
     }
     let mut out = String::with_capacity(source.len() + 32 * value_count);
     let mut names: Vec<String> = Vec::new();
+    let mut segments = Vec::with_capacity(forms.len());
     for form in &forms {
         let text = &source[form.start..form.end];
-        if STATEMENT_HEADS.contains(&form.head.as_str()) {
+        let mut copy = |out: &mut String| {
+            segments.push(diag::Segment {
+                out_start: out.len(),
+                src_start: form.start,
+                len: text.len(),
+            });
             out.push_str(text);
+        };
+        if STATEMENT_HEADS.contains(&form.head.as_str()) {
+            copy(&mut out);
             out.push('\n');
         } else {
             let name = format!("{prefix}_{}", names.len());
             out.push_str("[let ");
             out.push_str(&name);
             out.push(' ');
-            out.push_str(text);
+            copy(&mut out);
             out.push_str("]\n");
             names.push(name);
         }
@@ -390,7 +425,7 @@ fn collect_top_level_values(source: &str) -> String {
     out.push_str("#[");
     out.push_str(&names.join(" "));
     out.push_str("]\n");
-    out
+    (out, segments)
 }
 
 /// Evaluate a `.vcad` file from disk and produce a Document.

@@ -59,6 +59,7 @@ mod err;
 pub mod export;
 pub mod gym;
 pub mod sensitivity;
+pub mod session;
 pub mod train;
 
 pub use err::vcad_last_error;
@@ -540,6 +541,71 @@ pub extern "C" fn vcad_document_file_to_json(path: *const u8, path_len: usize) -
                 err::set_error("could not serialize the document");
                 ptr::null_mut()
             }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// [`vcad_loon_file_to_json`], reporting a failure with its source location.
+///
+/// On success returns the compiled document JSON (free with `vcad_cam_free`)
+/// and leaves `*out_diag` null. On failure returns null and, when `out_diag`
+/// is non-null, stores an owned JSON object
+/// `{"message": str, "file": str|null, "line": int|null, "column": int|null}`
+/// (free with `vcad_cam_free`); `vcad_last_error` carries the same message.
+/// `[use ...]` resolves against the file's directory, then `$VCAD_LOON_PATH`.
+#[no_mangle]
+pub extern "C" fn vcad_loon_file_to_json_diag(
+    path: *const u8,
+    path_len: usize,
+    out_diag: *mut *mut c_char,
+) -> *mut c_char {
+    if !out_diag.is_null() {
+        unsafe { *out_diag = ptr::null_mut() };
+    }
+    if path.is_null() {
+        return ptr::null_mut();
+    }
+    err::clear_error();
+    let fail = |d: serde_json::Value, msg: String| {
+        err::set_error(msg);
+        if !out_diag.is_null() {
+            if let Ok(c) = CString::new(d.to_string()) {
+                unsafe { *out_diag = c.into_raw() };
+            }
+        }
+        ptr::null_mut()
+    };
+    catch_unwind(AssertUnwindSafe(|| {
+        let bytes = unsafe { std::slice::from_raw_parts(path, path_len) };
+        let Ok(p) = std::str::from_utf8(bytes) else {
+            return fail(
+                serde_json::json!({"message": "path is not UTF-8"}),
+                "path is not UTF-8".into(),
+            );
+        };
+        let path = std::path::Path::new(p);
+        let mut doc = match vcad_loon::eval_vcad_file_diagnostic(path) {
+            Ok(d) => d,
+            Err(d) => {
+                let json = serde_json::json!({
+                    "message": d.message,
+                    "file": d.file.as_ref().map(|f| f.display().to_string()),
+                    "line": d.line,
+                    "column": d.column,
+                });
+                return fail(json, format!("loon: {d}"));
+            }
+        };
+        if let Some(dir) = path.parent() {
+            vcad_eval::resolve_mesh_paths(&mut doc, dir);
+        }
+        match serde_json::to_string(&doc).map(CString::new) {
+            Ok(Ok(c)) => c.into_raw(),
+            _ => fail(
+                serde_json::json!({"message": "could not serialize the compiled document"}),
+                "could not serialize the compiled document".into(),
+            ),
         }
     }))
     .unwrap_or(ptr::null_mut())
