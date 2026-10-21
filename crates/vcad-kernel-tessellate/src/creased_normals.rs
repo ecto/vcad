@@ -69,6 +69,23 @@ pub fn apply_creased_normals(mesh: &mut TriangleMesh, crease_angle_rad: f64) {
         corner_keys.push(position_key(p2));
     }
 
+    // --- Step 1b: planar BRep faces shade with their exact plane normal.
+    //
+    // A planar face is often tessellated with slivers whose f32 cross
+    // products wobble by degrees, and a loft cap meets its wall strips along
+    // a rim where per-triangle noise can land inside the crease cone. Either
+    // way the cap picks up a smoothed normal and glass streaks (#970). When
+    // the tessellator tagged faces, every triangle of a planar face uses the
+    // face's area-weighted normal instead, and a planar face counts once per
+    // corner — so caps stay exactly flat while neighbouring planar strips of
+    // a polyline round still smooth into each other (their face normals are
+    // a few degrees apart, well inside the cone).
+    let plane_face = planar_face_normals(mesh, &face_normals);
+    let effective: Vec<[f32; 3]> = (0..triangle_count)
+        .map(|t| plane_face[t].map_or(face_normals[t], |(_, n)| n))
+        .collect();
+    let face_normals = effective;
+
     // --- Step 2: group corners by welded position.
     let mut groups: std::collections::HashMap<u64, Vec<u32>> = std::collections::HashMap::new();
     for (corner_idx, &key) in corner_keys.iter().enumerate() {
@@ -89,11 +106,29 @@ pub fn apply_creased_normals(mesh: &mut TriangleMesh, crease_angle_rad: f64) {
             let key = corner_keys[corner_idx];
             let group = groups.get(&key).expect("group key populated above");
 
-            // Sum face normals that are within the crease cone.
+            // A corner of a planar face only smooths with other planar faces
+            // (neighbouring strips of a polyline round); a curved or noisy
+            // neighbour never bends a cap off its plane.
+            let planar_corner = plane_face[tri].is_some();
+
+            // Sum face normals that are within the crease cone. A planar
+            // face contributes once, however many triangles meet here.
             let mut sum = [0.0_f32; 3];
+            let mut seen_planes: Vec<u32> = Vec::new();
             for &other_corner in group {
                 let other_tri = (other_corner / 3) as usize;
                 let other_normal = face_normals[other_tri];
+                match plane_face[other_tri] {
+                    Some(_) if !planar_corner => continue,
+                    Some((id, _)) => {
+                        if seen_planes.contains(&id) {
+                            continue;
+                        }
+                        seen_planes.push(id);
+                    }
+                    None if planar_corner => continue,
+                    None => {}
+                }
                 if dot(tri_normal, other_normal) >= cos_threshold {
                     sum[0] += other_normal[0];
                     sum[1] += other_normal[1];
@@ -125,6 +160,73 @@ pub fn apply_default_creased_normals(mesh: &mut TriangleMesh) {
 }
 
 // --- helpers ---------------------------------------------------------------
+
+/// For each triangle of a planar BRep face, `Some((face_id, plane_normal))`
+/// with the face's area-weighted unit normal; `None` for curved faces,
+/// untagged meshes, and any face id whose triangles do not actually agree on
+/// one plane (ids are per-shell ordinals, so a multi-shell mesh can reuse
+/// one — those keep per-triangle normals rather than being flattened).
+fn planar_face_normals(
+    mesh: &TriangleMesh,
+    tri_normals: &[[f32; 3]],
+) -> Vec<Option<(u32, [f32; 3])>> {
+    let n = tri_normals.len();
+    if mesh.face_kinds.len() != n || mesh.face_ids.len() != n {
+        return vec![None; n];
+    }
+    let plane = crate::FaceKindTag::Plane as u8;
+    let mut acc: std::collections::HashMap<u32, ([f64; 3], f64)> = Default::default();
+    for t in 0..n {
+        if mesh.face_kinds[t] != plane {
+            continue;
+        }
+        let p = |c: usize| vertex(mesh, mesh.indices[t * 3 + c] as usize).map(|x| x as f64);
+        let (a, b, c) = (p(0), p(1), p(2));
+        let (ab, ac) = (
+            [b[0] - a[0], b[1] - a[1], b[2] - a[2]],
+            [c[0] - a[0], c[1] - a[1], c[2] - a[2]],
+        );
+        // Twice the area vector: its direction is the facet normal, its
+        // length weights big triangles over slivers.
+        let w = [
+            ab[1] * ac[2] - ab[2] * ac[1],
+            ab[2] * ac[0] - ab[0] * ac[2],
+            ab[0] * ac[1] - ab[1] * ac[0],
+        ];
+        let e = acc.entry(mesh.face_ids[t]).or_insert(([0.0; 3], 0.0));
+        for (acc, wk) in e.0.iter_mut().zip(w) {
+            *acc += wk;
+        }
+        e.1 += (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt();
+    }
+    let normals: std::collections::HashMap<u32, [f32; 3]> = acc
+        .into_iter()
+        .filter_map(|(id, (v, total))| {
+            let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+            // Coplanar facets sum to their total area; anything less means
+            // the id spans more than one plane.
+            (total > 0.0 && len >= 0.999 * total).then(|| {
+                (
+                    id,
+                    [
+                        (v[0] / len) as f32,
+                        (v[1] / len) as f32,
+                        (v[2] / len) as f32,
+                    ],
+                )
+            })
+        })
+        .collect();
+    (0..n)
+        .map(|t| {
+            if mesh.face_kinds[t] != plane {
+                return None;
+            }
+            let id = mesh.face_ids[t];
+            normals.get(&id).map(|&nrm| (id, nrm))
+        })
+        .collect()
+}
 
 fn vertex(mesh: &TriangleMesh, idx: usize) -> [f32; 3] {
     [

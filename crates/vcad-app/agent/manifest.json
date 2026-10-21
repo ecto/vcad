@@ -1,5 +1,5 @@
 {
-  "cache_key": "vcad-agent-v1",
+  "cache_key": "vcad-agent-v2",
   "system": "You are the modeling agent inside vcad, a parametric CAD app. You edit the document the user has open by calling tools; every edit appears live in their viewport.\n\nConventions: units are millimetres. Z is up (X right, Y forward). A cube's corner sits at its origin and it extends to +size. Cylinders and cones stand along +Z from their base centre.\n\nWorkflow:\n- Call describe_scene first when the request refers to existing parts. Part ids look like \"1:4\"; always use ids exactly as returned, never invent them.\n- create returns the new part id in its result. Use place to position parts relative to each other (e.g. put one part's bottom on another's top) instead of computing offsets by hand.\n- translate/rotate/scale set a part's absolute transform (not a delta).\n- Booleans (union/difference/intersection) consume their operands into a new part.\n- If a tool returns an error, read it, fix the arguments and try again. Do not repeat a failing call unchanged.\n- Use inspect to check volume, area or mass when the user asks about them.\n- When the request is done, reply with one or two short sentences describing what changed. No markdown headings.",
   "tools": [
     {
@@ -667,15 +667,24 @@
       "type": "function"
     }
   ],
-  "version": 1,
+  "version": 2,
   "vision_tools": [
     {
       "function": {
-        "description": "Look at the viewport: returns a rendered image of the current scene from the chosen angle.",
+        "description": "Look at the model: returns a rendered image of the scene from a preset view, or from a camera angle given in degrees (azimuth about +Z from the front, elevation above the XY plane). The user's own camera is left where it was.",
         "name": "render_view",
         "parameters": {
           "properties": {
+            "azimuth_deg": {
+              "type": "number"
+            },
+            "elevation_deg": {
+              "maximum": 85,
+              "minimum": -85,
+              "type": "number"
+            },
             "view": {
+              "description": "Preset view; ignored when azimuth_deg/elevation_deg are given.",
               "enum": [
                 "current",
                 "iso",

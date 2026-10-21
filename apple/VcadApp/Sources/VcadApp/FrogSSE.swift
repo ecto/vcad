@@ -1,6 +1,6 @@
 import Foundation
 
-// OpenAI-compatible Chat Completions SSE, as served by tang cloud (and by a
+// OpenAI-compatible Chat Completions SSE, as served by frog api (and by a
 // local `tang-llm serve`). Text arrives as `choices[0].delta.content`; tool
 // calls stream as `delta.tool_calls[]` fragments keyed by `index`, with the
 // id and name on the first fragment and `function.arguments` split across

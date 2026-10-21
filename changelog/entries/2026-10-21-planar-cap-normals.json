@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-planar-cap-normals",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "fix",
+  "title": "Flat faces keep exact normals in photoreal renders",
+  "summary": "The crease bake no longer smooths across flat loft caps: planar faces shade with their exact plane normal, so glass and polished caps render without streaks.",
+  "features": ["photoreal", "tessellation", "render"]
+}

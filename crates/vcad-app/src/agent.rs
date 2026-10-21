@@ -15,7 +15,7 @@ use crate::command::CommandError;
 use crate::DocumentApi;
 
 /// Bump when tools or the system prompt change; it also keys the prompt cache.
-pub const MANIFEST_VERSION: u32 = 1;
+pub const MANIFEST_VERSION: u32 = 2;
 
 /// The checked-in manifest (what hosts ship).
 pub const MANIFEST_JSON: &str = include_str!("../agent/manifest.json");
@@ -227,8 +227,15 @@ pub fn tools() -> Vec<Value> {
 pub fn vision_tools() -> Vec<Value> {
     vec![tool(
         "render_view",
-        "Look at the viewport: returns a rendered image of the current scene from the chosen angle.",
-        json!({"view": {"type": "string", "enum": ["current", "iso", "top", "front", "right"]}}),
+        "Look at the model: returns a rendered image of the scene from a preset view, or from a \
+         camera angle given in degrees (azimuth about +Z from the front, elevation above the XY plane). \
+         The user's own camera is left where it was.",
+        json!({
+            "view": {"type": "string", "enum": ["current", "iso", "top", "front", "right"],
+                     "description": "Preset view; ignored when azimuth_deg/elevation_deg are given."},
+            "azimuth_deg": {"type": "number"},
+            "elevation_deg": {"type": "number", "minimum": -85, "maximum": 85}
+        }),
         &[],
     )]
 }
