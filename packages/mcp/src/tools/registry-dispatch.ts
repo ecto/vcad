@@ -11,8 +11,15 @@
 
 import type { AnthropicTool } from "@vcad/core";
 import { commandRegistry, listPartsFromDocument } from "@vcad/core";
-import { getSession, recordLastChanged, recordTriangles } from "./session.js";
-import { storeEngine, takeCachedEngine } from "./session-core.js";
+// session-core, not session.ts: this module is bundled into the browser app
+// (via topopt), and session.ts pulls in node:path / node:fs.
+import {
+  getSession,
+  recordLastChanged,
+  recordTriangles,
+  storeEngine,
+  takeCachedEngine,
+} from "./session-core.js";
 import {
   isStablePartId,
   partIdDeprecation,
