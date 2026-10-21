@@ -573,6 +573,8 @@ enum BackdropArg {
     Shadow,
     /// No floor; the subject floats in the environment gradient.
     None,
+    /// Seamless cyclorama: floor curving up into a back wall, no horizon.
+    Cyclorama,
 }
 
 impl Cli {
@@ -678,6 +680,7 @@ fn photoreal_options(cli: &Cli) -> vcad_render::photoreal::PhotorealOptions {
             BackdropArg::Studio => Backdrop::Studio,
             BackdropArg::Shadow => Backdrop::ShadowCatcher,
             BackdropArg::None => Backdrop::None,
+            BackdropArg::Cyclorama => Backdrop::Cyclorama,
         },
         lighting: cli.lighting,
         seed: cli.seed,

@@ -388,7 +388,7 @@ fn rasterize(
         .map_err(|e| format!("--gpu: render failed: {e}"))?;
 
     let film = out.to_film();
-    let rgba = film.to_srgb8(pr.exposure, png && pr.backdrop != Backdrop::Studio);
+    let rgba = film.to_srgb8(pr.exposure, png && !pr.backdrop.is_opaque());
 
     let n = canvas.len();
     let mut rgb = vec![0u8; n * 3];
