@@ -12,7 +12,9 @@ use vcad_kernel_tessellate::TessellationParams;
 
 /// Probe step used only to match surfaces between θ ± h (see
 /// `document_parameter_gradient`); the derivatives themselves are analytic.
-const PROBE_STEP: f64 = 1e-3;
+/// Must stay well under the seam's 1e-3 mm surface-matching tolerance: a
+/// face moving at unit rate would otherwise drift out of its own match ball.
+const PROBE_STEP: f64 = 1e-4;
 
 fn tess() -> TessellationParams {
     TessellationParams {
