@@ -24,7 +24,9 @@ pub mod incremental;
 pub mod kinematics;
 pub mod mesh_inline;
 pub mod pcb_preview;
+pub mod placement;
 pub mod sensitivity;
+pub mod step_doc;
 pub mod step_sources;
 
 pub mod validate;
@@ -41,6 +43,7 @@ pub use evaluate::{
     RootSolid,
 };
 pub use kinematics::solve_forward_kinematics;
+pub use placement::placed_instance_meshes;
 pub use validate::validate_document;
 pub use vcad_ir::resolve::{self, resolve_document, resolve_document_cloned, ResolvePatchError};
 

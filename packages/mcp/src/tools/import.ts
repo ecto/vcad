@@ -16,8 +16,7 @@
  * evaluating to nothing.
  */
 
-import type { Document, ImportedMeshOp, StepImportOp } from "@vcad/ir";
-import { createDocument } from "@vcad/ir";
+import type { Document } from "@vcad/ir";
 import type { Engine, RegisterStepSourceResult } from "@vcad/engine";
 import { createHash } from "node:crypto";
 import { readFileSync, existsSync, statSync, mkdirSync, writeFileSync } from "node:fs";
@@ -233,31 +232,6 @@ function readStepInput(input: ImportStepInput): {
 }
 
 /** Default document materials shared by both import routes. */
-function defaultMaterials(): Document["materials"] {
-  return {
-    steel: {
-      name: "Steel",
-      color: [0.6, 0.6, 0.65],
-      metallic: 0.9,
-      roughness: 0.3,
-      density: 7850,
-    },
-    aluminum: {
-      name: "Aluminum",
-      color: [0.8, 0.8, 0.85],
-      metallic: 0.9,
-      roughness: 0.2,
-      density: 2700,
-    },
-    default: {
-      name: "Default",
-      color: [0.8, 0.8, 0.8],
-      metallic: 0,
-      roughness: 0.5,
-    },
-  };
-}
-
 /** Flatten a skipped-face report into the shape the tool result reports. */
 function skippedFaceSummary(
   report: RegisterStepSourceResult["report"],
@@ -303,48 +277,23 @@ export function importStep(
     );
   const partMaterial = material ?? "steel";
 
-  const doc = createDocument();
-  doc.materials = defaultMaterials();
-
-  const addRoot = (
-    nodeId: number,
-    nodeName: string,
-    op: StepImportOp | ImportedMeshOp,
-  ) => {
-    doc.nodes[String(nodeId)] = { id: nodeId, name: nodeName, op };
-    doc.roots.push({ root: nodeId, material: partMaterial });
-    doc.part_materials[nodeName] = partMaterial;
-  };
-
+  // The kernel builds the document (one root per body, default materials);
+  // this handler only reads the file and shapes the summary.
+  let doc: Document;
   let summary: Record<string, unknown>;
 
   if (as_mesh) {
-    const { meshes, report, summary: importWarnings } =
-      engine.importStepWithReport(arrayBuffer);
-    if (meshes.length === 0) {
-      throw new Error("No geometry found in STEP file");
-    }
-
-    meshes.forEach((mesh, i) => {
-      const op: ImportedMeshOp = {
-        type: "ImportedMesh",
-        positions: Array.from(mesh.positions),
-        indices: Array.from(mesh.indices),
-        normals: mesh.normals ? Array.from(mesh.normals) : undefined,
-        source: sourceLabel,
-      };
-      addRoot(i + 1, meshes.length === 1 ? partName : `${partName}_${i + 1}`, op);
-    });
-
+    const imported = engine.importStepMeshDocument(arrayBuffer, partName, partMaterial, sourceLabel);
+    doc = imported.document;
     summary = {
       representation: "mesh",
-      bodies: meshes.length,
-      total_triangles: meshes.reduce((sum, m) => sum + m.indices.length / 3, 0),
-      total_vertices: meshes.reduce((sum, m) => sum + m.positions.length / 3, 0),
+      bodies: imported.bodies,
+      total_triangles: imported.triangles,
+      total_vertices: imported.vertices,
       note:
         "Imported as triangle meshes: no analytic faces, and these parts cannot be " +
         "exported to STEP. Drop `as_mesh` for a B-rep import.",
-      ...skippedFaceSummary(report, importWarnings),
+      ...skippedFaceSummary(imported.report, imported.summary),
     };
   } else {
     const label = basename(sourceLabel).replace(/[^\w.-]/g, "_") || "import.step";
@@ -363,18 +312,12 @@ export function importStep(
       throw new Error("No geometry found in STEP file");
     }
 
-    registered.solids.forEach((solid, i) => {
-      const op: StepImportOp = {
-        type: "step_import",
-        path,
-        ...(solid.index === 0 ? {} : { solid_index: solid.index }),
-      };
-      addRoot(
-        i + 1,
-        registered.solids.length === 1 ? partName : `${partName}_${i + 1}`,
-        op,
-      );
-    });
+    doc = engine.stepImportDocument(
+      path,
+      registered.solids.map((solid) => solid.index),
+      partName,
+      partMaterial,
+    );
 
     const meshOnly = registered.solids.filter((s) => s.faces === 0);
     summary = {

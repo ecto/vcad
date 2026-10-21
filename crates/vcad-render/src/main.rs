@@ -453,6 +453,11 @@ struct Cli {
     #[arg(long, default_value_t = 0.0, requires = "photoreal")]
     aperture: f64,
 
+    /// Distance to the plane of focus in mm (`--photoreal --aperture`).
+    /// Defaults to the framed subject's centre, i.e. the `--focus` part.
+    #[arg(long, requires = "photoreal")]
+    focus_dist: Option<f64>,
+
     /// Backdrop for `--photoreal`: studio sweep, shadow-catcher (transparent
     /// but keeps the contact shadow), or none.
     #[arg(long, value_enum, default_value_t = BackdropArg::Studio, requires = "photoreal")]
@@ -662,6 +667,7 @@ fn photoreal_options(cli: &Cli) -> vcad_render::photoreal::PhotorealOptions {
         fov_deg: cli.fov,
         orthographic: cli.ortho,
         aperture_frac: cli.aperture,
+        focus_dist: cli.focus_dist,
         backdrop: match cli.backdrop {
             BackdropArg::Studio => Backdrop::Studio,
             BackdropArg::Shadow => Backdrop::ShadowCatcher,

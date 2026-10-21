@@ -253,6 +253,17 @@ enum Commands {
         /// GPU (same BSDF; adds the denoiser)
         #[arg(long, requires = "photoreal")]
         cpu: bool,
+        /// Thin-lens aperture for `--photoreal`, as a fraction of the scene
+        /// radius (0 = pinhole; 0.02-0.05 is a product-shot depth of field)
+        #[arg(long, default_value_t = 0.0, requires = "photoreal")]
+        aperture: f64,
+        /// Plane-of-focus distance in mm for `--photoreal --aperture`
+        /// (default: the framed subject)
+        #[arg(long, requires = "photoreal")]
+        focus_dist: Option<f64>,
+        /// Frame and focus `--photoreal` on this part (name or id)
+        #[arg(long, requires = "photoreal")]
+        focus_part: Option<String>,
         /// Image width in pixels
         #[arg(long, default_value = "1920")]
         width: u32,
@@ -817,6 +828,9 @@ fn run_command(cli: Cli) -> Result<()> {
             env,
             seed,
             cpu,
+            aperture,
+            focus_dist,
+            focus_part,
             width,
             height,
             azimuth,
@@ -846,6 +860,9 @@ fn run_command(cli: Cli) -> Result<()> {
                     env,
                     seed,
                     cpu,
+                    aperture,
+                    focus_dist,
+                    focus_part,
                 };
                 let doc = load_posed_document(&input, &pose)?;
                 return photoreal::render_document(&doc, &output, &req);
