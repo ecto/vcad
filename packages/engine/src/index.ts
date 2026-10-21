@@ -2592,9 +2592,17 @@ export class Engine {
     origin: { baseDir?: string; path?: string } = {},
   ): Document | null {
     if (typeof this.kernel.evalLoonDocument !== "function") return null;
-    return JSON.parse(
+    const doc = JSON.parse(
       this.kernel.evalLoonDocument(source, JSON.stringify(modules), origin.baseDir, origin.path),
     ) as Document;
+    // The wire format omits serde-default fields; restore them so the source
+    // reads explicitly fresh (`diverged: false`) to session bookkeeping.
+    if (doc.source) {
+      doc.source.diverged ??= false;
+      doc.source.diverged_by ??= [];
+      doc.source.modules ??= {};
+    }
+    return doc;
   }
 
   evalVcadSourceWithModules(
