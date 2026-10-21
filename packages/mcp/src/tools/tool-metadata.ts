@@ -120,6 +120,8 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   delete: { title: "Delete Node", annotations: DESTRUCTIVE },
   set_material: { title: "Set Material", annotations: RW },
   place: { title: "Place Part by Anchor", annotations: RW },
+  tube: { title: "Create Tube", annotations: RW },
+  polyline_tube: { title: "Create Polyline Tube", annotations: RW },
   inspect_part: { title: "Inspect Part", annotations: RO },
   describe_scene: { title: "Describe Scene", annotations: RO },
 

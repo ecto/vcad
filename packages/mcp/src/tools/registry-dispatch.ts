@@ -41,23 +41,13 @@ const BROWSER_ONLY_TOOLS = new Set<string>([
 ]);
 
 /**
- * Tools the registry exposes but whose execution path goes through
- * `executeCrudInner` (TS, app-only) rather than the Rust planner —
- * the docstore-shaped feature builder (`tube`, `polyline_tube`,
- * `linear_pattern`, `circular_pattern`, `mirror`). (Anchor-based `place`
- * was here too; it is now lowered by the engine.) Skipping for v1 — these can be ported to the IR-direct path
- * as a follow-up. (`inspect_part` / `describe_scene` were here too but are
- * now dispatched: they need an evaluated scene, not the planner, so they
- * are answered directly below like `read`.)
+ * Registry tools MCP serves through its own ToolDefs instead of this
+ * dispatcher. (The feature builders and `place` used to be deferred here;
+ * they are now lowered by the document engine.)
  */
 const DEFERRED_TOOLS = new Set<string>([
-  "tube",
-  "polyline_tube",
-  "linear_pattern",
-  "circular_pattern",
-  "mirror",
-  // search_parts / place_part are implemented separately in parts.ts —
-  // they take a Document directly and don't need the planner round-trip.
+  // search_parts / place_part are served by parts.ts (place_part still
+  // mutates through the engine, via runMutation).
   "search_parts",
   "place_part",
 ]);
@@ -480,6 +470,8 @@ const ENGINE_LOWERED_TOOLS = new Set<string>([
   "tube",
   "polyline_tube",
   "place",
+  // Reached via parts.ts (place_part handler), not registry dispatch.
+  "place_part",
 ]);
 
 interface EngineEnvelope {
