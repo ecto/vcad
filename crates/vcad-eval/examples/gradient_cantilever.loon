@@ -1,0 +1,10 @@
+; Cantilevered aluminum L-section beam, 150 mm long along +y.
+; Two named, differentiable parameters: wall thickness `t` and flange
+; height `h`. gradient_clip_v2.rs minimizes mass subject to a tip-deflection
+; limit, with both gradients from the differentiable seam.
+[defparam t 9.0]
+[defparam h 30.0]
+
+[root
+  [union [cube 40 150 t] [cube t 150 h]]
+  "aluminum"]
