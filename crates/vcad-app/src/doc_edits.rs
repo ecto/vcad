@@ -120,6 +120,13 @@ pub fn lower(
             Ok(())
         }),
         "add_design_constraint" => add_constraint(doc, args),
+        // Replace the whole set (e.g. sketch constraints merged by the host).
+        "set_design_constraints" => match args.get("constraints") {
+            Some(Json::Array(cs)) => {
+                constraints(doc).map(|(id, _)| write_constraints(id, cs.clone()))
+            }
+            _ => Err(invalid(format!("{tool}: `constraints` must be an array"))),
+        },
         "remove_design_constraint" => edit_constraints(doc, tool, |cs| {
             let id = str_arg(args, "id", tool)?;
             let before = cs.len();
@@ -162,7 +169,7 @@ pub fn lower(
 }
 
 /// First live feature of `kind`: its stable id and string param `key`.
-fn blob(doc: &DocumentApi, kind: &str, key: &str) -> Option<(String, Option<String>)> {
+pub(crate) fn blob(doc: &DocumentApi, kind: &str, key: &str) -> Option<(String, Option<String>)> {
     doc.crdt()
         .ordered_features()
         .into_iter()
@@ -179,7 +186,7 @@ fn blob(doc: &DocumentApi, kind: &str, key: &str) -> Option<(String, Option<Stri
         })
 }
 
-fn set_blob(id: String, key: &str, value: &Json) -> DocCommand {
+pub(crate) fn set_blob(id: String, key: &str, value: &Json) -> DocCommand {
     DocCommand::SetParam {
         id,
         key: key.to_string(),
@@ -505,7 +512,7 @@ fn num(v: &Json, key: &str, tool: &str) -> Result<f64, CommandError> {
         .ok_or_else(|| invalid(format!("{tool}: missing number `{key}`")))
 }
 
-fn invalid(message: String) -> CommandError {
+pub(crate) fn invalid(message: String) -> CommandError {
     CommandError::Invalid { message }
 }
 
@@ -840,6 +847,28 @@ mod tests {
             Err(CommandError::UnknownId { .. })
         ));
         assert!(apply(&mut api, "add_design_constraint", json!({"constraint": 3})).is_err());
+        // Whole-set replacement, and creation when the feature is missing.
+        let mut fresh = DocumentApi::new(ReplicaId(1));
+        apply(
+            &mut fresh,
+            "set_design_constraints",
+            json!({"constraints": [{"id": "c7"}]}),
+        )
+        .unwrap();
+        assert_eq!(blob_json(&fresh, DC_KIND, DC_KEY), json!([{"id": "c7"}]));
+        apply(
+            &mut fresh,
+            "set_design_constraints",
+            json!({"constraints": []}),
+        )
+        .unwrap();
+        assert_eq!(blob_json(&fresh, DC_KIND, DC_KEY), json!([]));
+        assert!(apply(
+            &mut fresh,
+            "set_design_constraints",
+            json!({"constraints": {}})
+        )
+        .is_err());
         // String values (parameter expressions) are accepted; other types are not.
         apply(
             &mut api,
