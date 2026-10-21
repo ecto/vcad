@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-stale-photoreal-renderer",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "fix",
+  "title": "Photoreal refuses a stale vcad-render that facets lofts",
+  "summary": "The Mac app's photoreal button now detects a pre-mesh-mode vcad-render (which traced polyline lofts as flat strips) and asks for a rebuild instead of rendering jagged rounds.",
+  "features": ["photoreal", "render", "loft"]
+}

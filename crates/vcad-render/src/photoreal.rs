@@ -219,14 +219,10 @@ pub(crate) fn build_objects(
         .par_iter()
         .map(|s| match (mesh_segments, s.solid.as_brep()) {
             (None, Some(brep)) => Bvh::build_brep(brep),
-            (segments, _) => {
-                // `to_mesh` ignores the segment count for a mesh-backed
-                // solid, so `unwrap_or(0)` keeps --exact's mesh-only branch
-                // byte-identical to what it did before this parameter existed.
-                let mut mesh = s.solid.to_mesh(segments.unwrap_or(0));
-                vcad_kernel::vcad_kernel_tessellate::render_bake_default(&mut mesh);
-                Bvh::build_mesh(&mesh)
-            }
+            // `to_mesh` ignores the segment count for a mesh-backed solid,
+            // so `unwrap_or(0)` keeps --exact's mesh-only branch
+            // byte-identical to what it did before this parameter existed.
+            (segments, _) => Bvh::build_mesh(&traced_mesh(&s.solid, segments.unwrap_or(0))),
         })
         .collect();
 
@@ -259,6 +255,21 @@ pub(crate) fn build_objects(
         ));
     }
     Ok(objects)
+}
+
+/// The triangles a solid is traced as in mesh mode: tessellated, then
+/// crease-baked so facets meeting at under 30° share one interpolated shading
+/// normal. This is what keeps a polyline loft (every strip its own planar
+/// BRep face) reading as the smooth round it stands for. Traced analytically
+/// (`--exact`, and every build before #825) those strips are flat, and each
+/// one catches the light on its own.
+pub(crate) fn traced_mesh(
+    solid: &vcad_kernel::Solid,
+    segments: u32,
+) -> vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
+    let mut mesh = solid.to_mesh(segments);
+    vcad_kernel::vcad_kernel_tessellate::render_bake_default(&mut mesh);
+    mesh
 }
 
 /// The eight corners of an object's BVH root AABB, in world space after
@@ -884,5 +895,80 @@ mod tests {
             "both the BRep and the mesh part must cover pixels: \
              left={left} right={right} cols={cols:?}"
         );
+    }
+
+    /// A rounded-rectangle loft drawn as line segments, the way loon sketches
+    /// a round (7.5° steps), is a stack of flat BRep strips. Mesh mode must
+    /// hand the tracer one continuous shading normal across neighbouring
+    /// strips, or the rounds render as jagged facets (the cortex head).
+    #[test]
+    fn polyline_loft_traces_with_continuous_normals() {
+        use crate::{cross, sub};
+        use vcad_kernel::vcad_kernel_math::{Point2, Point3, Vec3};
+        use vcad_kernel::vcad_kernel_sketch::{SketchProfile, SketchSegment};
+
+        let section = |z: f64| {
+            let (hx, hy, r) = (40.0, 25.0, 12.0);
+            let mut pts: Vec<Point2> = Vec::new();
+            for (cx, cy, a0) in [
+                (hx - r, hy - r, 0.0),
+                (r - hx, hy - r, 90.0),
+                (r - hx, r - hy, 180.0),
+                (hx - r, r - hy, 270.0),
+            ] {
+                for k in 0..=12 {
+                    let a = (a0 + 7.5 * k as f64).to_radians();
+                    pts.push(Point2::new(cx + r * a.cos(), cy + r * a.sin()));
+                }
+            }
+            let segs = (0..pts.len())
+                .map(|i| SketchSegment::Line {
+                    start: pts[i],
+                    end: pts[(i + 1) % pts.len()],
+                })
+                .collect();
+            SketchProfile::new(Point3::new(0.0, 0.0, z), Vec3::x(), Vec3::y(), segs).unwrap()
+        };
+        let solid = vcad_kernel::Solid::loft(&[section(0.0), section(30.0)], Default::default())
+            .expect("loft");
+        let mesh = traced_mesh(&solid, MESH_SEGMENTS);
+
+        let v = |i: usize| -> [f64; 3] { std::array::from_fn(|k| mesh.vertices[i * 3 + k] as f64) };
+        let n = |i: usize| -> [f64; 3] { std::array::from_fn(|k| mesh.normals[i * 3 + k] as f64) };
+        let key = |p: [f64; 3]| p.map(|c| (c * 1e3).round() as i64);
+        let mut at: std::collections::HashMap<[i64; 3], Vec<usize>> = Default::default();
+        for i in 0..mesh.vertices.len() / 3 {
+            at.entry(key(v(i))).or_default().push(i);
+        }
+
+        // Shading normals at one point either agree (same smooth surface) or
+        // differ by a real crease (wall vs cap, 90°). Anything in between is a
+        // strip seam that would show as a facet edge.
+        let (cos_same, cos_crease) = (0.5f64.to_radians().cos(), 45f64.to_radians().cos());
+        let mut seams = 0;
+        for ids in at.values() {
+            for (a, &i) in ids.iter().enumerate() {
+                for &j in &ids[a + 1..] {
+                    let d = dot(n(i), n(j));
+                    if d < cos_same && d > cos_crease {
+                        seams += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            seams, 0,
+            "shading normals split between neighbouring loft strips"
+        );
+
+        // And they really are interpolated: a wall corner on a round must not
+        // carry its strip's flat face normal (a 7.5° strip's corner averages
+        // to 3.75° off it).
+        let smoothed = (0..mesh.vertices.len() / 9).any(|t| {
+            let [a, b, c] = [v(3 * t), v(3 * t + 1), v(3 * t + 2)];
+            let face = normalize(cross(sub(b, a), sub(c, a)));
+            face[2].abs() < 0.1 && (0..3).any(|k| dot(face, n(3 * t + k)) < 2f64.to_radians().cos())
+        });
+        assert!(smoothed, "loft walls traced with flat facet normals");
     }
 }
