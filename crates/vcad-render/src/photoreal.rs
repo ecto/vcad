@@ -907,8 +907,8 @@ mod tests {
         use vcad_kernel::vcad_kernel_math::{Point2, Point3, Vec3};
         use vcad_kernel::vcad_kernel_sketch::{SketchProfile, SketchSegment};
 
-        let section = |z: f64| {
-            let (hx, hy, r) = (40.0, 25.0, 12.0);
+        let section = |z: f64, d: f64| {
+            let (hx, hy, r) = (40.0 - d, 25.0 - d, 12.0);
             let mut pts: Vec<Point2> = Vec::new();
             for (cx, cy, a0) in [
                 (hx - r, hy - r, 0.0),
@@ -929,8 +929,9 @@ mod tests {
                 .collect();
             SketchProfile::new(Point3::new(0.0, 0.0, z), Vec3::x(), Vec3::y(), segs).unwrap()
         };
-        let solid = vcad_kernel::Solid::loft(&[section(0.0), section(30.0)], Default::default())
-            .expect("loft");
+        let solid =
+            vcad_kernel::Solid::loft(&[section(0.0, 0.0), section(30.0, 0.0)], Default::default())
+                .expect("loft");
         let mesh = traced_mesh(&solid, MESH_SEGMENTS);
 
         let v = |i: usize| -> [f64; 3] { std::array::from_fn(|k| mesh.vertices[i * 3 + k] as f64) };
@@ -970,5 +971,58 @@ mod tests {
             face[2].abs() < 0.1 && (0..3).any(|k| dot(face, n(3 * t + k)) < 2f64.to_radians().cos())
         });
         assert!(smoothed, "loft walls traced with flat facet normals");
+
+        // The flat caps keep their exact plane normal at every corner (#970 —
+        // streaks on glass): a cap triangle must never pick up a smoothed
+        // normal from a wall strip or a sliver neighbour. Checked on the plain
+        // loft and on a visor-style one whose top edge is a 0.4 mm chamfer.
+        let assert_flat_caps = |mesh: &vcad_kernel::vcad_kernel_tessellate::TriangleMesh,
+                                top: f64| {
+            let v =
+                |i: usize| -> [f64; 3] { std::array::from_fn(|k| mesh.vertices[i * 3 + k] as f64) };
+            let n =
+                |i: usize| -> [f64; 3] { std::array::from_fn(|k| mesh.normals[i * 3 + k] as f64) };
+            let mut cap_tris = 0;
+            for t in 0..mesh.vertices.len() / 9 {
+                let zs = [v(3 * t)[2], v(3 * t + 1)[2], v(3 * t + 2)[2]];
+                let on = |z0: f64| zs.iter().all(|z| (z - z0).abs() < 1e-4);
+                let want = if on(0.0) {
+                    [0.0, 0.0, -1.0]
+                } else if on(top) {
+                    [0.0, 0.0, 1.0]
+                } else {
+                    continue;
+                };
+                cap_tris += 1;
+                for k in 0..3 {
+                    assert!(
+                        dot(want, n(3 * t + k)) > 0.05f64.to_radians().cos(),
+                        "cap triangle {t} corner {k} normal {:?} is not the cap normal {want:?}",
+                        n(3 * t + k)
+                    );
+                }
+            }
+            assert!(cap_tris > 0, "loft produced no cap triangles");
+            // And nothing beside a cap leans toward it: a wall or chamfer
+            // corner on the top rim is a real crease (past the 30 degree crease angle off the
+            // cap), not a normal half-smoothed into the cap.
+            for i in 0..mesh.vertices.len() / 3 {
+                let (p, nn) = (v(i), n(i));
+                if (p[2] - top).abs() < 1e-4 {
+                    let d = nn[2];
+                    assert!(
+                        d > 0.05f64.to_radians().cos() || d < 30f64.to_radians().cos(),
+                        "rim corner at {p:?} has normal {nn:?} smoothed toward the cap"
+                    );
+                }
+            }
+        };
+        assert_flat_caps(&mesh, 30.0);
+        let visor = vcad_kernel::Solid::loft(
+            &[section(0.0, 0.0), section(30.0, 0.0), section(30.4, 0.4)],
+            Default::default(),
+        )
+        .expect("chamfered loft");
+        assert_flat_caps(&traced_mesh(&visor, MESH_SEGMENTS), 30.4);
     }
 }
