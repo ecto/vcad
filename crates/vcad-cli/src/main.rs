@@ -49,6 +49,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+#[allow(clippy::large_enum_variant)] // parsed once at startup; boxing buys nothing
 enum Commands {
     /// Open the interactive TUI editor
     Tui {
