@@ -22,7 +22,17 @@ serde_json.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 
+# `agent-live` only: the live frog-api end-to-end runner (examples/agent_live.rs).
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"], optional = true }
+sha2 = { version = "0.10", optional = true }
+
 [dev-dependencies]
 
 [features]
 ts-rs = ["dep:ts-rs", "vcad-crdt/ts-rs"]
+# Network-backed live agent test; never on by default or in CI.
+agent-live = ["dep:reqwest", "dep:sha2"]
+
+[[example]]
+name = "agent_live"
+required-features = ["agent-live"]
