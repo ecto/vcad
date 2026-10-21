@@ -433,9 +433,6 @@ jobs:
           git clone --depth 1 https://github.com/ecto/tang.git ../tang
           git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
           git clone --depth 1 https://github.com/ecto/loon.git ../loon
-          # The field-overlay decoder (CTangCompress) links libtang_compress_ffi,
-          # built from tang's tang-compress branch by build-tc-ffi.sh.
-          git clone --depth 1 --branch claude/tang-compress-qtt https://github.com/ecto/tang.git ../tang-compress
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
@@ -446,7 +443,7 @@ jobs:
           cache-on-failure: true
           workspaces: |
             . -> target
-            ../tang-compress -> target/tc-ffi
+            ../tang -> target/tc-ffi
       - name: Cache SwiftPM build
         uses: actions/cache@v4
         with:
@@ -461,7 +458,7 @@ jobs:
       - name: Build vcad-ffi
         run: apple/VcadApp/build-ffi.sh
       - name: Build tang-compress-ffi
-        run: apple/VcadApp/build-tc-ffi.sh ../tang-compress
+        run: apple/VcadApp/build-tc-ffi.sh ../tang  # cram-codec lives in tang main
       - name: swift test
         run: swift test --package-path apple/VcadApp
 

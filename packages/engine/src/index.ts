@@ -107,6 +107,15 @@ export {
   type MergeOutcome,
 } from "./diff.js";
 export { SolidCache, hashCsgOp } from "./solid-cache.js";
+export {
+  applyDocumentDelta,
+  applyEngineDelta,
+  applyPartsDelta,
+  EngineRefusal,
+  parseDeltaEnvelope,
+  stateFromEnvelope,
+} from "./delta.js";
+export type { DeltaChanges, EngineState } from "./delta.js";
 export { MeshCache } from "./mesh-cache.js";
 export { DependencyGraph } from "./dependency-graph.js";
 export type { EvaluateOptions } from "./evaluate.js";
@@ -696,6 +705,8 @@ export interface KernelModule {
   ) => string;
   /** Name of a floating joint found in a commented-out region, if any. */
   urdfCommentedFloatingJoint?: (data: Uint8Array) => string | undefined;
+  /** Build a sheet-metal document from a sheet_metal_create request. */
+  buildSheetMetalDocument?: (args_json: string) => string;
   /** Rewrite MeshImport nodes to ImportedMesh from host-read STL bytes. */
   inlineMeshImports?: (doc_json: string, keys: string[], blobs: Uint8Array[]) => string;
   exportProjectedViewToDxf: (view_json: string) => Uint8Array;
@@ -1327,6 +1338,7 @@ export class Engine {
       importUrdfBuffer: (wasmModule as Record<string, unknown>).importUrdfBuffer as KernelModule["importUrdfBuffer"],
       importUrdfBufferWithOptions: (wasmModule as Record<string, unknown>).importUrdfBufferWithOptions as KernelModule["importUrdfBufferWithOptions"],
       urdfCommentedFloatingJoint: (wasmModule as Record<string, unknown>).urdfCommentedFloatingJoint as KernelModule["urdfCommentedFloatingJoint"],
+      buildSheetMetalDocument: (wasmModule as Record<string, unknown>).buildSheetMetalDocument as KernelModule["buildSheetMetalDocument"],
       inlineMeshImports: (wasmModule as Record<string, unknown>).inlineMeshImports as KernelModule["inlineMeshImports"],
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
       offsetSectionMesh: (wasmModule as Record<string, unknown>).offsetSectionMesh as KernelModule["offsetSectionMesh"],
@@ -2233,6 +2245,18 @@ export class Engine {
    * a commented-out floating joint means the author expected the simulator
    * to supply the free base.
    */
+  /**
+   * Build a sheet-metal document (base flange + ordered flanges, hems, jogs,
+   * bend relief) from a `sheet_metal_create` request, in the kernel
+   * (`vcad_eval::sheet_build`). Throws on malformed input.
+   */
+  buildSheetMetalDocument(args: unknown): Document {
+    if (typeof this.kernel.buildSheetMetalDocument !== "function") {
+      throw new Error("sheet-metal document builder not available - rebuild the kernel WASM");
+    }
+    return JSON.parse(this.kernel.buildSheetMetalDocument(JSON.stringify(args))) as Document;
+  }
+
   /**
    * Inline STL meshes into `doc` in place: each `MeshImport` node keyed in
    * `meshes` (node id -> STL bytes) becomes an `ImportedMesh` (metres -> mm,

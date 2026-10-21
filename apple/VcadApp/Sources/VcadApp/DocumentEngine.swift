@@ -23,16 +23,25 @@ final class DocumentEngine {
 
     /// Materialized state after a successful command.
     struct Result {
-        /// IR `Document` JSON.
-        let documentJSON: Data
-        /// The same document, parsed — what the editor renders and reads.
+        /// The materialized IR document — what the editor renders and reads.
         let document: [String: Any]
+        /// The document as JSON bytes.
+        var documentJSON: Data { (try? JSONSerialization.data(withJSONObject: document)) ?? Data() }
         /// Per materialized feature: its stable id, kind and IR node ids.
         let parts: [EnginePartInfo]
         /// Stable id of the feature the command created, if any.
         let createdFeatureId: String?
         var partCount: Int { parts.count }
         let warnings: [String]
+        /// What the command changed, when it came back as a delta: the parts
+        /// to re-tessellate (added + updated, by stable id) and those gone.
+        /// Nil for a full state (load, restore, undo snapshot) — rebuild all.
+        var changes: Changes? = nil
+
+        struct Changes: Equatable {
+            var rebuild: Set<String>
+            var removed: Set<String>
+        }
 
         /// Stable part id (`"replica:seq"`) of a scene root node, via the
         /// document's `partIds` map. Node ids are renumbered on every
@@ -78,6 +87,8 @@ final class DocumentEngine {
     }
 
     private let handle: OpaquePointer
+    /// The last state handed out — the base the next delta patches.
+    private var current: Result?
 
     init(replicaId: UInt64 = UInt64(Date().timeIntervalSince1970 * 1000)) {
         handle = vcad_engine_new(replicaId)
@@ -89,14 +100,22 @@ final class DocumentEngine {
     @discardableResult
     func apply(_ command: DocCommand) throws -> Result {
         let json = String(decoding: try JSONEncoder().encode(command), as: UTF8.self)
-        return try Self.unwrap(json.withCString { vcad_engine_apply(handle, $0) })
+        guard let base = current else {
+            return try track(Self.unwrap(json.withCString { vcad_engine_apply(handle, $0) }))
+        }
+        return try track(Self.patch(base, json.withCString { vcad_engine_apply_delta(handle, $0) }))
     }
 
     /// Lower and apply an AI tool call (`create`, `translate`, …) in Rust.
     @discardableResult
     func applyTool(_ call: ToolCall) throws -> Result {
         let json = String(decoding: try JSONEncoder().encode(call.args), as: UTF8.self)
-        return try Self.unwrap(call.tool.withCString { t in json.withCString { vcad_engine_apply_tool(handle, t, $0) } })
+        guard let base = current else {
+            return try track(Self.unwrap(call.tool.withCString { t in json.withCString { vcad_engine_apply_tool(handle, t, $0) } }))
+        }
+        return try track(Self.patch(base, call.tool.withCString { t in
+            json.withCString { vcad_engine_apply_tool_delta(handle, t, $0) }
+        }))
     }
 
     /// Answer an agent read tool (`describe_scene`, `inspect`) as text.
@@ -122,7 +141,7 @@ final class DocumentEngine {
     }
 
     /// The current state (no mutation).
-    func state() throws -> Result { try Self.unwrap(vcad_engine_state(handle)) }
+    func state() throws -> Result { try track(Self.unwrap(vcad_engine_state(handle))) }
 
     /// Replace the document with an IR `Document` (a `.vcad` file's
     /// contents); the undo history starts fresh. Throws, leaving the engine
@@ -130,7 +149,7 @@ final class DocumentEngine {
     @discardableResult
     func loadIR(_ document: [String: Any]) throws -> Result {
         let json = String(decoding: try JSONSerialization.data(withJSONObject: document), as: UTF8.self)
-        return try Self.unwrap(json.withCString { vcad_engine_load_ir(handle, $0) })
+        return try track(Self.unwrap(json.withCString { vcad_engine_load_ir(handle, $0) }))
     }
 
     /// Snapshot of document + undo/redo history, for `restore`.
@@ -144,9 +163,9 @@ final class DocumentEngine {
     /// Put back a `save` snapshot (document and history).
     @discardableResult
     func restore(_ snapshot: Data) throws -> Result {
-        try Self.unwrap(snapshot.withUnsafeBytes {
+        try track(Self.unwrap(snapshot.withUnsafeBytes {
             vcad_engine_restore(handle, $0.bindMemory(to: UInt8.self).baseAddress, snapshot.count)
-        })
+        }))
     }
 
     var canUndo: Bool { vcad_engine_can_undo(handle) }
@@ -160,14 +179,47 @@ final class DocumentEngine {
         return String(cString: raw)
     }
 
-    private static func unwrap(_ raw: UnsafeMutablePointer<CChar>?) throws -> Result {
+    private func track(_ r: Result) -> Result {
+        current = r
+        return r
+    }
+
+    private static func take(_ raw: UnsafeMutablePointer<CChar>?) throws -> Data {
         guard let raw else {
             var count = 0
             let message = vcad_last_error(&count).map { String(decoding: UnsafeBufferPointer(start: $0, count: count), as: UTF8.self) }
             throw Refusal(kind: "ffi", message: message ?? "engine call failed")
         }
         defer { vcad_engine_string_free(raw) }
-        return try result(from: Data(String(cString: raw).utf8))
+        return Data(String(cString: raw).utf8)
+    }
+
+    private static func unwrap(_ raw: UnsafeMutablePointer<CChar>?) throws -> Result {
+        try result(from: take(raw))
+    }
+
+    private static func patch(_ base: Result, _ raw: UnsafeMutablePointer<CChar>?) throws -> Result {
+        try result(fromDelta: take(raw), base: base)
+    }
+
+    /// Decode an `EngineDeltaEnvelope` and fold it into `base` (the state the
+    /// command started from).
+    static func result(fromDelta envelope: Data, base: Result) throws -> Result {
+        let decoded = try JSONDecoder().decode(EngineDeltaEnvelope.self, from: envelope)
+        guard decoded.ok, let delta = decoded.result else {
+            let error = decoded.error
+            throw Refusal(kind: error?.commandError.kind ?? "unknown",
+                          message: error?.message ?? "command refused",
+                          error: error?.commandError)
+        }
+        return Result(
+            document: delta.document.applied(to: base.document),
+            parts: delta.parts.applied(to: base.parts),
+            createdFeatureId: delta.createdFeatureId,
+            warnings: delta.warnings,
+            changes: .init(rebuild: Set((delta.parts.added + delta.parts.updated).map(\.id)),
+                           removed: Set(delta.parts.removed))
+        )
     }
 
     /// Decode an `EngineEnvelope`: a `Result`, or the `Refusal` it carries.
@@ -181,7 +233,6 @@ final class DocumentEngine {
         }
         let document = result.document.foundationValue as? [String: Any] ?? [:]
         return Result(
-            documentJSON: try JSONSerialization.data(withJSONObject: document),
             document: document,
             parts: result.parts,
             createdFeatureId: result.createdFeatureId,
@@ -227,5 +278,32 @@ extension EngineJSON: ExpressibleByStringLiteral, ExpressibleByFloatLiteral, Exp
     public init(arrayLiteral elements: EngineJSON...) { self = .array(elements) }
     public init(dictionaryLiteral elements: (String, EngineJSON)...) {
         self = .object(Dictionary(elements, uniquingKeysWith: { _, last in last }))
+    }
+}
+
+extension DocumentDelta {
+    /// `document` with this patch applied (mirrors `DocumentDelta::apply`).
+    func applied(to document: [String: Any]) -> [String: Any] {
+        var out = document
+        for key in removedFields { out.removeValue(forKey: key) }
+        for (key, value) in fields { out[key] = value.foundationValue }
+        for (key, patch) in maps {
+            var map = out[key] as? [String: Any] ?? [:]
+            for k in patch.remove { map.removeValue(forKey: k) }
+            for (k, v) in patch.set { map[k] = v.foundationValue }
+            out[key] = map
+        }
+        return out
+    }
+}
+
+extension PartsDelta {
+    /// `parts` with this patch applied (mirrors `PartsDelta::apply`).
+    func applied(to parts: [EnginePartInfo]) -> [EnginePartInfo] {
+        let ids = order ?? parts.map(\.id)
+        var byId = Dictionary(parts.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        for p in added + updated { byId[p.id] = p }
+        for id in removed { byId.removeValue(forKey: id) }
+        return ids.compactMap { byId[$0] }
     }
 }

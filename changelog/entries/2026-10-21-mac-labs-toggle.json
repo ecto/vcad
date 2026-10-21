@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-mac-labs-toggle",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "Labs toggle for in-development Mac workspaces",
+  "summary": "Electronics, Manufacture (CNC Studio) and simulation in the Mac app now sit behind Settings ▸ Labs, off by default, so the default app is Design plus Agent.",
+  "features": ["desktop", "settings"]
+}

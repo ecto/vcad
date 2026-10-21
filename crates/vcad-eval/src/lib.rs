@@ -26,6 +26,7 @@ pub mod pcb_preview;
 pub mod provenance;
 pub mod placement;
 pub mod sensitivity;
+pub mod sheet_build;
 pub mod step_doc;
 pub mod step_sources;
 

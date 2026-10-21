@@ -40,6 +40,8 @@ enum Workspace: String, CaseIterable, Identifiable, Codable {
         case .manufacture: return "wrench.and.screwdriver"
         }
     }
+    /// Workspaces the UI offers: Design, plus the Labs ones when enabled.
+    static var available: [Workspace] { Prefs.labs ? allCases : [.design] }
     var keyEquivalent: KeyEquivalent {
         switch self {
         case .design: return "1"
@@ -328,7 +330,7 @@ final class EditorModel {
         cnc.rightPanelShown = m.cncRight
         cnc.bottomPanelShown = m.cncBottom
         measurementsShown = m.measurementsShown
-        if let ws = Workspace(rawValue: m.workspace) { workspace = ws }
+        if let ws = Workspace(rawValue: m.workspace), Workspace.available.contains(ws) { workspace = ws }
     }
     /// Whether the last session ran in a window (the presentation to restore).
     var remembersWindowed: Bool { LayoutMemory.load().windowed }
@@ -513,6 +515,8 @@ final class EditorModel {
 
     /// Whether the current document can be simulated: an assembly with bodies.
     var canSimulate: Bool { assemblyInstanceCount > 0 && documentJSON != nil }
+    /// Simulation UI is a Labs feature; the capability stays for hooks/tests.
+    var showsSimulation: Bool { Prefs.labs && canSimulate }
 
     /// Build a simulation for the current document and bind it to the resident
     /// scene, so simulated transforms arrive in the renderer's index order.
@@ -1117,7 +1121,18 @@ final class EditorModel {
     var engineError: String?
     /// The engine's materialized document — read-only from Swift's side
     /// except for the detached electronics path.
-    @ObservationIgnored var documentJSON: [String: Any]?
+    @ObservationIgnored var documentJSON: [String: Any]? {
+        // Any document swap except an engine delta (`adopt`) invalidates the
+        // per-part tessellation cache.
+        didSet { if !adoptingDelta { partMeshCache.removeAll() } }
+    }
+    /// Tessellated parts by stable part id, reused across edits: an engine
+    /// delta drops exactly the parts it added, updated or removed, so an edit
+    /// re-tessellates only those.
+    @ObservationIgnored private var partMeshCache: [String: TessellatedPart] = [:]
+    @ObservationIgnored private var adoptingDelta = false
+    /// Part ids whose tessellation is cached (for tests and diagnostics).
+    var cachedPartIds: Set<String> { Set(partMeshCache.keys) }
     var undoStack: [UndoEntry] = []
     var redoStack: [UndoEntry] = []
     var documentDirty = false
@@ -1192,7 +1207,12 @@ final class EditorModel {
     /// Render an engine result: it is the document now.
     private func adopt(_ r: DocumentEngine.Result, reeval: Reeval) {
         engineState = r
+        if let changes = r.changes {
+            for id in changes.rebuild.union(changes.removed) { partMeshCache.removeValue(forKey: id) }
+            adoptingDelta = true
+        }
         documentJSON = r.document
+        adoptingDelta = false
         documentDirty = engine.map { $0.stateHash != savedHash } ?? true
         if let g = DocumentGraph.parse(r.document) {
             documentGraph = g
@@ -1990,12 +2010,8 @@ final class EditorModel {
     func reevalDocumentMeshes() -> [MeshResource]? {
         guard documentJSON != nil else { return nil }
         let plan = documentInstancingPlan()
-        guard let data = evalData(applying: plan) else { return nil }
         let start = Date()
-        let scene: OpaquePointer? = data.withUnsafeBytes {
-            vcad_scene_from_json($0.bindMemory(to: UInt8.self).baseAddress, data.count)
-        }
-        guard let scene else {
+        guard let parts = tessellateDocumentParts(plan: plan, dir: []) else {
             // The kernel refused the document. This used to return nil and
             // leave the app showing an empty viewport with a fully populated
             // feature tree — the Swift-side DAG parser is lenient, the kernel is
@@ -2004,8 +2020,6 @@ final class EditorModel {
             return nil
         }
         loadError = nil
-        defer { vcad_scene_free(scene) }
-        let count = vcad_scene_part_count(scene)
         var meshes: [MeshResource] = []
         var instancing: [PatternInstancing?] = []
         var picks: [PickMesh] = []
@@ -2013,15 +2027,10 @@ final class EditorModel {
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
         var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var tris = 0
-        for i in 0..<count {
-            let km = KernelMesh.fromView(vcad_scene_part_mesh(scene, i))
-            if km.isEmpty { continue }
-            var segs: [SIMD3<Float>] = []
-            if let eh = vcad_scene_part_edges(scene, i, Self.edgeAngleDeg) {
-                segs = EdgeOverlay.segments(fromView: vcad_edges_view(eh))
-                vcad_edges_free(eh)
-            }
-            meshes.append(km.resource(name: "part\(i)"))
+        for (i, part) in parts.enumerated() {
+            guard let part else { continue }
+            let km = part.mesh, segs = part.edges
+            meshes.append(part.resource)
             if let inst = plan[i] {
                 let agg = Self.aggregateInstances(km, edgeSegments: segs,
                                                   transforms: inst.transforms)
@@ -2049,6 +2058,62 @@ final class EditorModel {
         partCount = meshes.count
         sizeMM = hi - lo
         return meshes
+    }
+
+    /// One visible root's tessellation.
+    struct TessellatedPart {
+        let mesh: KernelMesh
+        let edges: [SIMD3<Float>]
+        let resource: MeshResource
+        /// Root-cache key (what a mesh bundle is written from).
+        let rootKey: String?
+    }
+
+    nonisolated private static func rootKey(_ scene: OpaquePointer, _ i: Int) -> String? {
+        guard let c = vcad_scene_root_key(scene, i) else { return nil }
+        defer { vcad_cam_free(c) }
+        return String(cString: c)
+    }
+
+    /// Tessellate the visible roots of the live document, index-aligned with
+    /// `documentGraph.visibleRoots` (nil = empty mesh). Parts still in
+    /// `partMeshCache` are reused; the kernel only evaluates the rest. Nil
+    /// when the kernel refuses the document.
+    private func tessellateDocumentParts(plan: [Int: PatternInstancing], dir: [UInt8]) -> [TessellatedPart?]? {
+        guard var json = documentJSON, let g = documentGraph else { return nil }
+        let partIds: [String?] = engine == nil ? g.visibleRoots.map { _ in nil }
+            : g.visibleRoots.map { engineState?.partId(forRootNode: $0.nodeId) }
+        let missing = partIds.indices.filter { partIds[$0].map { partMeshCache[$0] == nil } ?? true }
+        var out: [TessellatedPart?] = partIds.map { $0.flatMap { partMeshCache[$0] } }
+        guard !missing.isEmpty else { return out }
+        // Evaluate only the missing roots (pattern roots re-pointed at their
+        // seed, as `evalData` does).
+        let allRoots = json["roots"] as? [[String: Any]] ?? []
+        let visible = allRoots.filter { ($0["visible"] as? Bool) ?? true }
+        guard visible.count == partIds.count else { return nil }
+        json["roots"] = missing.map { i -> [String: Any] in
+            var r = visible[i]
+            if let inst = plan[i] { r["root"] = inst.seedNodeId }
+            return r
+        }
+        guard let data = DocEdit.serialize(json),
+              let scene = Self.evaluateScene(data: data, dir: dir) else { return nil }
+        defer { vcad_scene_free(scene) }
+        let count = vcad_scene_part_count(scene)
+        for (k, i) in missing.enumerated() where k < count {
+            let km = KernelMesh.fromView(vcad_scene_part_mesh(scene, k))
+            if km.isEmpty { out[i] = nil; continue }
+            var segs: [SIMD3<Float>] = []
+            if let eh = vcad_scene_part_edges(scene, k, Self.edgeAngleDeg) {
+                segs = EdgeOverlay.segments(fromView: vcad_edges_view(eh))
+                vcad_edges_free(eh)
+            }
+            let part = TessellatedPart(mesh: km, edges: segs, resource: km.resource(name: "part" + String(i)),
+                                       rootKey: Self.rootKey(scene, k))
+            out[i] = part
+            if let id = partIds[i] { partMeshCache[id] = part }
+        }
+        return out
     }
 
     // MARK: export
@@ -2596,6 +2661,10 @@ final class EditorModel {
         // A DXF is an outline to machine, not a document: it lands in
         // Manufacture as contour operations on the current part.
         if url.pathExtension.lowercased() == "dxf" {
+            guard Prefs.labs else {
+                loadError = "Opening DXF outlines needs the Manufacture workspace (Settings ▸ Labs)."
+                return
+            }
             workspace = .manufacture
             do {
                 try cnc.importOutline(try CNCOutline.parseDXF(String(contentsOf: url, encoding: .utf8), name: url.lastPathComponent))
@@ -3110,6 +3179,13 @@ final class EditorModel {
                 startBackgroundEvaluation(data: data, dir: dir)
                 return partialScene()
             }
+        } else if engine != nil, documentJSON != nil,
+                  ((documentJSON?["instances"] as? [Any])?.isEmpty ?? true),
+                  let parts = tessellateDocumentParts(plan: plan, dir: dir) {
+            // Engine-backed part document: only the parts the last deltas
+            // touched are re-tessellated.
+            loadError = nil
+            return sceneFromParts(parts, rootKeys: nil, start: start, plan: plan)
         } else {
             scene = Self.evaluateScene(data: data, dir: dir)
         }
@@ -3254,8 +3330,32 @@ final class EditorModel {
     /// document and AI-generated paths.
     private func sceneFromHandle(_ scene: OpaquePointer, start: Date,
                                  plan: [Int: PatternInstancing] = [:]) -> RenderScene {
-        clearAssembly()                      // part-mode scene: drop any resident assembly
         let count = vcad_scene_part_count(scene)
+        let parts: [TessellatedPart?] = (0..<count).map { i in
+            let km = KernelMesh.fromView(vcad_scene_part_mesh(scene, i))
+            if km.isEmpty { return nil }
+            // Feature edges for the CAD edge overlay (same index alignment).
+            var segs: [SIMD3<Float>] = []
+            if let eh = vcad_scene_part_edges(scene, i, Self.edgeAngleDeg) {
+                segs = EdgeOverlay.segments(fromView: vcad_edges_view(eh))
+                vcad_edges_free(eh)
+            }
+            return TessellatedPart(mesh: km, edges: segs, resource: km.resource(name: "part" + String(i)),
+                                   rootKey: Self.rootKey(scene, i))
+        }
+        let keys: [String] = (0..<count).compactMap { i in
+            guard let c = vcad_scene_root_key(scene, i) else { return nil }
+            defer { vcad_cam_free(c) }
+            return String(cString: c)
+        }
+        return sceneFromParts(parts, rootKeys: keys, start: start, plan: plan)
+    }
+
+    /// Gather a part-mode scene from per-root tessellations (index-aligned
+    /// with the evaluated roots; nil = empty).
+    private func sceneFromParts(_ parts: [TessellatedPart?], rootKeys: [String]?, start: Date,
+                                plan: [Int: PatternInstancing]) -> RenderScene {
+        clearAssembly()                      // part-mode scene: drop any resident assembly
         var meshes: [(MeshResource, NSColor)] = []
         var instancing: [PatternInstancing?] = []
         var picks: [PickMesh] = []
@@ -3263,16 +3363,10 @@ final class EditorModel {
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
         var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var tris = 0
-        for i in 0..<count {
-            let km = KernelMesh.fromView(vcad_scene_part_mesh(scene, i))
-            if km.isEmpty { continue }
-            // Feature edges for the CAD edge overlay (same index alignment).
-            var segs: [SIMD3<Float>] = []
-            if let eh = vcad_scene_part_edges(scene, i, Self.edgeAngleDeg) {
-                segs = EdgeOverlay.segments(fromView: vcad_edges_view(eh))
-                vcad_edges_free(eh)
-            }
-            meshes.append((km.resource(name: "part\(i)"), Self.partColors[i % Self.partColors.count]))
+        for (i, part) in parts.enumerated() {
+            guard let part else { continue }
+            let km = part.mesh, segs = part.edges
+            meshes.append((part.resource, Self.partColors[i % Self.partColors.count]))
             if let inst = plan[i] {
                 // Pattern root: the kernel returned the SEED (the eval doc was
                 // re-pointed) — aggregate picks/edges/bounds over the instances.
@@ -3299,11 +3393,7 @@ final class EditorModel {
         sceneGeneration &+= 1
         docPartEdges = edges
         docPartInstancing = instancing
-        lastRootKeys = (0..<count).compactMap { i in
-            guard let c = vcad_scene_root_key(scene, i) else { return nil }
-            defer { vcad_cam_free(c) }
-            return String(cString: c)
-        }
+        lastRootKeys = rootKeys ?? parts.compactMap { $0?.rootKey }
 
         solveMillis = Date().timeIntervalSince(start) * 1000
         triangleCount = tris
