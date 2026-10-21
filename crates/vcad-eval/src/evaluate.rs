@@ -170,10 +170,13 @@ fn evaluate_inner(
             }
         };
 
+    let mut solid_roots: Vec<NodeId> = Vec::new();
     for (idx, entry) in doc.roots.iter().enumerate() {
         if entry.visible == Some(false) {
             continue;
         }
+        // Every visible root pushes exactly one entry onto `solids` below.
+        solid_roots.push(entry.root);
 
         // Check for ImportedMesh chain
         if let Some(imported) = find_imported_mesh(entry.root, &doc.nodes) {
@@ -216,26 +219,30 @@ fn evaluate_inner(
             continue;
         }
 
-        // Incremental: an unchanged root reuses its solid and its mesh.
+        // Incremental: an unchanged root reuses its solid and its mesh. A
+        // peeled root caches its unplaced shape (`eval_root`'s subtree hash
+        // excludes the placement), so moving a part only re-places it.
         let root_hash = hashes.as_ref().and_then(|h| h.get(&eval_root).copied());
-        if placement.is_none() {
-            if let (Some(i), Some(h)) = (inc.as_deref_mut(), root_hash) {
-                if let (Some(Some(solid)), Some(mesh)) =
-                    (cache.get(&eval_root).cloned(), i.mesh(eval_root, h))
-                {
-                    parts.push(EvaluatedPart {
-                        mesh,
-                        material: entry.material.clone(),
-                        solid: Some(solid.clone()),
-                    });
-                    solids.push(Some(solid));
-                    landed(
-                        &parts,
-                        &mut root_keys,
-                        cache_key.as_ref().map(|k| k.0.clone()),
-                    );
-                    continue;
-                }
+        if let (Some(i), Some(h)) = (inc.as_deref_mut(), root_hash) {
+            if let (Some(Some(solid)), Some(mesh)) =
+                (cache.get(&eval_root).cloned(), i.mesh(eval_root, h))
+            {
+                let key = placement
+                    .is_none()
+                    .then(|| cache_key.as_ref().map(|k| k.0.clone()))
+                    .flatten();
+                let solid = match &placement {
+                    Some(t) => solid.apply_transform(t),
+                    None => solid,
+                };
+                parts.push(EvaluatedPart {
+                    mesh: place_mesh(mesh, placement.as_ref()),
+                    material: entry.material.clone(),
+                    solid: Some(solid.clone()),
+                });
+                solids.push(Some(solid));
+                landed(&parts, &mut root_keys, key);
+                continue;
             }
         }
 
@@ -273,9 +280,7 @@ fn evaluate_inner(
         match eval_outcome {
             Ok(Ok((mesh, solid))) => {
                 store(&cache_key, &mesh);
-                if let (true, Some(_), Some(i), Some(h)) =
-                    (placement.is_none(), &solid, inc.as_deref_mut(), root_hash)
-                {
+                if let (Some(_), Some(i), Some(h)) = (&solid, inc.as_deref_mut(), root_hash) {
                     i.put_mesh(eval_root, h, &mesh);
                 }
                 // A peeled root's key names the unplaced shape, which a mesh
@@ -479,6 +484,14 @@ fn evaluate_inner(
     // empty anyway, so skipping them is behavior-preserving.
     let mut clashes = Vec::new();
     let t_clash = clock.map(|c| c.now_ms());
+    // Incremental: a pair whose two roots are unchanged (fingerprints cover
+    // placement) reuses last evaluation's intersection.
+    let mut clash_prev = inc.as_deref_mut().map(|i| i.take_clashes());
+    let mut clash_next: HashMap<(u64, u64), Option<EvaluatedMesh>> = HashMap::new();
+    let pair_key = |i: usize, j: usize| -> Option<(u64, u64)> {
+        let h = hashes.as_ref()?;
+        Some((*h.get(solid_roots.get(i)?)?, *h.get(solid_roots.get(j)?)?))
+    };
     if !options.skip_clash_detection && solids.len() >= 2 {
         let boxes: Vec<Option<([f64; 3], [f64; 3])>> = solids
             .iter()
@@ -505,16 +518,31 @@ fn evaluate_inner(
                     continue;
                 }
                 if let (Some(a), Some(b)) = (&solids[i], &solids[j]) {
-                    let intersection = a.intersection(b);
-                    if !intersection.is_empty() {
-                        let tri = intersection.to_mesh(16);
-                        if !tri.vertices.is_empty() {
-                            clashes.push(tri_to_evaluated(&tri));
+                    let key = pair_key(i, j);
+                    let reused = match (&mut clash_prev, key) {
+                        (Some(prev), Some(k)) => prev.remove(&k),
+                        _ => None,
+                    };
+                    let clash = reused.unwrap_or_else(|| {
+                        let intersection = a.intersection(b);
+                        if intersection.is_empty() {
+                            return None;
                         }
+                        let tri = intersection.to_mesh(16);
+                        (!tri.vertices.is_empty()).then(|| tri_to_evaluated(&tri))
+                    });
+                    if let Some(m) = &clash {
+                        clashes.push(m.clone());
+                    }
+                    if let Some(k) = key {
+                        clash_next.insert(k, clash);
                     }
                 }
             }
         }
+    }
+    if let Some(i) = inc.as_deref_mut() {
+        i.put_clashes(clash_next);
     }
     let clash_ms = match (t_clash, clock) {
         (Some(t0), Some(c)) => c.now_ms() - t0,

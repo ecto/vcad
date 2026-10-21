@@ -26,6 +26,9 @@ use crate::EvaluatedMesh;
 pub struct IncrementalCache {
     solids: HashMap<NodeId, (u64, Option<Solid>)>,
     meshes: HashMap<NodeId, (u64, EvaluatedMesh)>,
+    /// Clash results between two roots, keyed by both roots' subtree
+    /// fingerprints (which cover their placement): `None` = no clash.
+    clashes: HashMap<(u64, u64), Option<EvaluatedMesh>>,
     stats: IncrementalStats,
 }
 
@@ -55,6 +58,17 @@ impl IncrementalCache {
     pub fn clear(&mut self) {
         self.solids.clear();
         self.meshes.clear();
+        self.clashes.clear();
+    }
+
+    /// Hand the clash results over to this evaluation (it puts back the
+    /// pairs it still tests, so unchanged pairs are never re-intersected).
+    pub(crate) fn take_clashes(&mut self) -> HashMap<(u64, u64), Option<EvaluatedMesh>> {
+        std::mem::take(&mut self.clashes)
+    }
+
+    pub(crate) fn put_clashes(&mut self, clashes: HashMap<(u64, u64), Option<EvaluatedMesh>>) {
+        self.clashes = clashes;
     }
 
     /// Move out the solids still valid under `hashes`, discarding stale ones.
@@ -156,4 +170,44 @@ fn fnv(mut h: u64, bytes: &[u8]) -> u64 {
         h = (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
     }
     h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evaluate::evaluate_document_incremental;
+    use crate::{evaluate_document, EvalOptions};
+
+    fn doc(x: f64) -> vcad_ir::Document {
+        vcad_ir::Document::from_json(&format!(
+            r#"{{"version":"0.1","nodes":{{
+            "1":{{"id":1,"op":{{"type":"Cube","size":{{"x":10,"y":10,"z":10}}}}}},
+            "2":{{"id":2,"op":{{"type":"Cube","size":{{"x":10,"y":10,"z":10}}}}}},
+            "3":{{"id":3,"op":{{"type":"Translate","child":2,"offset":{{"x":{x},"y":0,"z":0}}}}}},
+            "4":{{"id":4,"op":{{"type":"Cube","size":{{"x":4,"y":4,"z":4}}}}}},
+            "5":{{"id":5,"op":{{"type":"Translate","child":4,"offset":{{"x":2,"y":2,"z":8}}}}}}}},
+            "materials":{{}},"part_materials":{{}},
+            "roots":[{{"root":1,"material":"a"}},{{"root":3,"material":"b"}},{{"root":5,"material":"c"}}]}}"#
+        ))
+        .unwrap()
+    }
+
+    /// Clashes through a reused cache equal a cold evaluation's while one
+    /// part slides in and out of contact, and unchanged pairs are cached.
+    #[test]
+    fn incremental_clashes_match_cold() {
+        let opts = EvalOptions::default();
+        let mut inc = IncrementalCache::new();
+        for x in [5.0, 5.0, 8.0, 20.0, 20.0, 5.0] {
+            let d = doc(x);
+            let cold = evaluate_document(&d, &opts).unwrap();
+            let warm = evaluate_document_incremental(&d, &opts, &mut inc).unwrap();
+            assert_eq!(warm.clashes.len(), cold.clashes.len(), "x = {x}");
+            for (w, c) in warm.clashes.iter().zip(&cold.clashes) {
+                assert_eq!(w.positions, c.positions, "x = {x}");
+                assert_eq!(w.indices, c.indices, "x = {x}");
+            }
+        }
+        assert!(!inc.clashes.is_empty());
+    }
 }
