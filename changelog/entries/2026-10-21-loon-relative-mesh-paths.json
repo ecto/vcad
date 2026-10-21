@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-loon-relative-mesh-paths",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "fix",
+  "title": "Relative .loon paths no longer drop imported meshes",
+  "summary": "vcad commands given a .loon by relative path resolved import-mesh paths twice, so every STL part silently went missing from exports and renders.",
+  "features": ["loon", "mesh-import", "cli"]
+}
