@@ -6,7 +6,12 @@
  */
 import { beforeAll, describe, expect, it } from "vitest";
 import { EngineRefusal } from "../delta.js";
-import { DocumentEngineClient, inProcessTransport, type HostedEngineClass } from "../engine-host.js";
+import {
+  DocumentEngineClient,
+  inProcessTransport,
+  sharedEngineTransport,
+  type HostedEngineClass,
+} from "../engine-host.js";
 import { getKernelWasm } from "../wasm-singleton.js";
 
 let Engine: HostedEngineClass | undefined;
@@ -56,5 +61,26 @@ describe("DocumentEngineClient (in-process)", () => {
     expect(other.stateHash).toBe(client.stateHash);
     client.dispose();
     other.dispose();
+  });
+
+  it("resyncs a shared engine's view after direct mutations", async () => {
+    if (!hasDeltas()) {
+      if (process.env.CI) throw new Error("kernel WASM lacks applyDelta");
+      return;
+    }
+    const engine = new Engine!();
+    const client = new DocumentEngineClient(sharedEngineTransport(() => engine));
+    await client.init();
+    const a = await client.apply({ type: "add_feature", feature: { type: "Sphere", radius: 2 } });
+    // The owner mutates behind the client's back (the store's sync path).
+    engine.applyDelta(
+      JSON.stringify({ type: "add_feature", feature: { type: "Cube", size_x: 1, size_y: 1, size_z: 1 } }),
+    );
+    await client.apply({ type: "set_translation", id: a.createdFeatureId!, offset: [1, 2, 3] });
+    expect(client.state!.parts).toHaveLength(2);
+    expect(client.state).toEqual(await client.refresh());
+    client.dispose(); // must not free the owner's engine
+    expect(engine.stateHash()).toBe(client.stateHash);
+    engine.free();
   });
 });
