@@ -22,7 +22,7 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import type { Document, DocumentSource } from "@vcad/ir";
+import type { Document } from "@vcad/ir";
 import { documents } from "./session-core.js";
 
 /** SHA-256 (hex) of a source text — the same digest stored in `source.hash`. */
@@ -32,35 +32,6 @@ export function sourceHash(text: string): string {
 
 /** How many diverging tool names to remember; enough to explain, not a log. */
 const MAX_DIVERGED_BY = 8;
-
-/** Inputs `create_cad_loon` (or a file load) evaluated. */
-export interface LoonProvenance {
-  text: string;
-  modules?: Record<string, string>;
-  base_dir?: string;
-  path?: string;
-}
-
-/**
- * Record on `doc` the loon source it was evaluated from. Called at every
- * authoring entry point, so a document can always say what made it.
- */
-export function attachLoonSource(
-  doc: Document,
-  { text, modules, base_dir, path }: LoonProvenance,
-): void {
-  const source: DocumentSource = {
-    language: "loon",
-    text,
-    modules: modules && Object.keys(modules).length ? { ...modules } : {},
-    hash: sourceHash(text),
-    diverged: false,
-    diverged_by: [],
-  };
-  if (base_dir) source.base_dir = base_dir;
-  if (path) source.path = path;
-  doc.source = source;
-}
 
 /**
  * Mark a session's document as diverged from its stored source, naming the

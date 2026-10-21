@@ -50,9 +50,24 @@ pub fn discover_printers(timeout: Duration) -> Result<Vec<PrinterInfo>> {
         .map_err(|e| BambuError::DiscoveryError(e.to_string()))?;
 
     let mut printers = Vec::new();
-    let mut buf = [0u8; 2048];
+    collect(&socket, &mut printers)?;
 
-    // Receive responses
+    // Bambu printers also announce themselves with an SSDP NOTIFY to UDP
+    // 2021 every few seconds (what Bambu Studio listens for). The port may
+    // be taken by a running Bambu Studio; then we rely on M-SEARCH alone.
+    if let Ok(notify) = UdpSocket::bind("0.0.0.0:2021") {
+        notify
+            .set_read_timeout(Some(timeout))
+            .map_err(|e| BambuError::DiscoveryError(e.to_string()))?;
+        collect(&notify, &mut printers)?;
+    }
+
+    Ok(printers)
+}
+
+/// Drain SSDP datagrams from `socket` until it times out.
+fn collect(socket: &UdpSocket, printers: &mut Vec<PrinterInfo>) -> Result<()> {
+    let mut buf = [0u8; 2048];
     loop {
         match socket.recv_from(&mut buf) {
             Ok((len, addr)) => {
@@ -75,12 +90,10 @@ pub fn discover_printers(timeout: Duration) -> Result<Vec<PrinterInfo>> {
                 {
                     return Err(BambuError::DiscoveryError(e.to_string()));
                 }
-                break;
+                return Ok(());
             }
         }
     }
-
-    Ok(printers)
 }
 
 /// Parse an SSDP response into printer info.
@@ -100,10 +113,13 @@ fn parse_ssdp_response(response: &str, ip: IpAddr) -> Option<PrinterInfo> {
 
         if let Some(value) = line.strip_prefix("USN:") {
             // USN format: uuid:SERIAL::urn:bambulab-com:device:3dprinter:1
+            // M-SEARCH replies: `uuid:SERIAL::urn:...`; the printer's
+            // periodic NOTIFY on UDP 2021: bare `SERIAL`.
             let value = value.trim();
-            if let Some(uuid_part) = value.strip_prefix("uuid:") {
-                if let Some(sn) = uuid_part.split("::").next() {
-                    serial = Some(sn.trim().to_string());
+            let value = value.strip_prefix("uuid:").unwrap_or(value);
+            if let Some(sn) = value.split("::").next().map(str::trim) {
+                if !sn.is_empty() {
+                    serial = Some(sn.to_string());
                 }
             }
         } else if let Some(value) = line.strip_prefix("DevModel.bambu.com:") {
@@ -157,5 +173,17 @@ DevVersion.bambu.com: 01.07.00.00
         assert_eq!(info.model, "X1C");
         assert_eq!(info.name, "My Printer");
         assert_eq!(info.ip.to_string(), "192.168.1.100");
+    }
+
+    #[test]
+    fn parses_notify_with_bare_serial() {
+        let notify = "NOTIFY * HTTP/1.1\r\nHOST: 239.255.255.250:1990\r\n\
+NT: urn:bambulab-com:device:3dprinter:1\r\nUSN: 01P00A123456789\r\n\
+DevModel.bambu.com: C12\r\nDevName.bambu.com: p1s\r\n\r\n";
+        let ip: IpAddr = "10.0.0.7".parse().unwrap();
+        let info = parse_ssdp_response(notify, ip).unwrap();
+        assert_eq!(info.serial, "01P00A123456789");
+        assert_eq!(info.model, "C12");
+        assert_eq!(info.name, "p1s");
     }
 }

@@ -175,6 +175,12 @@ pub fn check_supported(opts: &RasterOptions, pr: &PhotorealOptions) -> Result<()
                     under an orthographic flag. Drop --ortho, or drop --gpu."
             .to_string());
     }
+    if pr.look.as_ref().is_some_and(|l| l.has_textures()) {
+        return Err("--gpu does not support textured materials (--look with a \
+                    texture): the GPU tracer shades flat materials only. Drop \
+                    the texture, or drop --gpu."
+            .to_string());
+    }
     if pr.backdrop == Backdrop::ShadowCatcher {
         return Err("--gpu does not support --backdrop shadow-catcher: the \
                     shadow catcher is a CPU integrator feature (a surface \
@@ -348,7 +354,8 @@ fn rasterize(
         return Err("no solids produced".to_string());
     }
     // `mesh_segments()` is Some here: --exact is refused above.
-    let objects = photoreal::build_objects(&solids, pr.mesh_segments())?;
+    let mut objects = photoreal::build_objects(&solids, pr.mesh_segments())?;
+    photoreal::apply_look(&mut objects, &solids, pr);
     let framing = photoreal::frame_scene(&solids, &objects, opts, pr)?;
     let scene = photoreal::dress_scene(objects, &framing, pr)?;
 
@@ -448,7 +455,7 @@ fn rasterize(
     }
 
     let film = out.to_film();
-    let rgba = film.to_srgb8(pr.exposure, png && pr.backdrop != Backdrop::Studio);
+    let rgba = film.to_srgb8(pr.exposure, png && !pr.backdrop.is_opaque());
 
     let n = canvas.len();
     let mut rgb = vec![0u8; n * 3];

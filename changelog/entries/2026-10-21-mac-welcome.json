@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-mac-welcome",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "Mac app welcome window with samples and a loon tutorial",
+  "summary": "First launch opens a welcome window with four sample projects bundled in the app and a short tutorial, “your first part in loon”. Help ▸ Welcome to vcad reopens it.",
+  "features": ["desktop", "mac", "onboarding", "loon"]
+}

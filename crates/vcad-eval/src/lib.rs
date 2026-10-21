@@ -25,6 +25,7 @@ pub mod kinematics;
 pub mod mesh_inline;
 pub mod pcb_preview;
 pub mod placement;
+pub mod provenance;
 pub mod sensitivity;
 pub mod sheet_build;
 pub mod step_doc;

@@ -837,6 +837,15 @@ struct ReleasedOverlayView: View {
                     .modifier(ChromeRegion(key: "gripper"))
             }
         }
+        .overlay(alignment: .bottom) {
+            // A loon program that failed to compile: where, and a jump there.
+            if let d = model.loonDiagnostic {
+                LoonDiagnosticBanner(diagnostic: d, keptLastGood: model.usesDocumentTree)
+                    .padding(.bottom, Theme.Space.l)
+                    .transition(.opacity)
+                    .modifier(ChromeRegion(key: "loonDiagnostic"))
+            }
+        }
         .overlay(alignment: .top) {
             if model.solving {
                 HStack(spacing: Theme.Space.s) {

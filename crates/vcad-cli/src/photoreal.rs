@@ -42,6 +42,12 @@ pub struct PhotorealRequest {
     pub focus_part: Option<String>,
     /// Light rig (`studio` or `warm-studio`).
     pub lighting: vcad_render::photoreal::Lighting,
+    /// Seamless cyclorama backdrop instead of the infinite floor.
+    pub cyclorama: bool,
+    /// Fraction of the frame the framed subject fills (default 0.6).
+    pub fill: Option<f64>,
+    /// Render-time material overrides (`--look`).
+    pub look: Option<std::sync::Arc<vcad_render::look::ResolvedLook>>,
 }
 
 /// Parse `WxH` (e.g. `1600x1000`).
@@ -82,6 +88,7 @@ fn options(req: &PhotorealRequest) -> (RasterOptions, PhotorealOptions) {
         size_px: req.width,
         height_px: Some(req.height),
         focus: req.focus_part.clone(),
+        fill_frac: req.fill.unwrap_or(RasterOptions::default().fill_frac),
         ..RasterOptions::default()
     };
     let pr = PhotorealOptions {
@@ -94,8 +101,13 @@ fn options(req: &PhotorealRequest) -> (RasterOptions, PhotorealOptions) {
         orthographic: false,
         aperture_frac: req.aperture,
         focus_dist: req.focus_dist,
-        backdrop: Backdrop::Studio,
+        backdrop: if req.cyclorama {
+            Backdrop::Cyclorama
+        } else {
+            Backdrop::Studio
+        },
         lighting: req.lighting,
+        look: req.look.clone(),
         seed: req.seed,
         // The GPU tracer reads back radiance only, so the guided denoiser has
         // nothing to steer by; the CPU path keeps it.
@@ -109,13 +121,16 @@ fn options(req: &PhotorealRequest) -> (RasterOptions, PhotorealOptions) {
 /// Render raw `.vcad` JSON to an encoded image (PNG unless `jpeg`).
 pub fn render_bytes(raw_vcad: &str, req: &PhotorealRequest, jpeg: bool) -> Result<Vec<u8>> {
     let (ro, pr) = options(req);
-    // The GPU camera is a pinhole; depth of field is a CPU-integrator
-    // feature, so an aperture routes there rather than being refused.
-    if !req.cpu && req.aperture > 0.0 {
+    // The GPU camera is a pinhole and shades flat materials only; depth of
+    // field and textures are CPU-integrator features, so they route there
+    // rather than being refused.
+    let textured = req.look.as_ref().is_some_and(|l| l.has_textures());
+    if !req.cpu && (req.aperture > 0.0 || textured) {
         let cpu = PhotorealRequest {
             cpu: true,
             ..req.clone()
         };
+        FELL_BACK_TO_CPU.store(true, std::sync::atomic::Ordering::Relaxed);
         return render_bytes(raw_vcad, &cpu, jpeg);
     }
     let out = if req.cpu {
@@ -230,6 +245,9 @@ mod tests {
             focus_dist: None,
             focus_part: None,
             lighting: Default::default(),
+            cyclorama: false,
+            look: None,
+            fill: None,
         }
     }
 

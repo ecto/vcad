@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-mac-loon-loop",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "Mac app: loon errors inline, last good model kept",
+  "summary": "Open a .loon file or project folder and every save rebuilds; a broken edit shows file:line with Go to Line and keeps the last good model on screen. Module edits rebuild too.",
+  "features": ["desktop", "mac", "loon"]
+}
