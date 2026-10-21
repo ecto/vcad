@@ -185,7 +185,6 @@ enum Prefs {
     static let gridKey = "vcad.prefs.grid"
     static let triadKey = "vcad.prefs.triad"
     static let presentationKey = "vcad.prefs.presentation"
-    static let labsKey = "vcad.prefs.labs"
 
     private static var defaults: UserDefaults { .standard }
     private static func bool(_ key: String, default value: Bool) -> Bool {
@@ -202,9 +201,6 @@ enum Prefs {
     static var showsTriad: Bool { bool(triadKey, default: true) }
     /// Open new instances in a window rather than released over the desktop.
     static var opensInWindow: Bool { bool(presentationKey, default: false) }
-    /// Labs: the Electronics and Manufacture (CNC Studio) workspaces and
-    /// simulation. Off by default; v1 ships Design + Agent.
-    static var labs: Bool { bool(labsKey, default: false) }
 }
 
 /// What the app remembers about its layout between launches: the active

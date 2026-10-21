@@ -9,7 +9,6 @@ private let cncAccent = Color.accentColor
 struct WorkspaceHeader: View {
     @Bindable var model: EditorModel
     @State private var connectionShown = false
-    @AppStorage(Prefs.labsKey) private var labs = false
     private var cnc: CNCWorkspace { model.cnc }
     var body: some View {
         @Bindable var cnc = cnc
@@ -18,15 +17,11 @@ struct WorkspaceHeader: View {
                 HStack {
                     HStack(spacing: 14) {
                         BrandMark().accessibilityLabel("vcad")
-                            // Labs switched off while in a Labs workspace: back to Design.
-                            .onChange(of: labs, initial: true) { if !labs, model.workspace != .design { model.workspace = .design } }
-                        if labs {
-                            Picker("Workspace", selection: $model.workspace) {
-                                ForEach(Workspace.available) { Label($0.label, systemImage: $0.symbol).tag($0) }
-                            }.pickerStyle(.menu).labelsHidden().fixedSize()
-                                .accessibilityLabel("Workspace")
-                                .help("Design, Electronics, or Manufacture (⌃⌘1–3)")
-                        }
+                        Picker("Workspace", selection: $model.workspace) {
+                            ForEach(Workspace.allCases) { Label($0.label, systemImage: $0.symbol).tag($0) }
+                        }.pickerStyle(.menu).labelsHidden().fixedSize()
+                            .accessibilityLabel("Workspace")
+                            .help("Design, Electronics, or Manufacture (⌃⌘1–3)")
                     }
                     Spacer(minLength: 0)
                     HStack(spacing: 14) {

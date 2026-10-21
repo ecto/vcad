@@ -790,7 +790,7 @@ struct ReleasedOverlayView: View {
                     PoseStudioWindow(model: model)
                         .modifier(ChromeRegion(key: "pose"))
                 }
-                if model.showsSimulation && !model.hasPoseStudio {
+                if model.canSimulate && !model.hasPoseStudio {
                     SimulationWindow(model: model)
                         .modifier(ChromeRegion(key: "sim"))
                 }
@@ -893,7 +893,7 @@ struct ReleasedOverlayView: View {
                         PlaybackBar(model: model)
                             .modifier(ChromeRegion(key: "playback"))
                     }
-                    if model.showsSimulation {
+                    if model.canSimulate {
                         SimBar(model: model)
                             .modifier(ChromeRegion(key: "simBar"))
                     }
