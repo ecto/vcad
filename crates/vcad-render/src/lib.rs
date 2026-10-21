@@ -1299,7 +1299,7 @@ fn evaluate_assembly_instances(
 /// Resolve a `focus` query to a per-solid mask (case-insensitive match
 /// against each solid's labels: root node name, instance id/name, part-def
 /// id). Errors with the available labels when nothing matches.
-fn focus_mask(scene: &[SceneSolid], focus: &str) -> Result<Vec<bool>, String> {
+pub(crate) fn focus_mask(scene: &[SceneSolid], focus: &str) -> Result<Vec<bool>, String> {
     let want = focus.trim().to_ascii_lowercase();
     let mask: Vec<bool> = scene
         .iter()

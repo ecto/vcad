@@ -310,6 +310,31 @@ pub(crate) fn object_corners_with(
         .collect()
 }
 
+/// Frame the scene, honouring `opts.focus`: the camera fits the focused
+/// part(s), while the studio floor stays under the *whole* scene so the rest
+/// of the document (a desk under a product, say) is never cut by it.
+pub(crate) fn frame_scene(
+    solids: &[crate::SceneSolid],
+    objects: &[Object],
+    opts: &RasterOptions,
+    pr: &PhotorealOptions,
+) -> Result<Framing, String> {
+    let all: Vec<[f64; 3]> = objects.iter().flat_map(object_corners).collect();
+    let Some(focus) = opts.focus.as_deref() else {
+        return frame_view(&all, opts, pr);
+    };
+    let mask = crate::focus_mask(solids, focus)?;
+    let focused: Vec<[f64; 3]> = objects
+        .iter()
+        .zip(&mask)
+        .filter(|(_, &m)| m)
+        .flat_map(|(o, _)| object_corners(o))
+        .collect();
+    let mut framing = frame_view(&focused, opts, pr)?;
+    framing.floor_z = all.iter().map(|c| c[2]).fold(f64::INFINITY, f64::min);
+    Ok(framing)
+}
+
 /// Camera, canvas, and the floor height a set of world points implies.
 pub(crate) struct Framing {
     pub(crate) camera: Camera,
@@ -524,8 +549,7 @@ fn rasterize(
         return Err("no solids produced".to_string());
     }
     let objects = build_objects(&solids, pr.mesh_segments())?;
-    let corners: Vec<[f64; 3]> = objects.iter().flat_map(object_corners).collect();
-    let framing = frame_view(&corners, opts, pr)?;
+    let framing = frame_scene(&solids, &objects, opts, pr)?;
     let scene = dress_scene(objects, &framing, pr)?;
     Ok(trace_frame(&scene, &framing, pr, png))
 }
@@ -813,6 +837,42 @@ mod tests {
     /// solid without an analytic BRep, so a mesh part beside a BRep part
     /// was silently omitted. Asserts the mesh actually covers pixels, not
     /// merely that the render succeeded.
+    /// `--focus` frames the focused part's bounds, while the studio floor
+    /// still sits under the whole scene (here, a slab under a small cube).
+    #[test]
+    fn focus_frames_part_but_floor_spans_scene() {
+        let vcad = r#"{ "version": "0.1", "nodes": {
+            "1": { "id": 1, "name": "slab", "op": { "type": "Cube", "size": { "x": 200, "y": 200, "z": 5 } } },
+            "2": { "id": 2, "name": "small_raw", "op": { "type": "Cube", "size": { "x": 10, "y": 10, "z": 10 } } },
+            "3": { "id": 3, "name": "small", "op": { "type": "Translate", "child": 2, "offset": { "x": 95, "y": 95, "z": 5 } } } },
+          "materials": {}, "part_materials": {},
+          "roots": [{ "root": 1, "material": "default" }, { "root": 3, "material": "default" }] }"#;
+        let solids = crate::evaluate_vcad(vcad).unwrap();
+        let pr = PhotorealOptions::default();
+        let objects = build_objects(&solids, pr.mesh_segments()).unwrap();
+        let whole = frame_scene(&solids, &objects, &RasterOptions::default(), &pr).unwrap();
+        let opts = RasterOptions {
+            focus: Some("small".into()),
+            ..RasterOptions::default()
+        };
+        let focused = frame_scene(&solids, &objects, &opts, &pr).unwrap();
+
+        // Camera fits the cube (half-diagonal ~8.7mm), not the slab (~141mm).
+        assert!(focused.radius < 10.0, "focused radius {}", focused.radius);
+        assert!(whole.radius > 100.0, "whole radius {}", whole.radius);
+        let c = focused.center;
+        assert!((c.x - 100.0).abs() < 1.0 && (c.y - 100.0).abs() < 1.0 && (c.z - 10.0).abs() < 1.0);
+        // Floor stays at the slab's underside, not the cube's base (z = 5).
+        assert!(focused.floor_z.abs() < 1e-6, "floor_z {}", focused.floor_z);
+        assert!(whole.floor_z.abs() < 1e-6);
+        // An unknown focus is an error, not a silent whole-scene frame.
+        let bad = RasterOptions {
+            focus: Some("nope".into()),
+            ..RasterOptions::default()
+        };
+        assert!(frame_scene(&solids, &objects, &bad, &pr).is_err());
+    }
+
     #[test]
     fn renders_both_brep_and_mesh_parts() {
         // Cube at x 0..20, raw-triangle box at x 60..80 — a 40mm gap, so
