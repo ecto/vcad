@@ -113,6 +113,9 @@ pub struct PhotorealOptions {
     pub backdrop: Backdrop,
     /// Light rig used with the analytic gradient environment.
     pub lighting: Lighting,
+    /// Render-time material overrides (`--look`), applied over the
+    /// document's own materials.
+    pub look: Option<Arc<crate::look::ResolvedLook>>,
     /// Random seed, for reproducible noise.
     pub seed: u64,
     /// Run the edge-aware à-trous denoiser over the film before tonemapping.
@@ -204,6 +207,7 @@ impl Default for PhotorealOptions {
             focus_dist: None,
             backdrop: Backdrop::Studio,
             lighting: Lighting::Studio,
+            look: None,
             seed: 0x5eed_1234,
             denoise: true,
             adaptive: true,
@@ -256,6 +260,24 @@ pub fn render_photoreal_png_str(
 /// builds fan out over rayon. Results are re-zipped with `solids` afterwards,
 /// so object order — and therefore the untraceable-part diagnostics — is
 /// unchanged from the serial version.
+/// Re-dress built objects with the `--look` overrides, if any. `objects` is
+/// index-aligned with `solids` (see [`build_objects`]).
+pub(crate) fn apply_look(
+    objects: &mut [Object],
+    solids: &[crate::SceneSolid],
+    pr: &PhotorealOptions,
+) {
+    let Some(look) = &pr.look else {
+        return;
+    };
+    for (o, s) in objects.iter_mut().zip(solids) {
+        let name = s.material.as_ref().map(|m| m.name.as_str());
+        let (pbr, tex) = look.apply(o.material, name, &s.labels);
+        o.material = pbr;
+        o.texture = tex;
+    }
+}
+
 pub(crate) fn build_objects(
     solids: &[crate::SceneSolid],
     mesh_segments: Option<u32>,
@@ -784,7 +806,8 @@ fn rasterize(
     if solids.is_empty() {
         return Err("no solids produced".to_string());
     }
-    let objects = build_objects(&solids, pr.mesh_segments())?;
+    let mut objects = build_objects(&solids, pr.mesh_segments())?;
+    apply_look(&mut objects, &solids, pr);
     let framing = frame_scene(&solids, &objects, opts, pr)?;
     let scene = dress_scene(objects, &framing, pr)?;
     Ok(trace_frame(&scene, &framing, pr, png))

@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-photoreal-look-textures",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "Material looks and wood/fabric textures in photoreal",
+  "summary": "--look applies render-time material overrides by material or part (colours, roughness, emission) plus procedural oak, fabric and triplanar image textures.",
+  "features": ["photoreal", "render", "materials"]
+}
