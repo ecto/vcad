@@ -40,6 +40,8 @@ pub struct PhotorealRequest {
     pub focus_dist: Option<f64>,
     /// Frame (and so focus) on this part instead of the whole document.
     pub focus_part: Option<String>,
+    /// Light rig (`studio` or `warm-studio`).
+    pub lighting: vcad_render::photoreal::Lighting,
 }
 
 /// Parse `WxH` (e.g. `1600x1000`).
@@ -93,6 +95,7 @@ fn options(req: &PhotorealRequest) -> (RasterOptions, PhotorealOptions) {
         aperture_frac: req.aperture,
         focus_dist: req.focus_dist,
         backdrop: Backdrop::Studio,
+        lighting: req.lighting,
         seed: req.seed,
         // The GPU tracer reads back radiance only, so the guided denoiser has
         // nothing to steer by; the CPU path keeps it.
@@ -226,6 +229,7 @@ mod tests {
             aperture: 0.0,
             focus_dist: None,
             focus_part: None,
+            lighting: Default::default(),
         }
     }
 

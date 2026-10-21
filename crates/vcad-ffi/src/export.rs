@@ -387,6 +387,7 @@ fn options(
         fov_deg: 34.0,
         orthographic: false,
         aperture_frac: 0.0,
+        focus_dist: None,
         backdrop: vcad_render::photoreal::Backdrop::Studio,
         seed: 0x5eed_1234,
         denoise: cpu,
