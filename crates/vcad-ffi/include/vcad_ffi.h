@@ -31,6 +31,19 @@ char *vcad_engine_apply(VcadEngine *engine, const char *command_json);
 char *vcad_engine_apply_tool(VcadEngine *engine, const char *tool, const char *args_json);
 /* Deterministic state fingerprint (16 hex digits); free with vcad_engine_string_free. */
 char *vcad_engine_state_hash(const VcadEngine *engine);
+/* Current state as an ok envelope; free with vcad_engine_string_free. */
+char *vcad_engine_state(const VcadEngine *engine);
+/* Replace the document with an IR Document JSON (a .vcad file), fresh undo
+ * history. Returns the state envelope; null (engine untouched) when the JSON
+ * is not an IR document. */
+char *vcad_engine_load_ir(VcadEngine *engine, const char *ir_json);
+/* Snapshot document + undo/redo history; free with vcad_engine_bytes_free. */
+uint8_t *vcad_engine_save(const VcadEngine *engine, size_t *out_len);
+void vcad_engine_bytes_free(uint8_t *bytes, size_t len);
+/* Restore a vcad_engine_save snapshot; state envelope, or null on bad bytes. */
+char *vcad_engine_restore(VcadEngine *engine, const uint8_t *bytes, size_t len);
+bool vcad_engine_can_undo(const VcadEngine *engine);
+bool vcad_engine_can_redo(const VcadEngine *engine);
 void vcad_engine_string_free(char *json);
 void vcad_engine_free(VcadEngine *engine);
 

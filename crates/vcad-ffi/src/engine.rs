@@ -103,6 +103,124 @@ pub extern "C" fn vcad_engine_state_hash(engine: *const VcadEngine) -> *mut c_ch
     CString::new(engine.api.state_hash()).map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// Current state as an `ok` result envelope (owned; free with
+/// `vcad_engine_string_free`). Hosts call this after load/restore to render.
+#[no_mangle]
+pub extern "C" fn vcad_engine_state(engine: *const VcadEngine) -> *mut c_char {
+    crate::err::clear_error();
+    if engine.is_null() {
+        crate::err::set_error("vcad_engine_state: null engine");
+        return std::ptr::null_mut();
+    }
+    let engine = unsafe { &*engine };
+    owned(engine.api.state_envelope())
+}
+
+/// Replace the engine's document with an IR `Document` JSON (a `.vcad`
+/// file's contents), starting a fresh undo history. Returns the state
+/// envelope, or null (see `vcad_last_error`) when the JSON isn't an IR
+/// document — in which case the engine is left untouched.
+#[no_mangle]
+pub extern "C" fn vcad_engine_load_ir(
+    engine: *mut VcadEngine,
+    ir_json: *const c_char,
+) -> *mut c_char {
+    crate::err::clear_error();
+    if engine.is_null() || ir_json.is_null() {
+        crate::err::set_error("vcad_engine_load_ir: null argument");
+        return std::ptr::null_mut();
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let json = unsafe { CStr::from_ptr(ir_json) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let engine = unsafe { &mut *engine };
+        let replica = engine.api.crdt().replica_id();
+        engine.api = DocumentApi::from_ir(json, replica)?;
+        Ok::<_, String>(engine.api.state_envelope())
+    }));
+    finish(result, "vcad_engine_load_ir")
+}
+
+/// Snapshot the whole engine state (document + undo/redo history) as
+/// bytes. Writes the length to `out_len`; free with `vcad_engine_bytes_free`.
+#[no_mangle]
+pub extern "C" fn vcad_engine_save(engine: *const VcadEngine, out_len: *mut usize) -> *mut u8 {
+    crate::err::clear_error();
+    if engine.is_null() || out_len.is_null() {
+        crate::err::set_error("vcad_engine_save: null argument");
+        return std::ptr::null_mut();
+    }
+    let engine = unsafe { &*engine };
+    let bytes = engine.api.save().into_boxed_slice();
+    unsafe { *out_len = bytes.len() };
+    Box::into_raw(bytes).cast::<u8>()
+}
+
+/// Free bytes returned by `vcad_engine_save`.
+#[no_mangle]
+pub extern "C" fn vcad_engine_bytes_free(bytes: *mut u8, len: usize) {
+    if !bytes.is_null() {
+        unsafe {
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                bytes, len,
+            )))
+        };
+    }
+}
+
+/// Restore a `vcad_engine_save` snapshot (document + history). Returns the
+/// state envelope, or null on bad bytes (engine untouched).
+#[no_mangle]
+pub extern "C" fn vcad_engine_restore(
+    engine: *mut VcadEngine,
+    bytes: *const u8,
+    len: usize,
+) -> *mut c_char {
+    crate::err::clear_error();
+    if engine.is_null() || bytes.is_null() {
+        crate::err::set_error("vcad_engine_restore: null argument");
+        return std::ptr::null_mut();
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let data = unsafe { std::slice::from_raw_parts(bytes, len) };
+        let engine = unsafe { &mut *engine };
+        engine.api.restore_snapshot(data)?;
+        Ok::<_, String>(engine.api.state_envelope())
+    }));
+    finish(result, "vcad_engine_restore")
+}
+
+/// Whether `{"type":"undo"}` would succeed.
+#[no_mangle]
+pub extern "C" fn vcad_engine_can_undo(engine: *const VcadEngine) -> bool {
+    !engine.is_null() && unsafe { &*engine }.api.can_undo()
+}
+
+/// Whether `{"type":"redo"}` would succeed.
+#[no_mangle]
+pub extern "C" fn vcad_engine_can_redo(engine: *const VcadEngine) -> bool {
+    !engine.is_null() && unsafe { &*engine }.api.can_redo()
+}
+
+fn owned(s: String) -> *mut c_char {
+    CString::new(s).map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
+fn finish(result: std::thread::Result<Result<String, String>>, what: &str) -> *mut c_char {
+    match result {
+        Ok(Ok(out)) => owned(out),
+        Ok(Err(e)) => {
+            crate::err::set_error(format!("{what}: {e}"));
+            std::ptr::null_mut()
+        }
+        Err(_) => {
+            crate::err::set_error(format!("{what} panicked"));
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// Free a string returned by `vcad_engine_apply` / `vcad_engine_apply_tool`.
 #[no_mangle]
 pub extern "C" fn vcad_engine_string_free(value: *mut c_char) {
@@ -171,6 +289,75 @@ mod tests {
             seen += 1;
         }
         assert!(seen > 0);
+    }
+
+    fn apply(engine: *mut VcadEngine, json: &str) -> serde_json::Value {
+        let c = CString::new(json).unwrap();
+        serde_json::from_str(&take(vcad_engine_apply(engine, c.as_ptr()))).unwrap()
+    }
+
+    const IR: &str = r#"{"version":"0.1","nodes":{"1":{"id":1,"name":"Box","op":{"type":"Cube","size":{"x":10,"y":20,"z":30}}}},"materials":{},"part_materials":{},"roots":[{"root":1,"material":"steel"}]}"#;
+
+    #[test]
+    fn load_ir_starts_fresh_history_and_maps_part_ids() {
+        let engine = vcad_engine_new(3);
+        apply(
+            engine,
+            r#"{"type":"add_feature","feature":{"type":"Sphere","radius":1}}"#,
+        );
+        assert!(vcad_engine_can_undo(engine));
+        let ir = CString::new(IR).unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&take(vcad_engine_load_ir(engine, ir.as_ptr()))).unwrap();
+        assert_eq!(v["ok"], true);
+        assert!(!vcad_engine_can_undo(engine) && !vcad_engine_can_redo(engine));
+        let doc = &v["result"]["document"];
+        let roots = doc["roots"].as_array().unwrap();
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0]["material"], "steel");
+        let root = roots[0]["root"].to_string();
+        assert!(
+            doc["partIds"][&root].as_str().is_some(),
+            "root must map to a stable part id: {doc}"
+        );
+        // Bad JSON fails closed and leaves the document alone.
+        let bad = CString::new(r#"{"nope":1}"#).unwrap();
+        assert!(vcad_engine_load_ir(engine, bad.as_ptr()).is_null());
+        let s: serde_json::Value = serde_json::from_str(&take(vcad_engine_state(engine))).unwrap();
+        assert_eq!(
+            s["result"]["document"]["roots"].as_array().unwrap().len(),
+            1
+        );
+        vcad_engine_free(engine);
+    }
+
+    #[test]
+    fn save_restore_round_trips_document_and_history() {
+        let engine = vcad_engine_new(4);
+        apply(
+            engine,
+            r#"{"type":"add_feature","feature":{"type":"Cube","size_x":1,"size_y":1,"size_z":1}}"#,
+        );
+        let hash = take(vcad_engine_state_hash(engine));
+        let mut len = 0usize;
+        let bytes = vcad_engine_save(engine, &mut len);
+        assert!(!bytes.is_null() && len > 0);
+        apply(
+            engine,
+            r#"{"type":"add_feature","feature":{"type":"Sphere","radius":2}}"#,
+        );
+        assert_ne!(take(vcad_engine_state_hash(engine)), hash);
+        let out = take(vcad_engine_restore(engine, bytes, len));
+        vcad_engine_bytes_free(bytes, len);
+        assert!(out.contains(r#""ok":true"#));
+        assert_eq!(take(vcad_engine_state_hash(engine)), hash);
+        // History came back with the snapshot: the cube add is undoable.
+        assert!(vcad_engine_can_undo(engine));
+        assert_eq!(apply(engine, r#"{"type":"undo"}"#)["ok"], true);
+        let junk = [1u8, 2, 3];
+        assert!(vcad_engine_restore(engine, junk.as_ptr(), junk.len()).is_null());
+        assert!(!vcad_engine_can_undo(std::ptr::null()));
+        vcad_engine_free(engine);
     }
 
     #[test]

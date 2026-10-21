@@ -20,7 +20,7 @@ final class DocumentEngineTests: XCTestCase {
         XCTAssertThrowsError(try engine.apply(["type": "delete_feature", "id": "nope"])) { error in
             XCTAssertEqual((error as? DocumentEngine.Refusal)?.kind, "unknown_id")
         }
-        XCTAssertThrowsError(try engine.applyTool("rotate", [:])) { error in
+        XCTAssertThrowsError(try engine.applyTool("place", [:])) { error in
             XCTAssertEqual((error as? DocumentEngine.Refusal)?.kind, "unsupported")
         }
     }
