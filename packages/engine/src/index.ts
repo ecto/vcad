@@ -116,6 +116,27 @@ export {
   stateFromEnvelope,
 } from "./delta.js";
 export type { DeltaChanges, EngineState } from "./delta.js";
+export {
+  DocumentEngineClient,
+  EngineHostError,
+  handleEngineRequest,
+  inProcessTransport,
+  workerTransport,
+} from "./engine-host.js";
+export type {
+  CommandOutcome,
+  EngineHostState,
+  EngineRequest,
+  EngineResponse,
+  EngineTransport,
+  HostedEngine,
+  HostedEngineClass,
+} from "./engine-host.js";
+
+/** Spawn the document-engine worker (browser only). */
+export function createEngineWorker(): Worker {
+  return new Worker(new URL("./engine-worker.js", import.meta.url), { type: "module" });
+}
 export { MeshCache } from "./mesh-cache.js";
 export { DependencyGraph } from "./dependency-graph.js";
 export type { EvaluateOptions } from "./evaluate.js";
