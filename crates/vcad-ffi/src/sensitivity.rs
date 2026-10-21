@@ -142,12 +142,20 @@ mod tests {
 
     #[test]
     fn single_primitive_plate() {
-        let doc = vcad_loon::eval_vcad("[defparam t 5.0]\n[root [cube 40 20 t] \"aluminum\"]", None).unwrap();
+        let doc =
+            vcad_loon::eval_vcad("[defparam t 5.0]\n[root [cube 40 20 t] \"aluminum\"]", None)
+                .unwrap();
         let out = document_sensitivity(&doc, 2700.0);
         let part = &out["parameters"][0]["parts"][0];
         assert!(out["parameters"][0]["error"].is_null(), "{out}");
-        assert!((part["d_volume"].as_f64().unwrap() - 800.0).abs() < 8.0, "{out}");
-        assert!((part["d_centroid"][2].as_f64().unwrap() - 0.5).abs() < 0.02, "{out}");
+        assert!(
+            (part["d_volume"].as_f64().unwrap() - 800.0).abs() < 8.0,
+            "{out}"
+        );
+        assert!(
+            (part["d_centroid"][2].as_f64().unwrap() - 0.5).abs() < 0.02,
+            "{out}"
+        );
     }
 
     #[test]
