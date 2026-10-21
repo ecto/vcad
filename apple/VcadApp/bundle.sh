@@ -63,6 +63,13 @@ fi
 mkdir -p "$app/Contents/Frameworks"
 ditto "$bin_dir/Sparkle.framework" "$app/Contents/Frameworks/Sparkle.framework"
 
+# Sample projects for the welcome window (symlinks in the checkout are
+# copied as the files they point at).
+if [ -f "$here/Samples/samples.json" ]; then
+  mkdir -p "$app/Contents/Resources/samples"
+  cp -RL "$here/Samples/." "$app/Contents/Resources/samples/"
+fi
+
 # App + document icons, drawn by the app's own icon script when missing.
 if [ ! -f "$here/dist/AppIcon.icns" ]; then
   swift "$here/make-icon.swift" "$here/dist" >/dev/null 2>&1 || echo "(icon generation skipped)"

@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-photoreal-cyclorama",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "Seamless cyclorama backdrop for photoreal renders",
+  "summary": "--backdrop cyclorama (vcad render --cyclorama) puts the subject on a matte floor that curves into a back wall, with no horizon line or edge in frame.",
+  "features": ["photoreal", "render"]
+}

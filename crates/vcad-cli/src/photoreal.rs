@@ -42,6 +42,8 @@ pub struct PhotorealRequest {
     pub focus_part: Option<String>,
     /// Light rig (`studio` or `warm-studio`).
     pub lighting: vcad_render::photoreal::Lighting,
+    /// Seamless cyclorama backdrop instead of the infinite floor.
+    pub cyclorama: bool,
 }
 
 /// Parse `WxH` (e.g. `1600x1000`).
@@ -94,7 +96,11 @@ fn options(req: &PhotorealRequest) -> (RasterOptions, PhotorealOptions) {
         orthographic: false,
         aperture_frac: req.aperture,
         focus_dist: req.focus_dist,
-        backdrop: Backdrop::Studio,
+        backdrop: if req.cyclorama {
+            Backdrop::Cyclorama
+        } else {
+            Backdrop::Studio
+        },
         lighting: req.lighting,
         seed: req.seed,
         // The GPU tracer reads back radiance only, so the guided denoiser has
@@ -230,6 +236,7 @@ mod tests {
             focus_dist: None,
             focus_part: None,
             lighting: Default::default(),
+            cyclorama: false,
         }
     }
 

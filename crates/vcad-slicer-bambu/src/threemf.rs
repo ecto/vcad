@@ -23,6 +23,10 @@ pub struct ThreeMfModel {
     /// When present, the output becomes a Bambu sliced `.gcode.3mf` the
     /// printer can print directly without on-device slicing.
     pub gcode: Option<Vec<u8>>,
+    /// Bambu printer model id written to `slice_info.config` as
+    /// `printer_model_id` (P1S = `C12`). The print gate refuses a file whose
+    /// model id doesn't match the connected printer.
+    pub printer_model_id: Option<String>,
 }
 
 /// Plate (build plate) configuration.
@@ -86,6 +90,7 @@ impl ThreeMfModel {
             plate: PlateConfig::default(),
             settings: PrintSettings::default(),
             gcode: None,
+            printer_model_id: None,
         }
     }
 
@@ -93,6 +98,13 @@ impl ThreeMfModel {
     /// printer can print directly.
     pub fn with_gcode(mut self, gcode: Vec<u8>) -> Self {
         self.gcode = Some(gcode);
+        self
+    }
+
+    /// Tag the file with the Bambu printer model id it was sliced for
+    /// (`C12` for the P1S).
+    pub fn with_printer_model(mut self, model_id: impl Into<String>) -> Self {
+        self.printer_model_id = Some(model_id.into());
         self
     }
 
@@ -271,6 +283,12 @@ impl ThreeMfModel {
                 )
             }
             None => String::new(),
+        };
+        let gcode_metadata = match self.printer_model_id.as_deref() {
+            Some(id) => format!(
+                "        <metadata key=\"printer_model_id\" value=\"{id}\"/>\n{gcode_metadata}"
+            ),
+            None => gcode_metadata,
         };
 
         format!(

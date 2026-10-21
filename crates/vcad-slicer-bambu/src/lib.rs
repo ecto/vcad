@@ -34,16 +34,22 @@
 //! printer.resume().await?;
 //! ```
 
+pub mod camera;
 pub mod commands;
+pub mod config;
 #[cfg(feature = "network")]
 pub mod discovery;
 pub mod error;
 #[cfg(feature = "network")]
 pub mod ftp;
+pub mod gate;
+pub mod link;
 #[cfg(feature = "network")]
 pub mod mqtt;
 pub mod status;
 pub mod threemf;
+#[cfg(feature = "network")]
+mod tls;
 
 pub use commands::PrinterCommand;
 #[cfg(feature = "network")]

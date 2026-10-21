@@ -10,7 +10,7 @@ publish = false
 
 [features]
 default = ["network"]
-network = ["dep:tokio", "dep:rumqttc", "dep:rustls", "dep:webpki-roots", "dep:suppaftp"]
+network = ["dep:tokio", "dep:rumqttc", "dep:rustls", "dep:rustls022", "dep:webpki-roots", "dep:suppaftp"]
 
 [dependencies]
 vcad-slicer = { path = "../vcad-slicer", version = "0.10.0" }
@@ -23,6 +23,7 @@ quick-xml = { version = "0.36", features = ["serialize"] }
 base64 = { workspace = true }
 uuid = { version = "1", features = ["v4", "js"] }
 md5 = "0.7"
+toml = { workspace = true }
 
 [dependencies.tokio]
 version = "1"
@@ -37,6 +38,13 @@ optional = true
 version = "0.23"
 optional = true
 
+# rumqttc 0.24's TLS stack is rustls 0.22; its `TlsConfiguration::Rustls`
+# wants a 0.22 ClientConfig.
+[dependencies.rustls022]
+package = "rustls"
+version = "0.22"
+optional = true
+
 [dependencies.webpki-roots]
 version = "0.26"
 optional = true
@@ -48,3 +56,4 @@ optional = true
 
 [dev-dependencies]
 tokio-test = "0.4"
+tempfile = "3"

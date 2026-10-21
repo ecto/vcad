@@ -7925,6 +7925,31 @@ pub fn eval_vcad_source_with_modules(source: &str, modules_json: &str) -> Result
     Ok(JsValue::from_str(&json))
 }
 
+/// Evaluate loon source to a document stamped with its provenance
+/// (`Document.source`: the program, its modules, `base_dir`/`path` when it
+/// came from disk, and the SHA-256 hosts compare against the file) — the
+/// session-minting form of [`eval_vcad_source_with_modules`].
+#[wasm_bindgen(js_name = evalLoonDocument)]
+pub fn eval_loon_document(
+    source: &str,
+    modules_json: &str,
+    base_dir: Option<String>,
+    path: Option<String>,
+) -> Result<String, JsError> {
+    let modules: std::collections::HashMap<String, String> = serde_json::from_str(modules_json)
+        .map_err(|e| JsError::new(&format!("invalid modules JSON: {e}")))?;
+    let mut doc =
+        vcad_loon::eval_vcad_with_modules(source, None, &modules).map_err(|e| JsError::new(&e))?;
+    vcad_eval::provenance::attach_loon_source(
+        &mut doc,
+        source,
+        &modules,
+        base_dir.as_deref(),
+        path.as_deref(),
+    );
+    serde_json::to_string(&doc).map_err(|e| JsError::new(&format!("Serialization error: {e}")))
+}
+
 /// Evaluate loon source and return both the document and the parametric
 /// warnings, as `{ "document": {...}, "warnings": ["..."] }`.
 ///
