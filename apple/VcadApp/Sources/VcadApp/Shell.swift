@@ -194,11 +194,18 @@ struct DocumentCommands: Commands {
                 .disabled(model.documentURL == nil)
             Divider()
             Menu("Export") {
-                Button("STL…") { exportSTLPanel(model) }
+                Button("STL…") { exportDocumentPanel(model, format: .stl) }
                     .keyboardShortcut("e").disabled(!model.canExport)
+                Button("STEP…") { exportDocumentPanel(model, format: .step) }
+                    .disabled(!model.canExportDocument)
+                Button("GLB…") { exportDocumentPanel(model, format: .glb) }
+                    .disabled(!model.canExportDocument)
                 Button("USDZ…") { exportUSDZPanel(model) }
                     .keyboardShortcut("e", modifiers: [.command, .shift]).disabled(!model.canExport)
             }
+            Button("Render Photoreal…") { PhotorealRenderController.shared.show(for: model) }
+                .keyboardShortcut("r", modifiers: [.command, .option, .shift])
+                .disabled(!model.canExportDocument)
         }
         CommandGroup(replacing: .undoRedo) {
             Button(model.undoActionName.map { "Undo \($0)" } ?? "Undo") { model.undo() }
@@ -234,7 +241,7 @@ struct DocumentCommands: Commands {
         }
         CommandGroup(after: .sidebar) {
             Divider()
-            ForEach(Workspace.allCases) { ws in
+            ForEach(Workspace.available.count > 1 ? Workspace.available : []) { ws in
                 Toggle(ws.label, isOn: Binding(
                     get: { model.workspace == ws },
                     set: { if $0 { model.workspace = ws } }))

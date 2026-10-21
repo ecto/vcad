@@ -181,33 +181,38 @@ describe("handleArtifactRequest", () => {
 // ── import_step offload ─────────────────────────────────────────────────────
 
 describe("import_step large-result offload", () => {
-  const smallEngine = {
-    importStepWithReport: () => ({
-      meshes: [
-        {
-          positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
-          indices: new Uint32Array([0, 1, 2]),
-          normals: undefined,
+  // Stub of the kernel's mesh-document entry point: one ImportedMesh root
+  // with `n` positions / indices, plus the given skipped-face report.
+  const meshDocEngine = (n: number, report: unknown[] = [], summary: string | null = null) =>
+    ({
+      importStepMeshDocument: (_: ArrayBuffer, partName: string, material: string, source: string) => ({
+        document: {
+          version: "0.1",
+          nodes: {
+            "1": {
+              id: 1,
+              name: partName,
+              op: {
+                type: "ImportedMesh",
+                positions: Array.from({ length: n }, (_, i) => i % 9),
+                indices: Array.from({ length: n }, (_, i) => i % 3),
+                source,
+              },
+            },
+          },
+          materials: {},
+          part_materials: { [partName]: material },
+          roots: [{ root: 1, material }],
         },
-      ],
-      report: [],
-      summary: null,
-    }),
-  } as unknown as Engine;
-
-  const bigEngine = {
-    importStepWithReport: () => ({
-      meshes: [
-        {
-          positions: new Float32Array(40_000),
-          indices: new Uint32Array(40_000),
-          normals: undefined,
-        },
-      ],
-      report: [],
-      summary: null,
-    }),
-  } as unknown as Engine;
+        report,
+        summary,
+        bodies: 1,
+        triangles: n / 3,
+        vertices: n / 3,
+      }),
+    }) as unknown as Engine;
+  const smallEngine = meshDocEngine(9);
+  const bigEngine = meshDocEngine(40_000);
 
   const step64 = Buffer.from("x").toString("base64");
 
@@ -218,28 +223,20 @@ describe("import_step large-result offload", () => {
 
 
   it("surfaces skipped faces from the import report", () => {
-    const dirtyEngine = {
-      importStepWithReport: () => ({
-        meshes: [
-          {
-            positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
-            indices: new Uint32Array([0, 1, 2]),
-            normals: undefined,
-          },
-        ],
-        report: [
-          {
-            solid_id: 45,
-            total_faces: 3,
-            skipped_faces: [
-              { face_id: 29, surface_id: 40, reason: "DEGENERATE_TOROIDAL_SURFACE" },
-            ],
-            notes: [],
-          },
-        ],
-        summary: "solid #45: skipped 1 of 3 faces",
-      }),
-    } as unknown as Engine;
+    const dirtyEngine = meshDocEngine(
+      9,
+      [
+        {
+          solid_id: 45,
+          total_faces: 3,
+          skipped_faces: [
+            { face_id: 29, surface_id: 40, reason: "DEGENERATE_TOROIDAL_SURFACE" },
+          ],
+          notes: [],
+        },
+      ],
+      "solid #45: skipped 1 of 3 faces",
+    );
     const res = importStep({ content_base64: step64, name: "holey", as_mesh: true }, dirtyEngine);
     const out = JSON.parse(res.content[0].text);
     expect(out.summary.warning).toContain("1 face(s) skipped");

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Build the tang-compress decoder static lib (C ABI, CPU reference decoder) and
-# stage it in Libs/ next to libvcad_ffi.a. Built from a tang-compress checkout
-# (default ~/Developer/tang-compress), outside the vcad cargo workspace.
-#   ./build-tc-ffi.sh [/path/to/tang-compress]
+# Build the cram-codec field decoder static lib (C ABI, CPU reference decoder) and
+# stage it in Libs/ next to libvcad_ffi.a. Built from an ecto/tang checkout
+# (crates/cram-codec; default ~/Developer/tang), outside the vcad workspace.
+#   ./build-tc-ffi.sh [/path/to/tang]
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-tc="$(cd "${1:-$HOME/Developer/tang-compress}" && pwd)"
+tc="$(cd "${1:-$HOME/Developer/tang}" && pwd)"
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 sed -e "s#@TC@#$tc#" -e "s#@SRC@#$here/tang-compress-ffi/src#" \
   "$here/tang-compress-ffi/Cargo.toml.in" > "$work/Cargo.toml"

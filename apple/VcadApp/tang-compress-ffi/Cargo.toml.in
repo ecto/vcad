@@ -12,7 +12,7 @@ crate-type = ["staticlib"]
 path = "@SRC@/lib.rs"
 
 [dependencies]
-tang-compress = { path = "@TC@/crates/tang-compress" }
+cram-codec = { path = "@TC@/crates/cram-codec" }
 
 [profile.release]
 debug = false

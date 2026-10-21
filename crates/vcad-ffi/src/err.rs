@@ -40,6 +40,12 @@ pub(crate) fn clear_error() {
     LAST_ERROR.with(|slot| *slot.borrow_mut() = None);
 }
 
+/// This thread's last error, owned (tests).
+#[cfg(test)]
+pub(crate) fn last_error_string() -> Option<String> {
+    LAST_ERROR.with(|slot| slot.borrow().clone())
+}
+
 /// Run `f`, recording `context: <err>` and returning `None` if it fails.
 pub(crate) fn ctx<T, E: std::fmt::Display>(
     context: &str,

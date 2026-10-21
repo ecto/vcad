@@ -4593,12 +4593,14 @@ dependencies = [
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-cam",
+ "vcad-kernel-export",
  "vcad-kernel-gpu",
  "vcad-kernel-math",
  "vcad-kernel-physics",
  "vcad-kernel-raytrace",
  "vcad-kernel-tessellate",
  "vcad-loon",
+ "vcad-render",
  "vcad-sim",
 ]
 
