@@ -21,6 +21,7 @@ pub mod convert;
 pub mod diff;
 pub mod evaluate;
 pub mod kinematics;
+pub mod mesh_inline;
 pub mod pcb_preview;
 pub mod placement;
 pub mod sensitivity;
