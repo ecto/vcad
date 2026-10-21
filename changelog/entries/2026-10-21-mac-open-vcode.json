@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-mac-open-vcode",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "fix",
+  "title": "Mac app opens compact-format .vcad files",
+  "summary": "The native Mac app now opens .vcad files in the compact text and loon formats, not just JSON, including the Sensor Mast example.",
+  "features": ["desktop", "file-io"]
+}

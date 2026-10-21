@@ -478,6 +478,71 @@ pub extern "C" fn vcad_loon_file_to_json(path: *const u8, path_len: usize) -> *m
     .unwrap_or(ptr::null_mut())
 }
 
+/// Load a document file in any `.vcad` format — JSON, loon (`[...]`/`;`
+/// source, or a `.loon` file) or compact VCode (`# vcad 0.2` lines) — into IR,
+/// with relative mesh paths resolved against the file's directory. This is
+/// what the native app's Open runs (via [`vcad_document_file_to_json`]) and
+/// what the examples smoke test drives.
+pub fn load_document_file(path: &std::path::Path) -> Result<Document, String> {
+    let is_loon_file = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("loon"));
+    let mut doc = if is_loon_file {
+        vcad_loon::eval_vcad_file(path).map_err(|e| format!("loon: {e}"))?
+    } else {
+        let text = std::fs::read_to_string(path).map_err(|e| format!("read: {e}"))?;
+        match vcad_ir::file_io::detect_format(&text) {
+            vcad_ir::file_io::VcadFormat::Json => {
+                Document::from_json(&text).map_err(|e| format!("parse: {e}"))?
+            }
+            vcad_ir::file_io::VcadFormat::VCode => {
+                vcad_ir::vcode::from_vcode(&text).map_err(|e| format!("vcode: {e}"))?
+            }
+            vcad_ir::file_io::VcadFormat::Loon => {
+                vcad_loon::eval_vcad(&text, path.parent()).map_err(|e| format!("loon: {e}"))?
+            }
+        }
+    };
+    if let Some(dir) = path.parent() {
+        vcad_eval::resolve_mesh_paths(&mut doc, dir);
+    }
+    Ok(doc)
+}
+
+/// [`load_document_file`] as owned IR JSON (free with `vcad_cam_free`), or
+/// null with `vcad_last_error` set. Lets the app open VCode and loon-source
+/// `.vcad` files, not just JSON ones.
+#[no_mangle]
+pub extern "C" fn vcad_document_file_to_json(path: *const u8, path_len: usize) -> *mut c_char {
+    if path.is_null() {
+        return ptr::null_mut();
+    }
+    err::clear_error();
+    catch_unwind(AssertUnwindSafe(|| {
+        let bytes = unsafe { std::slice::from_raw_parts(path, path_len) };
+        let Ok(p) = std::str::from_utf8(bytes) else {
+            err::set_error("path is not UTF-8");
+            return ptr::null_mut();
+        };
+        let doc = match load_document_file(std::path::Path::new(p)) {
+            Ok(d) => d,
+            Err(e) => {
+                err::set_error(e);
+                return ptr::null_mut();
+            }
+        };
+        match serde_json::to_string(&doc).map(CString::new) {
+            Ok(Ok(c)) => c.into_raw(),
+            _ => {
+                err::set_error("could not serialize the document");
+                ptr::null_mut()
+            }
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 /// Number of evaluated parts (visible document roots) in the scene.
 #[no_mangle]
 pub extern "C" fn vcad_scene_part_count(scene: *const VcadScene) -> usize {
