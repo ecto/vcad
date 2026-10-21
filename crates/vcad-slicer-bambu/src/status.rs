@@ -111,6 +111,42 @@ pub struct PrinterStatus {
     pub wifi_signal: Option<i32>,
     /// Firmware version.
     pub firmware_version: Option<String>,
+    /// Filament type feeding the nozzle (`PLA`, `PETG`, …): the active AMS
+    /// tray, or the external spool when no AMS tray is active. `None` when
+    /// the printer doesn't say (the print gate then refuses).
+    #[serde(default)]
+    pub loaded_filament: Option<String>,
+}
+
+/// Resolve the active filament from a `print` report object.
+///
+/// `ams.tray_now` is the global tray index (`ams_id * 4 + slot`); `254`
+/// means the external spool (`vt_tray`), `255` means nothing loaded.
+fn loaded_filament(print: &serde_json::Value) -> Option<String> {
+    let tray_type = |v: &serde_json::Value| {
+        v.get("tray_type")
+            .and_then(|t| t.as_str())
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+    };
+    let tray_now = print
+        .get("ams")
+        .and_then(|a| a.get("tray_now"))
+        .and_then(|t| {
+            t.as_str()
+                .map(str::to_string)
+                .or(t.as_u64().map(|n| n.to_string()))
+        });
+    match tray_now.as_deref() {
+        Some("255") => None,
+        None | Some("254") => print.get("vt_tray").and_then(tray_type),
+        Some(n) => {
+            let n: usize = n.parse().ok()?;
+            let unit = print.get("ams")?.get("ams")?.get(n / 4)?;
+            tray_type(unit.get("tray")?.get(n % 4)?)
+        }
+    }
 }
 
 impl PrinterStatus {
@@ -175,8 +211,86 @@ impl PrinterStatus {
             if let Some(signal) = print.get("wifi_signal").and_then(|v| v.as_str()) {
                 status.wifi_signal = signal.replace("dBm", "").trim().parse().ok();
             }
+
+            status.loaded_filament = loaded_filament(print);
+        }
+
+        if let Some(ver) = payload
+            .get("info")
+            .and_then(|i| i.get("module"))
+            .and_then(|m| m.as_array())
+            .and_then(|mods| {
+                mods.iter()
+                    .find(|m| m.get("name").and_then(|n| n.as_str()) == Some("ota"))
+            })
+            .and_then(|m| m.get("sw_ver"))
+            .and_then(|v| v.as_str())
+        {
+            status.firmware_version = Some(ver.to_string());
         }
 
         status
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn loaded_filament_follows_tray_now() {
+        let ams = json!({
+            "tray_now": "5",
+            "ams": [
+                {"tray": [{"tray_type": "PLA"}, {}, {}, {}]},
+                {"tray": [{}, {"tray_type": "PETG"}, {}, {}]}
+            ]
+        });
+        let p = json!({"print": {"gcode_state": "IDLE", "ams": ams,
+                                 "vt_tray": {"tray_type": "TPU"}}});
+        let s = PrinterStatus::from_mqtt_payload(&p);
+        assert_eq!(s.state, PrintState::Idle);
+        assert_eq!(s.loaded_filament.as_deref(), Some("PETG"));
+
+        let ext = json!({"print": {"ams": {"tray_now": "254"}, "vt_tray": {"tray_type": "PLA"}}});
+        assert_eq!(
+            PrinterStatus::from_mqtt_payload(&ext)
+                .loaded_filament
+                .as_deref(),
+            Some("PLA")
+        );
+        // No AMS on the P1S: external spool.
+        let no_ams = json!({"print": {"vt_tray": {"tray_type": "PLA"}}});
+        assert_eq!(
+            PrinterStatus::from_mqtt_payload(&no_ams)
+                .loaded_filament
+                .as_deref(),
+            Some("PLA")
+        );
+        let none = json!({"print": {"ams": {"tray_now": "255"}, "vt_tray": {"tray_type": "PLA"}}});
+        assert_eq!(
+            PrinterStatus::from_mqtt_payload(&none).loaded_filament,
+            None
+        );
+        let blank = json!({"print": {"vt_tray": {"tray_type": ""}}});
+        assert_eq!(
+            PrinterStatus::from_mqtt_payload(&blank).loaded_filament,
+            None
+        );
+    }
+
+    #[test]
+    fn firmware_from_info_module() {
+        let p = json!({"info": {"module": [
+            {"name": "mc", "sw_ver": "00.00.01"},
+            {"name": "ota", "sw_ver": "01.09.01.00"}
+        ]}});
+        assert_eq!(
+            PrinterStatus::from_mqtt_payload(&p)
+                .firmware_version
+                .as_deref(),
+            Some("01.09.01.00")
+        );
     }
 }
