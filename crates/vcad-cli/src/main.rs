@@ -2841,6 +2841,7 @@ fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Resul
 /// Read a .vcad file and return the materialized IR document.
 /// Auto-detects CRDT (v0.4) vs legacy v1 JSON shapes. A `.loon` input is
 /// evaluated to a document first.
+#[allow(clippy::ptr_arg)] // callers all hold PathBufs
 fn load_vcad_document(file: &PathBuf) -> Result<vcad_ir::Document> {
     // Work from the absolute path. `.loon` evaluation already anchors
     // `import-mesh` paths to the file's directory; with a relative input that
