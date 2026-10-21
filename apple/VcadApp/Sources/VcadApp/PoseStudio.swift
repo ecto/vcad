@@ -229,6 +229,27 @@ extension EditorModel {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
+    /// Whether `bin` is a pre-#825 `vcad-render`, which path-traces BRep faces
+    /// analytically by default. On a polyline loft every flat strip then shows
+    /// as its own facet: jagged, shard-like rounds that the creased-normal
+    /// viewport never shows. Builds since then tessellate and smooth normals by
+    /// default, and they shipped the `--exact` opt-out in the same change. So
+    /// the flag's presence in `--help` is the capability probe (the version
+    /// number is not: 0.9.4 builds exist on both sides of it). The shared
+    /// cargo target is easily left built from an old branch.
+    static func vcadRenderIsStale(_ bin: String) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: bin)
+        p.arguments = ["--help"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return false }   // let the real run report it
+        let help = String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        p.waitUntilExit()
+        return !help.contains("--exact")
+    }
+
     /// The document with the on-screen pose + explode baked into every
     /// instance transform and the joints dropped, so any renderer draws
     /// exactly what the viewport shows.
@@ -277,6 +298,11 @@ extension EditorModel {
         guard !photorealBusy else { completion?(nil, "A photoreal render is already running."); return }
         guard let bin = Self.vcadRenderBinary() else {
             photorealStatus = "vcad-render not found (build it: cargo build --release -p vcad-render, or set VCAD_RENDER)"
+            completion?(nil, photorealStatus); return
+        }
+        if Self.vcadRenderIsStale(bin) {
+            photorealStatus = "\(bin) is a stale build that traces lofts as flat facets "
+                + "(rebuild it: cargo build --release -p vcad-render from current main, or set VCAD_RENDER)"
             completion?(nil, photorealStatus); return
         }
         guard let posed = posedDocumentJSON() else {
