@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-mac-sensitivity-panel",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "Parameter sensitivity in the Mac inspector",
+  "summary": "The Mac app's inspector shows how volume, mass and center of mass change per unit of each named parameter, using exact kernel derivatives.",
+  "features": ["desktop", "parameters", "differentiable"]
+}

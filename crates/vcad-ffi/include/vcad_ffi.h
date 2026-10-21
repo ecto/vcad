@@ -134,6 +134,11 @@ VcadScene *vcad_scene_from_loon(const uint8_t *loon, size_t loon_len);
  * come back absolute), so the JSON evaluates like any .vcad document. Owned
  * string, free with vcad_cam_free; NULL + vcad_last_error on failure. */
 char *vcad_loon_file_to_json(const uint8_t *path, size_t path_len);
+/* Parameter sensitivities of an IR document: per named parameter and solid
+ * part, d(volume, mass, centroid)/dθ from the differentiable seam. Masses in
+ * grams at density_kg_m3. Owned JSON (free with vcad_cam_free); null when the
+ * input isn't a document. */
+char *vcad_document_sensitivity(const uint8_t *json, size_t json_len, double density_kg_m3);
 /* Any .vcad format (JSON, loon source, VCode) -> IR document JSON, mesh paths
  * resolved against the file's directory. Free with vcad_cam_free; null on error. */
 char *vcad_document_file_to_json(const uint8_t *path, size_t path_len);

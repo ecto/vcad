@@ -389,11 +389,13 @@ fn options(
         aperture_frac: 0.0,
         focus_dist: None,
         backdrop: vcad_render::photoreal::Backdrop::Studio,
-        lighting: vcad_render::photoreal::Lighting::Studio,
         seed: 0x5eed_1234,
         denoise: cpu,
         adaptive: true,
         exact: false,
+        // Options added to the renderer later take its defaults, so a new
+        // field cannot break this crate the way focus_dist and lighting did.
+        ..Default::default()
     };
     Ok((ro, pr))
 }
