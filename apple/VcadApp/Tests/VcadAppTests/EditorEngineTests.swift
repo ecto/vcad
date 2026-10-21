@@ -156,6 +156,37 @@ final class EditorEngineTests: XCTestCase {
         XCTAssertEqual(reopened.engineState?.material(ofPart: try XCTUnwrap(reopened.partId(forPart: 0))) != nil, true)
     }
 
+    /// Edits come back from the engine as deltas, and only the parts a delta
+    /// touched are re-tessellated.
+    func testEditsRetessellateOnlyTheChangedParts() throws {
+        let m = try open()
+        XCTAssertEqual(m.reevalDocumentMeshes()?.count, 2)
+        let block = try XCTUnwrap(m.partId(forPart: 0)), pin = try XCTUnwrap(m.partId(forPart: 1))
+        XCTAssertEqual(m.cachedPartIds, [block, pin])
+
+        // Scrub the block's size: a delta naming only the block.
+        let cube = try XCTUnwrap(m.engineState?.parts.first { $0.kind == "cube" })
+        m.editVec(nodeId: try XCTUnwrap(cube.leafNodeIds.first), key: "size", axis: "x", value: 25, snapshot: true)
+        XCTAssertEqual(m.engineState?.changes?.rebuild, [block])
+        XCTAssertEqual(m.cachedPartIds, [pin], "the pin's tessellation survives the edit")
+        XCTAssertEqual(m.reevalDocumentMeshes()?.count, 2)
+        XCTAssertEqual(m.cachedPartIds, [block, pin])
+
+        // The delta-folded document equals the engine's full state.
+        let full = try XCTUnwrap(m.engine?.state())
+        XCTAssertEqual(m.documentJSON as NSDictionary?, full.document as NSDictionary)
+        XCTAssertEqual(m.engineState?.parts, full.parts)
+
+        // A material change touches no geometry.
+        m.setPartMaterial(1, "brass")
+        XCTAssertEqual(m.engineState?.changes?.rebuild, [])
+        XCTAssertEqual(m.cachedPartIds, [block, pin])
+
+        // Undo through a snapshot (a full state) drops the whole cache.
+        m.undo(); m.undo()
+        XCTAssertEqual(roots(m)[1]["material"] as? String, "steel")
+    }
+
     func testSaveWritesTheEngineDocumentAndClearsDirty() throws {
         let m = try open()
         m.addPrimitive(.cube)

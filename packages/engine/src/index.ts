@@ -107,6 +107,15 @@ export {
   type MergeOutcome,
 } from "./diff.js";
 export { SolidCache, hashCsgOp } from "./solid-cache.js";
+export {
+  applyDocumentDelta,
+  applyEngineDelta,
+  applyPartsDelta,
+  EngineRefusal,
+  parseDeltaEnvelope,
+  stateFromEnvelope,
+} from "./delta.js";
+export type { DeltaChanges, EngineState } from "./delta.js";
 export { MeshCache } from "./mesh-cache.js";
 export { DependencyGraph } from "./dependency-graph.js";
 export type { EvaluateOptions } from "./evaluate.js";
