@@ -1,6 +1,6 @@
 # Rename plan: tang-compress → cram (2026-10-21)
 
-Brand **cram**. Crate **`cram-codec`** (Rust import `cram_codec`). The plain `cram` crate is taken.
+Brand **cram**. Homepage https://cram.sh (bought 2026-10-21); API docs on docs.rs/cram-codec. Crate **`cram-codec`** (Rust import `cram_codec`). The plain `cram` crate is taken.
 
 ## Name checks
 - **`cram` crate:** v0.1.2, last updated 2019-06-20, 4.8k downloads. Description: "Cram realy awesome middleware". Owner: Joaquim Oliveira (github.com/JoaquimOliveira34); repo gitlab.com/ram-project/ram.
