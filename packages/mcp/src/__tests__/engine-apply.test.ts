@@ -14,6 +14,8 @@ vi.mock("@vcad/engine", async (orig) => {
   const actual = (await orig()) as Record<string, unknown>;
   return {
     ...actual,
+    loadPartsManifest: () => [{ id: "bolt", name: "Bolt", category: "fastener", version: "1.0" }],
+    defaultParamsFor: () => ({ d: 3, l: 10 }),
     getKernelWasmSync: () => ({
       WasmDocumentEngine: {
         withReplica: () => {
@@ -35,6 +37,7 @@ vi.mock("@vcad/engine", async (orig) => {
 });
 
 const { dispatchRegistryTool } = await import("../tools/registry-dispatch.js");
+const { placePartTool } = await import("../tools/parts.js");
 const { documents, getSession, registerSession } = await import("../tools/session.js");
 
 function cubes(n: number): Document {
@@ -153,5 +156,45 @@ describe("runMutation via the document engine", () => {
     expect(calls[0]!.args.from).toBe("bottom");
     expect(calls[0]!.args.to).toEqual({ part: "0:1", anchor: "top" });
     expect(out.part_id).toBe("0:2");
+  });
+
+  it("dispatches tube and polyline_tube through the engine (no longer deferred)", () => {
+    const id = registerSession(cubes(1));
+    for (const tool of ["tube", "polyline_tube"]) {
+      calls.length = 0;
+      nextEnvelope = {
+        ok: true,
+        result: { document: cubes(2), parts: [], warnings: [], createdFeatureId: "0:2" },
+      };
+      const out = json(dispatchRegistryTool(tool, { document_id: id, start: { x: 0, y: 0, z: 0 } }));
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.tool).toBe(tool);
+      expect(out.part_id).toBe("0:2");
+    }
+  });
+
+  it("place_part inserts via the engine place_part lowering, then translates", () => {
+    const id = registerSession(cubes(1));
+    nextEnvelope = {
+      ok: true,
+      result: { document: cubes(2), parts: [], warnings: [], createdFeatureId: "0:2" },
+    };
+    const engine = { kernel: {} } as unknown as import("@vcad/engine").Engine;
+    const out = json(
+      placePartTool(
+        { document_id: id, path: "std:bolt", params: { l: 20 }, position: { x: 5 } },
+        engine,
+      ) as { content: Array<{ text: string }> },
+    );
+    expect(calls.map((c) => c.tool)).toEqual(["place_part", "translate"]);
+    expect(calls[0]!.args).toEqual({
+      path: "std:bolt",
+      version: "1.0",
+      params: { d: 3, l: 20 },
+      name: "Bolt",
+    });
+    expect(calls[1]!.args).toEqual({ child: "0:2", offset: { x: 5, y: 0, z: 0 } });
+    expect(out.part_id).toBe("0:2");
+    expect(getSession(id).roots).toHaveLength(2);
   });
 });

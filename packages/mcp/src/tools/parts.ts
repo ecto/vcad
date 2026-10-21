@@ -13,9 +13,8 @@ import {
   searchParts as searchPartsEngine,
   defaultParamsFor,
 } from "@vcad/engine";
-import type { Node } from "@vcad/ir";
 import { getSession } from "./session.js";
-import { partIdForNode } from "./part-ids.js";
+import { runMutation } from "./registry-dispatch.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 export const searchPartsSchema = {
@@ -145,22 +144,14 @@ export function placePartTool(
     ...userParams,
   };
 
-  const existingIds = Object.keys(doc.nodes).map(Number);
-  const partNodeId = (existingIds.length ? Math.max(...existingIds) : 0) + 1;
+  const name = typeof args.name === "string" ? args.name : entry.name;
+  const placed = JSON.parse(
+    runMutation("place_part", { path, version: entry.version, params, name }, doc, documentId)
+      .content[0]!.text,
+  ) as { part_id?: string; node_id?: number };
+  const partId = placed.part_id;
+  if (!partId) throw new Error("place_part: engine created no part");
 
-  const partNode: Node = {
-    id: partNodeId,
-    name: typeof args.name === "string" ? args.name : entry.name,
-    op: {
-      type: "PartInstance",
-      path,
-      version: entry.version,
-      params,
-    },
-  };
-  doc.nodes[String(partNodeId)] = partNode;
-
-  let rootId: number = partNodeId;
   const position = args.position as { x?: number; y?: number; z?: number } | undefined;
   if (
     position &&
@@ -168,27 +159,13 @@ export function placePartTool(
       Number.isFinite(position.y) ||
       Number.isFinite(position.z))
   ) {
-    const translateId = partNodeId + 1;
-    doc.nodes[String(translateId)] = {
-      id: translateId,
-      name: null,
-      op: {
-        type: "Translate",
-        child: partNodeId,
-        offset: {
-          x: typeof position.x === "number" ? position.x : 0,
-          y: typeof position.y === "number" ? position.y : 0,
-          z: typeof position.z === "number" ? position.z : 0,
-        },
-      },
+    const offset = {
+      x: typeof position.x === "number" ? position.x : 0,
+      y: typeof position.y === "number" ? position.y : 0,
+      z: typeof position.z === "number" ? position.z : 0,
     };
-    rootId = translateId;
+    runMutation("translate", { child: partId, offset }, doc, documentId);
   }
-
-  doc.roots.push({
-    root: rootId,
-    material: "default",
-  });
 
   return {
     content: [
@@ -197,12 +174,12 @@ export function placePartTool(
         text: JSON.stringify(
           {
             document_id: documentId,
-            part_id: partIdForNode(doc, rootId),
+            part_id: partId,
             placed: {
               path,
               version: entry.version,
               params,
-              node_id: partNodeId,
+              node_id: placed.node_id,
             },
           },
           null,
