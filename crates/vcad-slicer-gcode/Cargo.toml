@@ -16,3 +16,4 @@ serde = { workspace = true }
 
 [dev-dependencies]
 approx = "0.5"
+vcad-kernel-tessellate = { workspace = true }
