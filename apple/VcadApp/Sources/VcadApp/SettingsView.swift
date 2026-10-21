@@ -40,6 +40,10 @@ struct SettingsView: View {
             .formStyle(.grouped)
             .tabItem { Label("Feedback", systemImage: "speaker.wave.2") }
 
+            Form { AgentSettingsForm() }
+                .formStyle(.grouped)
+                .tabItem { Label("Agent", systemImage: "sparkles") }
+
             Form { RendererSettingsForm() }
                 .formStyle(.grouped)
                 .tabItem { Label("Renderer", systemImage: "camera.aperture") }
