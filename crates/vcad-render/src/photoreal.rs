@@ -299,6 +299,31 @@ pub(crate) fn object_corners_with(
         .collect()
 }
 
+/// Frame the scene, honouring `opts.focus`: the camera fits the focused
+/// part(s), while the studio floor stays under the *whole* scene so the rest
+/// of the document (a desk under a product, say) is never cut by it.
+pub(crate) fn frame_scene(
+    solids: &[crate::SceneSolid],
+    objects: &[Object],
+    opts: &RasterOptions,
+    pr: &PhotorealOptions,
+) -> Result<Framing, String> {
+    let all: Vec<[f64; 3]> = objects.iter().flat_map(object_corners).collect();
+    let Some(focus) = opts.focus.as_deref() else {
+        return frame_view(&all, opts, pr);
+    };
+    let mask = crate::focus_mask(solids, focus)?;
+    let focused: Vec<[f64; 3]> = objects
+        .iter()
+        .zip(&mask)
+        .filter(|(_, &m)| m)
+        .flat_map(|(o, _)| object_corners(o))
+        .collect();
+    let mut framing = frame_view(&focused, opts, pr)?;
+    framing.floor_z = all.iter().map(|c| c[2]).fold(f64::INFINITY, f64::min);
+    Ok(framing)
+}
+
 /// Camera, canvas, and the floor height a set of world points implies.
 pub(crate) struct Framing {
     pub(crate) camera: Camera,
@@ -513,8 +538,7 @@ fn rasterize(
         return Err("no solids produced".to_string());
     }
     let objects = build_objects(&solids, pr.mesh_segments())?;
-    let corners: Vec<[f64; 3]> = objects.iter().flat_map(object_corners).collect();
-    let framing = frame_view(&corners, opts, pr)?;
+    let framing = frame_scene(&solids, &objects, opts, pr)?;
     let scene = dress_scene(objects, &framing, pr)?;
     Ok(trace_frame(&scene, &framing, pr, png))
 }
