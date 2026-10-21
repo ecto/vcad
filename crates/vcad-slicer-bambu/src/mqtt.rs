@@ -198,10 +198,7 @@ impl BambuMqttClient {
     }
 }
 
-async fn run_event_loop(
-    mut event_loop: EventLoop,
-    tx: mpsc::UnboundedSender<Result<Event>>,
-) {
+async fn run_event_loop(mut event_loop: EventLoop, tx: mpsc::UnboundedSender<Result<Event>>) {
     loop {
         let event = event_loop
             .poll()
@@ -254,7 +251,10 @@ mod tests {
             .await
             .expect("event loop should be polled")
             .expect("event loop should report its result");
-        assert!(matches!(event, Err(crate::error::BambuError::ConnectionFailed(_))));
+        assert!(matches!(
+            event,
+            Err(crate::error::BambuError::ConnectionFailed(_))
+        ));
     }
 }
 

@@ -83,11 +83,11 @@ pub(crate) fn printer_client_config() -> Arc<rustls::ClientConfig> {
         rustls::ClientConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
-            .with_safe_default_protocol_versions()
-            .expect("ring provider supports the default TLS protocol versions")
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AcceptPrinterCert))
-            .with_no_client_auth(),
+        .with_safe_default_protocol_versions()
+        .expect("ring provider supports the default TLS protocol versions")
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AcceptPrinterCert))
+        .with_no_client_auth(),
     )
 }
 
@@ -97,10 +97,10 @@ pub(crate) fn mqtt_client_config() -> Arc<rustls022::ClientConfig> {
         rustls022::ClientConfig::builder_with_provider(Arc::new(
             rustls022::crypto::ring::default_provider(),
         ))
-            .with_safe_default_protocol_versions()
-            .expect("ring provider supports the default TLS protocol versions")
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AcceptPrinterCertMqtt))
-            .with_no_client_auth(),
+        .with_safe_default_protocol_versions()
+        .expect("ring provider supports the default TLS protocol versions")
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AcceptPrinterCertMqtt))
+        .with_no_client_auth(),
     )
 }
