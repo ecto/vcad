@@ -26,8 +26,10 @@
 
 pub mod flavor;
 pub mod gcode;
+pub mod lint;
 pub mod printer;
 
 pub use flavor::GcodeFlavor;
 pub use gcode::{generate_gcode, GcodeGenerator, GcodeSettings};
+pub use lint::{lint, LintFinding, LintLimits, LintReport};
 pub use printer::PrinterProfile;

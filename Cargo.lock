@@ -5423,6 +5423,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "vcad-kernel-math",
+ "vcad-kernel-tessellate",
  "vcad-slicer",
 ]
 

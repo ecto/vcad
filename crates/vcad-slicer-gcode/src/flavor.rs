@@ -40,13 +40,30 @@ impl GcodeFlavor {
                  G92 E0 ; Reset extruder\n"
             }
             GcodeFlavor::Bambu => {
-                "; Bambu Lab start sequence\n\
-                 M400 ; Wait for moves to finish\n\
-                 G28 X ; Home X\n\
-                 M109 S{print_temp} ; Wait for nozzle temp\n\
-                 M190 S{bed_temp} ; Wait for bed temp\n\
-                 G28 ; Home all\n\
-                 G1 Z5 F3000\n"
+                // Written from scratch for P1/X1 (CoreXY, 256 mm bed, Z homed
+                // by the nozzle touching the plate) — not Bambu's AGPL start
+                // G-code. Order matters: the nozzle homes and probes at 140 °C
+                // (below the ooze point), and only reaches print temperature
+                // parked above the plate, right before the purge line.
+                "; vcad start sequence (P1/X1)\n\
+                 M400\n\
+                 G90 ; absolute XYZ\n\
+                 M82 ; absolute E\n\
+                 M106 P1 S0 ; part fan off\n\
+                 M140 S{bed_temp} ; bed heating, no wait\n\
+                 M104 S140 ; nozzle to a non-oozing homing temp\n\
+                 G28 ; home all (Z by nozzle touch)\n\
+                 M190 S{bed_temp} ; wait for bed\n\
+                 G29 ; bed mesh at temperature\n\
+                 G1 Z5 F1200\n\
+                 G1 X18 Y2 F12000 ; park over the purge line start\n\
+                 M109 S{print_temp} ; wait for nozzle\n\
+                 G92 E0\n\
+                 G1 Z0.3 F600\n\
+                 G1 X118 Y2 E12 F1500 ; purge line\n\
+                 G1 X148 Y2 E13.5 F3000 ; thin tail\n\
+                 G92 E0\n\
+                 G1 Z1 F600\n"
             }
             GcodeFlavor::RepRap => {
                 "G28 ; Home\n\
@@ -84,12 +101,13 @@ impl GcodeFlavor {
             }
             GcodeFlavor::Bambu => {
                 "M400 ; Wait for moves\n\
+                 M106 P1 S0 ; part fan off\n\
                  M104 S0 ; Nozzle off\n\
                  M140 S0 ; Bed off\n\
-                 G91\n\
-                 G1 E-2 F2700\n\
-                 G1 Z10 F3000\n\
-                 G90\n\
+                 M83\n\
+                 G1 E-2 F2700 ; relieve nozzle pressure\n\
+                 M82\n\
+                 G1 Z{park_z} F900 ; lift clear, capped at the build height\n\
                  M84\n"
             }
             GcodeFlavor::RepRap => {
@@ -108,7 +126,10 @@ impl GcodeFlavor {
     /// Get layer change G-code.
     pub fn layer_change_gcode(&self) -> &'static str {
         match self {
-            GcodeFlavor::Bambu => "; LAYER_CHANGE\n",
+            // `; CHANGE_LAYER` is the marker Bambu's firmware and tools key
+            // on; `M73 L` (written by the generator) drives the layer count
+            // on the printer's screen.
+            GcodeFlavor::Bambu => "; CHANGE_LAYER\n",
             _ => "; layer change\n",
         }
     }
