@@ -1,0 +1,485 @@
+figure,series,field,quantity,value,source_file,source_row
+A,sperr,cesm-CLDTOT,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","79.989,4.5743,0.07409,0.06433",bench/out/heldout_cesm-CLDTOT.csv,79
+A,sperr,cesm-CLDTOT,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","83.035,5.1754,0.09423,0.06325",bench/out/heldout_cesm-CLDTOT.csv,80
+A,sperr,cesm-CLDTOT,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,cesm-FLDS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","75.505,1.0228,0.04564,0.03197",bench/out/heldout_cesm-FLDS.csv,78
+A,sperr,cesm-FLDS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","81.314,1.7826,0.04072,0.03582",bench/out/heldout_cesm-FLDS.csv,79
+A,sperr,cesm-FLDS,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,cesm-LHFLX,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","75.881,1.1007,0.0463,0.03096",bench/out/heldout_cesm-LHFLX.csv,78
+A,sperr,cesm-LHFLX,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","81.719,1.7827,0.04069,0.03385",bench/out/heldout_cesm-LHFLX.csv,79
+A,sperr,cesm-LHFLX,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,cesm-TS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","78.955,0.30056,0.03319,0.02943",bench/out/heldout_cesm-TS.csv,77
+A,sperr,cesm-TS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.843,0.3641,0.04314,0.03223",bench/out/heldout_cesm-TS.csv,78
+A,sperr,cesm-TS,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,exafel-ev0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","79.856,5.9082,0.05588,0.05385",bench/out/heldout_exafel-ev0.csv,79
+A,sperr,exafel-ev0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","82.970,6.5253,0.06751,0.05339",bench/out/heldout_exafel-ev0.csv,80
+A,sperr,exafel-ev0,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,hurricane-V,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","75.963,1.2176,0.04534,0.03621",bench/out/heldout_hurricane-V.csv,82
+A,sperr,hurricane-V,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","82.180,1.7916,0.04177,0.03536",bench/out/heldout_hurricane-V.csv,84
+A,sperr,hurricane-V,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,miranda-pressure,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","77.882,0.92213,0.04423,0.03442",bench/out/heldout_miranda-pressure.csv,82
+A,sperr,miranda-pressure,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","84.317,1.3122,0.03829,0.036",bench/out/heldout_miranda-pressure.csv,84
+A,sperr,miranda-pressure,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,nyx-velocity_x,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","74.309,1.7343,0.04999,0.06724",bench/out/heldout_nyx-velocity_x.csv,82
+A,sperr,nyx-velocity_x,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.216,2.6435,0.0465,0.04615",bench/out/heldout_nyx-velocity_x.csv,84
+A,sperr,nyx-velocity_x,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,qmcpack-orb0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","76.872,0.17223,0.02718,0.02235",bench/out/heldout_qmcpack-orb0.csv,79
+A,sperr,qmcpack-orb0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","82.748,0.23866,0.0253,0.02106",bench/out/heldout_qmcpack-orb0.csv,81
+A,sperr,qmcpack-orb0,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,qmcpack-orb100,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","79.999,0.41007,0.02543,0.02247",bench/out/heldout_qmcpack-orb100.csv,81
+A,sperr,qmcpack-orb100,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","82.181,0.46368,0.02728,0.02249",bench/out/heldout_qmcpack-orb100.csv,82
+A,sperr,qmcpack-orb100,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,scale-PRES,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","77.835,0.055023,0.03276,0.02538",bench/out/heldout_scale-PRES.csv,79
+A,sperr,scale-PRES,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","83.001,0.10155,0.02809,0.02605",bench/out/heldout_scale-PRES.csv,81
+A,sperr,scale-PRES,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,scale-QV,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","76.662,1.1171,0.04364,0.03073",bench/out/heldout_scale-QV.csv,82
+A,sperr,scale-QV,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","82.714,1.6775,0.03971,0.03046",bench/out/heldout_scale-QV.csv,84
+A,sperr,scale-QV,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,scale-T,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","78.668,0.41553,0.03621,0.024",bench/out/heldout_scale-T.csv,82
+A,sperr,scale-T,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","84.018,0.79604,0.03371,0.02603",bench/out/heldout_scale-T.csv,84
+A,sperr,scale-T,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,scale-U,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","75.270,1.3798,0.05431,0.0368",bench/out/heldout_scale-U.csv,82
+A,sperr,scale-U,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","81.393,2.0911,0.04902,0.03757",bench/out/heldout_scale-U.csv,84
+A,sperr,scale-U,bpv@80dB / sperr bpv@80dB,1.0000,derived (log-interp),
+A,sperr,geomean,y=bpv ratio vs SPERR (n=14),1.0000,derived,
+A,sperr,geomean,decode MB/s,112.1,derived,
+A,sperr,geomean,encode MB/s,91.50,derived,
+A,sz3,cesm-CLDTOT,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","79.999,4.9418,0.01949,0.01356",bench/out/heldout_cesm-CLDTOT.csv,21
+A,sz3,cesm-CLDTOT,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.092,4.9612,0.03437,0.01413",bench/out/heldout_cesm-CLDTOT.csv,20
+A,sz3,cesm-CLDTOT,bpv@80dB / sperr bpv@80dB,1.0799,derived (log-interp),
+A,sz3,cesm-FLDS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","71.087,0.95664,0.009882,0.004305",bench/out/heldout_cesm-FLDS.csv,18
+A,sz3,cesm-FLDS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.259,1.9721,0.008954,0.005192",bench/out/heldout_cesm-FLDS.csv,21
+A,sz3,cesm-FLDS,bpv@80dB / sperr bpv@80dB,1.2292,derived (log-interp),
+A,sz3,cesm-LHFLX,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","72.489,1.1095,0.009297,0.004516",bench/out/heldout_cesm-LHFLX.csv,18
+A,sz3,cesm-LHFLX,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.366,2.1478,0.009412,0.005217",bench/out/heldout_cesm-LHFLX.csv,21
+A,sz3,cesm-LHFLX,bpv@80dB / sperr bpv@80dB,1.3466,derived (log-interp),
+A,sz3,cesm-TS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","75.602,0.3262,0.0103,0.003902",bench/out/heldout_cesm-TS.csv,18
+A,sz3,cesm-TS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","83.950,0.64766,0.009945,0.004201",bench/out/heldout_cesm-TS.csv,21
+A,sz3,cesm-TS,bpv@80dB / sperr bpv@80dB,1.4007,derived (log-interp),
+A,sz3,exafel-ev0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.089,4.2028,0.007159,0.004654",bench/out/heldout_exafel-ev0.csv,18
+A,sz3,exafel-ev0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.003,5.8249,0.00688,0.004926",bench/out/heldout_exafel-ev0.csv,21
+A,sz3,exafel-ev0,bpv@80dB / sperr bpv@80dB,0.9813,derived (log-interp),
+A,sz3,hurricane-V,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.280,1.9732,0.007108,0.004964",bench/out/heldout_hurricane-V.csv,18
+A,sz3,hurricane-V,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.017,3.5161,0.00638,0.005706",bench/out/heldout_hurricane-V.csv,21
+A,sz3,hurricane-V,bpv@80dB / sperr bpv@80dB,2.2449,derived (log-interp),
+A,sz3,miranda-pressure,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","72.186,1.3002,0.007034,0.004392",bench/out/heldout_miranda-pressure.csv,18
+A,sz3,miranda-pressure,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","81.262,2.3925,0.007033,0.004887",bench/out/heldout_miranda-pressure.csv,21
+A,sz3,miranda-pressure,bpv@80dB / sperr bpv@80dB,2.1223,derived (log-interp),
+A,sz3,nyx-velocity_x,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.625,1.6771,0.006801,0.00479",bench/out/heldout_nyx-velocity_x.csv,18
+A,sz3,nyx-velocity_x,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.076,3.14,0.006049,0.005137",bench/out/heldout_nyx-velocity_x.csv,21
+A,sz3,nyx-velocity_x,bpv@80dB / sperr bpv@80dB,1.2001,derived (log-interp),
+A,sz3,qmcpack-orb0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","76.645,0.24714,0.003781,0.001402",bench/out/heldout_qmcpack-orb0.csv,18
+A,sz3,qmcpack-orb0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","85.731,0.39961,0.003663,0.001556",bench/out/heldout_qmcpack-orb0.csv,21
+A,sz3,qmcpack-orb0,bpv@80dB / sperr bpv@80dB,1.4403,derived (log-interp),
+A,sz3,qmcpack-orb100,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","74.994,0.35214,0.003788,0.001545",bench/out/heldout_qmcpack-orb100.csv,18
+A,sz3,qmcpack-orb100,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","83.847,0.66468,0.003667,0.001724",bench/out/heldout_qmcpack-orb100.csv,21
+A,sz3,qmcpack-orb100,bpv@80dB / sperr bpv@80dB,1.2298,derived (log-interp),
+A,sz3,scale-PRES,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","74.584,0.17876,0.006018,0.002911",bench/out/heldout_scale-PRES.csv,18
+A,sz3,scale-PRES,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","83.120,0.39477,0.006074,0.003327",bench/out/heldout_scale-PRES.csv,21
+A,sz3,scale-PRES,bpv@80dB / sperr bpv@80dB,4.1544,derived (log-interp),
+A,sz3,scale-QV,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","71.108,1.5919,0.008067,0.005003",bench/out/heldout_scale-QV.csv,18
+A,sz3,scale-QV,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.702,2.684,0.007504,0.005281",bench/out/heldout_scale-QV.csv,21
+A,sz3,scale-QV,bpv@80dB / sperr bpv@80dB,1.8480,derived (log-interp),
+A,sz3,scale-T,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","71.981,0.71219,0.007532,0.003895",bench/out/heldout_scale-T.csv,18
+A,sz3,scale-T,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.481,1.6476,0.007168,0.005284",bench/out/heldout_scale-T.csv,21
+A,sz3,scale-T,bpv@80dB / sperr bpv@80dB,3.2162,derived (log-interp),
+A,sz3,scale-U,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.442,2.2712,0.009395,0.006399",bench/out/heldout_scale-U.csv,18
+A,sz3,scale-U,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.070,3.8462,0.009473,0.007788",bench/out/heldout_scale-U.csv,21
+A,sz3,scale-U,bpv@80dB / sperr bpv@80dB,2.0140,derived (log-interp),
+A,sz3,geomean,y=bpv ratio vs SPERR (n=14),1.6630,derived,
+A,sz3,geomean,decode MB/s,874.4,derived,
+A,sz3,geomean,encode MB/s,501.67,derived,
+A,zfp,cesm-CLDTOT,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.371,5.6008,0.03718,0.02109",bench/out/heldout_cesm-CLDTOT.csv,38
+A,zfp,cesm-CLDTOT,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","82.187,7.5766,0.04807,0.02623",bench/out/heldout_cesm-CLDTOT.csv,39
+A,zfp,cesm-CLDTOT,bpv@80dB / sperr bpv@80dB,1.5655,derived (log-interp),
+A,zfp,cesm-FLDS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","77.854,4.2302,0.007795,0.006074",bench/out/heldout_cesm-FLDS.csv,39
+A,zfp,cesm-FLDS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","83.193,5.0706,0.008968,0.007478",bench/out/heldout_cesm-FLDS.csv,28
+A,zfp,cesm-FLDS,bpv@80dB / sperr bpv@80dB,2.8943,derived (log-interp),
+A,zfp,cesm-LHFLX,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","74.684,3.8883,0.007258,0.005647",bench/out/heldout_cesm-LHFLX.csv,38
+A,zfp,cesm-LHFLX,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","83.543,4.9752,0.008882,0.006904",bench/out/heldout_cesm-LHFLX.csv,28
+A,zfp,cesm-LHFLX,bpv@80dB / sperr bpv@80dB,2.9146,derived (log-interp),
+A,zfp,cesm-TS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","69.810,2.9382,0.004901,0.009891",bench/out/heldout_cesm-TS.csv,39
+A,zfp,cesm-TS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.587,3.5512,0.005672,0.008265",bench/out/heldout_cesm-TS.csv,40
+A,zfp,cesm-TS,bpv@80dB / sperr bpv@80dB,10.5159,derived (log-interp),
+A,zfp,exafel-ev0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","78.205,7.5388,0.007306,0.007161",bench/out/heldout_exafel-ev0.csv,36
+A,zfp,exafel-ev0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","82.266,7.6973,0.007329,0.0073",bench/out/heldout_exafel-ev0.csv,28
+A,zfp,exafel-ev0,bpv@80dB / sperr bpv@80dB,1.2819,derived (log-interp),
+A,zfp,hurricane-V,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","79.261,3.9616,0.006655,0.005014",bench/out/heldout_hurricane-V.csv,39
+A,zfp,hurricane-V,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","89.112,5.2825,0.007294,0.005793",bench/out/heldout_hurricane-V.csv,28
+A,zfp,hurricane-V,bpv@80dB / sperr bpv@80dB,2.5872,derived (log-interp),
+A,zfp,miranda-pressure,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","71.096,1.736,0.005294,0.003534",bench/out/heldout_miranda-pressure.csv,27
+A,zfp,miranda-pressure,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","81.981,3.6409,0.007116,0.005518",bench/out/heldout_miranda-pressure.csv,38
+A,zfp,miranda-pressure,bpv@80dB / sperr bpv@80dB,3.0722,derived (log-interp),
+A,zfp,nyx-velocity_x,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","73.304,2.9492,0.006157,0.004435",bench/out/heldout_nyx-velocity_x.csv,27
+A,zfp,nyx-velocity_x,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","84.342,5.1047,0.007039,0.005759",bench/out/heldout_nyx-velocity_x.csv,39
+A,zfp,nyx-velocity_x,bpv@80dB / sperr bpv@80dB,1.5803,derived (log-interp),
+A,zfp,qmcpack-orb0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","77.272,0.77394,0.001964,0.001116",bench/out/heldout_qmcpack-orb0.csv,27
+A,zfp,qmcpack-orb0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","98.183,1.7094,0.002728,0.001664",bench/out/heldout_qmcpack-orb0.csv,28
+A,zfp,qmcpack-orb0,bpv@80dB / sperr bpv@80dB,4.1886,derived (log-interp),
+A,zfp,qmcpack-orb100,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","78.786,2.226,0.003322,0.002082",bench/out/heldout_qmcpack-orb100.csv,38
+A,zfp,qmcpack-orb100,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","92.561,2.7499,0.003921,0.002317",bench/out/heldout_qmcpack-orb100.csv,28
+A,zfp,qmcpack-orb100,bpv@80dB / sperr bpv@80dB,5.5302,derived (log-interp),
+A,zfp,scale-PRES,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","79.288,1.3458,0.004081,0.002191",bench/out/heldout_scale-PRES.csv,27
+A,zfp,scale-PRES,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","82.383,1.6857,0.004785,0.002855",bench/out/heldout_scale-PRES.csv,39
+A,zfp,scale-PRES,bpv@80dB / sperr bpv@80dB,19.9250,derived (log-interp),
+A,zfp,scale-QV,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","72.059,2.3433,0.005376,0.003527",bench/out/heldout_scale-QV.csv,27
+A,zfp,scale-QV,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","94.358,5.0687,0.006527,0.005201",bench/out/heldout_scale-QV.csv,28
+A,zfp,scale-QV,bpv@80dB / sperr bpv@80dB,2.2063,derived (log-interp),
+A,zfp,scale-T,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","77.531,2.4006,0.005559,0.003398",bench/out/heldout_scale-T.csv,40
+A,zfp,scale-T,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","87.465,3.8615,0.006538,0.004612",bench/out/heldout_scale-T.csv,41
+A,zfp,scale-T,bpv@80dB / sperr bpv@80dB,5.5302,derived (log-interp),
+A,zfp,scale-U,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","78.949,4.7351,0.008995,0.007079",bench/out/heldout_scale-U.csv,39
+A,zfp,scale-U,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","90.641,6.3848,0.009969,0.008424",bench/out/heldout_scale-U.csv,28
+A,zfp,scale-U,bpv@80dB / sperr bpv@80dB,2.5568,derived (log-interp),
+A,zfp,geomean,y=bpv ratio vs SPERR (n=14),3.4377,derived,
+A,zfp,geomean,decode MB/s,752.4,derived,
+A,zfp,geomean,encode MB/s,568.63,derived,
+A,tthresh,hurricane-V,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","77.768,1.2605,0.1159,0.06696",bench/out/heldout_hurricane-V.csv,83
+A,tthresh,hurricane-V,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","88.136,2.0334,0.1302,0.07374",bench/out/heldout_hurricane-V.csv,86
+A,tthresh,hurricane-V,bpv@80dB / sperr bpv@80dB,0.8929,derived (log-interp),
+A,tthresh,miranda-pressure,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","77.917,1.064,0.1024,0.05383",bench/out/heldout_miranda-pressure.csv,83
+A,tthresh,miranda-pressure,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","88.036,1.9737,0.1085,0.05091",bench/out/heldout_miranda-pressure.csv,86
+A,tthresh,miranda-pressure,bpv@80dB / sperr bpv@80dB,1.1668,derived (log-interp),
+A,tthresh,nyx-velocity_x,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","78.079,3.5185,0.1515,0.08912",bench/out/heldout_nyx-velocity_x.csv,83
+A,tthresh,nyx-velocity_x,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","89.762,5.5116,0.172,0.1114",bench/out/heldout_nyx-velocity_x.csv,86
+A,tthresh,nyx-velocity_x,bpv@80dB / sperr bpv@80dB,1.4552,derived (log-interp),
+A,tthresh,qmcpack-orb0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","71.054,0.083607,0.04789,0.029",bench/out/heldout_qmcpack-orb0.csv,83
+A,tthresh,qmcpack-orb0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","82.056,0.11739,0.04974,0.02912",bench/out/heldout_qmcpack-orb0.csv,86
+A,tthresh,qmcpack-orb0,bpv@80dB / sperr bpv@80dB,0.5377,derived (log-interp),
+A,tthresh,qmcpack-orb100,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","75.925,0.26292,0.05048,0.02916",bench/out/heldout_qmcpack-orb100.csv,83
+A,tthresh,qmcpack-orb100,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","86.247,0.37993,0.05289,0.02703",bench/out/heldout_qmcpack-orb100.csv,86
+A,tthresh,qmcpack-orb100,bpv@80dB / sperr bpv@80dB,0.7414,derived (log-interp),
+A,tthresh,scale-PRES,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","67.790,0.03627,0.0896,0.03508",bench/out/heldout_scale-PRES.csv,83
+A,tthresh,scale-PRES,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","81.195,0.091507,0.0922,0.03365",bench/out/heldout_scale-PRES.csv,86
+A,tthresh,scale-PRES,bpv@80dB / sperr bpv@80dB,1.1845,derived (log-interp),
+A,tthresh,scale-QV,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","76.987,1.168,0.114,0.055",bench/out/heldout_scale-QV.csv,83
+A,tthresh,scale-QV,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","88.043,2.3848,0.1457,0.07111",bench/out/heldout_scale-QV.csv,86
+A,tthresh,scale-QV,bpv@80dB / sperr bpv@80dB,1.0150,derived (log-interp),
+A,tthresh,scale-T,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","76.391,0.30238,0.09818,0.04332",bench/out/heldout_scale-T.csv,83
+A,tthresh,scale-T,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","86.242,0.92134,0.1082,0.05791",bench/out/heldout_scale-T.csv,86
+A,tthresh,scale-T,bpv@80dB / sperr bpv@80dB,0.9310,derived (log-interp),
+A,tthresh,scale-U,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","77.289,1.3556,0.1486,0.07589",bench/out/heldout_scale-U.csv,83
+A,tthresh,scale-U,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","87.867,2.691,0.1566,0.08424",bench/out/heldout_scale-U.csv,86
+A,tthresh,scale-U,bpv@80dB / sperr bpv@80dB,0.8495,derived (log-interp),
+A,tthresh,geomean,y=bpv ratio vs SPERR (n=9),0.9403,derived,
+A,tthresh,geomean,decode MB/s,70.4,derived,
+A,tthresh,geomean,encode MB/s,36.42,derived,
+A,qtt,cesm-FLDS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.043,2.9246,5.288,0.0596",bench/out/heldout_cesm-FLDS.csv,6
+A,qtt,cesm-FLDS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.015,4.8562,4.701,0.07515",bench/out/heldout_cesm-FLDS.csv,7
+A,qtt,cesm-FLDS,bpv@80dB / sperr bpv@80dB,3.0868,derived (log-interp),
+A,qtt,cesm-LHFLX,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.066,4.456,5.003,0.07056",bench/out/heldout_cesm-LHFLX.csv,6
+A,qtt,cesm-LHFLX,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.139,6.9065,3.693,0.07805",bench/out/heldout_cesm-LHFLX.csv,7
+A,qtt,cesm-LHFLX,bpv@80dB / sperr bpv@80dB,4.4383,derived (log-interp),
+A,qtt,cesm-TS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","69.930,2.9489,3.955,0.06457",bench/out/heldout_cesm-TS.csv,6
+A,qtt,cesm-TS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.349,3.9496,5.566,0.06627",bench/out/heldout_cesm-TS.csv,7
+A,qtt,cesm-TS,bpv@80dB / sperr bpv@80dB,11.7019,derived (log-interp),
+A,qtt,hurricane-V,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.116,1.6746,1.56,0.04275",bench/out/heldout_hurricane-V.csv,6
+A,qtt,hurricane-V,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.097,2.8071,2.701,0.05124",bench/out/heldout_hurricane-V.csv,7
+A,qtt,hurricane-V,bpv@80dB / sperr bpv@80dB,1.7851,derived (log-interp),
+A,qtt,miranda-pressure,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","71.089,1.3446,2.702,0.02264",bench/out/heldout_miranda-pressure.csv,6
+A,qtt,miranda-pressure,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.574,3.4359,3,0.04061",bench/out/heldout_miranda-pressure.csv,7
+A,qtt,miranda-pressure,bpv@80dB / sperr bpv@80dB,3.1345,derived (log-interp),
+A,qtt,qmcpack-orb0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.561,0.074752,0.06231,0.0025",bench/out/heldout_qmcpack-orb0.csv,6
+A,qtt,qmcpack-orb0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.315,0.12952,0.1062,0.002838",bench/out/heldout_qmcpack-orb0.csv,7
+A,qtt,qmcpack-orb0,bpv@80dB / sperr bpv@80dB,0.6210,derived (log-interp),
+A,qtt,qmcpack-orb100,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.033,0.29037,0.1546,0.003564",bench/out/heldout_qmcpack-orb100.csv,6
+A,qtt,qmcpack-orb100,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.220,0.47896,0.3459,0.004079",bench/out/heldout_qmcpack-orb100.csv,7
+A,qtt,qmcpack-orb100,bpv@80dB / sperr bpv@80dB,1.1554,derived (log-interp),
+A,qtt,scale-PRES,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.374,0.020462,0.1515,0.004535",bench/out/heldout_scale-PRES.csv,6
+A,qtt,scale-PRES,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.071,0.068832,0.2,0.008808",bench/out/heldout_scale-PRES.csv,7
+A,qtt,scale-PRES,bpv@80dB / sperr bpv@80dB,0.9591,derived (log-interp),
+A,qtt,scale-QV,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.250,1.4136,7.94,0.04835",bench/out/heldout_scale-QV.csv,6
+A,qtt,scale-QV,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.048,2.7646,8.376,0.06243",bench/out/heldout_scale-QV.csv,7
+A,qtt,scale-QV,bpv@80dB / sperr bpv@80dB,1.9711,derived (log-interp),
+A,qtt,scale-T,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.821,0.29145,1.296,0.01424",bench/out/heldout_scale-T.csv,6
+A,qtt,scale-T,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.990,1.1414,5.763,0.04005",bench/out/heldout_scale-T.csv,7
+A,qtt,scale-T,bpv@80dB / sperr bpv@80dB,2.0457,derived (log-interp),
+A,qtt,scale-U,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.024,1.2397,5.606,0.0357",bench/out/heldout_scale-U.csv,6
+A,qtt,scale-U,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.154,2.776,12.98,0.07326",bench/out/heldout_scale-U.csv,7
+A,qtt,scale-U,bpv@80dB / sperr bpv@80dB,1.4415,derived (log-interp),
+A,qtt,geomean,y=bpv ratio vs SPERR (n=11),2.1046,derived,
+A,qtt,geomean,decode MB/s,151.6,derived,
+A,qtt,geomean,encode MB/s,2.18,derived,
+A,tc-auto,cesm-CLDTOT,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.001,2.5111,12.6,0.4477",bench/out/heldout_cesm-CLDTOT.csv,134
+A,tc-auto,cesm-CLDTOT,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.002,4.0642,12.93,0.5168",bench/out/heldout_cesm-CLDTOT.csv,135
+A,tc-auto,cesm-CLDTOT,bpv@80dB / sperr bpv@80dB,0.8880,derived (log-interp),
+A,tc-auto,cesm-FLDS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.000,0.4099,7.582,0.2381",bench/out/heldout_cesm-FLDS.csv,134
+A,tc-auto,cesm-FLDS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.001,1.3186,10.11,0.3912",bench/out/heldout_cesm-FLDS.csv,135
+A,tc-auto,cesm-FLDS,bpv@80dB / sperr bpv@80dB,0.8388,derived (log-interp),
+A,tc-auto,cesm-LHFLX,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.000,0.50375,7.247,0.2167",bench/out/heldout_cesm-LHFLX.csv,134
+A,tc-auto,cesm-LHFLX,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.001,1.2777,10.13,0.3436",bench/out/heldout_cesm-LHFLX.csv,135
+A,tc-auto,cesm-LHFLX,bpv@80dB / sperr bpv@80dB,0.8260,derived (log-interp),
+A,tc-auto,cesm-TS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.001,0.10924,15.31,0.08716",bench/out/heldout_cesm-TS.csv,134
+A,tc-auto,cesm-TS,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.001,0.27701,13.88,0.1286",bench/out/heldout_cesm-TS.csv,135
+A,tc-auto,cesm-TS,bpv@80dB / sperr bpv@80dB,0.8287,derived (log-interp),
+A,tc-auto,exafel-ev0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.001,3.9473,13.73,0.4908",bench/out/heldout_exafel-ev0.csv,134
+A,tc-auto,exafel-ev0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.001,5.6268,13.71,0.5624",bench/out/heldout_exafel-ev0.csv,135
+A,tc-auto,exafel-ev0,bpv@80dB / sperr bpv@80dB,0.9480,derived (log-interp),
+A,tc-auto,hurricane-V,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.001,0.61274,2.167,0.02667",bench/out/heldout_hurricane-V.csv,142
+A,tc-auto,hurricane-V,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.001,1.1354,2.091,0.03572",bench/out/heldout_hurricane-V.csv,143
+A,tc-auto,hurricane-V,bpv@80dB / sperr bpv@80dB,0.7256,derived (log-interp),
+A,tc-auto,miranda-pressure,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.001,0.33512,1.552,0.01018",bench/out/heldout_miranda-pressure.csv,142
+A,tc-auto,miranda-pressure,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.000,0.57314,1.905,0.0147",bench/out/heldout_miranda-pressure.csv,143
+A,tc-auto,miranda-pressure,bpv@80dB / sperr bpv@80dB,0.5534,derived (log-interp),
+A,tc-auto,nyx-velocity_x,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.001,0.85222,2.174,0.3701",bench/out/heldout_nyx-velocity_x.csv,142
+A,tc-auto,nyx-velocity_x,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.001,2.1796,2.418,0.4544",bench/out/heldout_nyx-velocity_x.csv,143
+A,tc-auto,nyx-velocity_x,bpv@80dB / sperr bpv@80dB,0.8372,derived (log-interp),
+A,tc-auto,qmcpack-orb0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.056,0.029369,0.9256,0.001239",bench/out/heldout_qmcpack-orb0.csv,142
+A,tc-auto,qmcpack-orb0,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.002,0.045456,0.9365,0.001305",bench/out/heldout_qmcpack-orb0.csv,143
+A,tc-auto,qmcpack-orb0,bpv@80dB / sperr bpv@80dB,0.2218,derived (log-interp),
+A,tc-auto,qmcpack-orb100,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.000,0.11761,1.131,0.002089",bench/out/heldout_qmcpack-orb100.csv,142
+A,tc-auto,qmcpack-orb100,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.004,0.18969,0.9589,0.002704",bench/out/heldout_qmcpack-orb100.csv,143
+A,tc-auto,qmcpack-orb100,bpv@80dB / sperr bpv@80dB,0.4625,derived (log-interp),
+A,tc-auto,scale-PRES,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.004,0.012543,1.173,0.003346",bench/out/heldout_scale-PRES.csv,142
+A,tc-auto,scale-PRES,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.003,0.03981,1.358,0.006572",bench/out/heldout_scale-PRES.csv,143
+A,tc-auto,scale-PRES,bpv@80dB / sperr bpv@80dB,0.5594,derived (log-interp),
+A,tc-auto,scale-QV,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.000,0.45761,2.143,0.03238",bench/out/heldout_scale-QV.csv,142
+A,tc-auto,scale-QV,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.001,1.2073,3.115,0.1374",bench/out/heldout_scale-QV.csv,143
+A,tc-auto,scale-QV,bpv@80dB / sperr bpv@80dB,0.8636,derived (log-interp),
+A,tc-auto,scale-T,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.010,0.076996,1.741,0.008233",bench/out/heldout_scale-T.csv,142
+A,tc-auto,scale-T,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.000,0.32854,2.255,0.03059",bench/out/heldout_scale-T.csv,143
+A,tc-auto,scale-T,bpv@80dB / sperr bpv@80dB,0.6725,derived (log-interp),
+A,tc-auto,scale-U,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","70.001,0.51569,2.015,0.02666",bench/out/heldout_scale-U.csv,142
+A,tc-auto,scale-U,"bracketing measured encode (psnr,bpv,enc_s,dec_s)","80.002,1.2923,2.31,0.04741",bench/out/heldout_scale-U.csv,143
+A,tc-auto,scale-U,bpv@80dB / sperr bpv@80dB,0.6791,derived (log-interp),
+A,tc-auto,geomean,y=bpv ratio vs SPERR (n=14),0.6701,derived,
+A,tc-auto,geomean,decode MB/s,83.3,derived,
+A,tc-auto,geomean,encode MB/s,1.14,derived,
+A,TCG3 static (GPU),scale-T,gpu bpv / sperr bpv at gpu's measured psnr,0.64182/0.48856=1.3137 (psnr 80.001),bench/out/gpu3_ratio.jsonl,80
+A,TCG3 static (GPU),scale-U,gpu bpv / sperr bpv at gpu's measured psnr,2.037/1.9024=1.0708 (psnr 80.000),bench/out/gpu3_ratio.jsonl,95
+A,TCG3 static (GPU),scale-QV,gpu bpv / sperr bpv at gpu's measured psnr,1.4298/1.398=1.0228 (psnr 80.000),bench/out/gpu3_ratio.jsonl,110
+A,TCG3 static (GPU),scale-PRES,gpu bpv / sperr bpv at gpu's measured psnr,0.093643/0.071141=1.3163 (psnr 80.001),bench/out/gpu3_ratio.jsonl,125
+A,TCG3 static (GPU),cesm-CLDTOT,gpu bpv / sperr bpv at gpu's measured psnr,4.1783/4.5767=0.9129 (psnr 80.001),bench/out/gpu3_ratio.jsonl,140
+A,TCG3 static (GPU),cesm-FLDS,gpu bpv / sperr bpv at gpu's measured psnr,1.3813/1.5721=0.8787 (psnr 80.000),bench/out/gpu3_ratio.jsonl,155
+A,TCG3 static (GPU),cesm-LHFLX,gpu bpv / sperr bpv at gpu's measured psnr,1.3677/1.5469=0.8841 (psnr 80.001),bench/out/gpu3_ratio.jsonl,170
+A,TCG3 static (GPU),cesm-TS,gpu bpv / sperr bpv at gpu's measured psnr,0.29453/0.33424=0.8812 (psnr 80.000),bench/out/gpu3_ratio.jsonl,185
+A,TCG3 static (GPU),exafel-ev0,gpu bpv / sperr bpv at gpu's measured psnr,5.6597/5.9354=0.9535 (psnr 80.000),bench/out/gpu3_ratio.jsonl,200
+A,TCG3 static (GPU),qmcpack-orb0,gpu bpv / sperr bpv at gpu's measured psnr,0.16105/0.20498=0.7857 (psnr 80.008),bench/out/gpu3_ratio.jsonl,215
+A,TCG3 static (GPU),qmcpack-orb100,gpu bpv / sperr bpv at gpu's measured psnr,0.29433/0.41015=0.7176 (psnr 80.003),bench/out/gpu3_ratio.jsonl,230
+A,TCG3 static (GPU),miranda-pressure,gpu bpv / sperr bpv at gpu's measured psnr,0.99509/1.0357=0.9608 (psnr 80.001),bench/out/gpu3_ratio.jsonl,245
+A,TCG3 static (GPU),hurricane-V,gpu bpv / sperr bpv at gpu's measured psnr,1.8456/1.5647=1.1795 (psnr 80.000),bench/out/gpu3_ratio.jsonl,260
+A,TCG3 static (GPU),nyx-velocity_x,gpu bpv / sperr bpv at gpu's measured psnr,2.3154/2.6034=0.8894 (psnr 80.001),bench/out/gpu3_ratio.jsonl,275
+A,TCG3 static (GPU),geomean,y=bpv ratio vs SPERR (n=14),0.9688,derived,
+A,TCG3 learned (GPU),scale-T,gpu bpv / sperr bpv at gpu's measured psnr,0.67557/0.48856=1.3828 (psnr 80.001),bench/out/gpu3_learned_ratio.jsonl,122
+A,TCG3 learned (GPU),scale-U,gpu bpv / sperr bpv at gpu's measured psnr,1.9853/1.9024=1.0436 (psnr 80.000),bench/out/gpu3_learned_ratio.jsonl,127
+A,TCG3 learned (GPU),scale-QV,gpu bpv / sperr bpv at gpu's measured psnr,1.4187/1.398=1.0149 (psnr 80.000),bench/out/gpu3_learned_ratio.jsonl,132
+A,TCG3 learned (GPU),scale-PRES,gpu bpv / sperr bpv at gpu's measured psnr,0.12303/0.071141=1.7294 (psnr 80.001),bench/out/gpu3_learned_ratio.jsonl,137
+A,TCG3 learned (GPU),cesm-CLDTOT,gpu bpv / sperr bpv at gpu's measured psnr,4.2349/4.5767=0.9253 (psnr 80.001),bench/out/gpu3_learned_ratio.jsonl,142
+A,TCG3 learned (GPU),cesm-FLDS,gpu bpv / sperr bpv at gpu's measured psnr,1.4467/1.5721=0.9203 (psnr 80.000),bench/out/gpu3_learned_ratio.jsonl,147
+A,TCG3 learned (GPU),cesm-LHFLX,gpu bpv / sperr bpv at gpu's measured psnr,1.3874/1.5469=0.8969 (psnr 80.001),bench/out/gpu3_learned_ratio.jsonl,152
+A,TCG3 learned (GPU),cesm-TS,gpu bpv / sperr bpv at gpu's measured psnr,0.31006/0.33424=0.9276 (psnr 80.000),bench/out/gpu3_learned_ratio.jsonl,157
+A,TCG3 learned (GPU),exafel-ev0,gpu bpv / sperr bpv at gpu's measured psnr,6.1801/5.9354=1.0412 (psnr 80.000),bench/out/gpu3_learned_ratio.jsonl,162
+A,TCG3 learned (GPU),qmcpack-orb0,gpu bpv / sperr bpv at gpu's measured psnr,0.1929/0.20498=0.9411 (psnr 80.008),bench/out/gpu3_learned_ratio.jsonl,167
+A,TCG3 learned (GPU),qmcpack-orb100,gpu bpv / sperr bpv at gpu's measured psnr,0.32131/0.41015=0.7834 (psnr 80.003),bench/out/gpu3_learned_ratio.jsonl,172
+A,TCG3 learned (GPU),miranda-pressure,gpu bpv / sperr bpv at gpu's measured psnr,0.91005/1.0357=0.8787 (psnr 80.001),bench/out/gpu3_learned_ratio.jsonl,177
+A,TCG3 learned (GPU),hurricane-V,gpu bpv / sperr bpv at gpu's measured psnr,1.7653/1.5647=1.1282 (psnr 80.000),bench/out/gpu3_learned_ratio.jsonl,182
+A,TCG3 learned (GPU),nyx-velocity_x,gpu bpv / sperr bpv at gpu's measured psnr,2.3217/2.6034=0.8918 (psnr 80.001),bench/out/gpu3_learned_ratio.jsonl,187
+A,TCG3 learned (GPU),geomean,y=bpv ratio vs SPERR (n=14),1.0142,derived,
+A,TCG3 static (GPU),nyx-temperature 512^3,"decode MB/s (GPU kernel, RTX 3090)",1732,docs/compression-math-survey/sources/tang-compress-tc3-cleanup.md,line 124: static | 1.591 | 1.732 (median kernel GB/s)
+A,TCG3 learned (GPU),nyx-temperature 512^3,"decode MB/s (GPU kernel, RTX 3090)",1101,docs/compression-math-survey/sources/tang-compress-tc3-cleanup.md,"line 121: 16-hidden, APM | 0.956 | 1.101 (median kernel GB/s)"
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","0.010437,38.676",bench/out/heldout_cesm-TS.csv,10
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","0.011162,41.922",bench/out/heldout_cesm-TS.csv,11
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","0.031151,44.693",bench/out/heldout_cesm-TS.csv,13
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","0.031494,44.820",bench/out/heldout_cesm-TS.csv,12
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","0.078873,58.090",bench/out/heldout_cesm-TS.csv,15
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","0.079483,58.153",bench/out/heldout_cesm-TS.csv,14
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","0.16599,66.711",bench/out/heldout_cesm-TS.csv,17
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","0.16913,67.215",bench/out/heldout_cesm-TS.csv,16
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","0.32603,75.493",bench/out/heldout_cesm-TS.csv,19
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","0.3262,75.602",bench/out/heldout_cesm-TS.csv,18
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","0.64766,83.950",bench/out/heldout_cesm-TS.csv,21
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","0.65755,84.016",bench/out/heldout_cesm-TS.csv,20
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","1.2912,92.655",bench/out/heldout_cesm-TS.csv,22
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","2.2924,100.507",bench/out/heldout_cesm-TS.csv,25
+B,sz3,cesm-TS,"pareto point (bpv,psnr)","2.6596,100.808",bench/out/heldout_cesm-TS.csv,24
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","1.0626,0.333",bench/out/heldout_cesm-TS.csv,33
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","1.3126,13.367",bench/out/heldout_cesm-TS.csv,34
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","1.5627,27.041",bench/out/heldout_cesm-TS.csv,35
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","1.8141,39.250",bench/out/heldout_cesm-TS.csv,36
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","2.0771,50.069",bench/out/heldout_cesm-TS.csv,37
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","2.2194,54.660",bench/out/heldout_cesm-TS.csv,26
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","2.417,58.951",bench/out/heldout_cesm-TS.csv,38
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","2.9336,69.761",bench/out/heldout_cesm-TS.csv,27
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","2.9382,69.810",bench/out/heldout_cesm-TS.csv,39
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","3.5512,80.587",bench/out/heldout_cesm-TS.csv,40
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","4.3685,90.808",bench/out/heldout_cesm-TS.csv,28
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","4.3744,90.851",bench/out/heldout_cesm-TS.csv,41
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","5.6657,101.133",bench/out/heldout_cesm-TS.csv,42
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","6.4651,106.589",bench/out/heldout_cesm-TS.csv,29
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","7.3352,112.267",bench/out/heldout_cesm-TS.csv,43
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","9.1635,123.657",bench/out/heldout_cesm-TS.csv,30
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","12.116,149.070",bench/out/heldout_cesm-TS.csv,31
+B,zfp,cesm-TS,"pareto point (bpv,psnr)","15.123,999.000",bench/out/heldout_cesm-TS.csv,32
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","0.012238,51.395",bench/out/heldout_cesm-TS.csv,69
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","0.015465,53.040",bench/out/heldout_cesm-TS.csv,70
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","0.031136,57.877",bench/out/heldout_cesm-TS.csv,71
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","0.038963,59.583",bench/out/heldout_cesm-TS.csv,72
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","0.072319,64.697",bench/out/heldout_cesm-TS.csv,73
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","0.089684,66.510",bench/out/heldout_cesm-TS.csv,74
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","0.15363,71.809",bench/out/heldout_cesm-TS.csv,75
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","0.188,73.740",bench/out/heldout_cesm-TS.csv,76
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","0.30056,78.955",bench/out/heldout_cesm-TS.csv,77
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","0.3641,80.843",bench/out/heldout_cesm-TS.csv,78
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","0.57176,86.385",bench/out/heldout_cesm-TS.csv,79
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","0.68105,88.551",bench/out/heldout_cesm-TS.csv,80
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","1.0305,94.150",bench/out/heldout_cesm-TS.csv,81
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","1.2291,96.243",bench/out/heldout_cesm-TS.csv,82
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","1.8509,102.184",bench/out/heldout_cesm-TS.csv,83
+B,sperr,cesm-TS,"pareto point (bpv,psnr)","2.1781,104.527",bench/out/heldout_cesm-TS.csv,84
+B,qtt,cesm-TS,"pareto point (bpv,psnr)","0.002037,30.090",bench/out/heldout_cesm-TS.csv,2
+B,qtt,cesm-TS,"pareto point (bpv,psnr)","0.016212,40.113",bench/out/heldout_cesm-TS.csv,3
+B,qtt,cesm-TS,"pareto point (bpv,psnr)","0.23883,50.741",bench/out/heldout_cesm-TS.csv,4
+B,qtt,cesm-TS,"pareto point (bpv,psnr)","0.79066,60.258",bench/out/heldout_cesm-TS.csv,5
+B,qtt,cesm-TS,"pareto point (bpv,psnr)","2.9489,69.930",bench/out/heldout_cesm-TS.csv,6
+B,qtt,cesm-TS,"pareto point (bpv,psnr)","3.9496,80.349",bench/out/heldout_cesm-TS.csv,7
+B,qtt,cesm-TS,"pareto point (bpv,psnr)","5.8226,90.130",bench/out/heldout_cesm-TS.csv,8
+B,qtt,cesm-TS,"pareto point (bpv,psnr)","8.3703,100.061",bench/out/heldout_cesm-TS.csv,9
+B,tc-auto,cesm-TS,"pareto point (bpv,psnr)","0.0015564,30.148",bench/out/heldout_cesm-TS.csv,130
+B,tc-auto,cesm-TS,"pareto point (bpv,psnr)","0.0085297,40.010",bench/out/heldout_cesm-TS.csv,131
+B,tc-auto,cesm-TS,"pareto point (bpv,psnr)","0.014534,50.012",bench/out/heldout_cesm-TS.csv,132
+B,tc-auto,cesm-TS,"pareto point (bpv,psnr)","0.039467,60.001",bench/out/heldout_cesm-TS.csv,133
+B,tc-auto,cesm-TS,"pareto point (bpv,psnr)","0.10924,70.001",bench/out/heldout_cesm-TS.csv,134
+B,tc-auto,cesm-TS,"pareto point (bpv,psnr)","0.27701,80.001",bench/out/heldout_cesm-TS.csv,135
+B,tc-auto,cesm-TS,"pareto point (bpv,psnr)","0.62215,90.002",bench/out/heldout_cesm-TS.csv,136
+B,tc-auto,cesm-TS,"pareto point (bpv,psnr)","1.2924,100.000",bench/out/heldout_cesm-TS.csv,137
+B,sz3,scale-T,"pareto point (bpv,psnr)","0.0060883,37.586",bench/out/heldout_scale-T.csv,11
+B,sz3,scale-T,"pareto point (bpv,psnr)","0.016479,46.252",bench/out/heldout_scale-T.csv,12
+B,sz3,scale-T,"pareto point (bpv,psnr)","0.06163,54.571",bench/out/heldout_scale-T.csv,14
+B,sz3,scale-T,"pareto point (bpv,psnr)","0.065384,55.633",bench/out/heldout_scale-T.csv,15
+B,sz3,scale-T,"pareto point (bpv,psnr)","0.23511,63.090",bench/out/heldout_scale-T.csv,17
+B,sz3,scale-T,"pareto point (bpv,psnr)","0.237,63.182",bench/out/heldout_scale-T.csv,16
+B,sz3,scale-T,"pareto point (bpv,psnr)","0.70599,71.906",bench/out/heldout_scale-T.csv,19
+B,sz3,scale-T,"pareto point (bpv,psnr)","0.71219,71.981",bench/out/heldout_scale-T.csv,18
+B,sz3,scale-T,"pareto point (bpv,psnr)","1.6476,80.481",bench/out/heldout_scale-T.csv,21
+B,sz3,scale-T,"pareto point (bpv,psnr)","1.6904,80.913",bench/out/heldout_scale-T.csv,20
+B,sz3,scale-T,"pareto point (bpv,psnr)","3.1485,90.117",bench/out/heldout_scale-T.csv,23
+B,sz3,scale-T,"pareto point (bpv,psnr)","3.1725,90.208",bench/out/heldout_scale-T.csv,22
+B,sz3,scale-T,"pareto point (bpv,psnr)","4.8403,100.011",bench/out/heldout_scale-T.csv,25
+B,sz3,scale-T,"pareto point (bpv,psnr)","5.0065,100.348",bench/out/heldout_scale-T.csv,24
+B,zfp,scale-T,"pareto point (bpv,psnr)","0.26575,12.904",bench/out/heldout_scale-T.csv,33
+B,zfp,scale-T,"pareto point (bpv,psnr)","0.32825,20.901",bench/out/heldout_scale-T.csv,34
+B,zfp,scale-T,"pareto point (bpv,psnr)","0.40686,30.674",bench/out/heldout_scale-T.csv,35
+B,zfp,scale-T,"pareto point (bpv,psnr)","0.53448,39.725",bench/out/heldout_scale-T.csv,36
+B,zfp,scale-T,"pareto point (bpv,psnr)","0.71411,51.296",bench/out/heldout_scale-T.csv,37
+B,zfp,scale-T,"pareto point (bpv,psnr)","0.93085,58.929",bench/out/heldout_scale-T.csv,26
+B,zfp,scale-T,"pareto point (bpv,psnr)","1.0272,60.084",bench/out/heldout_scale-T.csv,38
+B,zfp,scale-T,"pareto point (bpv,psnr)","1.5334,68.735",bench/out/heldout_scale-T.csv,39
+B,zfp,scale-T,"pareto point (bpv,psnr)","2.2006,76.577",bench/out/heldout_scale-T.csv,27
+B,zfp,scale-T,"pareto point (bpv,psnr)","2.4006,77.531",bench/out/heldout_scale-T.csv,40
+B,zfp,scale-T,"pareto point (bpv,psnr)","3.8615,87.465",bench/out/heldout_scale-T.csv,41
+B,zfp,scale-T,"pareto point (bpv,psnr)","4.3704,91.554",bench/out/heldout_scale-T.csv,28
+B,zfp,scale-T,"pareto point (bpv,psnr)","5.6923,98.525",bench/out/heldout_scale-T.csv,42
+B,zfp,scale-T,"pareto point (bpv,psnr)","7.2229,108.628",bench/out/heldout_scale-T.csv,29
+B,zfp,scale-T,"pareto point (bpv,psnr)","7.6561,110.263",bench/out/heldout_scale-T.csv,43
+B,zfp,scale-T,"pareto point (bpv,psnr)","11.212,132.093",bench/out/heldout_scale-T.csv,30
+B,zfp,scale-T,"pareto point (bpv,psnr)","14.212,155.651",bench/out/heldout_scale-T.csv,31
+B,zfp,scale-T,"pareto point (bpv,psnr)","15.652,170.385",bench/out/heldout_scale-T.csv,32
+B,sperr,scale-T,"pareto point (bpv,psnr)","0.0090561,53.146",bench/out/heldout_scale-T.csv,69
+B,sperr,scale-T,"pareto point (bpv,psnr)","0.010567,54.408",bench/out/heldout_scale-T.csv,70
+B,sperr,scale-T,"pareto point (bpv,psnr)","0.019295,58.788",bench/out/heldout_scale-T.csv,72
+B,sperr,scale-T,"pareto point (bpv,psnr)","0.023865,60.198",bench/out/heldout_scale-T.csv,73
+B,sperr,scale-T,"pareto point (bpv,psnr)","0.046539,64.801",bench/out/heldout_scale-T.csv,75
+B,sperr,scale-T,"pareto point (bpv,psnr)","0.058434,66.268",bench/out/heldout_scale-T.csv,76
+B,sperr,scale-T,"pareto point (bpv,psnr)","0.11806,70.737",bench/out/heldout_scale-T.csv,78
+B,sperr,scale-T,"pareto point (bpv,psnr)","0.1515,72.268",bench/out/heldout_scale-T.csv,79
+B,sperr,scale-T,"pareto point (bpv,psnr)","0.32226,76.961",bench/out/heldout_scale-T.csv,81
+B,sperr,scale-T,"pareto point (bpv,psnr)","0.41553,78.668",bench/out/heldout_scale-T.csv,82
+B,sperr,scale-T,"pareto point (bpv,psnr)","0.79604,84.018",bench/out/heldout_scale-T.csv,84
+B,sperr,scale-T,"pareto point (bpv,psnr)","0.99888,86.116",bench/out/heldout_scale-T.csv,85
+B,sperr,scale-T,"pareto point (bpv,psnr)","1.6243,92.054",bench/out/heldout_scale-T.csv,87
+B,sperr,scale-T,"pareto point (bpv,psnr)","1.9811,94.560",bench/out/heldout_scale-T.csv,88
+B,sperr,scale-T,"pareto point (bpv,psnr)","2.8213,100.760",bench/out/heldout_scale-T.csv,90
+B,sperr,scale-T,"pareto point (bpv,psnr)","3.3337,103.664",bench/out/heldout_scale-T.csv,91
+B,tthresh,scale-T,"pareto point (bpv,psnr)","0.0091095,31.349",bench/out/heldout_scale-T.csv,71
+B,tthresh,scale-T,"pareto point (bpv,psnr)","0.014297,41.456",bench/out/heldout_scale-T.csv,74
+B,tthresh,scale-T,"pareto point (bpv,psnr)","0.031998,51.459",bench/out/heldout_scale-T.csv,77
+B,tthresh,scale-T,"pareto point (bpv,psnr)","0.087967,64.463",bench/out/heldout_scale-T.csv,80
+B,tthresh,scale-T,"pareto point (bpv,psnr)","0.30238,76.391",bench/out/heldout_scale-T.csv,83
+B,tthresh,scale-T,"pareto point (bpv,psnr)","0.92134,86.242",bench/out/heldout_scale-T.csv,86
+B,tthresh,scale-T,"pareto point (bpv,psnr)","2.294,97.610",bench/out/heldout_scale-T.csv,89
+B,tthresh,scale-T,"pareto point (bpv,psnr)","3.9141,108.678",bench/out/heldout_scale-T.csv,92
+B,qtt,scale-T,"pareto point (bpv,psnr)","0.0013199,30.987",bench/out/heldout_scale-T.csv,2
+B,qtt,scale-T,"pareto point (bpv,psnr)","0.0019684,40.395",bench/out/heldout_scale-T.csv,3
+B,qtt,scale-T,"pareto point (bpv,psnr)","0.011131,50.086",bench/out/heldout_scale-T.csv,4
+B,qtt,scale-T,"pareto point (bpv,psnr)","0.056175,60.100",bench/out/heldout_scale-T.csv,5
+B,qtt,scale-T,"pareto point (bpv,psnr)","0.29145,70.821",bench/out/heldout_scale-T.csv,6
+B,qtt,scale-T,"pareto point (bpv,psnr)","1.1414,80.990",bench/out/heldout_scale-T.csv,7
+B,qtt,scale-T,"pareto point (bpv,psnr)","2.3543,90.025",bench/out/heldout_scale-T.csv,8
+B,qtt,scale-T,"pareto point (bpv,psnr)","4.2299,100.137",bench/out/heldout_scale-T.csv,9
+B,tc-auto,scale-T,"pareto point (bpv,psnr)","0.00046539,30.760",bench/out/heldout_scale-T.csv,138
+B,tc-auto,scale-T,"pareto point (bpv,psnr)","0.00068665,40.336",bench/out/heldout_scale-T.csv,139
+B,tc-auto,scale-T,"pareto point (bpv,psnr)","0.0054169,50.027",bench/out/heldout_scale-T.csv,140
+B,tc-auto,scale-T,"pareto point (bpv,psnr)","0.021492,60.001",bench/out/heldout_scale-T.csv,141
+B,tc-auto,scale-T,"pareto point (bpv,psnr)","0.076996,70.010",bench/out/heldout_scale-T.csv,142
+B,tc-auto,scale-T,"pareto point (bpv,psnr)","0.32854,80.000",bench/out/heldout_scale-T.csv,143
+B,tc-auto,scale-T,"pareto point (bpv,psnr)","1.0346,90.001",bench/out/heldout_scale-T.csv,144
+B,tc-auto,scale-T,"pareto point (bpv,psnr)","2.2097,100.004",bench/out/heldout_scale-T.csv,145
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","0.045181,36.680",bench/out/heldout_miranda-pressure.csv,11
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","0.045197,36.763",bench/out/heldout_miranda-pressure.csv,10
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","0.18707,43.272",bench/out/heldout_miranda-pressure.csv,13
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","0.18934,43.337",bench/out/heldout_miranda-pressure.csv,12
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","0.57846,63.409",bench/out/heldout_miranda-pressure.csv,17
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","0.57977,63.487",bench/out/heldout_miranda-pressure.csv,16
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","1.2923,72.107",bench/out/heldout_miranda-pressure.csv,19
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","1.3002,72.186",bench/out/heldout_miranda-pressure.csv,18
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","2.3925,81.262",bench/out/heldout_miranda-pressure.csv,21
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","2.404,81.334",bench/out/heldout_miranda-pressure.csv,20
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","3.8651,90.816",bench/out/heldout_miranda-pressure.csv,23
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","3.8807,90.900",bench/out/heldout_miranda-pressure.csv,22
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","5.3527,100.563",bench/out/heldout_miranda-pressure.csv,25
+B,sz3,miranda-pressure,"pareto point (bpv,psnr)","5.3673,100.649",bench/out/heldout_miranda-pressure.csv,24
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","0.2793,32.657",bench/out/heldout_miranda-pressure.csv,33
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","0.4892,41.412",bench/out/heldout_miranda-pressure.csv,34
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","0.78979,55.782",bench/out/heldout_miranda-pressure.csv,26
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","1.4901,60.623",bench/out/heldout_miranda-pressure.csv,36
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","1.736,71.096",bench/out/heldout_miranda-pressure.csv,27
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","3.6409,81.981",bench/out/heldout_miranda-pressure.csv,38
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","3.9863,92.984",bench/out/heldout_miranda-pressure.csv,28
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","5.1476,93.290",bench/out/heldout_miranda-pressure.csv,39
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","6.3332,110.203",bench/out/heldout_miranda-pressure.csv,29
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","8.749,116.730",bench/out/heldout_miranda-pressure.csv,41
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","9.0452,127.881",bench/out/heldout_miranda-pressure.csv,30
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","10.704,128.699",bench/out/heldout_miranda-pressure.csv,42
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","12.692,140.679",bench/out/heldout_miranda-pressure.csv,43
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","12.917,151.745",bench/out/heldout_miranda-pressure.csv,31
+B,zfp,miranda-pressure,"pareto point (bpv,psnr)","15.891,169.546",bench/out/heldout_miranda-pressure.csv,32
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","0.050499,45.005",bench/out/heldout_miranda-pressure.csv,69
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","0.063057,46.808",bench/out/heldout_miranda-pressure.csv,70
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","0.11531,52.402",bench/out/heldout_miranda-pressure.csv,72
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","0.13852,54.328",bench/out/heldout_miranda-pressure.csv,73
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","0.23078,59.931",bench/out/heldout_miranda-pressure.csv,75
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","0.27471,61.850",bench/out/heldout_miranda-pressure.csv,76
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","0.44218,67.540",bench/out/heldout_miranda-pressure.csv,78
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","0.5209,69.568",bench/out/heldout_miranda-pressure.csv,79
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","0.79642,75.669",bench/out/heldout_miranda-pressure.csv,81
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","0.92213,77.882",bench/out/heldout_miranda-pressure.csv,82
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","1.3122,84.317",bench/out/heldout_miranda-pressure.csv,84
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","1.4916,86.681",bench/out/heldout_miranda-pressure.csv,85
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","1.9989,93.184",bench/out/heldout_miranda-pressure.csv,87
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","2.2487,95.668",bench/out/heldout_miranda-pressure.csv,88
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","2.8784,102.211",bench/out/heldout_miranda-pressure.csv,90
+B,sperr,miranda-pressure,"pareto point (bpv,psnr)","3.212,104.882",bench/out/heldout_miranda-pressure.csv,91
+B,tthresh,miranda-pressure,"pareto point (bpv,psnr)","0.041519,35.064",bench/out/heldout_miranda-pressure.csv,71
+B,tthresh,miranda-pressure,"pareto point (bpv,psnr)","0.11024,46.411",bench/out/heldout_miranda-pressure.csv,74
+B,tthresh,miranda-pressure,"pareto point (bpv,psnr)","0.23592,57.261",bench/out/heldout_miranda-pressure.csv,77
+B,tthresh,miranda-pressure,"pareto point (bpv,psnr)","0.76912,67.648",bench/out/heldout_miranda-pressure.csv,80
+B,tthresh,miranda-pressure,"pareto point (bpv,psnr)","1.064,77.917",bench/out/heldout_miranda-pressure.csv,83
+B,tthresh,miranda-pressure,"pareto point (bpv,psnr)","1.9737,88.036",bench/out/heldout_miranda-pressure.csv,86
+B,tthresh,miranda-pressure,"pareto point (bpv,psnr)","2.8819,97.900",bench/out/heldout_miranda-pressure.csv,89
+B,tthresh,miranda-pressure,"pareto point (bpv,psnr)","4.0593,107.862",bench/out/heldout_miranda-pressure.csv,92
+B,qtt,miranda-pressure,"pareto point (bpv,psnr)","0.019867,30.121",bench/out/heldout_miranda-pressure.csv,2
+B,qtt,miranda-pressure,"pareto point (bpv,psnr)","0.11198,40.092",bench/out/heldout_miranda-pressure.csv,3
+B,qtt,miranda-pressure,"pareto point (bpv,psnr)","0.30766,50.017",bench/out/heldout_miranda-pressure.csv,4
+B,qtt,miranda-pressure,"pareto point (bpv,psnr)","0.67755,60.020",bench/out/heldout_miranda-pressure.csv,5
+B,qtt,miranda-pressure,"pareto point (bpv,psnr)","1.3446,71.089",bench/out/heldout_miranda-pressure.csv,6
+B,qtt,miranda-pressure,"pareto point (bpv,psnr)","3.4359,80.574",bench/out/heldout_miranda-pressure.csv,7
+B,qtt,miranda-pressure,"pareto point (bpv,psnr)","3.9033,92.689",bench/out/heldout_miranda-pressure.csv,8
+B,qtt,miranda-pressure,"pareto point (bpv,psnr)","5.4535,100.108",bench/out/heldout_miranda-pressure.csv,9
+B,tc-auto,miranda-pressure,"pareto point (bpv,psnr)","0.0078125,30.002",bench/out/heldout_miranda-pressure.csv,138
+B,tc-auto,miranda-pressure,"pareto point (bpv,psnr)","0.028183,40.001",bench/out/heldout_miranda-pressure.csv,139
+B,tc-auto,miranda-pressure,"pareto point (bpv,psnr)","0.075531,50.000",bench/out/heldout_miranda-pressure.csv,140
+B,tc-auto,miranda-pressure,"pareto point (bpv,psnr)","0.17727,60.001",bench/out/heldout_miranda-pressure.csv,141
+B,tc-auto,miranda-pressure,"pareto point (bpv,psnr)","0.33512,70.001",bench/out/heldout_miranda-pressure.csv,142
+B,tc-auto,miranda-pressure,"pareto point (bpv,psnr)","0.57314,80.000",bench/out/heldout_miranda-pressure.csv,143
+B,tc-auto,miranda-pressure,"pareto point (bpv,psnr)","0.94604,90.000",bench/out/heldout_miranda-pressure.csv,144
+B,tc-auto,miranda-pressure,"pareto point (bpv,psnr)","1.5538,100.004",bench/out/heldout_miranda-pressure.csv,145
