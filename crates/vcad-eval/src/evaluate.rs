@@ -68,6 +68,27 @@ pub fn evaluate_document(
     doc: &Document,
     options: &EvalOptions,
 ) -> Result<EvaluatedScene, EvalError> {
+    evaluate_inner(doc, options, None)
+}
+
+/// [`evaluate_document`], reusing `cache` across calls: only nodes whose
+/// subtree changed since the previous call through the same cache (the
+/// edited features and everything downstream of them) are re-evaluated,
+/// and unchanged roots skip tessellation. Results equal a cold evaluation.
+/// See [`crate::incremental`].
+pub fn evaluate_document_incremental(
+    doc: &Document,
+    options: &EvalOptions,
+    cache: &mut crate::incremental::IncrementalCache,
+) -> Result<EvaluatedScene, EvalError> {
+    evaluate_inner(doc, options, Some(cache))
+}
+
+fn evaluate_inner(
+    doc: &Document,
+    options: &EvalOptions,
+    mut inc: Option<&mut crate::incremental::IncrementalCache>,
+) -> Result<EvaluatedScene, EvalError> {
     let clock = options.clock.as_deref();
     let t_start = clock.map(|c| c.now_ms());
 
@@ -83,7 +104,6 @@ pub fn evaluate_document(
         &resolved_owned
     };
 
-    let mut cache: HashMap<NodeId, Option<Solid>> = HashMap::new();
     let mut node_timings: HashMap<String, NodeTiming> = HashMap::new();
     let mut tessellate_ms: f64 = 0.0;
     let mut failures: Vec<RootFailure> = Vec::new();
@@ -95,6 +115,20 @@ pub fn evaluate_document(
     let segments = match options.mesh_segments {
         0 => crate::DEFAULT_MESH_SEGMENTS,
         n => n,
+    };
+
+    // Incremental: subtree fingerprints decide which carried-over solids
+    // are still valid (salted with what else changes a result).
+    let hashes = inc.as_ref().map(|_| {
+        let fold = FOLD_SHEET_METAL.with(|f| f.get());
+        crate::incremental::subtree_hashes(
+            &doc.nodes,
+            u64::from(segments) | (u64::from(fold) << 32),
+        )
+    });
+    let mut cache: HashMap<NodeId, Option<Solid>> = match (inc.as_deref_mut(), &hashes) {
+        (Some(i), Some(h)) => i.take_valid(h),
+        _ => HashMap::new(),
     };
     let fp_settings = FingerprintSettings {
         segments,
@@ -182,6 +216,29 @@ pub fn evaluate_document(
             continue;
         }
 
+        // Incremental: an unchanged root reuses its solid and its mesh.
+        let root_hash = hashes.as_ref().and_then(|h| h.get(&eval_root).copied());
+        if placement.is_none() {
+            if let (Some(i), Some(h)) = (inc.as_deref_mut(), root_hash) {
+                if let (Some(Some(solid)), Some(mesh)) =
+                    (cache.get(&eval_root).cloned(), i.mesh(eval_root, h))
+                {
+                    parts.push(EvaluatedPart {
+                        mesh,
+                        material: entry.material.clone(),
+                        solid: Some(solid.clone()),
+                    });
+                    solids.push(Some(solid));
+                    landed(
+                        &parts,
+                        &mut root_keys,
+                        cache_key.as_ref().map(|k| k.0.clone()),
+                    );
+                    continue;
+                }
+            }
+        }
+
         // Wrap eval + tessellate in catch_unwind so a kernel assertion
         // (e.g. `add_loop` invariant) turns into a per-root failure
         // instead of aborting the whole scene. AssertUnwindSafe is safe
@@ -216,6 +273,11 @@ pub fn evaluate_document(
         match eval_outcome {
             Ok(Ok((mesh, solid))) => {
                 store(&cache_key, &mesh);
+                if let (true, Some(_), Some(i), Some(h)) =
+                    (placement.is_none(), &solid, inc.as_deref_mut(), root_hash)
+                {
+                    i.put_mesh(eval_root, h, &mesh);
+                }
                 // A peeled root's key names the unplaced shape, which a mesh
                 // bundle cannot stand in for: report none.
                 let key = (!mesh.indices.is_empty() && placement.is_none())
@@ -304,6 +366,21 @@ pub fn evaluate_document(
                     continue;
                 }
 
+                // Incremental: an unchanged part def reuses its mesh.
+                let def_hash = hashes.as_ref().and_then(|h| h.get(&part_def.root).copied());
+                if let (Some(i), Some(h)) = (inc.as_deref_mut(), def_hash) {
+                    if matches!(cache.get(&part_def.root), Some(Some(_))) {
+                        if let Some(mesh) = i.mesh(part_def.root, h) {
+                            part_def_meshes.insert(id.clone(), mesh.clone());
+                            eval_part_defs.push(EvaluatedPartDef {
+                                id: id.clone(),
+                                mesh,
+                            });
+                            continue;
+                        }
+                    }
+                }
+
                 let outcome =
                     catch_unwind(AssertUnwindSafe(|| -> Result<EvaluatedMesh, EvalError> {
                         match evaluate_node_timed(
@@ -327,6 +404,11 @@ pub fn evaluate_document(
                 let mesh = match outcome {
                     Ok(Ok(m)) => {
                         store(&cache_key, &m);
+                        if let (Some(i), Some(h)) = (inc.as_deref_mut(), def_hash) {
+                            if matches!(cache.get(&part_def.root), Some(Some(_))) {
+                                i.put_mesh(part_def.root, h, &m);
+                            }
+                        }
                         m
                     }
                     Ok(Err(err)) => {
@@ -438,6 +520,10 @@ pub fn evaluate_document(
         (Some(t0), Some(c)) => c.now_ms() - t0,
         _ => 0.0,
     };
+
+    if let (Some(i), Some(h)) = (inc, &hashes) {
+        i.put_back(cache, h);
+    }
 
     let timing = t_start.map(|t0| EvalTiming {
         total_ms: clock.unwrap().now_ms() - t0,
