@@ -741,6 +741,9 @@ impl From<UpAxisArg> for crate::render::UpAxis {
 }
 
 fn main() -> Result<()> {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("rustls CryptoProvider already installed");
     let _otel = telemetry::init();
     vcad_i18n::init(&vcad_i18n::Locale::from_env());
     let cli = Cli::parse();

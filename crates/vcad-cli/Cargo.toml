@@ -44,6 +44,8 @@ vcad-slicer = { path = "../vcad-slicer", version = "0.10.0" }
 vcad-slicer-gcode = { path = "../vcad-slicer-gcode", version = "0.10.0" }
 vcad-slicer-bambu = { path = "../vcad-slicer-bambu", default-features = false }
 vcad-printcheck = { path = "../vcad-printcheck", version = "0.10.0" }
+# Match the ring backend used by the printer's rustls 0.22 MQTT stack.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 # Print server (optional feature)
 axum = { version = "0.8", optional = true }
