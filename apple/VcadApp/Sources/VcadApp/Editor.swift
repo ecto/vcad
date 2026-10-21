@@ -815,6 +815,7 @@ final class EditorModel {
         docPartMeshes = []
         documentJSON = nil
         engine = nil; engineState = nil; engineError = nil; savedHash = nil
+        evalSession = EvalSession()          // a new document starts a fresh session
         undoStack.removeAll(); redoStack.removeAll()
         renamingFeatureID = nil
         documentDirty = false
@@ -2056,6 +2057,11 @@ final class EditorModel {
         return meshes
     }
 
+    /// The open document's incremental-evaluation session (`VcadEvalSession`):
+    /// kernel evaluations of this document reuse every solid an edit didn't
+    /// touch. Replaced when another document opens.
+    @ObservationIgnored private(set) var evalSession = EvalSession()
+
     /// One visible root's tessellation.
     struct TessellatedPart {
         let mesh: KernelMesh
@@ -2093,7 +2099,7 @@ final class EditorModel {
             return r
         }
         guard let data = DocEdit.serialize(json),
-              let scene = Self.evaluateScene(data: data, dir: dir) else { return nil }
+              let scene = evalSession.scene(data: data, dir: dir) else { return nil }
         defer { vcad_scene_free(scene) }
         let count = vcad_scene_part_count(scene)
         for (k, i) in missing.enumerated() where k < count {

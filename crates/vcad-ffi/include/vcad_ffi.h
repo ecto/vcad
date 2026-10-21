@@ -114,6 +114,20 @@ VcadScene *vcad_scene_from_json(const uint8_t *json, size_t json_len);
 VcadScene *vcad_scene_from_json_in(const uint8_t *json, size_t json_len,
                                    const uint8_t *base_dir, size_t base_dir_len);
 
+/* Incremental evaluation session: keep one per open document and evaluate
+ * every edit through it. Only nodes whose subtree changed since the previous
+ * evaluation are redone (and only changed roots re-tessellated); the scene
+ * equals vcad_scene_from_json_in. Null on error (see vcad_last_error). */
+typedef struct VcadEvalSession VcadEvalSession;
+VcadEvalSession *vcad_eval_session_new(void);
+void vcad_eval_session_free(VcadEvalSession *session);
+void vcad_eval_session_clear(VcadEvalSession *session);
+void vcad_eval_session_stats(const VcadEvalSession *session, size_t *reused_solids,
+                             size_t *evaluated_solids, size_t *reused_meshes);
+VcadScene *vcad_scene_from_json_session(VcadEvalSession *session,
+                                        const uint8_t *json, size_t json_len,
+                                        const uint8_t *base_dir, size_t base_dir_len);
+
 VcadScene *vcad_scene_from_loon(const uint8_t *loon, size_t loon_len);
 /* Compile a .loon FILE (path bytes) to .vcad document JSON: [use] modules and
  * relative import-mesh paths resolve against the file's directory (mesh paths

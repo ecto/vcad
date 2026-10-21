@@ -7499,6 +7499,64 @@ pub fn get_compiled_module() -> JsValue {
 /// A JsValue containing the serialized EvaluatedScene.
 #[wasm_bindgen(js_name = evaluateDocument)]
 pub fn evaluate_document(doc_json: &str, skip_clash_detection: bool) -> Result<JsValue, JsError> {
+    evaluate_document_with(doc_json, skip_clash_detection, None)
+}
+
+/// Incremental document evaluation: keep one per open document and pass it
+/// every edit of that document. Only nodes whose subtree changed since the
+/// previous `evaluate` are redone, and only changed roots re-tessellated;
+/// the result equals `evaluateDocument` (same scene shape).
+#[wasm_bindgen]
+pub struct IncrementalEvaluator {
+    cache: vcad_eval::incremental::IncrementalCache,
+}
+
+#[wasm_bindgen]
+impl IncrementalEvaluator {
+    /// A fresh evaluator (its first `evaluate` is cold).
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self {
+            cache: vcad_eval::incremental::IncrementalCache::new(),
+        }
+    }
+
+    /// `evaluateDocument`, reusing everything the edit didn't touch.
+    pub fn evaluate(
+        &mut self,
+        doc_json: &str,
+        skip_clash_detection: bool,
+    ) -> Result<JsValue, JsError> {
+        evaluate_document_with(doc_json, skip_clash_detection, Some(&mut self.cache))
+    }
+
+    /// Drop everything carried (the next evaluation is cold).
+    pub fn clear(&mut self) {
+        self.cache.clear();
+    }
+
+    /// `[reusedSolids, evaluatedSolids, reusedMeshes]` from the last evaluation.
+    pub fn stats(&self) -> Vec<u32> {
+        let s = self.cache.stats();
+        vec![
+            s.reused_solids as u32,
+            s.evaluated_solids as u32,
+            s.reused_meshes as u32,
+        ]
+    }
+}
+
+impl Default for IncrementalEvaluator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn evaluate_document_with(
+    doc_json: &str,
+    skip_clash_detection: bool,
+    incremental: Option<&mut vcad_eval::incremental::IncrementalCache>,
+) -> Result<JsValue, JsError> {
     let t_parse = performance_now();
     let doc: vcad_ir::Document = serde_json::from_str(doc_json)
         .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
@@ -7512,8 +7570,11 @@ pub fn evaluate_document(doc_json: &str, skip_clash_detection: bool) -> Result<J
         on_root: None,
     };
 
-    let mut scene = vcad_eval::evaluate_document(&doc, &options)
-        .map_err(|e| JsError::new(&format!("Evaluation error: {}", e)))?;
+    let mut scene = match incremental {
+        Some(cache) => vcad_eval::evaluate::evaluate_document_incremental(&doc, &options, cache),
+        None => vcad_eval::evaluate_document(&doc, &options),
+    }
+    .map_err(|e| JsError::new(&format!("Evaluation error: {}", e)))?;
 
     // Inject parse_ms into timing
     if let Some(ref mut timing) = scene.timing {

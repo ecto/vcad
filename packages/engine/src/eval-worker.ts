@@ -56,6 +56,15 @@ let kernelModule: any = null;
 /** Native WASM evaluateDocument (may not be available in older builds) */
 let wasmEvaluateDocument: WasmEvaluateDocumentFn | null = null;
 
+/**
+ * Incremental evaluator (kernel `IncrementalEvaluator`): this worker serves
+ * one open document, so one evaluator carries its solids between edits and
+ * each evaluation redoes only what the edit touched. Subtree fingerprints
+ * keep it exact even if a different document arrives (stale entries are
+ * dropped, so memory stays bounded to the current document).
+ */
+let incremental: { evaluate(docJson: string, skip: boolean): WasmEvaluatedScene } | null = null;
+
 /** Whether we're using the fast WASM path or the TS fallback */
 let evaluatorMode: "wasm" | "ts" = "ts";
 
@@ -169,7 +178,9 @@ function evaluate(docJson: string, skipClashDetection: boolean): EvaluatedScene 
   // Fast path: native WASM evaluator (with fallback to TS on failure)
   if (evaluatorMode === "wasm" && wasmEvaluateDocument) {
     try {
-      const result = wasmEvaluateDocument(docJson, skipClashDetection);
+      const result = incremental
+        ? incremental.evaluate(docJson, skipClashDetection)
+        : wasmEvaluateDocument(docJson, skipClashDetection);
       const scene = wasmResultToScene(result);
       const doc: Document = JSON.parse(docJson);
       return postProcessSheetMetal(postProcessEmbroidery(scene, doc), doc);
@@ -214,6 +225,10 @@ self.onmessage = async (e: MessageEvent) => {
       // Check if native WASM evaluator is available
       wasmEvaluateDocument = (wasm as Record<string, unknown>).evaluateDocument as WasmEvaluateDocumentFn | null;
       evaluatorMode = wasmEvaluateDocument ? "wasm" : "ts";
+      const Incremental = (wasm as Record<string, unknown>).IncrementalEvaluator as
+        | (new () => { evaluate(docJson: string, skip: boolean): WasmEvaluatedScene })
+        | undefined;
+      incremental = Incremental ? new Incremental() : null;
 
       self.postMessage({ type: "ready" });
     } catch (err) {
