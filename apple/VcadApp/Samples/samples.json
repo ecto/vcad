@@ -1,0 +1,38 @@
+[
+  {
+    "id": "first-part",
+    "title": "Your first part in loon",
+    "subtitle": "A drilled plate, explained line by line. Edit it, save, watch it rebuild.",
+    "file": "first-part.loon",
+    "thumbnail": "first-part.jpg",
+    "tutorial": true
+  },
+  {
+    "id": "stirling-engine",
+    "title": "Stirling engine",
+    "subtitle": "Ten parts in cast iron, steel, brass and aluminum, with a flywheel on a revolute joint.",
+    "file": "stirling-engine.vcad",
+    "thumbnail": "stirling-engine.jpg"
+  },
+  {
+    "id": "robot-arm",
+    "title": "Two-axis robot arm",
+    "subtitle": "Two revolute joints on a base. Pose it, or simulate it.",
+    "file": "robot-arm.vcad",
+    "thumbnail": "robot-arm.jpg"
+  },
+  {
+    "id": "sensor-mast",
+    "title": "Sensor mast",
+    "subtitle": "A pocketed, drilled base plate carrying a mast and sensor housings.",
+    "file": "sensor-mast.vcad",
+    "thumbnail": "sensor-mast.jpg"
+  },
+  {
+    "id": "pulley",
+    "title": "Pulley",
+    "subtitle": "Flanges, a groove and a bore, built from booleans in the feature tree.",
+    "file": "pulley.vcad",
+    "thumbnail": "pulley.jpg"
+  }
+]
