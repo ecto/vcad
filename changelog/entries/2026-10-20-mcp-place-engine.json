@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-20-mcp-place-engine",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "feat",
+  "title": "MCP place tool runs on the Rust engine",
+  "summary": "Anchor-based `place` is now available over MCP, lowered by the Rust document engine; chat place and place_part also apply through the engine.",
+  "features": ["mcp", "engine", "place"],
+  "mcpTools": ["place"]
+}

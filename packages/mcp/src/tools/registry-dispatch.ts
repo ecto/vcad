@@ -44,8 +44,8 @@ const BROWSER_ONLY_TOOLS = new Set<string>([
  * Tools the registry exposes but whose execution path goes through
  * `executeCrudInner` (TS, app-only) rather than the Rust planner —
  * the docstore-shaped feature builder (`tube`, `polyline_tube`,
- * `linear_pattern`, `circular_pattern`, `mirror`) and anchor-based
- * `place`. Skipping for v1 — these can be ported to the IR-direct path
+ * `linear_pattern`, `circular_pattern`, `mirror`). (Anchor-based `place`
+ * was here too; it is now lowered by the engine.) Skipping for v1 — these can be ported to the IR-direct path
  * as a follow-up. (`inspect_part` / `describe_scene` were here too but are
  * now dispatched: they need an evaluated scene, not the planner, so they
  * are answered directly below like `read`.)
@@ -56,7 +56,6 @@ const DEFERRED_TOOLS = new Set<string>([
   "linear_pattern",
   "circular_pattern",
   "mirror",
-  "place",
   // search_parts / place_part are implemented separately in parts.ts —
   // they take a Document directly and don't need the planner round-trip.
   "search_parts",
@@ -480,6 +479,7 @@ const ENGINE_LOWERED_TOOLS = new Set<string>([
   "shell",
   "tube",
   "polyline_tube",
+  "place",
 ]);
 
 interface EngineEnvelope {
@@ -558,6 +558,14 @@ function engineArgs(
   // the engine's renumbered nodes instead.
   if (toolName === "update" && out.node_id !== undefined) {
     out.node_id = nodeRefToStableId(doc, out.node_id);
+  }
+  if (toolName === "place") {
+    for (const key of ["from", "to"]) {
+      const ref = out[key];
+      if (ref && typeof ref === "object" && "part" in ref) {
+        out[key] = { ...ref, part: toStableId(doc, (ref as { part: unknown }).part) };
+      }
+    }
   }
   if (toolName === "create" && out.params && typeof out.params === "object") {
     const params = { ...(out.params as Record<string, unknown>) };

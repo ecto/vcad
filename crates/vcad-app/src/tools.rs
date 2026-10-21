@@ -48,8 +48,35 @@ pub fn lower(tool: &str, args: &Value, doc: &DocumentApi) -> Result<DocCommand, 
         "set_material" => lower_set_material(args, doc),
         "update" => lower_update(args, doc),
         "place" => lower_place(args, doc),
+        "place_part" => lower_place_part(args),
         other => Err(unsupported(other)),
     }
+}
+
+/// `place_part {path, version, params?, name?}`: insert a parts-library
+/// instance. The host resolves `version` and default params from its parts
+/// manifest; a `position` is applied by the host as a follow-up `translate`
+/// on the created id.
+fn lower_place_part(args: &Value) -> Result<DocCommand, CommandError> {
+    let path = str_arg(args, "path", "place_part")?;
+    if path.is_empty() {
+        return Err(invalid("place_part: `path` must not be empty".into()));
+    }
+    let version = str_arg(args, "version", "place_part")?.to_string();
+    let params = match args.get("params") {
+        None | Some(Value::Null) => Value::Object(Default::default()),
+        Some(v @ Value::Object(_)) => v.clone(),
+        Some(_) => return Err(invalid("place_part: `params` must be an object".into())),
+    };
+    let name = args.get("name").and_then(Value::as_str).map(str::to_string);
+    Ok(DocCommand::AddFeature {
+        feature: FeatureInput::PartInstance {
+            path: path.to_string(),
+            version,
+            params_json: params.to_string(),
+        },
+        name,
+    })
 }
 
 /// Named bbox anchors `place` accepts.
@@ -1029,6 +1056,77 @@ mod tests {
             );
         }
         assert_eq!(bbox(&api, &id), before);
+    }
+
+    #[test]
+    fn place_part_lowers_to_named_part_instance() {
+        let cmd = lower_empty(
+            "place_part",
+            &json!({"path": "std:fastener.bolt", "version": "1.0",
+                    "params": {"d": 3}, "name": "Bolt"}),
+        )
+        .unwrap();
+        match cmd {
+            DocCommand::AddFeature {
+                feature:
+                    FeatureInput::PartInstance {
+                        path,
+                        version,
+                        params_json,
+                    },
+                name,
+            } => {
+                assert_eq!(path, "std:fastener.bolt");
+                assert_eq!(version, "1.0");
+                assert_eq!(
+                    serde_json::from_str::<Value>(&params_json).unwrap(),
+                    json!({"d": 3})
+                );
+                assert_eq!(name.as_deref(), Some("Bolt"));
+            }
+            other => panic!("expected AddFeature(PartInstance), got {other:?}"),
+        }
+        // Params default to an empty object.
+        match lower_empty("place_part", &json!({"path": "std:x", "version": "1"})).unwrap() {
+            DocCommand::AddFeature {
+                feature: FeatureInput::PartInstance { params_json, .. },
+                name: None,
+            } => assert_eq!(params_json, "{}"),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn place_part_bad_args_fail_closed() {
+        for bad in [
+            json!({"version": "1"}),
+            json!({"path": "", "version": "1"}),
+            json!({"path": "std:x"}),
+            json!({"path": "std:x", "version": "1", "params": [1]}),
+        ] {
+            assert!(
+                matches!(
+                    lower_empty("place_part", &bad).unwrap_err(),
+                    CommandError::Invalid { .. }
+                ),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn place_part_applies_a_named_feature() {
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let out = apply_ok(
+            &mut api,
+            "place_part",
+            json!({"path": "std:x", "version": "1", "name": "Widget"}),
+        );
+        let id = out["result"]["createdFeatureId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(api.stable_ids().resolve(&id).is_some());
     }
 
     #[test]
