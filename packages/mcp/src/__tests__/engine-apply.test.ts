@@ -135,4 +135,23 @@ describe("runMutation via the document engine", () => {
     expect((calls[0]!.args.params as { child: unknown }).child).toBe("0:2");
     expect(out.part_id).toBe("0:2");
   });
+
+  it("dispatches place through the engine with stable ids for part anchors", () => {
+    const id = registerSession(cubes(2));
+    nextEnvelope = { ok: true, result: { document: cubes(2), parts: [], warnings: [] } };
+    const out = json(
+      dispatchRegistryTool("place", {
+        document_id: id,
+        part_id: "2",
+        from: "bottom",
+        to: { part: "1", anchor: "top" },
+      }),
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.tool).toBe("place");
+    expect(calls[0]!.args.part_id).toBe("0:2");
+    expect(calls[0]!.args.from).toBe("bottom");
+    expect(calls[0]!.args.to).toEqual({ part: "0:1", anchor: "top" });
+    expect(out.part_id).toBe("0:2");
+  });
 });

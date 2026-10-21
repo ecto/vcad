@@ -229,6 +229,8 @@ struct DocumentCommands: Commands {
             Divider()
             Button("Describe a Part…") { intent.focusRequested = true }
                 .keyboardShortcut("k")
+            Button(AgentSession.shared.isOpen ? "Hide Agent" : "Show Agent") { AgentSession.shared.toggle() }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
         }
         CommandGroup(after: .sidebar) {
             Divider()

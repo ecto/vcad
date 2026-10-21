@@ -69,18 +69,6 @@ function computePartWorldBboxForceEval(
   return computePartWorldBbox(partId, docStore);
 }
 
-/** Build a structured-error JSON string the AI can act on. Keeping it as
- *  a single line keeps it cheap to emit from any executor while still
- *  giving the model enough handles to recover (a code, hints about what
- *  was looked up, and an explicit suggestion). */
-function structuredError(
-  code: string,
-  message: string,
-  details?: Record<string, unknown>,
-): string {
-  return JSON.stringify({ ok: false, code, message, ...(details ?? {}) });
-}
-
 /** Build a compact JSON summary for successful CRUD operations. Gives the
  *  model enough information to decide what to do next (bbox for placing,
  *  resulting transform for chaining, material for bulk ops) without a
@@ -169,21 +157,6 @@ function getCurrentAngles(partId: string, docStore: DocStore): Vec3 {
 }
 
 
-
-
-
-/** Validate that a part ID exists in the document. */
-function validatePartId(partId: string, docStore: DocStore, label: string): ExecutionResult | null {
-  if (!docStore.partIndex.get(partId)) {
-    const available = docStore.parts.map((p) => p.id).slice(0, 10).join(", ");
-    return {
-      status: "error",
-      result: `${label} "${partId}" not found. Available parts: [${available}]${docStore.parts.length > 10 ? ` (+${docStore.parts.length - 10} more)` : ""}`,
-    };
-  }
-  return null;
-}
-
 /** Render a part ID as a clickable segment, falling back to last 4 chars if unknown. */
 function link(id: string, docStore: DocStore): SummarySegment {
   const part = docStore.partIndex.get(id);
@@ -230,6 +203,7 @@ const ENGINE_TOOLS = new Set([
   "delete",
   "set_material",
   "update",
+  "place",
 ]);
 
 /**
@@ -297,7 +271,6 @@ function paramFields(params: Record<string, unknown> | undefined): Array<{ label
 }
 
 
-
 function executeCrudInner(
   tool: string,
   args: Record<string, unknown>,
@@ -316,8 +289,6 @@ function executeCrudInner(
       return executeRead(args.part_id as string | undefined, docStore);
     case "inspect_part":
       return executeInspectPart(args.part_id as string, docStore);
-    case "place":
-      return executePlace(args, docStore);
     case "describe_scene":
       return executeDescribeScene(args, docStore);
     case "search_parts":
@@ -338,8 +309,12 @@ function executeInspectPart(partId: string, docStore: DocStore): ExecutionResult
   if (!partId) return { status: "error", result: "inspect_part requires part_id" };
   const part = docStore.partIndex.get(partId);
   if (!part) {
-    const err = validatePartId(partId, docStore, "inspect_part part_id");
-    return err ?? { status: "error", result: `Part ${partId} not found` };
+    const available = docStore.parts.map((p) => p.id).slice(0, 10).join(", ");
+    const more = docStore.parts.length > 10 ? ` (+${docStore.parts.length - 10} more)` : "";
+    return {
+      status: "error",
+      result: `inspect_part part_id "${partId}" not found. Available parts: [${available}]${more}`,
+    };
   }
   // Force-eval if the scene is stale (e.g. this part was just created
   // within the same AI turn). This was the #1 source of failed `inspect`
@@ -453,158 +428,6 @@ function executeDescribeScene(
   };
 }
 
-// ---------------------------------------------------------------------------
-// place — anchor-based positioning. Translates a part so that its `from`
-// anchor lands on the world-space `to` point (or another part's anchor).
-// Optional `align` rotates the part so an axis on it matches a world-space
-// direction. This is the high-level alternative to computing translate+rotate
-// by hand; the AI can say "place handlebar's center on stem's top".
-// ---------------------------------------------------------------------------
-
-type AnchorName =
-  | "center" | "min" | "max"
-  | "top" | "bottom" | "front" | "back" | "left" | "right";
-
-type AnchorRef =
-  | AnchorName
-  | Vec3
-  | { part: string; anchor: AnchorName };
-
-function resolveAnchorOnPart(
-  partId: string,
-  anchor: AnchorName,
-  docStore: DocStore,
-): Vec3 | null {
-  const bbox = computePartWorldBboxForceEval(partId, docStore);
-  if (!bbox) return null;
-  const c = bboxCenter(bbox);
-  switch (anchor) {
-    case "center": return c;
-    case "min": return { x: bbox.min[0], y: bbox.min[1], z: bbox.min[2] };
-    case "max": return { x: bbox.max[0], y: bbox.max[1], z: bbox.max[2] };
-    case "top":    return { x: c.x, y: c.y, z: bbox.max[2] };
-    case "bottom": return { x: c.x, y: c.y, z: bbox.min[2] };
-    case "front":  return { x: c.x, y: bbox.min[1], z: c.z };
-    case "back":   return { x: c.x, y: bbox.max[1], z: c.z };
-    case "left":   return { x: bbox.min[0], y: c.y, z: c.z };
-    case "right":  return { x: bbox.max[0], y: c.y, z: c.z };
-  }
-}
-
-const ANCHOR_NAMES: AnchorName[] = [
-  "center", "min", "max", "top", "bottom", "front", "back", "left", "right",
-];
-
-function resolveAnchor(
-  ref: AnchorRef | undefined,
-  selfPartId: string,
-  docStore: DocStore,
-): Vec3 | null {
-  if (!ref) return null;
-  if (typeof ref === "string") {
-    return resolveAnchorOnPart(selfPartId, ref as AnchorName, docStore);
-  }
-  if ("x" in ref && "y" in ref && "z" in ref) {
-    return { x: (ref as Vec3).x, y: (ref as Vec3).y, z: (ref as Vec3).z };
-  }
-  if ("part" in ref && "anchor" in ref) {
-    return resolveAnchorOnPart((ref as { part: string }).part, (ref as { anchor: AnchorName }).anchor, docStore);
-  }
-  return null;
-}
-
-function executePlace(
-  args: Record<string, unknown>,
-  docStore: DocStore,
-): ExecutionResult {
-  const partId = args.part_id as string;
-  if (!partId) return { status: "error", result: "place requires part_id" };
-  const err = validatePartId(partId, docStore, "place part_id");
-  if (err) return err;
-
-  const from = (args.from as AnchorRef | undefined) ?? ("center" as AnchorName);
-  const to = args.to as AnchorRef | undefined;
-  if (!to) return { status: "error", result: "place requires a `to` anchor (Vec3, named anchor, or {part,anchor})" };
-
-  const fromWorld = resolveAnchor(from, partId, docStore);
-  if (!fromWorld) {
-    return {
-      status: "error",
-      result: structuredError(
-        "ANCHOR_UNRESOLVED",
-        "place: could not resolve `from` anchor",
-        {
-          part_id: partId,
-          from,
-          available_anchors: ANCHOR_NAMES,
-          suggestion:
-            "If you just created this part, the scene is still evaluating. Try `inspect_part` first, or pass `from` as an explicit Vec3 (e.g. {x,y,z}).",
-        },
-      ),
-    };
-  }
-  const toWorld = resolveAnchor(to, partId, docStore);
-  if (!toWorld) {
-    return {
-      status: "error",
-      result: structuredError(
-        "ANCHOR_UNRESOLVED",
-        "place: could not resolve `to` anchor",
-        {
-          to,
-          available_anchors: ANCHOR_NAMES,
-          suggestion:
-            "If `to` references another part, that part may not exist or may not yet be evaluated. Try `inspect_part` on it first, or pass `to` as an explicit Vec3.",
-        },
-      ),
-    };
-  }
-
-  const currentOffset = getCurrentOffset(partId, docStore);
-  const newOffset = {
-    x: currentOffset.x + (toWorld.x - fromWorld.x),
-    y: currentOffset.y + (toWorld.y - fromWorld.y),
-    z: currentOffset.z + (toWorld.z - fromWorld.z),
-  };
-  docStore.setTranslation(partId, newOffset);
-
-  return {
-    status: "success",
-    result: snapshotJson(partId, docStore, {
-      applied: "place",
-      from_world: fromWorld,
-      to_world: toWorld,
-    }),
-    partId,
-    display: {
-      summary: [
-        text("◎ Place "),
-        link(partId, docStore),
-        text(` at (${toWorld.x.toFixed(1)}, ${toWorld.y.toFixed(1)}, ${toWorld.z.toFixed(1)})`),
-      ],
-      fields: [
-        { label: "from", value: typeof from === "string" ? from : JSON.stringify(from) },
-        { label: "to", value: typeof to === "string" ? to : JSON.stringify(to) },
-      ],
-      affectedPartIds: [partId],
-    },
-  };
-}
-
-
-
-/** Apply a user-provided name to a freshly created part, if any. */
-function applyName(docStore: DocStore, partId: string | null | undefined, name: string | undefined): void {
-  if (!partId || !name) return;
-  if (typeof docStore.renamePart !== "function") return;
-  try {
-    docStore.renamePart(partId, name);
-  } catch {
-    // non-fatal: rename failures shouldn't break the create call
-  }
-}
-
-
 /** Tool-name aliases — Claude occasionally hallucinates extra underscores in
  * snake_case (`sketch_2_d` instead of `sketch_2d`). Normalize at the boundary
  * so legitimate prompts don't fail just because the model picked the wrong
@@ -667,8 +490,6 @@ function executeRead(
     return { status: "error", result: err instanceof Error ? err.message : "Read failed" };
   }
 }
-
-
 
 
 // ---------------------------------------------------------------------------
@@ -754,10 +575,12 @@ function executePlacePart(
   const params = { ...defaultParamsForEngine(entry), ...userParams };
   const version = entry.version;
 
-  const partId = docStore.addPartInstance(path, version, params);
-  if (!partId) {
-    return { status: "error", result: "place_part: document store refused insertion" };
-  }
+  const displayName = typeof args.name === "string" ? args.name : entry.name;
+  const placed = docStore.applyTool("place_part", { path, version, params, name: displayName });
+  if (!placed) return { status: "error", result: "engine not ready" };
+  if (!placed.ok) return { status: "error", result: `place_part: ${placed.error.message}` };
+  const partId = placed.result.createdFeatureId;
+  if (!partId) return { status: "error", result: "place_part: engine created no part" };
 
   // Apply optional position after insertion.
   const position = args.position as Vec3 | undefined;
@@ -767,11 +590,10 @@ function executePlacePart(
       y: typeof position.y === "number" ? position.y : 0,
       z: typeof position.z === "number" ? position.z : 0,
     };
-    docStore.setTranslation(partId, offset);
+    const moved = docStore.applyTool("translate", { child: partId, offset });
+    if (moved && !moved.ok) return { status: "error", result: `place_part: ${moved.error.message}` };
   }
 
-  const displayName = typeof args.name === "string" ? args.name : entry.name;
-  applyName(docStore, partId, displayName);
   uiStore.select(partId);
 
   return {

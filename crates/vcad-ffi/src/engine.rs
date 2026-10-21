@@ -203,6 +203,39 @@ pub extern "C" fn vcad_engine_can_redo(engine: *const VcadEngine) -> bool {
     !engine.is_null() && unsafe { &*engine }.api.can_redo()
 }
 
+/// The built-in agent's tool manifest + system prompt (`vcad_app::agent`),
+/// owned JSON; free with `vcad_engine_string_free`.
+#[no_mangle]
+pub extern "C" fn vcad_agent_manifest() -> *mut c_char {
+    owned(vcad_app::agent::MANIFEST_JSON.to_string())
+}
+
+/// Answer an agent read tool (`describe_scene`, `inspect`) without mutating:
+/// `{"ok":true,"result":{"text":…}}` or an error envelope.
+#[no_mangle]
+pub extern "C" fn vcad_engine_agent_read(
+    engine: *const VcadEngine,
+    tool: *const c_char,
+    args_json: *const c_char,
+) -> *mut c_char {
+    crate::err::clear_error();
+    if engine.is_null() || tool.is_null() || args_json.is_null() {
+        crate::err::set_error("vcad_engine_agent_read: null argument");
+        return std::ptr::null_mut();
+    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let tool = unsafe { CStr::from_ptr(tool) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let args = unsafe { CStr::from_ptr(args_json) }
+            .to_str()
+            .map_err(|e| e.to_string())?;
+        let engine = unsafe { &*engine };
+        Ok::<_, String>(vcad_app::agent::read_tool_envelope(&engine.api, tool, args))
+    }));
+    finish(result, "vcad_engine_agent_read")
+}
+
 fn owned(s: String) -> *mut c_char {
     CString::new(s).map_or(std::ptr::null_mut(), CString::into_raw)
 }

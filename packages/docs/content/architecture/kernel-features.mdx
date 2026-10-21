@@ -364,6 +364,18 @@ Honesty: **kinematic degrees of freedom are out of scope for mates.** A mate nev
 
 `vcad-kernel-diff` is a differentiable seam through the kernel: it computes exact parameter sensitivities (dx/dθ) of tessellations, mass-property gradients, differentiable fillet radii, and reverse-mode adjoints — so you can ask "how does mass change per millimeter of this parameter?" and optimize designs with L-BFGS, including gradients through physics rollouts with contact.
 
+The seam reaches authored documents too: `vcad_eval::diff::document_parameter_gradient` returns d(mass properties)/d(named parameter) for any `.vcad` with a `defparam`. The `gradient_clip` example (`cargo run --release -p vcad-eval --example gradient_clip -- out/`) runs plain gradient descent on the wall thickness `t` of a loon L-bracket, minimizing J = ½(m − 55 g)². It goes from t = 9.0 mm to 4.49 mm in 30 steps. Every step's dm/dt comes from the seam, and a rebuild central finite difference, logged only as a check, agrees to within 10⁻¹⁰ relative error. The example writes one `.vcad` per iteration for `vcad-render`, plus a CSV log.
+
+```clojure
+[defparam t 9.0]
+
+[root
+  [difference
+    [translate 40 20 -1 [cylinder 5 [+ t 2]]]
+    [union [cube 70 40 t] [cube t 40 50]]]
+  "aluminum"]
+```
+
 ### Topology Optimization
 
 `vcad-kernel-topopt` runs SIMP topology optimization — voxel FEA finding the stiffest material layout for given loads and supports, extracted back to a mesh via surface nets.

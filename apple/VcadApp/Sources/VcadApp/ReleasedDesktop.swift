@@ -897,6 +897,10 @@ struct ReleasedOverlayView: View {
                         SimBar(model: model)
                             .modifier(ChromeRegion(key: "simBar"))
                     }
+                    if AgentSession.shared.isOpen {
+                        AgentPanel(session: AgentSession.shared, model: model)
+                            .modifier(ChromeRegion(key: "agentPanel"))
+                    }
                     CommandBar(engine: intent, model: model)
                         .modifier(ChromeRegion(key: "composer"))
                 }

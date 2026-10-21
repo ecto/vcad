@@ -119,6 +119,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   update: { title: "Update Node", annotations: RW },
   delete: { title: "Delete Node", annotations: DESTRUCTIVE },
   set_material: { title: "Set Material", annotations: RW },
+  place: { title: "Place Part by Anchor", annotations: RW },
   inspect_part: { title: "Inspect Part", annotations: RO },
   describe_scene: { title: "Describe Scene", annotations: RO },
 

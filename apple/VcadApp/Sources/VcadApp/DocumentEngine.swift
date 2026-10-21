@@ -99,6 +99,28 @@ final class DocumentEngine {
         return try Self.unwrap(call.tool.withCString { t in json.withCString { vcad_engine_apply_tool(handle, t, $0) } })
     }
 
+    /// Answer an agent read tool (`describe_scene`, `inspect`) as text.
+    func agentRead(_ tool: String, _ args: [String: Any]) throws -> String {
+        let json = String(decoding: try JSONSerialization.data(withJSONObject: args), as: UTF8.self)
+        guard let raw = tool.withCString({ t in json.withCString { vcad_engine_agent_read(handle, t, $0) } }) else {
+            throw Refusal(kind: "ffi", message: "agent read failed")
+        }
+        defer { vcad_engine_string_free(raw) }
+        let envelope = try JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Any] ?? [:]
+        if envelope["ok"] as? Bool == true, let text = (envelope["result"] as? [String: Any])?["text"] as? String {
+            return text
+        }
+        let error = envelope["error"] as? [String: Any] ?? [:]
+        throw Refusal(kind: error["kind"] as? String ?? "unknown", message: error["message"] as? String ?? "read refused")
+    }
+
+    /// The agent's tool manifest + system prompt (`vcad_app::agent`).
+    static func agentManifest() -> [String: Any] {
+        guard let raw = vcad_agent_manifest() else { return [:] }
+        defer { vcad_engine_string_free(raw) }
+        return (try? JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8))) as? [String: Any] ?? [:]
+    }
+
     /// The current state (no mutation).
     func state() throws -> Result { try Self.unwrap(vcad_engine_state(handle)) }
 

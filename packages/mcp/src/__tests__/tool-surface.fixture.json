@@ -1189,6 +1189,38 @@
     }
   },
   {
+    "name": "place",
+    "title": "Place Part by Anchor",
+    "description": "Position a part by anchor: moves the part so that its `from` anchor lands on the `to` anchor. Both anchors can be either a named anchor on this or another part (center/min/max/top/bottom/front/back/left/right), or an explicit world-space {x,y,z} point. Prefer this over manual translate/rotate when you're aligning to another part — it remains correct when upstream dimensions change.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document. The tool mutates this session's document."
+        },
+        "part_id": {
+          "type": "string",
+          "description": "The part to move."
+        },
+        "from": {
+          "description": "The anchor on this part to place. Either a named anchor string, a {x,y,z} point, or {part, anchor}. Defaults to 'center'."
+        },
+        "to": {
+          "description": "The destination. Either a named anchor string (resolved on this part), a {x,y,z} world point, or {part, anchor}."
+        }
+      },
+      "required": [
+        "document_id",
+        "part_id",
+        "to"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
     "name": "describe_scene",
     "title": "Describe Scene",
     "description": "One-call snapshot of the whole scene (or a subset of parts): each part's world-space bbox, center, translate, rotate, and material as JSON. Use this INSTEAD of a chain of `inspect_part` calls when you need positions for several parts at once — one turn, no round-trips. Also use it after a batch of edits to verify where everything ended up.",

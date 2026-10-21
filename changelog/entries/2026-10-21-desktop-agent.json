@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-desktop-agent",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "Built-in Agent edits documents in the Mac app",
+  "summary": "A chat panel in the native Mac app where an agent edits the open document through engine tools: edits show live, each turn is one undo step, and tool errors go back to the model.",
+  "features": ["desktop", "agent", "ai"]
+}
