@@ -47,10 +47,10 @@ final class FrogToolExecutor {
 
     let engine: DocumentEngine
     var supportsImages: Bool
-    /// Renders the viewport as PNG for `render_view` (view name → bytes).
-    var snapshot: ((String) async -> Data?)?
+    /// Renders the scene as PNG for `render_view` from the requested view.
+    var snapshot: ((FrogView) async -> Data?)?
 
-    init(engine: DocumentEngine, supportsImages: Bool = false, snapshot: ((String) async -> Data?)? = nil) {
+    init(engine: DocumentEngine, supportsImages: Bool = false, snapshot: ((FrogView) async -> Data?)? = nil) {
         self.engine = engine
         self.supportsImages = supportsImages
         self.snapshot = snapshot
@@ -90,14 +90,52 @@ final class FrogToolExecutor {
     /// With a vision endpoint and a renderer: an image. Otherwise the text
     /// scene description, so the model still learns what is there.
     private func renderView(_ args: [String: Any]) async -> Outcome {
-        let view = args["view"] as? String ?? "current"
+        let view = FrogView(args)
         if supportsImages, let png = await snapshot?(view) {
             return Outcome(name: "render_view", ok: true,
-                           content: "Rendered the \(view) view; the image is attached in the next message.", image: png)
+                           content: "Rendered \(view.label); the image is attached in the next message.", image: png)
         }
         let scene = (try? engine.agentRead("describe_scene", [:])) ?? "scene unavailable"
         return Outcome(name: "render_view", ok: true,
                        content: "Images are not available on this endpoint; text scene description instead:\n\(scene)")
+    }
+}
+
+/// The camera `render_view` asked for: the user's current camera, or an
+/// orbit angle (degrees; azimuth about +Z from the front, elevation above XY).
+enum FrogView: Equatable {
+    case current
+    case angles(azimuthDeg: Double, elevationDeg: Double)
+
+    /// Explicit angles win; then the named preset; else the current camera.
+    init(_ args: [String: Any]) {
+        let az = (args["azimuth_deg"] as? NSNumber)?.doubleValue
+        let el = (args["elevation_deg"] as? NSNumber)?.doubleValue
+        if az != nil || el != nil {
+            let iso = Self.preset(.isometric)
+            self = .angles(azimuthDeg: az ?? iso.0, elevationDeg: min(85, max(-85, el ?? iso.1)))
+            return
+        }
+        let presets: [String: CameraPreset] = ["iso": .isometric, "front": .front, "right": .right, "top": .top]
+        if let name = args["view"] as? String, let p = presets[name] {
+            let (a, e) = Self.preset(p)
+            self = .angles(azimuthDeg: a, elevationDeg: e)
+        } else {
+            self = .current
+        }
+    }
+
+    private static func preset(_ p: CameraPreset) -> (Double, Double) {
+        // Float radians → whole-ish degrees (π/2 must read as 90, not 89.99999).
+        let deg = { (r: Float) in (Double(r) * 180 / .pi * 100).rounded() / 100 }
+        return (deg(p.azimuth), deg(p.elevation))
+    }
+
+    var label: String {
+        switch self {
+        case .current: return "the current view"
+        case let .angles(a, e): return String(format: "the view at azimuth %.0f°, elevation %.0f°", a, e)
+        }
     }
 }
 
@@ -111,7 +149,7 @@ enum FrogTurnEvent {
 /// One agent conversation over one document.
 @MainActor
 final class FrogAgent {
-    let client: FrogClient
+    private(set) var client: FrogClient
     let manifest: FrogManifest
     let executor: FrogToolExecutor
     /// The conversation so far (system message first).
@@ -135,6 +173,9 @@ final class FrogAgent {
         messages.append(["role": "user", "content": text])
         let tools = manifest.offered(supportsImages: client.config.supportsImages)
         var mutated = false
+        if client.config.model.isEmpty {
+            client.config.model = try await client.resolveModel()
+        }
         for _ in 0..<maxRounds {
             try Task.checkCancellation()
             let acc = try await client.complete(messages: messages, tools: tools, cacheKey: cacheKey) { event in

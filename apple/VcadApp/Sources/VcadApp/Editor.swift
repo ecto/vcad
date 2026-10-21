@@ -3356,4 +3356,25 @@ extension EditorModel {
     func agentEndTurn(before: Data, name: String = "Agent Edit") {
         pushUndo(.snapshot(before), name: name)
     }
+
+    /// The agent can work here: an engine document, or a blank canvas that
+    /// can be given one.
+    var agentCanEdit: Bool { engine != nil || (source.isSandbox && documentJSON == nil) }
+
+    /// The engine the agent edits. A blank canvas (Untitled, nothing in it)
+    /// gets an empty engine document on first use; Save then goes to Save As
+    /// like any untitled document. Nil for view-only documents.
+    func agentEnsureEngine() -> DocumentEngine? {
+        if let engine { return engine }
+        guard source.isSandbox, documentJSON == nil else { return nil }
+        let empty: [String: Any] = ["version": "0.1", "nodes": [String: Any](), "materials": [String: Any](),
+                                    "part_materials": [String: Any](), "roots": [Any]()]
+        let fresh = DocumentEngine()
+        guard let state = try? fresh.loadIR(empty) else { return nil }
+        engine = fresh
+        engineError = nil
+        savedHash = fresh.stateHash
+        adopt(state, reeval: .rebuild)
+        return fresh
+    }
 }
