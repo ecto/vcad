@@ -14,6 +14,7 @@ mod input;
 mod keybinding_adapter;
 mod kit;
 mod log_capture;
+mod photoreal;
 #[cfg(feature = "print-server")]
 mod print_server;
 mod raycast;
@@ -213,10 +214,45 @@ enum Commands {
 
     /// Render document to image
     Render {
-        /// Input .vcad or .loon file
+        /// Input .vcad or .loon file (`[use]` imports resolve relative to it)
         input: PathBuf,
+        /// Output image (PNG, JPEG). Same as `--out`.
+        output: Option<PathBuf>,
         /// Output image (PNG, JPEG)
-        output: PathBuf,
+        #[arg(long = "out", short = 'o', conflicts_with = "output")]
+        out: Option<PathBuf>,
+        /// Path-trace with the app's photoreal renderer (materials, studio
+        /// lights, environment, ACES tonemap) on a headless GPU device
+        #[arg(long)]
+        photoreal: bool,
+        /// Camera preset for `--photoreal`: iso|front|side|top
+        #[arg(long, requires = "photoreal")]
+        preset: Option<String>,
+        /// Camera for `--photoreal` as `<azimuth>,<elevation>` degrees
+        #[arg(long, requires = "photoreal", conflicts_with = "preset")]
+        camera: Option<String>,
+        /// Image size `WxH` for `--photoreal` (default 1600x1000)
+        #[arg(long, requires = "photoreal")]
+        size: Option<String>,
+        /// Samples per pixel for `--photoreal`
+        #[arg(long, default_value_t = 128, requires = "photoreal")]
+        samples: u32,
+        /// Maximum light bounces for `--photoreal`
+        #[arg(long, default_value_t = 6, requires = "photoreal")]
+        max_depth: u32,
+        /// Exposure multiplier before the tonemap (`--photoreal`)
+        #[arg(long, default_value_t = 1.0, requires = "photoreal")]
+        exposure: f64,
+        /// Environment for `--photoreal`: `gradient` or an equirect `.hdr`
+        #[arg(long, default_value = "gradient", requires = "photoreal")]
+        env: String,
+        /// Sampling seed for `--photoreal`
+        #[arg(long, default_value_t = 0x5eed_1234, requires = "photoreal")]
+        seed: u64,
+        /// Trace `--photoreal` on the CPU reference integrator instead of the
+        /// GPU (same BSDF; adds the denoiser)
+        #[arg(long, requires = "photoreal")]
+        cpu: bool,
         /// Image width in pixels
         #[arg(long, default_value = "1920")]
         width: u32,
@@ -770,6 +806,17 @@ fn run_command(cli: Cli) -> Result<()> {
         Some(Commands::Render {
             input,
             output,
+            out,
+            photoreal,
+            preset,
+            camera,
+            size,
+            samples,
+            max_depth,
+            exposure,
+            env,
+            seed,
+            cpu,
             width,
             height,
             azimuth,
@@ -781,6 +828,28 @@ fn run_command(cli: Cli) -> Result<()> {
             pose_file,
         }) => {
             let pose = cli_pose(&pose, pose_file.as_deref())?;
+            let output = output
+                .or(out)
+                .ok_or_else(|| anyhow::anyhow!("render: give an output path (or --out)"))?;
+            if photoreal {
+                let (width, height) = match size.as_deref() {
+                    Some(s) => photoreal::parse_size(s)?,
+                    None => (1600, 1000),
+                };
+                let req = photoreal::PhotorealRequest {
+                    width,
+                    height,
+                    view: photoreal::resolve_view(preset.as_deref(), camera.as_deref())?,
+                    samples,
+                    max_depth,
+                    exposure,
+                    env,
+                    seed,
+                    cpu,
+                };
+                let doc = load_posed_document(&input, &pose)?;
+                return photoreal::render_document(&doc, &output, &req);
+            }
             render_to_image(
                 &input,
                 &output,

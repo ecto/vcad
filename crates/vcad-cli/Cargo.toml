@@ -39,7 +39,7 @@ vcad-ecad-pcb = { workspace = true }
 # fab-prep runs for minutes on a dense board and narrates its rounds through
 # `log`; without a subscriber the terminal shows nothing until it finishes.
 env_logger = "0.11"
-vcad-render = { path = "../vcad-render", default-features = false }
+vcad-render = { path = "../vcad-render", default-features = false, features = ["photoreal-gpu"] }
 vcad-slicer = { path = "../vcad-slicer", version = "0.10.0" }
 vcad-slicer-gcode = { path = "../vcad-slicer-gcode", version = "0.10.0" }
 vcad-slicer-bambu = { path = "../vcad-slicer-bambu", default-features = false }
@@ -93,3 +93,4 @@ print-server = ["dep:axum", "dep:tower-http", "vcad-slicer-bambu/network"]
 
 [dev-dependencies]
 tempfile = "3"
+image = { version = "0.25", default-features = false, features = ["png"] }

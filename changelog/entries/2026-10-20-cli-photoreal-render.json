@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-cli-photoreal-render",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "feat",
+  "title": "Headless photoreal rendering in the vcad CLI",
+  "summary": "vcad render --photoreal path-traces .loon/.vcad files on a headless GPU with the app's materials, lighting and tonemap; presets, --camera, --size, --samples, --cpu fallback.",
+  "features": ["render", "photoreal", "cli", "path-tracing"]
+}
