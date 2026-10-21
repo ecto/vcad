@@ -216,26 +216,30 @@ fn evaluate_inner(
             continue;
         }
 
-        // Incremental: an unchanged root reuses its solid and its mesh.
+        // Incremental: an unchanged root reuses its solid and its mesh. A
+        // peeled root caches its unplaced shape (`eval_root`'s subtree hash
+        // excludes the placement), so moving a part only re-places it.
         let root_hash = hashes.as_ref().and_then(|h| h.get(&eval_root).copied());
-        if placement.is_none() {
-            if let (Some(i), Some(h)) = (inc.as_deref_mut(), root_hash) {
-                if let (Some(Some(solid)), Some(mesh)) =
-                    (cache.get(&eval_root).cloned(), i.mesh(eval_root, h))
-                {
-                    parts.push(EvaluatedPart {
-                        mesh,
-                        material: entry.material.clone(),
-                        solid: Some(solid.clone()),
-                    });
-                    solids.push(Some(solid));
-                    landed(
-                        &parts,
-                        &mut root_keys,
-                        cache_key.as_ref().map(|k| k.0.clone()),
-                    );
-                    continue;
-                }
+        if let (Some(i), Some(h)) = (inc.as_deref_mut(), root_hash) {
+            if let (Some(Some(solid)), Some(mesh)) =
+                (cache.get(&eval_root).cloned(), i.mesh(eval_root, h))
+            {
+                let key = placement
+                    .is_none()
+                    .then(|| cache_key.as_ref().map(|k| k.0.clone()))
+                    .flatten();
+                let solid = match &placement {
+                    Some(t) => solid.apply_transform(t),
+                    None => solid,
+                };
+                parts.push(EvaluatedPart {
+                    mesh: place_mesh(mesh, placement.as_ref()),
+                    material: entry.material.clone(),
+                    solid: Some(solid.clone()),
+                });
+                solids.push(Some(solid));
+                landed(&parts, &mut root_keys, key);
+                continue;
             }
         }
 
@@ -273,9 +277,7 @@ fn evaluate_inner(
         match eval_outcome {
             Ok(Ok((mesh, solid))) => {
                 store(&cache_key, &mesh);
-                if let (true, Some(_), Some(i), Some(h)) =
-                    (placement.is_none(), &solid, inc.as_deref_mut(), root_hash)
-                {
+                if let (Some(_), Some(i), Some(h)) = (&solid, inc.as_deref_mut(), root_hash) {
                     i.put_mesh(eval_root, h, &mesh);
                 }
                 // A peeled root's key names the unplaced shape, which a mesh
