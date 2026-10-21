@@ -57,6 +57,7 @@ mod cam;
 pub mod engine;
 mod err;
 pub mod gym;
+pub mod sensitivity;
 pub mod train;
 
 pub use err::vcad_last_error;
