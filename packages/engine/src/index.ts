@@ -708,6 +708,8 @@ export interface KernelModule {
   evalVcadSource?: (source: string) => string;
   /** Evaluate loon source with an in-memory `[use ...]` module map. */
   evalVcadSourceWithModules?: (source: string, modulesJson: string) => string;
+  /** Evaluate loon to a document stamped with its provenance. */
+  evalLoonDocument?: (source: string, modulesJson: string, baseDir?: string, path?: string) => string;
   evalVcadSourceParametric?: (
     source: string,
     modulesJson: string | undefined,
@@ -1315,6 +1317,7 @@ export class Engine {
       evaluateDocument: (wasmModule as Record<string, unknown>).evaluateDocument as KernelModule["evaluateDocument"],
       evalVcadSource: (wasmModule as Record<string, unknown>).evalVcadSource as KernelModule["evalVcadSource"],
       evalVcadSourceWithModules: (wasmModule as Record<string, unknown>).evalVcadSourceWithModules as KernelModule["evalVcadSourceWithModules"],
+      evalLoonDocument: (wasmModule as Record<string, unknown>).evalLoonDocument as KernelModule["evalLoonDocument"],
       evalVcadSourceParametric: (wasmModule as Record<string, unknown>).evalVcadSourceParametric as KernelModule["evalVcadSourceParametric"],
       documentParameterGradient: (wasmModule as Record<string, unknown>).documentParameterGradient as KernelModule["documentParameterGradient"],
       documentSensitivities: (wasmModule as Record<string, unknown>).documentSensitivities as KernelModule["documentSensitivities"],
@@ -2513,12 +2516,9 @@ export class Engine {
     modules: Record<string, string>,
     origin: { baseDir?: string; path?: string } = {},
   ): Document | null {
-    const k = this.kernel as unknown as {
-      evalLoonDocument?: (s: string, m: string, b?: string, p?: string) => string;
-    };
-    if (typeof k.evalLoonDocument !== "function") return null;
+    if (typeof this.kernel.evalLoonDocument !== "function") return null;
     return JSON.parse(
-      k.evalLoonDocument(source, JSON.stringify(modules), origin.baseDir, origin.path),
+      this.kernel.evalLoonDocument(source, JSON.stringify(modules), origin.baseDir, origin.path),
     ) as Document;
   }
 
