@@ -1,0 +1,4 @@
+; Broken on purpose: line 4 calls an unbound name.
+[use bracket]
+[root bracket.plate "aluminum"]
+[root [translate 20.0 no-such-offset 4.0 bracket.post] "steel"]

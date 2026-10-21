@@ -184,6 +184,9 @@ extension EditorModel {
     /// Generators usually replace the file (write-new + rename), which kills a
     /// vnode watch, so every event re-arms on the path after the reload.
     func watchDocumentFile() {
+        // A loon program watches its directories instead (LoonLoop.swift).
+        watchLoonSources()
+        if isLoonDocument { fileWatch?.cancel(); fileWatch = nil; fileWatchPath = nil; return }
         let path: String? = { if case let .document(p, _) = source { return p } else { return nil } }()
         guard path != fileWatchPath || fileWatch == nil else { return }
         fileWatch?.cancel(); fileWatch = nil; fileWatchPath = nil
@@ -214,6 +217,7 @@ extension EditorModel {
 
     /// Reload the document from disk, keeping pose, explode and camera.
     func reloadFromDisk() {
+        if isLoonDocument { rebuildLoon(); return }
         guard case let .document(path, _) = source else { return }
         // Re-arm: a replaced file is a new inode.
         fileWatch?.cancel(); fileWatch = nil
