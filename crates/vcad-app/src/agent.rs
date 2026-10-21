@@ -556,6 +556,38 @@ mod tests {
     }
 
     #[test]
+    fn observed_model_call_shapes_lower() {
+        // Verbatim argument shapes a live model emitted for "create a 20mm
+        // cube, move it +10mm in Z, inspect it" (create nests type + params
+        // one level down).
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let created = apply(
+            &mut api,
+            "create",
+            json!({"name": "cube", "params": {"type": "cube", "params": {"size": {"x": 20, "y": 20, "z": 20}}}}),
+        );
+        let id = created["result"]["createdFeatureId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        apply(
+            &mut api,
+            "translate",
+            json!({"child": id, "offset": {"x": 0, "y": 0, "z": 10}}),
+        );
+        let text = read_tool("inspect", &json!({"part_id": id}), &api).unwrap();
+        assert!(text.contains("volume 8000.000"), "{text}");
+        let (lo, hi) = api.part_world_bbox(&id).unwrap();
+        assert!(
+            (lo[2] - 10.0).abs() < 1e-9 && (hi[2] - 30.0).abs() < 1e-9,
+            "{lo:?} {hi:?}"
+        );
+        assert_eq!(api.get_state().parts.len(), 1);
+        let name = serde_json::to_value(&api.get_state().parts[0]).unwrap()["name"].clone();
+        assert_eq!(name, "cube");
+    }
+
+    #[test]
     fn inspect_reports_volume_and_mass() {
         let mut api = DocumentApi::new(ReplicaId(2));
         let id = apply(
