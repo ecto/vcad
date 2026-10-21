@@ -13,6 +13,7 @@ import {
   type HostedEngineClass,
 } from "../engine-host.js";
 import { getKernelWasm } from "../wasm-singleton.js";
+import { wasmResultToScene, type WasmEvaluatedScene } from "../scene-convert.js";
 
 let Engine: HostedEngineClass | undefined;
 beforeAll(async () => {
@@ -61,6 +62,42 @@ describe("DocumentEngineClient (in-process)", () => {
     expect(other.stateHash).toBe(client.stateHash);
     client.dispose();
     other.dispose();
+  });
+
+  it("evaluates in the host, incrementally, equal to a cold evaluation", async () => {
+    const wasm = (await getKernelWasm()) as unknown as {
+      IncrementalEvaluator?: new () => object;
+      evaluateDocument: (json: string, skip: boolean) => unknown;
+    };
+    const canEval = typeof (Engine?.prototype as { evaluateIncremental?: unknown } | undefined)
+      ?.evaluateIncremental === "function";
+    if (!hasDeltas() || !canEval || !wasm.IncrementalEvaluator) {
+      if (process.env.CI) throw new Error("kernel WASM lacks evaluateIncremental");
+      return;
+    }
+    const client = new DocumentEngineClient(inProcessTransport(Engine!, wasm.IncrementalEvaluator));
+    await client.init(3);
+    const box = await client.apply({
+      type: "add_feature",
+      feature: { type: "Cube", size_x: 10, size_y: 10, size_z: 10 },
+    });
+    await client.apply({ type: "add_feature", feature: { type: "Sphere", radius: 4 } });
+    const cold = () =>
+      wasmResultToScene(
+        wasm.evaluateDocument(JSON.stringify(client.state!.document), true) as WasmEvaluatedScene,
+      );
+    const meshes = (s: { parts: { mesh: { positions: Float32Array } }[] }) =>
+      s.parts.map((p) => Array.from(p.mesh.positions));
+
+    const first = await client.evaluate({ skipClashDetection: true });
+    expect(meshes(first)).toEqual(meshes(cold()));
+    // Commands then an evaluate: the scene is of the post-command state.
+    const moved = client.apply({ type: "set_translation", id: box.createdFeatureId!, offset: [3, 0, 0] });
+    const second = await client.evaluate({ skipClashDetection: true });
+    await moved;
+    expect(meshes(second)).toEqual(meshes(cold()));
+    expect(first.parts).toHaveLength(2);
+    client.dispose();
   });
 
   it("resyncs a shared engine's view after direct mutations", async () => {

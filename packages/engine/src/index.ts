@@ -130,8 +130,10 @@ export type {
   EngineRequest,
   EngineResponse,
   EngineTransport,
+  EvaluateOverlay,
   HostedEngine,
   HostedEngineClass,
+  HostedEvaluator,
 } from "./engine-host.js";
 
 /** Spawn the document-engine worker (browser only). */

@@ -7574,7 +7574,17 @@ fn evaluate_document_with(
     let doc: vcad_ir::Document = serde_json::from_str(doc_json)
         .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
     let parse_ms = performance_now() - t_parse;
+    evaluate_parsed(&doc, Some(parse_ms), skip_clash_detection, incremental)
+}
 
+/// Evaluate an in-memory document (no JSON round trip) and return the scene
+/// as JS (typed arrays). `parse_ms` is reported in the timing when given.
+pub(crate) fn evaluate_parsed(
+    doc: &vcad_ir::Document,
+    parse_ms: Option<f64>,
+    skip_clash_detection: bool,
+    incremental: Option<&mut vcad_eval::incremental::IncrementalCache>,
+) -> Result<JsValue, JsError> {
     let options = vcad_eval::EvalOptions {
         skip_clash_detection,
         clock: Some(Box::new(WasmClock)),
@@ -7584,14 +7594,14 @@ fn evaluate_document_with(
     };
 
     let mut scene = match incremental {
-        Some(cache) => vcad_eval::evaluate::evaluate_document_incremental(&doc, &options, cache),
-        None => vcad_eval::evaluate_document(&doc, &options),
+        Some(cache) => vcad_eval::evaluate::evaluate_document_incremental(doc, &options, cache),
+        None => vcad_eval::evaluate_document(doc, &options),
     }
     .map_err(|e| JsError::new(&format!("Evaluation error: {}", e)))?;
 
     // Inject parse_ms into timing
     if let Some(ref mut timing) = scene.timing {
-        timing.parse_ms = Some(parse_ms);
+        timing.parse_ms = parse_ms;
     }
 
     // Serialize the scene to a JS-friendly format using typed arrays (not serde_wasm_bindgen)
