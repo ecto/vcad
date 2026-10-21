@@ -27,7 +27,7 @@ pub const MAX_FACES: usize = 4096;
 /// from the data — so the ceiling that actually matters is the device's
 /// `max_storage_buffer_binding_size`, which [`GpuScene::validate`] checks
 /// separately. This is the "obviously absurd" guard, not the real limit.
-pub const MAX_BVH_NODES: usize = 4_000_000;
+pub const MAX_BVH_NODES: usize = 32_000_000;
 
 /// Deepest root-to-leaf path the WGSL tracer can walk.
 ///
@@ -47,12 +47,14 @@ pub const MAX_TRIM_VERTS: usize = 32768;
 /// part. A tessellated mesh counts in the hundreds of thousands for the same
 /// object, so the mesh path gets its own ceiling. At
 /// [`size_of::<GpuSurface>`](GpuSurface) = 144 bytes per triangle this bounds
-/// the surface buffer at ~144 MB, which is above the 128 MB that
-/// `maxStorageBufferBindingSize` defaults to — so a mesh near this cap can
-/// still be refused by the driver. The limit is here to turn an absurd mesh
-/// into a message rather than an OOM, not to certify that everything under it
-/// uploads.
-pub const MAX_MESH_TRIANGLES: usize = 1_000_000;
+/// the surface buffer at ~2.3 GB. The real ceiling is the device's
+/// `max_storage_buffer_binding_size` (2 GB on desktop discrete GPUs, often
+/// 128 MB on mobile/WebGPU), which [`GpuScene::validate`] checks against the
+/// actual device. This constant only turns an absurd mesh into a message
+/// rather than an OOM; it used to be 1M, which refused real assemblies (a
+/// perforated grille alone runs to hundreds of thousands of triangles) that
+/// the device could hold.
+pub const MAX_MESH_TRIANGLES: usize = 16_000_000;
 
 /// GPU-compatible surface representation.
 ///
