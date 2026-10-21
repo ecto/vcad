@@ -53,6 +53,10 @@ struct EditorView: View {
                     // any further documents get instances of their own.
                     for url in AppInstance.pendingOpen { AppInstance.opening(url, from: model) }
                     AppInstance.pendingOpen = []
+                    // First launch: samples and the loon tutorial.
+                    if WelcomeWindowController.shouldShowAtLaunch(model: model) {
+                        WelcomeWindowController.shared.show(model: model)
+                    }
                     // Dev hook: VCAD_SIM=1 builds the physics simulation for the
                     // opened document and starts it running, so the whole path
                     // (enableSimulation -> prepare -> stepping engine -> instance
@@ -286,6 +290,8 @@ struct DocumentCommands: Commands {
                 .keyboardShortcut("0", modifiers: [.command, .option]).disabled(!model.hasSelection)
         }
         CommandGroup(replacing: .help) {
+            Button("Welcome to vcad") { WelcomeWindowController.shared.show(model: model) }
+            Divider()
             Button("vcad Help") { NSWorkspace.shared.open(URL(string: "https://vcad.io/docs")!) }
             Button("Keyboard Shortcuts") { NSWorkspace.shared.open(URL(string: "https://vcad.io/docs/native/shortcuts")!) }
             Divider()
