@@ -165,7 +165,7 @@ impl GcodeGenerator {
             "{}; Layer {}, Z={:.3}",
             self.settings.printer.flavor.layer_change_gcode(),
             layer.index,
-            layer.z
+            layer.z + layer.layer_height / 2.0
         );
 
         if self.settings.printer.flavor == GcodeFlavor::Bambu {
@@ -173,7 +173,10 @@ impl GcodeGenerator {
         }
 
         // Move to layer Z
-        self.move_z(layer.z);
+        // `layer.z` is the slicing plane, mid-way through the layer; the
+        // nozzle prints at the layer top. Moving to `layer.z` squashed the
+        // first layer to half height into the plate.
+        self.move_z(layer.z + layer.layer_height / 2.0);
 
         // Fan control
         if self.settings.fan_enabled && layer.index == self.settings.fan_start_layer {
