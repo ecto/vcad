@@ -393,6 +393,9 @@ fn options(
         denoise: cpu,
         adaptive: true,
         exact: false,
+        // Fields added to the renderer later take their defaults here, so a
+        // new option can't break this crate's build again (#1007).
+        ..Default::default()
     };
     Ok((ro, pr))
 }
