@@ -4,7 +4,7 @@
  * session document is replaced by the engine's `result.document`. The
  * checked-in WASM may predate `apply_tool`, so the engine is stubbed here.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Document } from "@vcad/ir";
 
 const calls: Array<{ tool: string; args: Record<string, unknown>; imported: Document }> = [];
@@ -57,9 +57,6 @@ describe("runMutation via the document engine", () => {
     documents.clear();
     calls.length = 0;
   });
-  afterEach(() => {
-    delete process.env.VCAD_MCP_ENGINE_APPLY;
-  });
 
   it("replaces the session doc with result.document and reports createdFeatureId", () => {
     const id = registerSession(cubes(1));
@@ -99,16 +96,43 @@ describe("runMutation via the document engine", () => {
     expect(getSession(id).roots).toHaveLength(1);
   });
 
-  it("falls back to the legacy planner on `unsupported` and when disabled", () => {
+  it("has no planner fallback: `unsupported` is an error and the doc is untouched", () => {
     const id = registerSession(cubes(2));
-    nextEnvelope = { ok: false, error: { kind: "unsupported", tool: "delete" } };
-    json(dispatchRegistryTool("delete", { document_id: id, part_id: "0:2" }));
-    expect(getSession(id).roots).toHaveLength(1);
+    const before = JSON.stringify(getSession(id));
+    nextEnvelope = { ok: false, error: { kind: "unsupported", tool: "delete", message: "not lowered" } };
+    expect(() => dispatchRegistryTool("delete", { document_id: id, part_id: "0:2" })).toThrow(
+      /delete: not lowered/,
+    );
+    expect(calls).toHaveLength(1);
+    expect(JSON.stringify(getSession(id))).toBe(before);
+  });
 
+  it("ignores the retired VCAD_MCP_ENGINE_APPLY switch: every mutation reaches the engine", () => {
+    const id = registerSession(cubes(2));
     process.env.VCAD_MCP_ENGINE_APPLY = "0";
-    calls.length = 0;
-    json(dispatchRegistryTool("delete", { document_id: id, part_id: "0:1" }));
-    expect(calls).toHaveLength(0);
-    expect(getSession(id).roots).toHaveLength(0);
+    try {
+      nextEnvelope = { ok: true, result: { document: cubes(1), parts: [], warnings: [] } };
+      const out = json(dispatchRegistryTool("delete", { document_id: id, part_id: "0:2" }));
+      expect(calls.map((c) => c.tool)).toEqual(["delete"]);
+      expect(calls[0]!.args.part_id).toBe("0:2");
+      expect(out.removed).toBe("0:2");
+      expect(getSession(id).roots).toHaveLength(1);
+    } finally {
+      delete process.env.VCAD_MCP_ENGINE_APPLY;
+    }
+  });
+
+  it("reports the edited part for in-place transforms", () => {
+    const id = registerSession(cubes(2));
+    nextEnvelope = { ok: true, result: { document: cubes(2), parts: [], warnings: [] } };
+    const out = json(
+      dispatchRegistryTool("create", {
+        document_id: id,
+        type: "translate",
+        params: { child: 2, offset: { x: 1, y: 0, z: 0 } },
+      }),
+    );
+    expect((calls[0]!.args.params as { child: unknown }).child).toBe("0:2");
+    expect(out.part_id).toBe("0:2");
   });
 });

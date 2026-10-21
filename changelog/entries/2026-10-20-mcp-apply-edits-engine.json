@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-20-mcp-apply-edits-engine",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "fix",
+  "title": "apply_edits runs on the document engine",
+  "summary": "MCP apply_edits now applies every op through the Rust document engine, like the single-op tools; \"@N\" resolves to op N's stable part id. The legacy planner fallback is gone.",
+  "features": ["mcp", "engine", "batch-edit"],
+  "mcpTools": ["apply_edits", "create", "update", "delete", "set_material"]
+}

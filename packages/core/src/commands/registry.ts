@@ -70,28 +70,6 @@ export class CommandRegistry {
     this.wasm = wasm;
   }
 
-  /**
-   * Plan a CRUD tool call via the Rust executor. Returns `null` if the
-   * wasm binding isn't present (old kernel build, test harness, etc.)
-   * so callers can fall back to the TS `executeCrud` path.
-   *
-   * `docJson` is a `JSON.stringify(document)` of the current store
-   * snapshot — the planner needs it for id/existence validation.
-   */
-  planCrud(
-    tool: string,
-    args: Record<string, unknown>,
-    docJson: string,
-  ): PlannedResponse | null {
-    if (!this.wasm?.plan_chat_tool) return null;
-    try {
-      const raw = this.wasm.plan_chat_tool(tool, JSON.stringify(args), docJson);
-      return JSON.parse(raw) as PlannedResponse;
-    } catch {
-      return null;
-    }
-  }
-
   /** Get all loaded schema entries. */
   getSchemas(): ToolSchemaEntry[] {
     return this.schemas;

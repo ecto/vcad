@@ -121,17 +121,21 @@ describe("per-session engine cache", () => {
     expect(engines[1]!.freed).toBe(true);
   });
 
-  it("re-imports after a legacy-path mutation", () => {
-    const id = registerSession(cubes(2));
-    nextDoc = () => cubes(2);
+  it("frees the engine and re-imports after a refused mutation", () => {
+    const id = registerSession(cubes(1));
     setMaterial(id);
-    process.env.VCAD_MCP_ENGINE_APPLY = "0";
-    try {
-      dispatchRegistryTool("delete", { document_id: id, part_id: "0:2" });
-    } finally {
-      delete process.env.VCAD_MCP_ENGINE_APPLY;
-    }
+    expect(hasCachedEngine(id)).toBe(true);
+    const good = nextDoc;
+    nextDoc = () => {
+      throw new Error("engine blew up");
+    };
+    expect(() => setMaterial(id)).toThrow(/engine blew up/);
+    // A failed apply never leaves its (possibly half-applied) engine cached.
+    expect(hasCachedEngine(id)).toBe(false);
+    expect(engines[0]!.freed).toBe(true);
+    nextDoc = good;
     setMaterial(id);
+    expect(engines).toHaveLength(2);
     expect(importIr).toHaveBeenCalledTimes(2);
   });
 

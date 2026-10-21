@@ -240,7 +240,6 @@ export {
   commandRegistry,
   executeCrud,
   HIGH_LEVEL_TOOLS_SYSTEM_PROMPT_APPENDIX,
-  applyToolOutcome,
   listPartsFromDocument,
   partIdForRoot,
   partIdForNode,
@@ -261,7 +260,6 @@ export type {
   AnthropicTool,
   ToolOutcome,
   PlannedResponse,
-  ApplyOutcomeResult,
   ResolvedPart,
   PartIdMatch,
 } from "./commands/index.js";
