@@ -75,7 +75,11 @@ fn every_example_opens_with_geometry() {
     assert!(!files.is_empty(), "no examples found");
     let mut failures = Vec::new();
     for path in &files {
-        let rel = path.strip_prefix(repo()).unwrap_or(path).display().to_string();
+        let rel = path
+            .strip_prefix(repo())
+            .unwrap_or(path)
+            .display()
+            .to_string();
         let started = std::time::Instant::now();
         match catch_unwind(AssertUnwindSafe(|| open(path))) {
             Ok(Ok(tris)) => eprintln!("ok   {rel}: {tris} triangles in {:?}", started.elapsed()),
