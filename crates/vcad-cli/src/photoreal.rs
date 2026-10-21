@@ -44,6 +44,8 @@ pub struct PhotorealRequest {
     pub lighting: vcad_render::photoreal::Lighting,
     /// Seamless cyclorama backdrop instead of the infinite floor.
     pub cyclorama: bool,
+    /// Fraction of the frame the framed subject fills (default 0.6).
+    pub fill: Option<f64>,
     /// Render-time material overrides (`--look`).
     pub look: Option<std::sync::Arc<vcad_render::look::ResolvedLook>>,
 }
@@ -86,6 +88,7 @@ fn options(req: &PhotorealRequest) -> (RasterOptions, PhotorealOptions) {
         size_px: req.width,
         height_px: Some(req.height),
         focus: req.focus_part.clone(),
+        fill_frac: req.fill.unwrap_or(RasterOptions::default().fill_frac),
         ..RasterOptions::default()
     };
     let pr = PhotorealOptions {
@@ -127,6 +130,7 @@ pub fn render_bytes(raw_vcad: &str, req: &PhotorealRequest, jpeg: bool) -> Resul
             cpu: true,
             ..req.clone()
         };
+        FELL_BACK_TO_CPU.store(true, std::sync::atomic::Ordering::Relaxed);
         return render_bytes(raw_vcad, &cpu, jpeg);
     }
     let out = if req.cpu {
@@ -243,6 +247,7 @@ mod tests {
             lighting: Default::default(),
             cyclorama: false,
             look: None,
+            fill: None,
         }
     }
 

@@ -275,6 +275,10 @@ enum Commands {
         /// fabric and image textures)
         #[arg(long, requires = "photoreal", value_name = "LOOK.json")]
         look: Option<PathBuf>,
+        /// Fraction of the frame the framed subject (or `--focus-part`)
+        /// fills, 0..1 (default 0.6)
+        #[arg(long, requires = "photoreal")]
+        fill: Option<f64>,
         /// Image width in pixels
         #[arg(long, default_value = "1920")]
         width: u32,
@@ -845,6 +849,7 @@ fn run_command(cli: Cli) -> Result<()> {
             lighting,
             cyclorama,
             look,
+            fill,
             width,
             height,
             azimuth,
@@ -879,6 +884,7 @@ fn run_command(cli: Cli) -> Result<()> {
                     focus_part,
                     lighting,
                     cyclorama,
+                    fill,
                     look: look
                         .as_deref()
                         .map(vcad_render::look::Look::load)
