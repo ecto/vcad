@@ -1,0 +1,739 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="519.060694pt" height="204.540684pt" viewBox="0 0 519.060694 204.540684" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-10-20T08:38:28.800810</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.11.2, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 204.540684 
+L 519.060694 204.540684 
+L 519.060694 0 
+L 0 0 
+L 0 204.540684 
+z
+" style="fill: none"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 67.882344 151.344 
+L 464.285544 151.344 
+L 464.285544 7.2 
+L 67.882344 7.2 
+L 67.882344 151.344 
+z
+" style="fill: none"/>
+   </g>
+   <g clip-path="url(#pbf3e4c8285)">
+    <image xlink:href="data:image/png;base64,
+iVBORw0KGgoAAAANSUhEUgAAAicAAADICAYAAAAz3UGjAAAEv0lEQVR4nO3YQa4bRRhG0W7bCY9BgICQmIAUZRnZU5bD8tgCSIyQiDsrCMP6L6lzNvC5Kna/mz5/fvvmOjZwHns4Bw562+RybxOjm9ztce3yW1k/eh845xZ/VIbOeQ2M/vbdY4/nLQDAl4gTACBFnAAAKeIEAEgRJwBAijgBAFLECQCQIk4AgBRxAgCkiBMAIEWcAAAp4gQASBEnAECKOAEAUsQJAJAiTgCAFHECAKSIEwAgRZwAACniBABIEScAQIo4AQBSxAkAkCJOAIAUcQIApIgTACBFnAAAKeIEAEgRJwBAijgBAFLECQCQIk4AgJTH9AeA/4trk/89jJzzPNePDkxOmLjaiS/RxDmfm5zzPrDpzQkAkCJOAIAUcQIApIgTACBFnAAAKeIEAEgRJwBAijgBAFLECQCQIk4AgBRxAgCkiBMAIEWcAAAp4gQASBEnAECKOAEAUsQJAJAiTgCAFHECAKSIEwAgRZwAACniBABIEScAQIo4AQBSxAkAkCJOAIAUcQIApIgTACBFnAAAKeIEAEgRJwBAijgBAFLECQCQ8pgYPSc2J0YHbHLM4zZw0NvE7e4xebzc168+j2v55qfn8sltnrfnyEN+/XfoPnDOn17Wb3pzAgCkiBMAIEWcAAAp4gQASBEnAECKOAEAUsQJAJAiTgCAFHECAKSIEwAgRZwAACniBABIEScAQIo4AQBSxAkAkCJOAIAUcQIApIgTACBFnAAAKeIEAEgRJwBAijgBAFLECQCQIk4AgBRxAgCkiBMAIEWcAAAp4gQASBEnAECKOAEAUsQJAJAiTgCAlMf0B/iandMf4Ct2Xes3n+f60ds18C0amPzn0/q7PQfOeR/YvE0cdMDMv+ced/vL64Fn3/JFAID/IE4AgBRxAgCkiBMAIEWcAAAp4gQASBEnAECKOAEAUsQJAJAiTgCAFHECAKSIEwAgRZwAACniBABIEScAQIo4AQBSxAkAkCJOAIAUcQIApIgTACBFnAAAKeIEAEgRJwBAijgBAFLECQCQIk4AgBRxAgCkiBMAIEWcAAAp4gQASBEnAECKOAEAUh7HJs6JzXOTc05sDoy+up1bnPM+MPr+7fpH0fNaPnn88de/yzcHvrb7PPs2+X3++rL+x+LNCQCQIk4AgBRxAgCkiBMAIEWcAAAp4gQASBEnAECKOAEAUsQJAJAiTgCAFHECAKSIEwAgRZwAACniBABIEScAQIo4AQBSxAkAkCJOAIAUcQIApIgTACBFnAAAKeIEAEgRJwBAijgBAFLECQCQIk4AgBRxAgCkiBMAIEWcAAAp4gQASBEnAECKOAEAUsQJAJDyODZxnus3HwOjt4HcfF7rN1/u6+/2+2/WX+7A1R7fPtbf7Ycfnss3f3y1/nZ//3v55HG/DTyHNnnGv3m9/qT3gcv9+O7P5ZvenAAAKeIEAEgRJwBAijgBAFLECQCQIk4AgBRxAgCkiBMAIEWcAAAp4gQASBEnAECKOAEAUsQJAJAiTgCAFHECAKSIEwAgRZwAACniBABIEScAQIo4AQBSxAkAkCJOAIAUcQIApIgTACBFnAAAKeIEAEgRJwBAijgBAFLECQCQIk4AgBRxAgCkiBMA4Cj5DJ7lKni7TIB2AAAAAElFTkSuQmCC" id="image97c1d5966e" transform="scale(1 -1) translate(0 -144)" x="67.68" y="-7.260684" width="396.72" height="144"/>
+   </g>
+   <g id="matplotlib.axis_1">
+    <g id="xtick_1">
+     <g id="line2d_1">
+      <defs>
+       <path id="mf146acf0ab" d="M 0 0 
+L 0 3.5 
+" style="stroke: #a08d70; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#mf146acf0ab" x="78.314007" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_1">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(54.374628 182.425059) rotate(-40)">exafel-ev0</text>
+     </g>
+    </g>
+    <g id="xtick_2">
+     <g id="line2d_2">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="99.177333" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_2">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(64.895038 191.103797) rotate(-40)">cesm-CLDTOT</text>
+     </g>
+    </g>
+    <g id="xtick_3">
+     <g id="line2d_3">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="120.04066" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_3">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(92.769825 185.220482) rotate(-40)">cesm-FLDS</text>
+     </g>
+    </g>
+    <g id="xtick_4">
+     <g id="line2d_4">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="140.903986" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_4">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(103.212434 193.964503) rotate(-40)">nyx-temperature</text>
+     </g>
+    </g>
+    <g id="xtick_5">
+     <g id="line2d_5">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="161.767312" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_5">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(129.069053 189.774632) rotate(-40)">nyx-velocity_x</text>
+     </g>
+    </g>
+    <g id="xtick_6">
+     <g id="line2d_6">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="182.630638" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_6">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(152.686548 187.46361) rotate(-40)">cesm-LHFLX</text>
+     </g>
+    </g>
+    <g id="xtick_7">
+     <g id="line2d_7">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="203.493965" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_7">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(182.497034 179.956052) rotate(-40)">cesm-TS</text>
+     </g>
+    </g>
+    <g id="xtick_8">
+     <g id="line2d_8">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="224.357291" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_8">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(187.402518 193.346272) rotate(-40)">miranda-density</text>
+     </g>
+    </g>
+    <g id="xtick_9">
+     <g id="line2d_9">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="245.220617" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_9">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(205.128892 195.978487) rotate(-40)">miranda-pressure</text>
+     </g>
+    </g>
+    <g id="xtick_10">
+     <g id="line2d_10">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="266.083944" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_10">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(225.632776 196.280095) rotate(-40)">miranda-velocityx</text>
+     </g>
+    </g>
+    <g id="xtick_11">
+     <g id="line2d_11">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="286.94727" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_11">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(253.124003 190.718626) rotate(-40)">qmcpack-orb0</text>
+     </g>
+    </g>
+    <g id="xtick_12">
+     <g id="line2d_12">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="307.810596" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_12">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(268.450982 195.364173) rotate(-40)">qmcpack-orb100</text>
+     </g>
+    </g>
+    <g id="xtick_13">
+     <g id="line2d_13">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="328.673923" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_13">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(307.403131 180.185848) rotate(-40)">scale-QV</text>
+     </g>
+    </g>
+    <g id="xtick_14">
+     <g id="line2d_14">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="349.537249" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_14">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(322.919946 184.672104) rotate(-40)">hurricane-V</text>
+     </g>
+    </g>
+    <g id="xtick_15">
+     <g id="line2d_15">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="370.400575" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_15">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(343.230105 185.136267) rotate(-40)">hurricane-U</text>
+     </g>
+    </g>
+    <g id="xtick_16">
+     <g id="line2d_16">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="391.263902" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_16">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(373.224202 177.47464) rotate(-40)">scale-U</text>
+     </g>
+    </g>
+    <g id="xtick_17">
+     <g id="line2d_17">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="412.127228" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_17">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(382.098334 187.534769) rotate(-40)">hurricane-TC</text>
+     </g>
+    </g>
+    <g id="xtick_18">
+     <g id="line2d_18">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="432.990554" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_18">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(415.687634 176.856409) rotate(-40)">scale-T</text>
+     </g>
+    </g>
+    <g id="xtick_19">
+     <g id="line2d_19">
+      <g>
+       <use xlink:href="#mf146acf0ab" x="453.853881" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_19">
+      <text style="font-size: 6.5px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; fill: #a08d70" transform="translate(426.503689 185.287071) rotate(-40)">scale-PRES</text>
+     </g>
+    </g>
+   </g>
+   <g id="matplotlib.axis_2">
+    <g id="ytick_1">
+     <g id="line2d_20">
+      <defs>
+       <path id="meb4af86afa" d="M 0 0 
+L -3.5 0 
+" style="stroke: #a08d70; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#meb4af86afa" x="67.882344" y="19.212" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_20">
+      <text style="font-size: 7px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #a08d70" x="60.882344" y="22.544" transform="rotate(-0 60.882344 22.544)">TCG1 32³</text>
+     </g>
+    </g>
+    <g id="ytick_2">
+     <g id="line2d_21">
+      <g>
+       <use xlink:href="#meb4af86afa" x="67.882344" y="43.236" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_21">
+      <text style="font-size: 7px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #a08d70" x="60.882344" y="46.568" transform="rotate(-0 60.882344 46.568)">TCG1 64³</text>
+     </g>
+    </g>
+    <g id="ytick_3">
+     <g id="line2d_22">
+      <g>
+       <use xlink:href="#meb4af86afa" x="67.882344" y="67.26" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_22">
+      <text style="font-size: 7px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #a08d70" x="60.882344" y="70.592" transform="rotate(-0 60.882344 70.592)">TCG1 128³</text>
+     </g>
+    </g>
+    <g id="ytick_4">
+     <g id="line2d_23">
+      <g>
+       <use xlink:href="#meb4af86afa" x="67.882344" y="91.284" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_23">
+      <text style="font-size: 7px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #a08d70" x="60.882344" y="94.616" transform="rotate(-0 60.882344 94.616)">TCG3 16³</text>
+     </g>
+    </g>
+    <g id="ytick_5">
+     <g id="line2d_24">
+      <g>
+       <use xlink:href="#meb4af86afa" x="67.882344" y="115.308" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_24">
+      <text style="font-size: 7px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #a08d70" x="60.882344" y="118.64" transform="rotate(-0 60.882344 118.64)">TCG3 32³</text>
+     </g>
+    </g>
+    <g id="ytick_6">
+     <g id="line2d_25">
+      <g>
+       <use xlink:href="#meb4af86afa" x="67.882344" y="139.332" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_25">
+      <text style="font-size: 7px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: end; fill: #a08d70" x="60.882344" y="142.664" transform="rotate(-0 60.882344 142.664)">TCG3 1 blk/band</text>
+     </g>
+    </g>
+   </g>
+   <g id="line2d_26">
+    <path d="M 67.882344 79.272 
+L 464.285544 79.272 
+" clip-path="url(#pbf3e4c8285)" style="fill: none; stroke: #0b0907; stroke-width: 3; stroke-linecap: square"/>
+   </g>
+   <g id="text_26">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="78.314007" y="21.2812" transform="rotate(-0 78.314007 21.2812)">1.00</text>
+   </g>
+   <g id="text_27">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="99.177333" y="21.2812" transform="rotate(-0 99.177333 21.2812)">1.03</text>
+   </g>
+   <g id="text_28">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="120.04066" y="21.2812" transform="rotate(-0 120.04066 21.2812)">1.06</text>
+   </g>
+   <g id="text_29">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="140.903986" y="21.2812" transform="rotate(-0 140.903986 21.2812)">1.10</text>
+   </g>
+   <g id="text_30">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="161.767312" y="21.2812" transform="rotate(-0 161.767312 21.2812)">1.13</text>
+   </g>
+   <g id="text_31">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="182.630638" y="21.2812" transform="rotate(-0 182.630638 21.2812)">1.11</text>
+   </g>
+   <g id="text_32">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="203.493965" y="21.2812" transform="rotate(-0 203.493965 21.2812)">1.20</text>
+   </g>
+   <g id="text_33">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="224.357291" y="21.2812" transform="rotate(-0 224.357291 21.2812)">1.43</text>
+   </g>
+   <g id="text_34">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="245.220617" y="21.2812" transform="rotate(-0 245.220617 21.2812)">1.41</text>
+   </g>
+   <g id="text_35">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="266.083944" y="21.2812" transform="rotate(-0 266.083944 21.2812)">1.56</text>
+   </g>
+   <g id="text_36">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="286.94727" y="21.2812" transform="rotate(-0 286.94727 21.2812)">2.52</text>
+   </g>
+   <g id="text_37">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="307.810596" y="21.2812" transform="rotate(-0 307.810596 21.2812)">2.78</text>
+   </g>
+   <g id="text_38">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="328.673923" y="21.2812" transform="rotate(-0 328.673923 21.2812)">1.29</text>
+   </g>
+   <g id="text_39">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="349.537249" y="21.2812" transform="rotate(-0 349.537249 21.2812)">1.34</text>
+   </g>
+   <g id="text_40">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="370.400575" y="21.2812" transform="rotate(-0 370.400575 21.2812)">1.36</text>
+   </g>
+   <g id="text_41">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="391.263902" y="21.2812" transform="rotate(-0 391.263902 21.2812)">1.37</text>
+   </g>
+   <g id="text_42">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="412.127228" y="21.2812" transform="rotate(-0 412.127228 21.2812)">1.59</text>
+   </g>
+   <g id="text_43">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="432.990554" y="21.2812" transform="rotate(-0 432.990554 21.2812)">1.66</text>
+   </g>
+   <g id="text_44">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="453.853881" y="21.2812" transform="rotate(-0 453.853881 21.2812)">5.52</text>
+   </g>
+   <g id="text_45">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="78.314007" y="45.3052" transform="rotate(-0 78.314007 45.3052)">1.00</text>
+   </g>
+   <g id="text_46">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="99.177333" y="45.3052" transform="rotate(-0 99.177333 45.3052)">1.02</text>
+   </g>
+   <g id="text_47">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="120.04066" y="45.3052" transform="rotate(-0 120.04066 45.3052)">1.04</text>
+   </g>
+   <g id="text_48">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="140.903986" y="45.3052" transform="rotate(-0 140.903986 45.3052)">1.05</text>
+   </g>
+   <g id="text_49">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="161.767312" y="45.3052" transform="rotate(-0 161.767312 45.3052)">1.07</text>
+   </g>
+   <g id="text_50">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="182.630638" y="45.3052" transform="rotate(-0 182.630638 45.3052)">1.08</text>
+   </g>
+   <g id="text_51">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="203.493965" y="45.3052" transform="rotate(-0 203.493965 45.3052)">1.09</text>
+   </g>
+   <g id="text_52">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="224.357291" y="45.3052" transform="rotate(-0 224.357291 45.3052)">1.15</text>
+   </g>
+   <g id="text_53">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="245.220617" y="45.3052" transform="rotate(-0 245.220617 45.3052)">1.17</text>
+   </g>
+   <g id="text_54">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="266.083944" y="45.3052" transform="rotate(-0 266.083944 45.3052)">1.20</text>
+   </g>
+   <g id="text_55">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="286.94727" y="45.3052" transform="rotate(-0 286.94727 45.3052)">1.79</text>
+   </g>
+   <g id="text_56">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="307.810596" y="45.3052" transform="rotate(-0 307.810596 45.3052)">1.76</text>
+   </g>
+   <g id="text_57">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="328.673923" y="45.3052" transform="rotate(-0 328.673923 45.3052)">1.20</text>
+   </g>
+   <g id="text_58">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="349.537249" y="45.3052" transform="rotate(-0 349.537249 45.3052)">1.23</text>
+   </g>
+   <g id="text_59">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="370.400575" y="45.3052" transform="rotate(-0 370.400575 45.3052)">1.24</text>
+   </g>
+   <g id="text_60">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="391.263902" y="45.3052" transform="rotate(-0 391.263902 45.3052)">1.27</text>
+   </g>
+   <g id="text_61">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="412.127228" y="45.3052" transform="rotate(-0 412.127228 45.3052)">1.28</text>
+   </g>
+   <g id="text_62">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="432.990554" y="45.3052" transform="rotate(-0 432.990554 45.3052)">1.33</text>
+   </g>
+   <g id="text_63">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="453.853881" y="45.3052" transform="rotate(-0 453.853881 45.3052)">2.57</text>
+   </g>
+   <g id="text_64">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="78.314007" y="69.3292" transform="rotate(-0 78.314007 69.3292)">1.00</text>
+   </g>
+   <g id="text_65">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="99.177333" y="69.3292" transform="rotate(-0 99.177333 69.3292)">1.02</text>
+   </g>
+   <g id="text_66">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="120.04066" y="69.3292" transform="rotate(-0 120.04066 69.3292)">1.03</text>
+   </g>
+   <g id="text_67">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="140.903986" y="69.3292" transform="rotate(-0 140.903986 69.3292)">1.04</text>
+   </g>
+   <g id="text_68">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="161.767312" y="69.3292" transform="rotate(-0 161.767312 69.3292)">1.05</text>
+   </g>
+   <g id="text_69">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="182.630638" y="69.3292" transform="rotate(-0 182.630638 69.3292)">1.06</text>
+   </g>
+   <g id="text_70">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="203.493965" y="69.3292" transform="rotate(-0 203.493965 69.3292)">1.07</text>
+   </g>
+   <g id="text_71">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="224.357291" y="69.3292" transform="rotate(-0 224.357291 69.3292)">1.08</text>
+   </g>
+   <g id="text_72">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="245.220617" y="69.3292" transform="rotate(-0 245.220617 69.3292)">1.10</text>
+   </g>
+   <g id="text_73">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="266.083944" y="69.3292" transform="rotate(-0 266.083944 69.3292)">1.10</text>
+   </g>
+   <g id="text_74">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="286.94727" y="69.3292" transform="rotate(-0 286.94727 69.3292)">1.11</text>
+   </g>
+   <g id="text_75">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="307.810596" y="69.3292" transform="rotate(-0 307.810596 69.3292)">1.13</text>
+   </g>
+   <g id="text_76">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="328.673923" y="69.3292" transform="rotate(-0 328.673923 69.3292)">1.17</text>
+   </g>
+   <g id="text_77">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="349.537249" y="69.3292" transform="rotate(-0 349.537249 69.3292)">1.20</text>
+   </g>
+   <g id="text_78">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="370.400575" y="69.3292" transform="rotate(-0 370.400575 69.3292)">1.21</text>
+   </g>
+   <g id="text_79">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="391.263902" y="69.3292" transform="rotate(-0 391.263902 69.3292)">1.22</text>
+   </g>
+   <g id="text_80">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="412.127228" y="69.3292" transform="rotate(-0 412.127228 69.3292)">1.23</text>
+   </g>
+   <g id="text_81">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="432.990554" y="69.3292" transform="rotate(-0 432.990554 69.3292)">1.24</text>
+   </g>
+   <g id="text_82">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="453.853881" y="69.3292" transform="rotate(-0 453.853881 69.3292)">2.18</text>
+   </g>
+   <g id="text_83">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="78.314007" y="93.3532" transform="rotate(-0 78.314007 93.3532)">1.00</text>
+   </g>
+   <g id="text_84">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="99.177333" y="93.3532" transform="rotate(-0 99.177333 93.3532)">1.01</text>
+   </g>
+   <g id="text_85">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="120.04066" y="93.3532" transform="rotate(-0 120.04066 93.3532)">1.03</text>
+   </g>
+   <g id="text_86">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="140.903986" y="93.3532" transform="rotate(-0 140.903986 93.3532)">1.03</text>
+   </g>
+   <g id="text_87">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="161.767312" y="93.3532" transform="rotate(-0 161.767312 93.3532)">1.04</text>
+   </g>
+   <g id="text_88">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="182.630638" y="93.3532" transform="rotate(-0 182.630638 93.3532)">1.06</text>
+   </g>
+   <g id="text_89">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="203.493965" y="93.3532" transform="rotate(-0 203.493965 93.3532)">1.09</text>
+   </g>
+   <g id="text_90">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="224.357291" y="93.3532" transform="rotate(-0 224.357291 93.3532)">1.10</text>
+   </g>
+   <g id="text_91">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="245.220617" y="93.3532" transform="rotate(-0 245.220617 93.3532)">1.11</text>
+   </g>
+   <g id="text_92">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="266.083944" y="93.3532" transform="rotate(-0 266.083944 93.3532)">1.11</text>
+   </g>
+   <g id="text_93">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="286.94727" y="93.3532" transform="rotate(-0 286.94727 93.3532)">1.21</text>
+   </g>
+   <g id="text_94">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="307.810596" y="93.3532" transform="rotate(-0 307.810596 93.3532)">1.19</text>
+   </g>
+   <g id="text_95">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="328.673923" y="93.3532" transform="rotate(-0 328.673923 93.3532)">1.14</text>
+   </g>
+   <g id="text_96">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="349.537249" y="93.3532" transform="rotate(-0 349.537249 93.3532)">1.18</text>
+   </g>
+   <g id="text_97">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="370.400575" y="93.3532" transform="rotate(-0 370.400575 93.3532)">1.18</text>
+   </g>
+   <g id="text_98">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="391.263902" y="93.3532" transform="rotate(-0 391.263902 93.3532)">1.20</text>
+   </g>
+   <g id="text_99">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="412.127228" y="93.3532" transform="rotate(-0 412.127228 93.3532)">1.17</text>
+   </g>
+   <g id="text_100">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="432.990554" y="93.3532" transform="rotate(-0 432.990554 93.3532)">1.21</text>
+   </g>
+   <g id="text_101">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="453.853881" y="93.3532" transform="rotate(-0 453.853881 93.3532)">1.91</text>
+   </g>
+   <g id="text_102">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="78.314007" y="117.3772" transform="rotate(-0 78.314007 117.3772)">0.99</text>
+   </g>
+   <g id="text_103">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="99.177333" y="117.3772" transform="rotate(-0 99.177333 117.3772)">1.01</text>
+   </g>
+   <g id="text_104">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="120.04066" y="117.3772" transform="rotate(-0 120.04066 117.3772)">1.02</text>
+   </g>
+   <g id="text_105">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="140.903986" y="117.3772" transform="rotate(-0 140.903986 117.3772)">1.02</text>
+   </g>
+   <g id="text_106">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="161.767312" y="117.3772" transform="rotate(-0 161.767312 117.3772)">1.03</text>
+   </g>
+   <g id="text_107">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="182.630638" y="117.3772" transform="rotate(-0 182.630638 117.3772)">1.05</text>
+   </g>
+   <g id="text_108">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="203.493965" y="117.3772" transform="rotate(-0 203.493965 117.3772)">1.06</text>
+   </g>
+   <g id="text_109">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="224.357291" y="117.3772" transform="rotate(-0 224.357291 117.3772)">1.07</text>
+   </g>
+   <g id="text_110">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="245.220617" y="117.3772" transform="rotate(-0 245.220617 117.3772)">1.09</text>
+   </g>
+   <g id="text_111">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="266.083944" y="117.3772" transform="rotate(-0 266.083944 117.3772)">1.09</text>
+   </g>
+   <g id="text_112">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="286.94727" y="117.3772" transform="rotate(-0 286.94727 117.3772)">1.10</text>
+   </g>
+   <g id="text_113">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="307.810596" y="117.3772" transform="rotate(-0 307.810596 117.3772)">1.11</text>
+   </g>
+   <g id="text_114">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="328.673923" y="117.3772" transform="rotate(-0 328.673923 117.3772)">1.12</text>
+   </g>
+   <g id="text_115">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="349.537249" y="117.3772" transform="rotate(-0 349.537249 117.3772)">1.16</text>
+   </g>
+   <g id="text_116">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="370.400575" y="117.3772" transform="rotate(-0 370.400575 117.3772)">1.15</text>
+   </g>
+   <g id="text_117">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="391.263902" y="117.3772" transform="rotate(-0 391.263902 117.3772)">1.16</text>
+   </g>
+   <g id="text_118">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="412.127228" y="117.3772" transform="rotate(-0 412.127228 117.3772)">1.14</text>
+   </g>
+   <g id="text_119">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="432.990554" y="117.3772" transform="rotate(-0 432.990554 117.3772)">1.14</text>
+   </g>
+   <g id="text_120">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="453.853881" y="117.3772" transform="rotate(-0 453.853881 117.3772)">1.62</text>
+   </g>
+   <g id="text_121">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="78.314007" y="141.4012" transform="rotate(-0 78.314007 141.4012)">0.99</text>
+   </g>
+   <g id="text_122">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="99.177333" y="141.4012" transform="rotate(-0 99.177333 141.4012)">1.01</text>
+   </g>
+   <g id="text_123">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="120.04066" y="141.4012" transform="rotate(-0 120.04066 141.4012)">1.02</text>
+   </g>
+   <g id="text_124">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="140.903986" y="141.4012" transform="rotate(-0 140.903986 141.4012)">1.02</text>
+   </g>
+   <g id="text_125">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="161.767312" y="141.4012" transform="rotate(-0 161.767312 141.4012)">1.03</text>
+   </g>
+   <g id="text_126">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="182.630638" y="141.4012" transform="rotate(-0 182.630638 141.4012)">1.05</text>
+   </g>
+   <g id="text_127">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="203.493965" y="141.4012" transform="rotate(-0 203.493965 141.4012)">1.06</text>
+   </g>
+   <g id="text_128">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="224.357291" y="141.4012" transform="rotate(-0 224.357291 141.4012)">1.07</text>
+   </g>
+   <g id="text_129">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="245.220617" y="141.4012" transform="rotate(-0 245.220617 141.4012)">1.09</text>
+   </g>
+   <g id="text_130">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="266.083944" y="141.4012" transform="rotate(-0 266.083944 141.4012)">1.08</text>
+   </g>
+   <g id="text_131">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="286.94727" y="141.4012" transform="rotate(-0 286.94727 141.4012)">1.07</text>
+   </g>
+   <g id="text_132">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="307.810596" y="141.4012" transform="rotate(-0 307.810596 141.4012)">1.09</text>
+   </g>
+   <g id="text_133">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="328.673923" y="141.4012" transform="rotate(-0 328.673923 141.4012)">1.11</text>
+   </g>
+   <g id="text_134">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="349.537249" y="141.4012" transform="rotate(-0 349.537249 141.4012)">1.16</text>
+   </g>
+   <g id="text_135">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="370.400575" y="141.4012" transform="rotate(-0 370.400575 141.4012)">1.15</text>
+   </g>
+   <g id="text_136">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="391.263902" y="141.4012" transform="rotate(-0 391.263902 141.4012)">1.15</text>
+   </g>
+   <g id="text_137">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="412.127228" y="141.4012" transform="rotate(-0 412.127228 141.4012)">1.13</text>
+   </g>
+   <g id="text_138">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="432.990554" y="141.4012" transform="rotate(-0 432.990554 141.4012)">1.12</text>
+   </g>
+   <g id="text_139">
+    <text style="font-size: 5.6px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="453.853881" y="141.4012" transform="rotate(-0 453.853881 141.4012)">1.57</text>
+   </g>
+  </g>
+  <g id="axes_2">
+   <g id="patch_3">
+    <path d="M 468.414744 151.344 
+L 475.621944 151.344 
+L 475.621944 7.2 
+L 468.414744 7.2 
+L 468.414744 151.344 
+z
+" style="fill: none"/>
+   </g>
+   <g id="matplotlib.axis_3"/>
+   <g id="matplotlib.axis_4">
+    <g id="ytick_7">
+     <g id="line2d_27">
+      <defs>
+       <path id="m194bff20d9" d="M 0 0 
+L 3.5 0 
+" style="stroke: #a08d70; stroke-width: 0.8"/>
+      </defs>
+      <g>
+       <use xlink:href="#m194bff20d9" x="475.621944" y="151.344" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_140">
+      <text style="font-size: 8px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #a08d70" x="482.621944" y="155.152" transform="rotate(-0 482.621944 155.152)">1×</text>
+     </g>
+    </g>
+    <g id="ytick_8">
+     <g id="line2d_28">
+      <g>
+       <use xlink:href="#m194bff20d9" x="475.621944" y="118.725022" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_141">
+      <text style="font-size: 8px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #a08d70" x="482.621944" y="122.533022" transform="rotate(-0 482.621944 122.533022)">1.5×</text>
+     </g>
+    </g>
+    <g id="ytick_9">
+     <g id="line2d_29">
+      <g>
+       <use xlink:href="#m194bff20d9" x="475.621944" y="95.581489" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_142">
+      <text style="font-size: 8px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #a08d70" x="482.621944" y="99.389489" transform="rotate(-0 482.621944 99.389489)">2×</text>
+     </g>
+    </g>
+    <g id="ytick_10">
+     <g id="line2d_30">
+      <g>
+       <use xlink:href="#m194bff20d9" x="475.621944" y="62.962511" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_143">
+      <text style="font-size: 8px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #a08d70" x="482.621944" y="66.770511" transform="rotate(-0 482.621944 66.770511)">3×</text>
+     </g>
+    </g>
+    <g id="ytick_11">
+     <g id="line2d_31">
+      <g>
+       <use xlink:href="#m194bff20d9" x="475.621944" y="21.867459" style="fill: #a08d70; stroke: #a08d70; stroke-width: 0.8"/>
+      </g>
+     </g>
+     <g id="text_144">
+      <text style="font-size: 8px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: start; fill: #a08d70" x="482.621944" y="25.675459" transform="rotate(-0 482.621944 25.675459)">5×</text>
+     </g>
+    </g>
+    <g id="text_145">
+     <text style="font-size: 8px; font-family: 'IBM Plex Sans', 'Helvetica Neue', 'DejaVu Sans', sans-serif; text-anchor: middle; fill: #e8e1d2" x="510.156694" y="79.272" transform="rotate(-90 510.156694 79.272)">bpv / serial, 80 dB</text>
+    </g>
+   </g>
+   <image xlink:href="data:image/png;base64,
+iVBORw0KGgoAAAANSUhEUgAAAAoAAADICAYAAADREnACAAABBklEQVR4nO2ZQQ6EMAwD7TTXPeyB/z81+wWvZGQKcLbGpXWSCnh8PwPhaVKRAS3qUKIOMrEpLrL/IMJMhJ1IWcjcEdJ+MnBveNmJtO9jqdYQF9lvKexfCoSbiFw3o5sItRSKscmF6zepto/hEoF4S+GqF6Ta4QjLXlz0E6ESOamXoUpcud6zNhhIK7fGhdkg4XBbUxXimQkfM3Hda3tgzmP5Rxzc1mXvFNR0eGoPx60SPqI1/NZwWzNInNQ9vHJzpk746AJRiFjCKQuZs0Yq4a0eYWkynHN/nMt/aqJ7jX3GGJ6cdS7hUImUrVNV2NEePrGE41Y9fNzWhJsI2XrMxAr+TnUn/Af6hhlhWSD/zwAAAABJRU5ErkJggg==" id="image18ade446c3" transform="scale(1 -1) translate(0 -144)" x="468.72" y="-7.2" width="7.2" height="144"/>
+   <g id="LineCollection_1"/>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pbf3e4c8285">
+   <rect x="67.882344" y="7.2" width="396.4032" height="144.144"/>
+  </clipPath>
+ </defs>
+</svg>

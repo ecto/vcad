@@ -1,0 +1,136 @@
+<title>Compression Math Survey</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: single reading column; equation strip as the hero; chapter cards in a two-up grid that stacks on phones */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --fg:#17202b; --muted:#566273; --rule:#d9dee6; --accent:#1f6f8b; --accent-soft:#e3f0f4; --warn:#9a5b00;
+  --display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
+  --body:"Source Serif 4",Georgia,"Times New Roman",serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f141b; --surface:#161d26; --fg:#e4e9f0; --muted:#97a3b3; --rule:#2a3442; --accent:#6cc1dc; --accent-soft:#16303a; --warn:#e0a54a; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f141b; --surface:#161d26; --fg:#e4e9f0; --muted:#97a3b3; --rule:#2a3442; --accent:#6cc1dc; --accent-soft:#16303a; --warn:#e0a54a; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:17px;line-height:1.6}
+.wrap{max-width:860px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:40px 80px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;line-height:1.15;margin:0}
+h1{font-size:clamp(2rem,5vw,3rem);font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.55rem;font-weight:700;margin-top:56px;padding-top:20px;border-top:1px solid var(--rule)}
+h3{font-size:1.1rem;font-weight:500}
+p,li{max-width:68ch}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.lede{font-size:1.15rem;color:var(--muted);margin-top:12px}
+.eqs{margin-top:28px;display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.eq{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:12px 14px;min-width:0}
+.eq code{font-family:var(--mono);font-size:.85rem;display:block;overflow-x:auto;white-space:nowrap;color:var(--fg)}
+.eq span{font-size:.85rem;color:var(--muted);display:block;margin-top:4px}
+code{font-family:var(--mono);font-size:.88em}
+.engines{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));margin-top:18px}
+.engine{border-top:3px solid var(--accent);background:var(--surface);padding:14px 16px;min-width:0}
+.engine h3{margin-bottom:6px}
+.engine p{font-size:.95rem;margin:0}
+.tablewrap{overflow-x:auto;margin-top:16px}
+table{border-collapse:collapse;width:100%;font-size:.93rem;min-width:560px}
+th,td{text-align:left;vertical-align:top;padding:9px 10px;border-bottom:1px solid var(--rule)}
+th{font-family:var(--mono);font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.tag{font-family:var(--mono);font-size:.72rem;padding:2px 7px;border-radius:999px;background:var(--accent-soft);color:var(--accent);white-space:nowrap}
+.tag.warn{background:transparent;border:1px solid var(--warn);color:var(--warn)}
+.chapters{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));margin-top:18px}
+.chapter{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:16px 18px;min-width:0}
+.chapter .num{font-family:var(--mono);font-size:.75rem;color:var(--muted)}
+.chapter ul{padding-left:18px;margin:10px 0 0}
+.chapter li{font-size:.93rem;margin-bottom:6px}
+.chapter .file{font-family:var(--mono);font-size:.75rem;color:var(--muted);margin-top:10px;overflow-wrap:anywhere}
+ol.steps li{margin-bottom:10px}
+.note{border-left:3px solid var(--warn);padding:10px 14px;background:var(--surface);font-size:.93rem;margin-top:16px}
+a{color:var(--accent)}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">tang-compress · research survey · Oct 2026</div>
+  <h1>Compression Math Survey</h1>
+  <p class="lede">Six chapters on the mathematics behind compression, read for one purpose: designing a general compression library on tang's expression IR, and deciding whether a Hutter Prize attempt is worth it.</p>
+
+  <div class="eqs" aria-label="Key equations">
+    <div class="eq"><code>L = L(θ) + Σ −log₂ p_θ(xₜ)</code><span>Two-part MDL: the Hutter score literally</span></div>
+    <div class="eq"><code>R(D) = Σ ½·log₂(σᵢ² / θ)</code><span>Reverse water-filling: the Gaussian floor</span></div>
+    <div class="eq"><code>rank H(x) = K ⇔ x = Σₖ cₖ zₖⁿ</code><span>Kronecker: few exponentials, low Hankel rank</span></div>
+    <div class="eq"><code>Δ ≈ 1.53 dB = 0.254 bit</code><span>Uniform quantizer gap at high rate</span></div>
+  </div>
+
+  <h2>The picture in one paragraph</h2>
+  <p>Compressed size is cross-entropy plus the cost of the model, so every compressor is a predictor with a bill attached. The chapters split into three ways of predicting and one shared set of plumbing. <strong>Structure</strong> finds low-rank shift structure (Hankel matrices, tensor trains, weighted automata). <strong>Statistics</strong> mixes many models online with regret guarantees. <strong>Programs</strong> search for a short generator. Underneath all three sit quantization, entropy coding and one hard rule: the coding path must be bit-exact on every backend.</p>
+
+  <div class="engines">
+    <div class="engine"><h3>Structure</h3><p>One theorem in three forms: Kronecker for signals, Fliess for strings, QTT ranks for multiscale grids. Every decoder is a product of small matrices, which tang lowers to Add and Mul.</p></div>
+    <div class="engine"><h3>Statistics</h3><p>Excess file size equals the predictor's regret. CTW, Pitman–Yor and fixed-share mixing give exact Bayesian answers; PAQ-style logistic mixing is online gradient descent on log loss.</p></div>
+    <div class="engine"><h3>Programs</h3><p>Kolmogorov complexity is the ideal; Levin search and the speed prior make it resource-bounded. Symbolic regression and CAD program inference are the practical forms.</p></div>
+  </div>
+
+  <h2>What this means for tang-compress</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Decision</th><th>Why the math says so</th><th>Source</th></tr></thead>
+    <tbody>
+      <tr><td>Objective is <code>R + λD</code>, with λ as a graph input</td><td>Shannon's Lagrangian and the learned-codec loss are the same expression</td><td>Ch 4</td></tr>
+      <tr><td>Integer-only from probabilities to bits</td><td>Float drift desynchronizes arithmetic and rANS decoders; floats are allowed only where they change reconstruction quality</td><td>Ch 4, 5</td></tr>
+      <tr><td>Uniform scalar quantizer as the default; E8 as an option</td><td>Uniform loses 1.53 dB, E8 0.86 dB, Leech 0.50 dB; E8 nearest-point search is integer round and compare</td><td>Ch 4</td></tr>
+      <tr><td>A lifting node with an auto-generated inverse</td><td>Invertibility becomes structural, whatever the predictors are</td><td>Ch 4</td></tr>
+      <tr><td>Encoder = classical initializer, then gradient refinement</td><td>ESPRIT, TT-SVD, cross interpolation or spectral automata start it; tang-ad refines D + λR</td><td>Ch 3</td></tr>
+      <tr><td>Choose rank and gauge by rate, not by a fixed cap</td><td>TT-SVD gives an analytic rate–distortion curve, and the gauge freedom of a tensor train is unused compression</td><td>Ch 3</td></tr>
+      <tr><td>Mixer written as a tang graph</td><td>Logistic mixing needs only Exp2, Log2, Recip and Select, so exact gradients and second-order updates come almost free</td><td>Ch 2</td></tr>
+      <tr><td>Pick the model class from a log-log plot of mutual information against distance</td><td>Markov models and fixed-rank tensor trains only produce exponential decay; text decays as a power law, which needs trees, MERA or attention</td><td>Ch 6</td></tr>
+      <tr><td>Gavish–Donoho thresholds for every SVD truncation</td><td>The optimal hard threshold is (4/√3)·√n·σ, about 2.858× the median singular value when σ is unknown; heavy-tailed trained weights should be quantized, not truncated</td><td>Ch 6</td></tr>
+      <tr><td>Canonicalize before entropy coding</td><td>Coding the orbit saves log₂|G| bits; ordering a million points costs about 2.3 MB</td><td>Ch 6</td></tr>
+      <tr><td>Model cost priced in the loss</td><td>Fisher precision (MML), relative entropy coding and rate-penalized training make weight bits differentiable</td><td>Ch 1</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>What this means for a Hutter attempt</h2>
+  <p>The record entry (fx2-cmix-transformer, 100,424,672 bytes, 2026) already mixes a pretrained 6M-parameter 4-bit transformer with online context models. The math points at four levers.</p>
+  <ol class="steps">
+    <li><strong>Find the pretrain/online split.</strong> Stop adding stored weights when one more byte of weights saves less than one byte of early-learning loss. No one has published this ablation on enwik9.</li>
+    <li><strong>Code the weights by information, not uniformly.</strong> Spend precision by Fisher information, or use singular learning theory where the Fisher matrix is degenerate. Use a randomized Hadamard rotation plus E8 or trellis quantization (the QuIP#/QTIP recipe), or relative entropy coding at about KL bits.</li>
+    <li><strong>Train the transformer for the mixture.</strong> Its job is to predict what the context models miss, so train through a simulated mixer.</li>
+    <li><strong>Upgrade the mixer.</strong> Online Newton Step-style second-order updates, and fixed-share switching across the roughly 240k articles.</li>
+  </ol>
+
+  <h2>Gaps no one seems to have filled</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Gap</th><th>Status</th><th>First experiment</th></tr></thead>
+    <tbody>
+      <tr><td>A bit-counted QTT codec benchmarked against SZ3, ZFP, SPERR and TTHRESH</td><td><span class="tag">open</span></td><td>Quantize and rANS-code TT cores; match PSNR on SDRBench fields</td></tr>
+      <tr><td>Pretrained vs online model split on enwik9</td><td><span class="tag">open</span></td><td>Sweep stored-model size on enwik8 and plot total bytes</td></tr>
+      <tr><td>Gauge choice as entropy minimization for tensor-train cores</td><td><span class="tag">open</span></td><td>Compare canonical gauges by coded size of quantized cores</td></tr>
+      <tr><td>A deterministic integer lowering of tang graphs</td><td><span class="tag">prerequisite</span></td><td>Add <code>Round</code> and a fixed-point dialect; CPU and GPU must give identical bytes</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Chapters</h2>
+  <div class="chapters">
+    <div class="chapter"><div class="num">Chapter 1</div><h3>MDL and the cost of models</h3>
+      <ul><li>Prequential codes never send weights: the decoder is the training loop.</li><li>MML ties weight precision to 1/√Fisher.</li><li>Bits-back and relative entropy coding price weights at roughly KL(q‖p).</li><li>New pointers: requential coding, MDL with singular learning theory.</li></ul>
+      <div class="file">docs/compression-math-survey/01-mdl-model-coding.md</div></div>
+    <div class="chapter"><div class="num">Chapter 2</div><h3>Universal prediction and mixing</h3>
+      <ul><li>Parameters cost about (k/2)·log₂ n bits each.</li><li>CTW mixes doubly exponentially many tree models at O(D) per symbol.</li><li>Kneser–Ney is approximate hierarchical Pitman–Yor inference.</li><li>Fixed share and switching handle changing sources cheaply.</li></ul>
+      <div class="file">docs/compression-math-survey/02-universal-prediction-mixing.md</div></div>
+    <div class="chapter"><div class="num">Chapter 3</div><h3>Hankel, tensor trains, automata</h3>
+      <ul><li>QTT ranks: exponential 1, sinusoid 2, degree-p polynomial p+1.</li><li>Tensorized trains match wavelet rates on Besov classes (Ali–Nouy).</li><li>A weighted automaton is a stationary MPS.</li><li>QTT plus a sparse Walsh residual as a two-layer codec.</li></ul>
+      <div class="file">docs/compression-math-survey/03-hankel-tensor-networks.md</div></div>
+    <div class="chapter"><div class="num">Chapter 4</div><h3>Rate–distortion, quantization, coding</h3>
+      <ul><li>Dithered quantization is exactly signal plus uniform noise, the identity behind the training proxy.</li><li>Dither must come from a counter-based integer PRNG.</li><li>Interleaved rANS maps to GPU warps.</li><li>Perfect realism costs at most 2× the MSE.</li></ul>
+      <div class="file">docs/compression-math-survey/04-rate-distortion-quantization-coding.md</div></div>
+    <div class="chapter"><div class="num">Chapter 5</div><h3>Algorithmic information</h3>
+      <ul><li>Every compressor is an upper bound on Kolmogorov complexity.</li><li>The Hutter Prize is a time-capped Levin-style objective.</li><li>Levin's 2^−length time allocation orders expression search.</li><li>CAD program inference plus differentiable fitting gives a mesh codec.</li></ul>
+      <div class="file">docs/compression-math-survey/05-algorithmic-information.md</div></div>
+    <div class="chapter"><div class="num">Chapter 6</div><h3>Structure, floors and symmetry</h3>
+      <ul><li>Mutual information in text decays as a power law (Lin & Tegmark); block measurements suggest near volume-law scaling, which favors attention over plain trees.</li><li>String attractors: LZ77, BWT runs, grammars and macro schemes all approximate one quantity, γ; δ is a linear-time proxy.</li><li>Pesin and Brudno: chaotic trajectories cost Σλ⁺ bits per second, so replay compression needs keyframes about every 1/λ_max.</li><li>Gavish–Donoho thresholds and symmetry savings of log₂|G| bits.</li></ul>
+      <div class="file">docs/compression-math-survey/06-structure-floors-symmetry.md</div></div>
+  </div>
+
+  <h2>How far to trust this</h2>
+  <p>Chapters 1–5 were drafted largely from the authors' knowledge of the literature, then checked: all 91 arXiv IDs were looked up against the arXiv API, 86 matched, 3 pointed at unrelated papers and were corrected, and 2 could not be confirmed and are marked as unverified. The Hutter record was corrected to the 2026 figure. Chapter 6 was researched with web searches, and all 17 of its arXiv IDs matched.</p>
+  <div class="note">Numbers that were not checked against a source carry an <span class="tag warn">unverified</span> tag in the chapter files. Treat those as leads, not results. The full lookup table is in <code>VERIFICATION.md</code>.</div>
+</div>
