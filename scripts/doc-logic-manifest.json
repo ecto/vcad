@@ -5,7 +5,7 @@
     { "path": "packages/core/src/stores/engine-command.ts", "reason": "Sends DocCommand to the Rust document engine; command envelope and error handling" },
     { "path": "packages/core/src/stores/parameters-store.ts", "reason": "Document parameters/bindings held outside the CRDT and merged into the IR before evaluation" },
     { "path": "packages/core/src/stores/crdt-value.ts", "reason": "CRDT parameter value constructors used by the mutation path" },
-    { "path": "packages/core/src/commands/executors.ts", "reason": "Chat/command tool execution against the document store and ToolOutcome dispatch (also builds display summaries)", "partial": true },
+    { "path": "packages/core/src/commands/executors.ts", "reason": "Chat tool execution: every mutation goes through the engine (applyTool); remaining TS is read/inspect/describe/search tools and display summaries", "partial": true },
     { "path": "packages/core/src/commands/document-mutations.ts", "reason": "Applies Rust ToolOutcome directly to a plain Document IR (MCP session path)" },
     { "path": "packages/core/src/commands/part-ids.ts", "reason": "Stable part-id assignment and lazy migration stored in Document.partIds" },
     { "path": "packages/core/src/commands/registry.ts", "reason": "Tool registry: plans chat tool calls via WASM, mirrors ToolOutcome; also schema/prompt building", "partial": true },
