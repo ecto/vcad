@@ -394,6 +394,9 @@ fn options(
         denoise: cpu,
         adaptive: true,
         exact: false,
+        // Options added to the renderer later take its defaults, so a new
+        // field cannot break this crate the way focus_dist and lighting did.
+        ..Default::default()
     };
     Ok((ro, pr))
 }
