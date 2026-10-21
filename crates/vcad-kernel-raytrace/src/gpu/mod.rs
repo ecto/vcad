@@ -37,6 +37,31 @@ pub use kosm_render::gpu::{OfflineOptions, OfflineResult};
 
 /// A [`RayTracePipeline`] over the BRep geometry module — the only kind this
 /// crate builds. Sugar for `crate::gpu::brep_pipeline(ctx, &BrepGeometry::module())`.
+///
+/// Natively this also catches a driver that loses the device while compiling
+/// the tracer (seen on NVIDIA's Linux Vulkan driver): wgpu still hands back a
+/// pipeline, and the first buffer upload then panics with an "invalid buffer"
+/// error that points nowhere near the cause. Reported as an error here
+/// instead, so callers can say so or fall back to the CPU.
 pub fn brep_pipeline(ctx: &GpuContext) -> Result<RayTracePipeline, GpuError> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use std::sync::{Arc, Mutex};
+        let lost: Arc<Mutex<Option<String>>> = Arc::default();
+        let sink = lost.clone();
+        ctx.device.set_device_lost_callback(move |reason, msg| {
+            *sink.lock().unwrap_or_else(|e| e.into_inner()) = Some(format!("{reason:?}: {msg}"));
+        });
+        let pipeline = RayTracePipeline::new(ctx, &BrepGeometry::module())?;
+        let _ = ctx.device.poll(wgpu::PollType::wait_indefinitely());
+        if let Some(why) = lost.lock().unwrap_or_else(|e| e.into_inner()).take() {
+            return Err(GpuError::InvalidInput(format!(
+                "the GPU device was lost while building the path-tracing pipeline \
+                 ({why}); the driver rejected the tracer shader"
+            )));
+        }
+        Ok(pipeline)
+    }
+    #[cfg(target_arch = "wasm32")]
     RayTracePipeline::new(ctx, &BrepGeometry::module())
 }
