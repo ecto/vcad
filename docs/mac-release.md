@@ -19,34 +19,47 @@ signed `dist/vcad.app`, no update key, updater idle.
 
 ## One-time setup (Cam)
 
-### 1. Developer ID Application certificate
+> **Signing waits on the Municipal Robotics Apple organization enrollment.**
+> The Developer ID certificate and App Store Connect API key below belong to
+> that organization's team; until enrollment completes, CI releases stop at
+> the "Import Developer ID certificate" step and local builds stay ad-hoc.
 
-1. Xcode → Settings → Accounts → (team) → Manage Certificates → **+** →
-   **Developer ID Application**. (Or developer.apple.com → Certificates → +.)
-2. Check it's in the login keychain:
-   ```bash
-   security find-identity -v -p codesigning | grep "Developer ID Application"
-   ```
-   The quoted string, e.g. `Developer ID Application: Cam Pedersen (TEAMID)`,
-   is `VCAD_SIGN_IDENTITY`.
-3. For CI, export it: Keychain Access → My Certificates → right-click the
-   cert → Export → `.p12` with a strong password. Then
-   `base64 -i DeveloperID.p12 | pbcopy` → secret `APPLE_DEVELOPER_ID_P12`, the
-   password → `APPLE_P12_PASSWORD`. Delete the `.p12` file afterwards.
+Signing and notarization use the **shared ecto org setup**, the same
+certificate and API key as ecto/tang (see tang's
+`docs/release/macos-signing.md`). If those org secrets already exist on
+ecto, steps 1 and 2 are done; vcad only needs the Sparkle and
+tang-compress items.
 
-### 2. notarytool credentials
+### 1. Developer ID Application certificate (shared)
 
-Create an app-specific password at appleid.apple.com → Sign-In and Security →
-App-Specific Passwords, then:
+1. Xcode → Settings → Accounts → (Municipal Robotics team) → Manage
+   Certificates → **+** → **Developer ID Application**.
+2. `security find-identity -v -p codesigning | grep "Developer ID Application"`
+   prints the full name, e.g.
+   `Developer ID Application: Municipal Robotics (TEAMID1234)`. That's
+   `MACOS_SIGN_IDENTITY` (and `VCAD_SIGN_IDENTITY` locally).
+3. Keychain Access → My Certificates → right-click the cert → Export →
+   `.p12` with a strong password. `base64 -i cert.p12 | pbcopy` →
+   `MACOS_CERT_P12`; the password → `MACOS_CERT_PASSWORD`. Delete the file
+   (or keep it in a password manager).
 
-```bash
-xcrun notarytool store-credentials vcad-notary \
-  --apple-id "you@example.com" --team-id "TEAMID" --password "abcd-efgh-ijkl-mnop"
-```
+### 2. Notarization: App Store Connect API key (shared)
 
-This stores a keychain profile named `vcad-notary` (= `VCAD_NOTARY_PROFILE`).
-For CI, the same three values go in secrets `NOTARY_APPLE_ID`,
-`NOTARY_TEAM_ID`, `NOTARY_PASSWORD`.
+appstoreconnect.apple.com → Users and Access → Integrations → App Store
+Connect API → Team Keys → **+** → name "notary", access "Developer".
+Download `AuthKey_<id>.p8` (one chance). Note the Key ID and the Issuer ID.
+`base64 -i AuthKey_<id>.p8 | pbcopy` → `ASC_KEY_P8`; the IDs →
+`ASC_KEY_ID`, `ASC_ISSUER_ID`.
+
+Add all six as **organization secrets on ecto** (Settings → Secrets and
+variables → Actions), shared with ecto/tang and ecto/vcad.
+
+Locally, `release.sh` notarizes either way:
+
+- API key: `VCAD_ASC_KEY_PATH=~/keys/AuthKey_X.p8 VCAD_ASC_KEY_ID=X VCAD_ASC_ISSUER=…`
+- keychain profile: store one once with
+  `xcrun notarytool store-credentials vcad-notary --key ~/keys/AuthKey_X.p8 --key-id X --issuer …`
+  and set `VCAD_NOTARY_PROFILE=vcad-notary`.
 
 ### 3. Sparkle EdDSA keys
 
@@ -78,13 +91,14 @@ read-only token as secret `TANG_COMPRESS_TOKEN`.
 
 | Name | Kind | Value |
 |---|---|---|
-| `APPLE_DEVELOPER_ID_P12` | secret | base64 of the exported Developer ID `.p12` |
-| `APPLE_P12_PASSWORD` | secret | that `.p12`'s password |
-| `NOTARY_APPLE_ID` | secret | Apple ID email |
-| `NOTARY_TEAM_ID` | secret | 10-char team ID |
-| `NOTARY_PASSWORD` | secret | app-specific password |
-| `SPARKLE_ED_PRIVATE_KEY` | secret | `generate_keys -x` output |
-| `SPARKLE_PUBLIC_ED_KEY` | variable | `generate_keys -p` output |
+| `MACOS_CERT_P12` | ecto org secret (shared) | base64 of the Developer ID `.p12` |
+| `MACOS_CERT_PASSWORD` | ecto org secret (shared) | that `.p12`'s password |
+| `MACOS_SIGN_IDENTITY` | ecto org secret (shared) | full identity name |
+| `ASC_KEY_ID` | ecto org secret (shared) | App Store Connect API key ID |
+| `ASC_ISSUER_ID` | ecto org secret (shared) | issuer ID |
+| `ASC_KEY_P8` | ecto org secret (shared) | base64 of `AuthKey_<id>.p8` |
+| `SPARKLE_ED_PRIVATE_KEY` | vcad repo secret | `generate_keys -x` output |
+| `SPARKLE_PUBLIC_ED_KEY` | vcad repo variable | `generate_keys -p` output |
 | `TANG_COMPRESS_REPO` | variable | `owner/name` of tang-compress |
 | `TANG_COMPRESS_TOKEN` | secret (optional) | read token if that repo is private |
 
@@ -102,7 +116,7 @@ workflows; close/reopen it if you want CI on it.
 ```bash
 cd apple/VcadApp
 ./build-ffi.sh && ./build-tc-ffi.sh
-VCAD_SIGN_IDENTITY="Developer ID Application: Cam Pedersen (TEAMID)" \
+VCAD_SIGN_IDENTITY="Developer ID Application: Municipal Robotics (TEAMID1234)" \
 VCAD_NOTARY_PROFILE=vcad-notary \
 SPARKLE_PUBLIC_ED_KEY="$(.build/artifacts/sparkle/Sparkle/bin/generate_keys -p)" \
 VCAD_VERSION=0.10.0 VCAD_BUILD=100 \
