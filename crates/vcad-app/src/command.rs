@@ -490,6 +490,8 @@ mod ts_export {
         EngineEnvelope::export_all().expect("EngineEnvelope export failed");
         ToolCall::export_all().expect("ToolCall export failed");
         crate::delta::EngineDeltaEnvelope::export_all().expect("EngineDeltaEnvelope export failed");
+        // Referenced only through a `ts(type)` override, so not pulled in above.
+        crate::delta::MapPatch::export_all().expect("MapPatch export failed");
         crate::agent::AgentManifest::export_all().expect("AgentManifest export failed");
         crate::agent::AgentReadEnvelope::export_all().expect("AgentReadEnvelope export failed");
     }

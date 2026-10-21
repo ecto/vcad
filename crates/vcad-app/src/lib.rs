@@ -13,6 +13,7 @@ pub mod context;
 pub mod delta;
 pub mod doc_edits;
 pub mod document_api;
+pub mod ecad_tools;
 pub mod engine;
 pub mod evaluate;
 pub mod feature;

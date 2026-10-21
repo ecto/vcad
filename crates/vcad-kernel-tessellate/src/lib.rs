@@ -1681,6 +1681,13 @@ fn fill_closed_boundary_loops(
         mesh.face_kinds
             .extend(std::iter::repeat_n(FaceKindTag::Unknown as u8, added));
     }
+    // Patch triangles belong to no BRep face; tag them so `face_ids` stays
+    // one-per-triangle (it silently drifted here before, which mis-mapped
+    // every later triangle to the wrong face).
+    if !mesh.face_ids.is_empty() {
+        mesh.face_ids
+            .extend(std::iter::repeat_n(FACE_ID_UNKNOWN, added));
+    }
     added
 }
 
@@ -1908,6 +1915,8 @@ pub fn prune_redundant_patches(mesh: &mut TriangleMesh) {
     }
     let mut indices = Vec::with_capacity(mesh.indices.len());
     let mut kinds = Vec::new();
+    let mut ids = Vec::new();
+    let ids_tagged = mesh.face_ids.len() * 3 == mesh.indices.len();
     let tagged = mesh.face_kinds.len() == ntri;
     for t in 0..ntri {
         if !removed[patch[t]] {
@@ -1915,9 +1924,15 @@ pub fn prune_redundant_patches(mesh: &mut TriangleMesh) {
             if tagged {
                 kinds.push(mesh.face_kinds[t]);
             }
+            if ids_tagged {
+                ids.push(mesh.face_ids[t]);
+            }
         }
     }
     mesh.indices = indices;
+    if ids_tagged {
+        mesh.face_ids = ids;
+    }
     if tagged {
         mesh.face_kinds = kinds;
     }
@@ -1988,6 +2003,8 @@ fn refill_defective_neighborhoods(mesh: &mut TriangleMesh) {
         }
         let mut indices = Vec::with_capacity(m.indices.len());
         let mut kinds = Vec::with_capacity(m.face_kinds.len());
+        let mut ids = Vec::new();
+        let ids_tagged = m.face_ids.len() * 3 == m.indices.len();
         let tagged = !m.face_kinds.is_empty();
         for (t, tri) in m.indices.chunks(3).enumerate() {
             if !del[t] {
@@ -1995,9 +2012,15 @@ fn refill_defective_neighborhoods(mesh: &mut TriangleMesh) {
                 if tagged {
                     kinds.push(m.face_kinds[t]);
                 }
+                if ids_tagged {
+                    ids.push(m.face_ids[t]);
+                }
             }
         }
         m.indices = indices;
+        if ids_tagged {
+            m.face_ids = ids;
+        }
         m.face_kinds = kinds;
         fill_closed_boundary_loops(&mut m, 256, Some(2.0), true);
         let after = defective_edge_count(&m);
@@ -7013,9 +7036,10 @@ pub fn tessellate(brep: &BRepSolid, segments: u32) -> TriangleMesh {
         // Which face each triangle came from — the same tagging
         // `tessellate_brep` does, so both entry points produce pickable meshes.
         let post_face_tris = mesh.indices.len() / 3;
-        while mesh.face_ids.len() < post_face_tris {
-            mesh.face_ids.push(FACE_ID_UNKNOWN);
-        }
+        // A face sub-mesh can arrive carrying more tags than triangles (its
+        // own clean-up dropped triangles); resize rather than only grow, so
+        // the per-triangle arrays stay in lockstep with `indices`.
+        mesh.face_ids.resize(post_face_tris, FACE_ID_UNKNOWN);
         mesh.face_ids[pre_face_tris..post_face_tris].fill(face_ordinal);
     }
 
@@ -7158,15 +7182,15 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
         // uses `tessellate_disk_general`, which returns an untagged
         // mesh).
         let post_face_tris = mesh.indices.len() / 3;
-        while mesh.face_kinds.len() < post_face_tris {
-            mesh.face_kinds.push(FaceKindTag::Unknown as u8);
-        }
+        mesh.face_kinds
+            .resize(post_face_tris, FaceKindTag::Unknown as u8);
         mesh.face_kinds[pre_face_tris..post_face_tris].fill(face_kind_tag);
         // …and with WHICH face, by shell ordinal. Same overwrite-not-extend
         // reasoning as the kind tag above.
-        while mesh.face_ids.len() < post_face_tris {
-            mesh.face_ids.push(FACE_ID_UNKNOWN);
-        }
+        // A face sub-mesh can arrive carrying more tags than triangles (its
+        // own clean-up dropped triangles); resize rather than only grow, so
+        // the per-triangle arrays stay in lockstep with `indices`.
+        mesh.face_ids.resize(post_face_tris, FACE_ID_UNKNOWN);
         mesh.face_ids[pre_face_tris..post_face_tris].fill(face_ordinal);
     }
 
@@ -7219,6 +7243,8 @@ fn drop_exact_duplicate_triangles(mesh: &mut TriangleMesh) {
         std::collections::HashSet::new();
     let mut indices = Vec::with_capacity(mesh.indices.len());
     let mut kinds = Vec::new();
+    let mut ids = Vec::new();
+    let ids_tagged = mesh.face_ids.len() * 3 == mesh.indices.len();
     for (t, tri) in mesh.indices.chunks(3).enumerate() {
         let ks = [vkey(tri[0]), vkey(tri[1]), vkey(tri[2])];
         // Canonical rotation preserving winding: start at the smallest key.
@@ -7229,9 +7255,15 @@ fn drop_exact_duplicate_triangles(mesh: &mut TriangleMesh) {
             if tagged {
                 kinds.push(mesh.face_kinds[t]);
             }
+            if ids_tagged {
+                ids.push(mesh.face_ids[t]);
+            }
         }
     }
     mesh.indices = indices;
+    if ids_tagged {
+        mesh.face_ids = ids;
+    }
     if tagged {
         mesh.face_kinds = kinds;
     }
@@ -7343,6 +7375,8 @@ fn collapse_short_defective_edges(mesh: &mut TriangleMesh) {
         let tagged = mesh.face_kinds.len() == ntri;
         let mut indices = Vec::with_capacity(mesh.indices.len());
         let mut kinds = Vec::new();
+        let mut ids = Vec::new();
+        let ids_tagged = mesh.face_ids.len() * 3 == mesh.indices.len();
         for (t, tri) in mesh.indices.chunks(3).enumerate() {
             let (a, b, c) = (resolve(tri[0]), resolve(tri[1]), resolve(tri[2]));
             if a != b && b != c && a != c {
@@ -7350,9 +7384,15 @@ fn collapse_short_defective_edges(mesh: &mut TriangleMesh) {
                 if tagged {
                     kinds.push(mesh.face_kinds[t]);
                 }
+                if ids_tagged {
+                    ids.push(mesh.face_ids[t]);
+                }
             }
         }
         mesh.indices = indices;
+        if ids_tagged {
+            mesh.face_ids = ids;
+        }
         if tagged {
             mesh.face_kinds = kinds;
         }
@@ -7415,6 +7455,8 @@ fn collapse_zero_area_triangles(mesh: &mut TriangleMesh) {
         let tagged = mesh.face_kinds.len() == ntri;
         let mut indices = Vec::with_capacity(mesh.indices.len());
         let mut kinds = Vec::new();
+        let mut ids = Vec::new();
+        let ids_tagged = mesh.face_ids.len() * 3 == mesh.indices.len();
         for (t, tri) in mesh.indices.chunks(3).enumerate() {
             let (a, b, c) = (resolve(tri[0]), resolve(tri[1]), resolve(tri[2]));
             if a != b && b != c && a != c {
@@ -7422,9 +7464,15 @@ fn collapse_zero_area_triangles(mesh: &mut TriangleMesh) {
                 if tagged {
                     kinds.push(mesh.face_kinds[t]);
                 }
+                if ids_tagged {
+                    ids.push(mesh.face_ids[t]);
+                }
             }
         }
         mesh.indices = indices;
+        if ids_tagged {
+            mesh.face_ids = ids;
+        }
         if tagged {
             mesh.face_kinds = kinds;
         }

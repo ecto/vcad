@@ -122,6 +122,9 @@ VcadScene *vcad_scene_from_loon(const uint8_t *loon, size_t loon_len);
  * come back absolute), so the JSON evaluates like any .vcad document. Owned
  * string, free with vcad_cam_free; NULL + vcad_last_error on failure. */
 char *vcad_loon_file_to_json(const uint8_t *path, size_t path_len);
+/* Any .vcad format (JSON, loon source, VCode) -> IR document JSON, mesh paths
+ * resolved against the file's directory. Free with vcad_cam_free; null on error. */
+char *vcad_document_file_to_json(const uint8_t *path, size_t path_len);
 size_t vcad_scene_part_count(const VcadScene *scene);
 VcadMeshView vcad_scene_part_mesh(const VcadScene *scene, size_t index);
 

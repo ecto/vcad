@@ -687,6 +687,8 @@ export interface KernelModule {
   ) => string;
   /** Name of a floating joint found in a commented-out region, if any. */
   urdfCommentedFloatingJoint?: (data: Uint8Array) => string | undefined;
+  /** Rewrite MeshImport nodes to ImportedMesh from host-read STL bytes. */
+  inlineMeshImports?: (doc_json: string, keys: string[], blobs: Uint8Array[]) => string;
   exportProjectedViewToDxf: (view_json: string) => Uint8Array;
   /** Offset (stepped) section of a mesh; null on parse failure. */
   offsetSectionMesh?: (
@@ -1312,6 +1314,7 @@ export class Engine {
       importUrdfBuffer: (wasmModule as Record<string, unknown>).importUrdfBuffer as KernelModule["importUrdfBuffer"],
       importUrdfBufferWithOptions: (wasmModule as Record<string, unknown>).importUrdfBufferWithOptions as KernelModule["importUrdfBufferWithOptions"],
       urdfCommentedFloatingJoint: (wasmModule as Record<string, unknown>).urdfCommentedFloatingJoint as KernelModule["urdfCommentedFloatingJoint"],
+      inlineMeshImports: (wasmModule as Record<string, unknown>).inlineMeshImports as KernelModule["inlineMeshImports"],
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
       offsetSectionMesh: (wasmModule as Record<string, unknown>).offsetSectionMesh as KernelModule["offsetSectionMesh"],
       renderTitleBlock: (wasmModule as Record<string, unknown>).renderTitleBlock as KernelModule["renderTitleBlock"],
@@ -2185,6 +2188,27 @@ export class Engine {
    * a commented-out floating joint means the author expected the simulator
    * to supply the free base.
    */
+  /**
+   * Inline STL meshes into `doc` in place: each `MeshImport` node keyed in
+   * `meshes` (node id -> STL bytes) becomes an `ImportedMesh` (metres -> mm,
+   * URDF scale applied) via the kernel's `vcad_eval::mesh_inline`. Returns the
+   * inlined count and per-node failures; failed nodes stay `MeshImport`.
+   */
+  inlineMeshImports(
+    doc: Document,
+    meshes: Map<string, Uint8Array>,
+  ): { inlined: number; errors: Array<[string, string]> } {
+    if (meshes.size === 0) return { inlined: 0, errors: [] };
+    if (typeof this.kernel.inlineMeshImports !== "function") {
+      throw new Error("mesh inlining not available - rebuild the kernel WASM");
+    }
+    const out = JSON.parse(
+      this.kernel.inlineMeshImports(JSON.stringify(doc), [...meshes.keys()], [...meshes.values()]),
+    ) as { document: Document; inlined: number; errors: Array<[string, string]> };
+    doc.nodes = out.document.nodes;
+    return { inlined: out.inlined, errors: out.errors };
+  }
+
   urdfCommentedFloatingJoint(data: ArrayBuffer): string | undefined {
     if (typeof this.kernel.urdfCommentedFloatingJoint !== "function") {
       return undefined;

@@ -62,8 +62,6 @@ import {
 } from "../types.js";
 import { useUiStore } from "./ui-store.js";
 import { useParametersStore } from "./parameters-store.js";
-import { syncSchematicToPcbData } from "./ecad-sync.js";
-import { assertSupportedCopperCount, copperLayerNames } from "../utils/pcb-layers.js";
 
 // ---------------------------------------------------------------------------
 // CRDT bridge types
@@ -851,45 +849,8 @@ function getOrCreateDrawingFeature(state: DocumentState): string {
   return "";
 }
 
-let _constraintsFeatureId: string | null = null;
 
 /** The singleton design-constraints CRDT feature (created on demand). */
-function getOrCreateConstraintsFeature(state: DocumentState): string {
-  const engine = state._crdtEngine!;
-  if (_constraintsFeatureId) return _constraintsFeatureId;
-
-  const featuresJson = engine.get_ordered_features_json();
-  const features: { id: string; kind: string }[] = JSON.parse(featuresJson);
-  const existing = features.find((f) => f.kind === "design-constraints");
-  if (existing) {
-    _constraintsFeatureId = existing.id;
-    return existing.id;
-  }
-
-  const result = applyCommand(engine, { type: "create_feature", kind: "design-constraints" });
-  if (result.createdFeatureId) {
-    _constraintsFeatureId = result.createdFeatureId;
-    return result.createdFeatureId;
-  }
-  return "";
-}
-
-/** Write the design-constraint set back to its CRDT feature. */
-function setCrdtConstraints(
-  state: DocumentState,
-  constraints: DesignConstraint[],
-): Partial<DocumentState> {
-  const fid = getOrCreateConstraintsFeature(state);
-  if (!fid) return {};
-  const result = applyCommand(state._crdtEngine!, {
-    type: "set_param",
-    id: fid,
-    key: "constraints",
-    value: crdtStr(JSON.stringify(constraints)),
-  });
-  return applyLegacyResult(result);
-}
-
 function getOrCreateSchematicFeature(state: DocumentState): string {
   const engine = state._crdtEngine!;
   if (_schematicFeatureId) return _schematicFeatureId;
@@ -918,14 +879,6 @@ function getPcbBoardFeatureId(state: DocumentState): string {
   return pcb?.id ?? "";
 }
 
-/** Write the entire PCB board back to the CRDT pcb-board feature. */
-function setCrdtPcb(state: DocumentState, pcb: Pcb): Partial<DocumentState> {
-  const pcbFid = getPcbBoardFeatureId(state);
-  if (!pcbFid) return {};
-  const result = applyCommand(state._crdtEngine!, { type: "set_param", id: pcbFid, key: "board", value: crdtStr(JSON.stringify(pcb)) });
-  return applyLegacyResult(result);
-}
-
 /**
  * Apply a blob-edit tool (PCB board, schematic sheet, design constraints)
  * through the engine's Rust lowering. A refused edit (no board, index out of
@@ -948,27 +901,27 @@ function applyEdit(
   return true;
 }
 
-/** Shared logic for adding a Pcb board to the document. */
-function addPcbToDocument(
+/** Create a PCB board feature via an engine tool; returns its board node id.
+ *  Throws when the engine refuses (e.g. an unsupported layer count). */
+function addBoard(
   get: () => DocumentState,
-  set: (s: Partial<DocumentState>) => void,
-  pcbBoard: Pcb,
-  boardName: string,
+  set: (patch: Partial<DocumentState>) => void,
+  tool: string,
+  args: unknown,
 ): NodeId {
   const engine = get()._crdtEngine;
   if (!engine) {
     console.error("[PCB] Cannot create board: CRDT engine not initialized");
     return 0;
   }
-  const params: Record<string, CrdtValue> = {
-    name: crdtStr(boardName),
-    board: crdtStr(JSON.stringify(pcbBoard)),
-    material: crdtStr("__pcb_fr4__"),
-  };
-  const result = applyCommand(engine, { type: "create_feature", kind: "pcb-board", params: params });
-  set({ ...applyLegacyResult(result), isDirty: true });
-  const pcbPart = result.parts.find((p) => p.kind === "pcb-board");
-  return pcbPart ? (pcbPart as PcbBoardPartInfo).boardNodeId : 0;
+  const envelope = applyToolCall(engine, tool, args);
+  if (!envelope.ok) throw new Error(envelope.error.message);
+  set(applyApiResult(envelope.result));
+  const created = envelope.result.parts.find((p) => p.id === envelope.result.createdFeatureId);
+  const board = (created ?? envelope.result.parts.find((p) => p.kind === "pcb-board")) as
+    | PcbBoardPartInfo
+    | undefined;
+  return board?.boardNodeId ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1975,44 +1928,37 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   newDocument: (id, name) => {
     const state = get();
-    // Create a fresh CRDT engine if constructor is available
+    // A fresh engine is the source of truth; the store's document is its view.
+    let engine = state._crdtEngine;
+    let view: Partial<DocumentState> = {
+      document: createDocument(),
+      parts: [],
+      partIndex: new Map(),
+      consumedParts: {},
+      nextNodeId: 1,
+    };
     if (state._crdtEngineClass) {
       _sceneSettingsFeatureId = null;
       _schematicFeatureId = null;
       _analysisStudiesFeatureId = null;
       _drawingSettingsFeatureId = null;
-      const engine = new state._crdtEngineClass();
-      set({
-        document: createDocument(),
-        parts: [],
-        partIndex: new Map(),
-        consumedParts: {},
-        nextNodeId: 1,
-        isDirty: false,
-        documentId: id,
-        documentName: name,
-        lastSavedAt: null,
-        isParameterDragging: false,
-        isTransientEval: false,
-        loonSource: null,
-        _crdtEngine: engine,
-      });
-    } else {
-      set({
-        document: createDocument(),
-        parts: [],
-        partIndex: new Map(),
-        consumedParts: {},
-        nextNodeId: 1,
-        isDirty: false,
-        documentId: id,
-        documentName: name,
-        lastSavedAt: null,
-        isParameterDragging: false,
-        isTransientEval: false,
-        loonSource: null,
+      engine = new state._crdtEngineClass();
+      view = applyLegacyResult({
+        document: JSON.parse(engine.get_document_json()),
+        parts: JSON.parse(engine.get_parts_json()),
       });
     }
+    set({
+      ...view,
+      isDirty: false,
+      documentId: id,
+      documentName: name,
+      lastSavedAt: null,
+      isParameterDragging: false,
+      isTransientEval: false,
+      loonSource: null,
+      _crdtEngine: engine,
+    });
   },
 
   clearDirtyNodes: () => {
@@ -2193,80 +2139,29 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   initPcb: (options) => {
-    const w = options?.width ?? 50;
-    const h = options?.height ?? 30;
-    const layerCount = options?.layers ?? 2;
-    const thickness = options?.thickness ?? 1.6;
-    const traceWidth = options?.traceWidth ?? 0.15;
-    const clearance = options?.clearance ?? 0.15;
-    const boardName = options?.name ?? "PCB Board";
-
-    assertSupportedCopperCount(layerCount);
-    const copperNames = copperLayerNames(layerCount);
-    const dielectricPerLayer = layerCount > 1 ? thickness / (layerCount - 1) : thickness;
-    const stackupLayers: Pcb["stackup"]["layers"] = copperNames.map((layer, i) =>
-      i === 0
-        ? { layer, copperThickness: 0.035 }
-        : {
-            layer,
-            copperThickness: 0.035,
-            dielectricThickness: dielectricPerLayer,
-            dielectricEr: 4.5,
-            material: "FR4",
-          },
-    );
-
-    const pcbBoard: Pcb = {
-      outline: {
-        vertices: [
-          { x: 0, y: 0 },
-          { x: w, y: 0 },
-          { x: w, y: h },
-          { x: 0, y: h },
-        ],
-        thickness,
-      },
-      stackup: { layers: stackupLayers },
-      nets: [],
-      rules: {
-        defaultRules: {
-          name: "Default",
-          traceWidth,
-          clearance,
-          viaDiameter: 0.6,
-          viaDrill: 0.3,
-        },
-        edgeClearance: 0.25,
-        holeToHole: 0.25,
-        minAnnularRing: 0.13,
-        minDrill: 0.2,
-        // KiCad's microvia defaults (uvia_min_drill / uvia_min_size).
-        minMicroviaDrill: 0.1,
-        minMicroviaDiameter: 0.2,
-        inferredFloors: [],
-      },
-      footprints: [],
-      traces: [],
-      vias: [],
-      zones: [],
-    };
-
-    return addPcbToDocument(get, set, pcbBoard, boardName);
+    // The engine builds the board (stackup, default rules) and refuses an
+    // unsupported layer count.
+    return addBoard(get, set, "pcb_init", {
+      width: options?.width,
+      height: options?.height,
+      layers: options?.layers,
+      thickness: options?.thickness,
+      trace_width: options?.traceWidth,
+      clearance: options?.clearance,
+      name: options?.name,
+    });
   },
 
   importPcb: (pcb, name) => {
-    return addPcbToDocument(get, set, pcb, name ?? "Imported PCB");
+    return addBoard(get, set, "pcb_import", { board: pcb, name: name ?? "Imported PCB" });
   },
 
-  syncSchematicToPcb: (boardNodeId, netlist, opts) => {
-    const state = get();
-    const pcb = state.document.pcb;
-    const schematic = state.document.schematic;
+  syncSchematicToPcb: (_boardNodeId, netlist, opts) => {
+    const { pcb, schematic } = get().document;
     if (!pcb || !schematic) return;
-    const { pcb: nextPcb, changed } = syncSchematicToPcbData(pcb, schematic, netlist, opts);
-    if (!changed) return;
-    const patch = setCrdtPcb(state, nextPcb);
-    set({ ...patch, isDirty: true });
+    // Reconciliation (placement + net mapping) runs in the engine; an
+    // in-sync board is an empty edit.
+    applyEdit(get, set, "pcb_sync_schematic", { netlist, place_unplaced: opts?.placeUnplaced });
   },
 
   moveSchematicComponent: (idx, position) => {
@@ -2386,7 +2281,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       session,
     );
     if (next.length === 0 && (state.document.constraints ?? []).length === 0) return;
-    set({ ...setCrdtConstraints(state, next), isDirty: true });
+    applyEdit(get, set, "set_design_constraints", { constraints: next });
   },
 
   addDesignConstraint: (constraint) => {
@@ -2424,28 +2319,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         report: DesignConstraintSolveReport;
       };
       const { report } = result;
-      // Apply the solved board back through the CRDT (single-board app
-      // model, like setCrdtPcb's other callers). Sketch groups re-solve on
-      // the MCP/kernel path; the app UI scope is the PCB editor.
-      let patch: Partial<DocumentState> = {};
-      const movedBoard = report.groups.find(
-        (g) => g.converged && getNodePcb(result.document, g.node),
-      );
-      if (
-        movedBoard &&
-        (report.movedFootprints.length > 0 || report.movedVertices.length > 0)
-      ) {
-        const pcb = getNodePcb(result.document, movedBoard.node);
-        if (pcb) patch = setCrdtPcb(get(), structuredClone(pcb));
-      }
-      // Back-annotated driven dimensions ride the constraints feature.
-      if (report.drivenValues.length > 0) {
-        patch = {
-          ...patch,
-          ...setCrdtConstraints(get(), result.document.constraints ?? []),
-        };
-      }
-      set({ ...patch, isDirty: true });
+      // The engine commits the solve: a converged PCB group's moved board
+      // and back-annotated driven values.
+      applyEdit(get, set, "apply_design_solve", { document: result.document, report });
       return report;
     } catch (e) {
       console.warn("[document-store] solveDesignConstraints failed:", e);
