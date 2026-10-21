@@ -465,17 +465,25 @@ pub(crate) fn strip_membranes_once(mesh: &mut TriangleMesh) -> bool {
         return false;
     }
     let tagged = mesh.face_kinds.len() == ntri;
+    let ids_tagged = mesh.face_ids.len() == ntri;
     let mut indices = Vec::with_capacity(mesh.indices.len());
     let mut kinds = Vec::new();
+    let mut ids = Vec::new();
     for (t, doom) in doomed.iter().enumerate() {
         if !doom {
             indices.extend_from_slice(&mesh.indices[t * 3..t * 3 + 3]);
             if tagged {
                 kinds.push(mesh.face_kinds[t]);
             }
+            if ids_tagged {
+                ids.push(mesh.face_ids[t]);
+            }
         }
     }
     mesh.indices = indices;
+    if ids_tagged {
+        mesh.face_ids = ids;
+    }
     if tagged {
         mesh.face_kinds = kinds;
     }
