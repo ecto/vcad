@@ -23,6 +23,7 @@ pub mod evaluate;
 pub mod kinematics;
 pub mod pcb_preview;
 pub mod sensitivity;
+pub mod sheet_build;
 pub mod step_sources;
 
 pub mod validate;

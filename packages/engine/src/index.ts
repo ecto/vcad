@@ -678,6 +678,8 @@ export interface KernelModule {
   ) => string;
   /** Name of a floating joint found in a commented-out region, if any. */
   urdfCommentedFloatingJoint?: (data: Uint8Array) => string | undefined;
+  /** Build a sheet-metal document from a sheet_metal_create request. */
+  buildSheetMetalDocument?: (args_json: string) => string;
   exportProjectedViewToDxf: (view_json: string) => Uint8Array;
   /** Offset (stepped) section of a mesh; null on parse failure. */
   offsetSectionMesh?: (
@@ -1303,6 +1305,7 @@ export class Engine {
       importUrdfBuffer: (wasmModule as Record<string, unknown>).importUrdfBuffer as KernelModule["importUrdfBuffer"],
       importUrdfBufferWithOptions: (wasmModule as Record<string, unknown>).importUrdfBufferWithOptions as KernelModule["importUrdfBufferWithOptions"],
       urdfCommentedFloatingJoint: (wasmModule as Record<string, unknown>).urdfCommentedFloatingJoint as KernelModule["urdfCommentedFloatingJoint"],
+      buildSheetMetalDocument: (wasmModule as Record<string, unknown>).buildSheetMetalDocument as KernelModule["buildSheetMetalDocument"],
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
       offsetSectionMesh: (wasmModule as Record<string, unknown>).offsetSectionMesh as KernelModule["offsetSectionMesh"],
       renderTitleBlock: (wasmModule as Record<string, unknown>).renderTitleBlock as KernelModule["renderTitleBlock"],
@@ -2176,6 +2179,18 @@ export class Engine {
    * a commented-out floating joint means the author expected the simulator
    * to supply the free base.
    */
+  /**
+   * Build a sheet-metal document (base flange + ordered flanges, hems, jogs,
+   * bend relief) from a `sheet_metal_create` request, in the kernel
+   * (`vcad_eval::sheet_build`). Throws on malformed input.
+   */
+  buildSheetMetalDocument(args: unknown): Document {
+    if (typeof this.kernel.buildSheetMetalDocument !== "function") {
+      throw new Error("sheet-metal document builder not available - rebuild the kernel WASM");
+    }
+    return JSON.parse(this.kernel.buildSheetMetalDocument(JSON.stringify(args))) as Document;
+  }
+
   urdfCommentedFloatingJoint(data: ArrayBuffer): string | undefined {
     if (typeof this.kernel.urdfCommentedFloatingJoint !== "function") {
       return undefined;
