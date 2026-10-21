@@ -351,7 +351,7 @@ fn rasterize(
     }
     gpu_scene
         .validate(Some(
-            ctx.device.limits().max_storage_buffer_binding_size as u64,
+            ctx.device.limits().max_storage_buffer_binding_size,
         ))
         .map_err(|e| format!("--gpu: {e}"))?;
 
