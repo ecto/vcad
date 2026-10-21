@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn bad_inputs_are_errors() {
         assert!(hex_linear("#12345").is_err());
-        assert!(serde_json::from_str::<Look>(r#"{"parts":{"a":{"colour":"#fff"}}}"#).is_err());
+        assert!(serde_json::from_str::<Look>(r##"{"parts":{"a":{"colour":"#fff"}}}"##).is_err());
         let bad = serde_json::from_str::<Look>(r##"{"parts":{"a":{"color":"#zzzzzz"}}}"##).unwrap();
         assert!(bad.resolve(Path::new(".")).is_err());
         let missing = serde_json::from_str::<Look>(
