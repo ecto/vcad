@@ -1,4 +1,4 @@
-# tang-compress: error-bounded compression of scientific fields and ML tensors, with in-band prediction, learned integer context models, and a decoder that decodes the same bytes everywhere
+# cram: error-bounded compression of scientific fields and ML tensors, with in-band prediction, learned integer context models, and a decoder that decodes the same bytes everywhere
 
 *Preprint, revision 2 (2026-10-21; arXiv target 2026-10-29). Not peer-reviewed. Typeset version: `paper-draft.typ` / `paper-draft.pdf`; previous draft kept as `paper-draft-v1.*`. Nothing was re-measured for this revision: every number is copied from a source report, tagged in brackets in the text and mapped claim by claim in Appendix A.*
 
@@ -6,7 +6,7 @@
 
 ## Abstract
 
-tang-compress is an error-bounded lossy compressor for floating-point data. Its main codec is a CDF 9/7 wavelet followed by per-band integer prediction, a deadzone quantizer, a context-modelled range coder whose probabilities come from hand-designed contexts or a small integer MLP, and a correction stream for pointwise bounds. A portfolio encoder tries this codec alongside Tucker, interpolation and tensor-train candidates and keeps the smallest stream. Every byte is counted and every error is measured on the decoder's output.
+cram is an error-bounded lossy compressor for floating-point data. Its main codec is a CDF 9/7 wavelet followed by per-band integer prediction, a deadzone quantizer, a context-modelled range coder whose probabilities come from hand-designed contexts or a small integer MLP, and a correction stream for pointwise bounds. A portfolio encoder tries this codec alongside Tucker, interpolation and tensor-train candidates and keeps the smallest stream. Every byte is counted and every error is measured on the decoder's output.
 
 Tuned on five SDRBench fields and then frozen, the codec uses 0.67–0.72× SPERR's bits at matched PSNR on 14 held-out fields, and 0.74–0.81× the best external codec at each point, winning 54 of 55 PSNR points. A later portfolio version, frozen before it saw a second fresh set of nine fields from six new applications, stays within 5% of the best external codec at 53 of 62 points; all nine misses are traced to gaps in the candidate set.
 
@@ -194,7 +194,7 @@ Fast mode passed its own gate on the fresh set: 23.7× faster encoding than the 
 >
 > | Codec | bpp @ PSNR TBD | BD-rate vs Cool-chic | decode time |
 > |---|---|---|---|
-> | tang-compress | TBD | TBD | TBD |
+> | cram | TBD | TBD | TBD |
 > | Cool-chic [Ladune23] | TBD | 0 (ref.) | TBD |
 
 ### 5.6 What the numbers look like
@@ -377,7 +377,7 @@ We also tried decoding the compressed cache inside the generation loop, layer by
 
 ## 11. Reproducibility
 
-The benchmark harness is in the `bench/` directory of the tang repository on branch `claude/tang-compress-qtt` and its successors. Held-out runs use `fetch_heldout.py`, `run_bench.py` and `summarize_heldout.py`; the portfolio uses `run_portfolio.py` and `summarize_portfolio.py`; the fresh set uses `fetch_fresh.py`, `run_fresh.py` and `summarize_fresh.py`; GPU runs use `run_gpu.py`, `gpu3_time.sh` and the `gpubench` example (`encode3`, `gpu3`, `verify3`, `ship3`, `cpu3`); the KV study uses `kv_hf.py`, `kv_base.py` and `kv_summary.py`; and the browser gate is `crates/tang-compress-wasm/scripts/gate.py`. Exact commands are in each source report (Appendix A). Frozen commits are `4e27445` (held-out codec), `6b00aff` (portfolio, phase 1) and `838bc22` (portfolio, fresh set). Data are fetched from SDRBench's public mirrors by HTTP range request and are not committed. `paper-draft-figures/make_figures.py` regenerates every plot from the source data.
+The benchmark harness is in the `bench/` directory of the tang repository on branch `claude/cram-qtt` and its successors. Held-out runs use `fetch_heldout.py`, `run_bench.py` and `summarize_heldout.py`; the portfolio uses `run_portfolio.py` and `summarize_portfolio.py`; the fresh set uses `fetch_fresh.py`, `run_fresh.py` and `summarize_fresh.py`; GPU runs use `run_gpu.py`, `gpu3_time.sh` and the `gpubench` example (`encode3`, `gpu3`, `verify3`, `ship3`, `cpu3`); the KV study uses `kv_hf.py`, `kv_base.py` and `kv_summary.py`; and the browser gate is `crates/cram-codec-wasm/scripts/gate.py`. Exact commands are in each source report (Appendix A). Frozen commits are `4e27445` (held-out codec), `6b00aff` (portfolio, phase 1) and `838bc22` (portfolio, fresh set). Data are fetched from SDRBench's public mirrors by HTTP range request and are not committed. `paper-draft-figures/make_figures.py` regenerates every plot from the source data.
 
 ## References
 
@@ -437,18 +437,18 @@ Every number in the paper traces to one of the files below. Paths under `docs/` 
 
 | Tag | File |
 |---|---|
-| M0 | tang-compress-qtt-m0.md (+ CSV in tang-compress-qtt-m0/) |
+| M0 | tang-compress-qtt-m0.md (+ CSV in cram-qtt-m0/) |
 | M1 | tang-compress-m1.md |
 | S | tang-compress-m1-summary.md |
 | M1d | tang-compress-m1d.md |
 | P | sources/tang-compress-portfolio.md (tang checkout docs/) |
 | C | sources/tang-compress-tc3-cleanup.md (newest copy, 8,576 B, incl. occupancy section) |
 | K | tang-compress-tensors-bench.md |
-| SD | sources/SHIPPED_DECODER.md (crates/tang-compress/) |
-| W | sources/tang-compress-wasm-README.md |
+| SD | sources/SHIPPED_DECODER.md (crates/cram/) |
+| W | sources/cram-codec-wasm-README.md |
 | IR | tang-expr src/int/mod.rs, wire.rs (doc comments); irdec.rs, shipdec.rs |
 | RK | release/tang-compress-release-kit.md |
-| B | tang-compress/bench/out/ (heldout_*.csv, gpu*.jsonl) |
+| B | cram/bench/out/ (heldout_*.csv, gpu*.jsonl) |
 | demo | paper-draft-figures/demo_results.json |
 
 | Claim | Source |

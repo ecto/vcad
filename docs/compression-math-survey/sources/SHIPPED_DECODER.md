@@ -1,6 +1,6 @@
 # Decoder in the stream (TCS1)
 
-A tang-compress TCG3 stream can carry the program that decodes it. The
+A cram TCG3 stream can carry the program that decodes it. The
 receiver checks the program, compiles it to WGSL and to the CPU interpreter,
 and caches the result. Plain TCG1 and TCG3 streams decode exactly as before.
 

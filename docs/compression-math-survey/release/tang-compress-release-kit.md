@@ -1,4 +1,4 @@
-# tang-compress launch kit (target Tue Nov 3)
+# cram launch kit (target Tue Nov 3)
 
 Status as of 2026-10-21. Every number traces to a report in `docs/compression-math-survey/`.
 
@@ -44,13 +44,13 @@ If 16 or 17 fails by Oct 28, the headline drops it: images is left out entirely,
 |---|---|---|---|
 | Gates 16–17 | Wed Oct 28 | running | low–medium |
 | Paper (arXiv) | Thu Oct 29 | 14-page draft exists (`paper-draft.pdf`); needs Phase 2/3 numbers, the TCS1/IR section, KV section and limitations | **medium**: ~2–3 days of revision, which has to start by Oct 25 |
-| Browser demo with URL | Fri Oct 30 | decoder done (`crates/tang-compress-wasm`); vcad viewer merged (#937) but inactive until the WASM package ships with the app | **medium–high**: hosting location undecided (brand); needs the WASM package published or bundled, plus a demo page |
-| Crates | tang-compile Oct 26, tang-compress Nov 2 | prep PR **ecto/tang#99 open, not merged** (awaiting Cam's OK) | **blocks Oct 26:** tang-compile depends on **tang-expr 0.2.0**, which must publish first, and #99 must merge before either |
+| Browser demo with URL | Fri Oct 30 | decoder done (`crates/cram-codec-wasm`); vcad viewer merged (#937) but inactive until the WASM package ships with the app | **medium–high**: hosting location undecided (brand); needs the WASM package published or bundled, plus a demo page |
+| Crates | tang-compile Oct 26, cram Nov 2 | prep PR **ecto/tang#99 open, not merged** (awaiting Cam's OK) | **blocks Oct 26:** tang-compile depends on **tang-expr 0.2.0**, which must publish first, and #99 must merge before either |
 
 ## Crate publish order (from #99)
 
 1. `tang-expr` 0.2.0 (breaking: `CompiledMany` requires Send + Sync; abs/min/max/tanh trace differently)
 2. `tang-compile` 0.1.0
-3. `tang-compress` 0.1.0
+3. `cram` 0.1.0
 
 `tang`, `tang-la`, `tang-ad` and `tang-optim` are already published and unchanged. Commands are in `docs/publishing.md` / `scripts/publish.sh` on the #99 branch. **The Oct 26 tang-compile date requires #99 merged and tang-expr 0.2.0 published on or before Oct 26.** tang-llm and tang-compute (zest) inherit `tang-expr = "0.2"`.

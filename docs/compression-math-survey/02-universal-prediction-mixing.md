@@ -44,7 +44,7 @@ natural host: the objective is a sum of scalar `Log2`s of differentiable outputs
 
 **Open problems.** Tight regret for non-stationary / large-alphabet classes (Orlitsky–Santhanam pattern coding: alphabet-size-free bounds). Regret for neural model classes (k ~ 10^6–10^9) where (k/2)log n is vacuous — the bound is useless for transformers; actual cost is governed by online learning dynamics, not parameter count.
 
-**tang-compress / Hutter.** Implement KT, KT with zero-redundancy (Willems' "KT with deterministic sources"), and adaptive-rate counters as primitive estimators. The (k/2)log n heuristic is the right back-of-envelope for *transmitted* parameters: a weight costs ~0.5 log2 n bits if sent, which is the formal reason Hutter entries prefer online learning over shipping large weights (except where pretrained weights compress very well).
+**cram / Hutter.** Implement KT, KT with zero-redundancy (Willems' "KT with deterministic sources"), and adaptive-rate counters as primitive estimators. The (k/2)log n heuristic is the right back-of-envelope for *transmitted* parameters: a weight costs ~0.5 log2 n bits if sent, which is the formal reason Hutter entries prefer online learning over shipping large weights (except where pretrained weights compress very well).
 
 ## 2. Context tree weighting (Willems, Shtarkov, Tjalkens 1995)
 
@@ -67,7 +67,7 @@ Cost O(D) per symbol.
 
 **Open.** Efficient CTW over non-suffix contexts (word, sparse, column contexts); exact Bayesian mixing over context *sets* rather than trees.
 
-**tang-compress.** CTW is a clean, provable baseline and a good test of the estimator API. The CTS idea (local switching weights) is directly reusable inside a logistic mixer's per-context weight selection.
+**cram.** CTW is a clean, provable baseline and a good test of the estimator API. The CTS idea (local switching weights) is directly reusable inside a logistic mixer's per-context weight selection.
 
 ## 3. PPM and its Bayesian reading
 
@@ -77,7 +77,7 @@ Cost O(D) per symbol.
 
 **Why elegant.** No parameters to learn beyond counts; the escape mechanism is a crude but effective Bayesian shrinkage.
 
-**tang-compress.** PPMd-style models are cheap high-order predictors to feed a mixer; SEE is precisely an "APM/SSE" stage (§8).
+**cram.** PPMd-style models are cheap high-order predictors to feed a mixer; SEE is precisely an "APM/SSE" stage (§8).
 
 ## 4. Hierarchical Pitman–Yor, the sequence memoizer, and Kneser–Ney
 
@@ -93,7 +93,7 @@ where t are table counts and π(u) drops the oldest symbol. Teh (2006, ACL "A Hi
 
 **Open.** Fast/streaming inference at enwik9 scale in 10GB; learning discounts d per depth online by gradient (they are differentiable!).
 
-**tang-compress.** The predictive above is rational in counts and (d, α) — expressible in tang's Add/Mul/Recip and differentiable in d, α. Online gradient tuning of discounts per depth/context class is a cheap, novel knob. Store table counts with the min(1,c) KN approximation to keep memory O(contexts).
+**cram.** The predictive above is rational in counts and (d, α) — expressible in tang's Add/Mul/Recip and differentiable in d, α. Online gradient tuning of discounts per depth/context class is a cheap, novel knob. Store table counts with the min(1,c) KN approximation to keep memory O(contexts).
 
 ## 5. Prediction with expert advice under log loss
 
@@ -119,7 +119,7 @@ with Dirichlet(1/2) prior (Cover & Ordentlich 1996). Equivalence: betting on seq
 
 **Computation.** Exact Cover portfolio is exponential in m; efficient alternatives: Online Newton Step (Hazan, Agarwal, Kale 2007) with O(m log n) regret via exp-concavity of -log(b·x). This is the clean theoretical reason second-order / ONS updates are appealing for mixers.
 
-**tang-compress.** "Linear mixing with learned weights" in the probability domain is a portfolio problem; ONS is a principled optimizer for it and fits tang's optimizer module.
+**cram.** "Linear mixing with learned weights" in the probability domain is a portfolio problem; ONS is a principled optimizer for it and fits tang's optimizer module.
 
 ## 7. Switching: fixed share, switch distribution, catch-up
 
@@ -134,7 +134,7 @@ Regret vs best sequence with k switches: ≤ (k+1) ln N + (n-1) H(k/(n-1)) nats 
 
 **Empirical relevance.** The catch-up phenomenon is exactly why compressors combine a small fast-adapting model with a slow large model, and why PAQ's learning rates decay but don't go to zero.
 
-**tang-compress.** Put a fixed-share/switch layer over heterogeneous model families (n-gram, match model, neural) — cheap, provable, and complementary to logistic mixing. Variable-share and "mixing past posteriors" (Bousquet & Warmuth 2002) handle returning-to-old-expert patterns typical of Wikipedia articles.
+**cram.** Put a fixed-share/switch layer over heterogeneous model families (n-gram, match model, neural) — cheap, provable, and complementary to logistic mixing. Variable-share and "mixing past posteriors" (Bousquet & Warmuth 2002) handle returning-to-old-expert patterns typical of Wikipedia articles.
 
 ## 8. Geometric / logistic mixing (PAQ) — Mattern's theory
 
@@ -154,7 +154,7 @@ The update is exactly online gradient descent on log loss for this single-neuron
 
 **Open.** Tight regret theory for multi-layer context-gated mixers; optimal learning-rate schedules (Mattern advocates decaying rates; practice tunes by hand); principled weight-set selection.
 
-**tang-compress.** This is the sweet spot for tang: the whole mixer graph is `Exp2`/`Log2`/`Recip`/`Select` — stretch(p) = Log2(p) - Log2(1-p) (scaled), squash via Exp2 + Recip, context gating via Select. Symbolic diff gives exact per-weight gradients; codegen gives a branch-free CPU kernel (Hutter: 1 CPU). Use the symbolic graph to derive *second-order* (ONS/diagonal-Newton) updates automatically — something hand-written PAQ code rarely does.
+**cram.** This is the sweet spot for tang: the whole mixer graph is `Exp2`/`Log2`/`Recip`/`Select` — stretch(p) = Log2(p) - Log2(1-p) (scaled), squash via Exp2 + Recip, context gating via Select. Symbolic diff gives exact per-weight gradients; codegen gives a branch-free CPU kernel (Hutter: 1 CPU). Use the symbolic graph to derive *second-order* (ONS/diagonal-Newton) updates automatically — something hand-written PAQ code rarely does.
 
 ## 9. Online convex optimization view
 
@@ -163,7 +163,7 @@ Each mixer step minimizes f_t(w) = -log p_mix(x_t; w). For geometric mixing f_t 
 - Adaptive methods (AdaGrad/Adam) are used in cmix's LSTM and in NNCP; Adam-style rates on mixer weights are a cheap experiment.
 - Meta-view: the compressor is an online learner whose total regret IS the excess file size. Every bit saved is regret reduction; this gives a principled way to tune hyperparameters (they're "experts" too — mix over learning rates, à la MetaGrad, van Erven & Koolen 2016, arXiv:1604.08740).
 
-**tang-compress.** MetaGrad-style mixing over learning rates is a natural use of tang's vectorized codegen: run K rate copies of the mixer in SIMD, mix them with exponential weights.
+**cram.** MetaGrad-style mixing over learning rates is a natural use of tang's vectorized codegen: run K rate copies of the mixer in SIMD, mix them with exponential weights.
 
 ## 10. "Language modeling is compression" and neural lossless text compression
 
@@ -180,7 +180,7 @@ Each mixer step minimizes f_t(w) = -log p_mix(x_t; w). For geometric mixing f_t 
 
 **Open problems.** (1) Optimal *two-part* allocation: pretrained-weight bits vs online-learning bits under fixed CPU time. (2) Deterministic floating point across encode/decode (bit-exact replay on 1 CPU — tang's codegen to C with fixed op order helps). (3) Distilling a transformer into context-gated mixers (GLN-like) that run 10–100x faster at equal bpc. (4) Throughput: enwik9 = 10^9 bytes in ~50h ⇒ ≤ ~180 µs/byte total budget, ~22 µs/bit.
 
-**tang-compress / Hutter mapping.**
+**cram / Hutter mapping.**
 1. Pretrained small transformer (≤ ~10M params, quantized, weights themselves compressed) as one expert; it pays its own weight cost in the total.
 2. Online-learned sparse experts: PPMd/HPYP n-grams (§3–4), match models, word/column contexts, CTW/CTS (§2).
 3. Context-gated geometric mixer layers (§8) with tang-derived gradients; fixed-share over model families (§7); MetaGrad over learning rates (§9).

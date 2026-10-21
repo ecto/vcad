@@ -1,12 +1,12 @@
-# tang-compress on ML tensors — Phase 1 benchmark (Track C)
+# cram on ML tensors — Phase 1 benchmark (Track C)
 
-Question: does tang-compress (error-bounded float codec: wavelet / Tucker / QTT
+Question: does cram (error-bounded float codec: wavelet / Tucker / QTT
 transforms + learned integer context coding, deterministic GPU decode) carry
 over from scientific fields to ML tensors? This is the baseline benchmark only —
-tang-compress is run **as-is**, no tensor-specific transforms.
+cram is run **as-is**, no tensor-specific transforms.
 
 Harness: `tang` repo, branch `claude/tc-tensor-bench-4a82a9`, `bench/tensors_*.py`
-(data under gitignored `bench/tensors/`, ~500 MB). tang-compress at `22304c6`.
+(data under gitignored `bench/tensors/`, ~500 MB). cram at `22304c6`.
 
 ## Dataset (exact sources)
 
@@ -93,7 +93,7 @@ Downstream (SmolLM2-135M WikiText-2 perplexity):
 
 ## Reading
 
-1. **Current tang-compress wavelet is already at or near the front everywhere**, mostly because it entropy-codes (with a context model) instead of storing fixed-width codes: it is within ~0.1–0.2 bpv of ideal ECSQ on weights, activations and gradients — i.e. on those the 2-D/3-D wavelet transform buys essentially nothing (no spatial smoothness in a weight matrix or a residual-stream matrix), as expected.
+1. **Current cram wavelet is already at or near the front everywhere**, mostly because it entropy-codes (with a context model) instead of storing fixed-width codes: it is within ~0.1–0.2 bpv of ideal ECSQ on weights, activations and gradients — i.e. on those the 2-D/3-D wavelet transform buys essentially nothing (no spatial smoothness in a weight matrix or a residual-stream matrix), as expected.
 2. **It beats ideal ECSQ where the tensor has real structure along an axis**:
    * **KV cache**: −0.2 bpv @1 %, −0.33 bpv @10 %, and the best downstream point at ~3 bpv (ppl +0.85 vs KIVI-2's +3.2 and SZ3's +1.3 at the same rate). K has strong per-channel scale structure (RoPE pairs, outlier channels) and smooth-ish variation along tokens.
    * **Adam second/first moments**: 1.05 bpv vs 1.62 (ECSQ) / 1.91 (SZ3) @10 % — `exp_avg_sq` is positive, heavy-tailed and row/column-scaled, which the wavelet low-pass + context model exploits.
@@ -121,7 +121,7 @@ TC_BIN=target/release/examples/tc $UVW python bench/tensors_ppl.py      # ~10 mi
 
 ## Phase 2 — Track C: KV-cache codec (`kvcodec`)
 
-Branch `claude/tc2-kv-cache-333ccb` (tang), commit `8ec4cd1`: `crates/tang-compress/src/kvcodec.rs`, CLI `examples/kvc.rs`, harness `bench/kv_ppl.py` / `kv_bench.py` / `kv_codecs.py` / `adam_look.py`.
+Branch `claude/tc2-kv-cache-333ccb` (tang), commit `8ec4cd1`: `crates/cram/src/kvcodec.rs`, CLI `examples/kvc.rs`, harness `bench/kv_ppl.py` / `kv_bench.py` / `kv_codecs.py` / `adam_look.py`.
 
 ### Design (and what each piece bought)
 
@@ -196,7 +196,7 @@ Reading: log-domain coding plus an Adafactor-style rank-1 log offset is the righ
 
 ```
 ln -s <data>/bench/tensors bench/tensors   # SmolLM2 weights + tokens.npz + kv/ dumps
-cargo build --release -p tang-compress --example kvc --example tc
+cargo build --release -p cram-codec --example kvc --example tc
 UVW="uv run --no-project --python 3.12 --with numpy --with pysz --with zstandard --with torch"
 $UVW python bench/kv_ppl.py tkvk kivi sz3   # ppl sweep, ~1 min/config on CPU
 $UVW --with zfpy python bench/kv_bench.py   # curves + cost
@@ -205,7 +205,7 @@ $UVW python bench/adam_look.py
 
 ## Phase 3 — KV codec: fair baselines, real model sizes, in-loop cost
 
-Branch `claude/tc3-kv-phase-730c4c` (tang, from `claude/tang-compress-qtt`; not pushed). Harness: `bench/kv_hf.py` (HF transformers, model-generic), baselines `bench/kv_base.py`, summary `bench/kv_summary.py`. GPU: `tang_compress::kvgpu`, `tang-compute` `tkv_decode` / `kivi_dequant` (MSL, `kernels/kvdec_msl.rs`), `tang-llm` `kvcomp` + `examples/kvcomp_bench.rs`.
+Branch `claude/tc3-kv-phase-730c4c` (tang, from `claude/cram-qtt`; not pushed). Harness: `bench/kv_hf.py` (HF transformers, model-generic), baselines `bench/kv_base.py`, summary `bench/kv_summary.py`. GPU: `cram_codec::kvgpu`, `tang-compute` `tkv_decode` / `kivi_dequant` (MSL, `kernels/kvdec_msl.rs`), `tang-llm` `kvcomp` + `examples/kvcomp_bench.rs`.
 
 ### Harness
 

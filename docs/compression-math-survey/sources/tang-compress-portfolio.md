@@ -1,6 +1,6 @@
-# tang-compress portfolio codec (Track E, phase 1)
+# cram portfolio codec (Track E, phase 1)
 
-Branch `claude/tc-portfolio-716321`. **Frozen code: `6b00aff`** (committed before any held-out run). Harness: `bench/run_portfolio.py`, `bench/summarize_portfolio.py`. External-codec rows are reused unchanged from the M1 held-out run (`bench/out/heldout_*.csv` from the `claude/tang-compress-qtt` worktree, copied to `bench/out/ext/`; QTT there is row-major, the same codec the portfolio calls).
+Branch `claude/tc-portfolio-716321`. **Frozen code: `6b00aff`** (committed before any held-out run). Harness: `bench/run_portfolio.py`, `bench/summarize_portfolio.py`. External-codec rows are reused unchanged from the M1 held-out run (`bench/out/heldout_*.csv` from the `claude/cram-qtt` worktree, copied to `bench/out/ext/`; QTT there is row-major, the same codec the portfolio calls).
 
 ## What changed
 

@@ -1,6 +1,6 @@
-# tang-compress Phase 3 cleanup: three Phase 2 debts
+# cram Phase 3 cleanup: three Phase 2 debts
 
-Branch `claude/tc3-cleanup-126408` (from `claude/tang-compress-qtt`). Builds, tests and
+Branch `claude/tc3-cleanup-126408` (from `claude/cram-qtt`). Builds, tests and
 timing ran on mew (RTX 3090, Vulkan) after the Mac crash, except where marked M4.
 
 ## (a) TCG3 GPU kernel speed, NYX 512³, 80 dB, 8 lanes, block 32
@@ -41,7 +41,7 @@ gpubench gpu3 S.tcg3 pretrained:pre3v4_16.tcm --reps 7      # TC_GPU_HANDRES=1: 
   effects run in the one shared schedule order by every backend (interpreter, WGSL,
   Rust; never inlined or moved), out-of-range loads read 0 and stores drop; wire tags
   10–12 and `from_bytes_rw` (scratch ABI from the host); `UnOp::Clz`.
-- **tang-compress:** `irdec::learned_ad_graph` is `lmodel3::Adapt` (stretch lookup,
+- **cram:** `irdec::learned_ad_graph` is `lmodel3::Adapt` (stretch lookup,
   2-bin interpolation, mix, count-rate update of the nearer bin, packed
   `(p << 8) | n` per bin in the kernel's workgroup `adt[ad_b + i]`). Per-block reset
   stays host side. TCDP flag bit 3 ships it (`builtin_program(net, ad)`); programs
@@ -127,4 +127,4 @@ The static stream gets faster too (its pipeline no longer carries the 17 KB arra
 
 **Gate (learned 16-hidden ≥ 1.0 GB/s or ≥ 1.15×): met** (1.10 GB/s, 1.15×). Rounds 1 and 5 each had one contended outlier (base 16-hidden no-APM 0.921, new static 1.417 and 16-hidden APM 0.906); medians exclude their effect.
 
-**Verified:** tang-compress GPU tests (Vulkan) with both placements, CPU tests, clippy with and without `gpu`, wasm32 build. **Not verified:** the browser gate (no Chrome on mew, no jobs on the Mac). The WebGPU path keeps workgroup bins for adaptive streams as before; only non-adaptive pipelines change, to the stub. Metal was not timed.
+**Verified:** cram GPU tests (Vulkan) with both placements, CPU tests, clippy with and without `gpu`, wasm32 build. **Not verified:** the browser gate (no Chrome on mew, no jobs on the Mac). The WebGPU path keeps workgroup bins for adaptive streams as before; only non-adaptive pipelines change, to the stub. Metal was not timed.

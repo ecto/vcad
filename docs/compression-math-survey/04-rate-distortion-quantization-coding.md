@@ -1,6 +1,6 @@
 # 04 — Rate–distortion theory, transforms, quantization, entropy coding
 
-> Scope: the classical lossy-coding stack (transform → quantize → entropy code) as mathematics, plus the 2016–2026 learned-codec and LLM-weight-quantization results that reuse it. Every section ends with a **tang-compress** note.
+> Scope: the classical lossy-coding stack (transform → quantize → entropy code) as mathematics, plus the 2016–2026 learned-codec and LLM-weight-quantization results that reuse it. Every section ends with a **cram** note.
 >
 > **Citation status.** I wrote this from memory of the primary literature, with no live search in this pass. The arXiv IDs below are ones I'm confident in. Anything marked **[unverified]** must be checked before anyone quotes it.
 
@@ -22,7 +22,7 @@ This is the operational minimum bits/sample at average distortion D. The coding 
 
 **Open.** Computing R(D) for real high-dimensional sources such as natural images is still open; see §6.
 
-**tang-compress.** `R + λD` is the universal objective, and λ should be a first-class parameter of every codec graph. Blahut–Arimoto is a fixed-point iteration over Exp2/Log2/Mul/Recip, so it can be expressed directly in tang-expr. That makes it a useful reference oracle for small discrete sources and for checking learned rate estimates in tests.
+**cram.** `R + λD` is the universal objective, and λ should be a first-class parameter of every codec graph. Blahut–Arimoto is a fixed-point iteration over Exp2/Log2/Mul/Recip, so it can be expressed directly in tang-expr. That makes it a useful reference oracle for small discrete sources and for checking learned rate estimates in tests.
 
 ## 2. Reverse water-filling and KLT optimality
 
@@ -40,7 +40,7 @@ Components with variance below the "water level" θ get zero bits. For a correla
 
 **Open.** The KLT is *not* optimal for non-Gaussian sources (Effros, Feng & Zeger 2004 gave counterexamples). This is the gap that nonlinear transforms fill (§6).
 
-**tang-compress.** Water-filling is a 1-D root find on θ. It is differentiable almost everywhere, since the `Select` op handles min(θ, σ²). Use it as the analytic baseline that every learned transform must beat on a Gaussian test source. Eigen-decomposition belongs in tang-la. Ship KLT/PCA bases as *data* in the bitstream header, never recomputed on the decoder, to keep decoding deterministic.
+**cram.** Water-filling is a 1-D root find on θ. It is differentiable almost everywhere, since the `Select` op handles min(θ, σ²). Use it as the analytic baseline that every learned transform must beat on a Gaussian test source. Eigen-decomposition belongs in tang-la. Ship KLT/PCA bases as *data* in the bitstream header, never recomputed on the decoder, to keep decoding deterministic.
 
 ## 3. High-resolution quantization (Bennett, Gersho, Zador)
 
@@ -72,7 +72,7 @@ The 1.53 dB figure corresponds to ≈0.254 bit/sample. It is the full "space-fil
 
 **Elegance.** Distortion factors into a *geometric* constant (G) times a *source* constant (h(X)). Shaping and granular gain separate cleanly.
 
-**tang-compress.** This explains why "uniform scalar quantizer + good entropy coder" is within 0.25 bit/sample of optimal at high rate. That pipeline should be the default, because it is also the easiest to make bit-exact. Vector quantization is only worth the complexity at low rate or when that 0.25 bit matters (LLM weights at 2 bits/param, §5).
+**cram.** This explains why "uniform scalar quantizer + good entropy coder" is within 0.25 bit/sample of optimal at high rate. That pipeline should be the default, because it is also the easiest to make bit-exact. Vector quantization is only worth the complexity at low rate or when that 0.25 bit matters (LLM weights at 2 bits/param, §5).
 
 ## 4. Lattice quantization and sphere packing
 
@@ -82,7 +82,7 @@ The 1.53 dB figure corresponds to ≈0.254 bit/sample. It is the full "space-fil
 
 **Open.** Optimal-NSM lattices in most dimensions. Learned "lattice transform coding" (Lei, Hassani, Saeedi Bidokhti, arXiv:2403.07320 **[unverified ID]**) puts a lattice quantizer in the latent space of an NTC.
 
-**tang-compress.** E8 nearest-point decoding needs only round, compare and select, so it is exactly reproducible in integer/fixed-point arithmetic. Recommendation: implement `Z^n`, `D_n`, `E8` quantizers in integer arithmetic on the half-integer grid (scale by 2) so CPU/GPU agree bit for bit. Treat Leech as optional.
+**cram.** E8 nearest-point decoding needs only round, compare and select, so it is exactly reproducible in integer/fixed-point arithmetic. Recommendation: implement `Z^n`, `D_n`, `E8` quantizers in integer arithmetic on the half-integer grid (scale by 2) so CPU/GPU agree bit for bit. Treat Leech as optional.
 
 ## 5. Trellis-coded quantization and LLM weights (QuIP#, QTIP, AQLM)
 
@@ -98,7 +98,7 @@ The 1.53 dB figure corresponds to ≈0.254 bit/sample. It is the full "space-fil
 
 **Open.** Rate allocation across layers, and joint quantization with the Hessian metric (all of these use GPTQ/LDLQ-style Hessian-aware rounding).
 
-**tang-compress.** This is the strongest single recipe to adopt for tensor and weight compression:
+**cram.** This is the strongest single recipe to adopt for tensor and weight compression:
 1. Randomized Hadamard with a seeded sign vector. It is integer-friendly, and the seed goes in the header.
 2. Hessian-aware (LDLQ) rounding, where tang AD supplies the proxy Hessian.
 3. A bitshift-trellis TCQ whose decoder is a pure integer function of the state.
@@ -119,7 +119,7 @@ This holds exactly, for any input distribution (Schuchman 1964; Ziv 1985; Zamir 
 
 **Open.** The best surrogate gradient for hard quantization. Shared-randomness costs in practice.
 
-**tang-compress.** Dither must come from a counter-based PRNG (e.g. Philox or a SplitMix64 hash keyed by (seed, index)) implemented in integer ops, so the encoder and decoder regenerate identical U on any backend. Training: implement both the noise proxy and the straight-through estimator as interchangeable `Quantize` graph nodes with custom VJPs.
+**cram.** Dither must come from a counter-based PRNG (e.g. Philox or a SplitMix64 hash keyed by (seed, index)) implemented in integer ops, so the encoder and decoder regenerate identical U on any backend. Training: implement both the noise proxy and the straight-through estimator as interchangeable `Quantize` graph nodes with custom VJPs.
 
 ## 7. Nonlinear transform coding (NTC) and estimating R(D) of real sources
 
@@ -135,7 +135,7 @@ That is a variational autoencoder whose ELBO equals R + λD under the uniform-no
 
 **Determinism.** A learned entropy model must give *bit-identical* CDFs on encoder and decoder, or arithmetic decoding desynchronizes catastrophically. Ballé, Johnston & Minnen, "Integer networks for data compression" (arXiv ID unverified) is the canonical fix: the entropy-model network runs in integer arithmetic.
 
-**tang-compress.** This section is the core design constraint. Train in float with AD. For deployment, *lower the entropy-model subgraph to integer ops* (quantized weights, integer accumulation, fixed-point division via `Recip` lookup) and emit it through codegen as integer-only kernels. The analysis/synthesis transforms can stay float, since a decoder-side mismatch there only perturbs reconstruction. Anything that produces probabilities must be integer.
+**cram.** This section is the core design constraint. Train in float with AD. For deployment, *lower the entropy-model subgraph to integer ops* (quantized weights, integer accumulation, fixed-point division via `Recip` lookup) and emit it through codegen as integer-only kernels. The analysis/synthesis transforms can stay float, since a decoder-side mismatch there only perturbs reconstruction. Anything that produces probabilities must be integer.
 
 ## 8. Lifting and integer-to-integer transforms
 
@@ -151,7 +151,7 @@ Each step is trivially invertible, even after rounding: s ← s + ⌊U(d)⌉ is 
 
 **Learned variants.** iWave and iWave++ (Ma et al.) and the integer discrete flows of Hoogeboom et al. (arXiv:1905.07376) make the P and U operators neural nets.
 
-**tang-compress.** This is the most important primitive for bit-exactness. A `Lift{predict: Expr, update: Expr}` node whose inverse is auto-generated by negation guarantees lossless invertibility no matter how P and U are computed, *provided P and U themselves are deterministic integer functions*. Build lossless modes and integer Hadamard/DCT stages from lifting. For training, the rounding inside a lift uses a straight-through gradient.
+**cram.** This is the most important primitive for bit-exactness. A `Lift{predict: Expr, update: Expr}` node whose inverse is auto-generated by negation guarantees lossless invertibility no matter how P and U are computed, *provided P and U themselves are deterministic integer functions*. Build lossless modes and integer Hadamard/DCT stages from lifting. For training, the rounding inside a lift uses a straight-through gradient.
 
 ## 9. Sparse approximation and compressed sensing
 
@@ -161,7 +161,7 @@ Each step is trivially invertible, even after rounding: s ← s + ⌊U(d)⌉ is 
 
 **Relation to compression.** CS is a poor *rate*-efficient compressor. The quantized measurements of a CS encoder fall well short of transform coding plus entropy coding (Goyal, Fletcher & Rangan, "Compressive sampling and lossy compression", IEEE SP Mag. 2008). Its value is a cheap encoder: the decoder does the heavy work.
 
-**tang-compress.** Use sparse coding (OMP or ISTA unrolled as a tang graph) for dictionary-based residual coding. Don't build a CS codec. ISTA/FISTA unrolled through tang AD gives a LISTA-style learnable sparse encoder.
+**cram.** Use sparse coding (OMP or ISTA unrolled as a tang graph) for dictionary-based residual coding. Don't build a CS codec. ISTA/FISTA unrolled through tang AD gives a LISTA-style learnable sparse encoder.
 
 ## 10. Entropy coding: arithmetic coding, ANS, parallelism, determinism
 
@@ -187,7 +187,7 @@ Renormalization streams bytes or words out. ANS is LIFO: you encode in reverse o
 2. Never let floating-point `exp`/`log` reach that table on the decode path unless both sides run identical integer code.
 3. M = 2^12–2^16 with 32-bit state and 16-bit renorm is the common design point. Precision loss is ~O(|A|/M) bits/symbol **[order-of-magnitude, not a quoted bound]**.
 
-**tang-compress.** Build one rANS core over `u32` state with K-way interleaving (K = 32 for a warp). Write it once in tang's integer subset and codegen it to CPU/WGSL/MSL/CUDA. The CDF quantizer is *the* determinism boundary and should carry a test that hashes the tables across backends. Rate estimation during training uses −log₂ p in float, which never touches the coder.
+**cram.** Build one rANS core over `u32` state with K-way interleaving (K = 32 for a warp). Write it once in tang's integer subset and codegen it to CPU/WGSL/MSL/CUDA. The CDF quantizer is *the* determinism boundary and should carry a test that hashes the tables across backends. Rate estimation during training uses −log₂ p in float, which never touches the coder.
 
 ## 11. The rate–distortion–perception tradeoff
 
@@ -203,7 +203,7 @@ Theis & Wagner give a coding theorem for the RDP function with common randomness
 
 **Open.** Operational RDP coding beyond Gaussians. The cost of common randomness. Which divergence matches human perception.
 
-**tang-compress.** Make the decoder head swappable over a fixed latent and entropy model. Distortion-optimal and perception-optimal decoders then share one bit-exact bitstream format. Only the (float, non-critical) synthesis transform changes.
+**cram.** Make the decoder head swappable over a fixed latent and entropy model. Distortion-optimal and perception-optimal decoders then share one bit-exact bitstream format. Only the (float, non-critical) synthesis transform changes.
 
 ---
 

@@ -1,4 +1,4 @@
-# tang-compress, Phase 2 Track D: a GPU-decoded overfitted image codec
+# cram, Phase 2 Track D: a GPU-decoded overfitted image codec
 
 **Question.** Do "compiled per-stream decoders" generalize from scientific fields to images? Here, a
 Cool-chic-style overfitted image codec whose per-image networks are compiled to straight-line WGSL with
@@ -17,7 +17,7 @@ the weights as literals, decoded on the GPU.
 ## Where the code and data are
 
 - Code: tang branch `claude/tc2-images-901f3d`.
-  - `crates/tang-compress/src/img.rs`: stream format, encoder from the export, CPU reference decoder.
+  - `crates/cram/src/img.rs`: stream format, encoder from the export, CPU reference decoder.
   - `src/imggpu.rs`: per-stream WGSL generation and the wgpu decoder.
   - `examples/imgcodec.rs`: encode, decode and compare.
   - `tools/coolchic/`:

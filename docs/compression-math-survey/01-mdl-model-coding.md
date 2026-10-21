@@ -1,6 +1,6 @@
 # 01 — Minimum description length and the cost of models
 
-> Survey chapter for tang-compress. Equations are plain LaTeX. Numbers are only
+> Survey chapter for cram. Equations are plain LaTeX. Numbers are only
 > quoted where I am confident of the source; anything else is flagged
 > **[unverified]**. arXiv IDs are given so each claim can be checked.
 
@@ -66,7 +66,7 @@ schedule — the regret term is schedule-sensitive and nobody has a closed form.
 optimally (section 7). (iii) Bit-exact determinism of floating-point training
 across machines.
 
-**tang-compress / Hutter.** Prequential is the default mode. tang's reverse-mode
+**cram / Hutter.** Prequential is the default mode. tang's reverse-mode
 AD + optimizers *are* the decoder; the hard engineering requirement is
 **bit-exact replay**: fixed op order, no nondeterministic GPU reductions,
 deterministic codegen to C for the decompressor. tang's small 11-op IR is an
@@ -102,7 +102,7 @@ but optimise essentially the same second-order objective.
 $\log\det I$ is $-\infty$; the right replacement is the SLT learning coefficient
 (see arXiv:2510.12077). Practical MML for 10⁶–10⁸ parameters remains heuristic.
 
-**tang-compress / Hutter.** tang can compute exact diagonal Fisher / Gauss-Newton
+**cram / Hutter.** tang can compute exact diagonal Fisher / Gauss-Newton
 per weight symbolically. Use it to pick per-tensor (or per-group) bit widths for
 the *stored* pretrained component: cost model
 $\sum_i \log_2(\text{range}_i/\delta_i)$ + $\tfrac12\sum_i I_{ii}\delta_i^2/12 \cdot \log_2 e$.
@@ -138,7 +138,7 @@ the KL term, not the entropy of $q$, is the real cost of a noisy model.
 discretised continuous latents; applying bits-back to *weights* of a large
 model is in principle possible but nobody does it at enwik scale.
 
-**tang-compress / Hutter.** Relevant for latent-variable models of text (e.g. a
+**cram / Hutter.** Relevant for latent-variable models of text (e.g. a
 discrete "topic/section state" latent over Wikipedia articles), and for the
 weight-coding interpretation below. tang needs an ANS backend that exposes
 push/pop of arbitrary discretised distributions defined by tang graphs.
@@ -176,7 +176,7 @@ blocks (≈ 10–20 bits each), costing the $\log$ overhead per block; good
 non-factorised $q$ is hard. Requential coding (sec. 1) applies REC to *training
 data* rather than weights — possibly the more promising direction.
 
-**tang-compress / Hutter.** Highly attractive for the stored pretrained model:
+**cram / Hutter.** Highly attractive for the stored pretrained model:
 weights decode from a PRNG seed + indices, which is decompressor-side cheap
 (sample $K$ Gaussians, pick index). tang's diff stack can train $q$ with an
 explicit $\beta\cdot\mathrm{KL}$ term per block. Requires a portable
@@ -208,7 +208,7 @@ training target, which is exactly the Hutter score.
 **Open problems.** Rate estimates are surrogates; straight-through gradient
 bias; joint optimisation of weight rate and downstream mixer.
 
-**tang-compress / Hutter.** This is the direct tang play: express
+**cram / Hutter.** This is the direct tang play: express
 $R(w)$ (entropy model over quantised weight latents) as a tang graph, so
 symbolic diff gives exact gradients of total score. For fx2-cmix-style entries
 (6M params at 4 bit ≈ 3 MB **[back-of-envelope, not measured]**) going to a
@@ -248,7 +248,7 @@ and why cmix/paq counter-state machines look the way they do.
 **Open problems.** NML is intractable for neural classes; the sum diverges for
 many classes; singular models need SLT corrections.
 
-**tang-compress / Hutter.** Use as theory for the *small* models: per-context
+**cram / Hutter.** Use as theory for the *small* models: per-context
 counters should be KT/NML-style (add-½, or sequential NML), and the
 $\tfrac12\log n$ per-parameter regret is a budget rule for how many contexts a
 context model can afford. Also a principled rule for when to split a context.
@@ -278,7 +278,7 @@ $\partial L(\theta_0)/\partial s = -\partial L_{preq}/\partial s$ in model size 
 better than on other text? (Hutter rules effectively make the data the only
 legal "corpus" to amortise.) Optimal fine-tune schedule given a fixed CPU budget.
 
-**tang-compress / Hutter.** Make the split a tunable hyperparameter and measure
+**cram / Hutter.** Make the split a tunable hyperparameter and measure
 the curve. Combine: REC/entropy-coded $\theta_0$ (secs. 4–5) + deterministic
 online adaptation (sec. 1) + KT-style context models (sec. 6) + a mixer.
 

@@ -1,7 +1,7 @@
 """Regenerate every figure in paper.typ from the source data.
 
-Run with the tang-compress bench venv (it has matplotlib):
-  /Users/cam/Developer/tang-compress/bench/.venv/bin/python make_figures.py
+Run with the cram bench venv (it has matplotlib):
+  /Users/cam/Developer/cram/bench/.venv/bin/python make_figures.py
 
 Data sources (read-only):
   BENCH/heldout_*.csv              per-field held-out frontiers       [B]
@@ -19,14 +19,14 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, LogNorm, TwoSlopeNorm
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-BENCH = "/Users/cam/Developer/tang-compress/bench/out"
+BENCH = "/Users/cam/Developer/cram/bench/out"
 SUMMARY = os.path.join(HERE, "..", "tang-compress-m1-summary.md")
 
 # ---- style -----------------------------------------------------------------
 # master-plan palette (warm black page): text, label, hairline, the one flame
 INK, MUTED, GRID = "#e8e1d2", "#a08d70", "#2a2119"
 SURFACE, LINEHI = "#15110d", "#4a3a2a"
-ACCENT = "#ff5f00"          # tang-compress
+ACCENT = "#ff5f00"          # cram
 C = {
     "tc-auto": ACCENT, "tc": ACCENT,
     "sperr": "#6fb7c9", "tthresh": "#9d8bc4", "sz3": "#7fae86",

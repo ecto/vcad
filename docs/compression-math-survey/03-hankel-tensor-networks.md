@@ -32,7 +32,7 @@ With repeated roots, the coefficients `c_k` become polynomials in `n`. The finit
 
 **Open problems.** Real data is only approximately low rank. Choosing the rank under noise, and the bad conditioning when nodes `z_k` sit close together (the super-resolution limit), are both still active research. Approximation of general signals by short exponential sums is AAK/Adamjan–Arov–Krein theory: the singular values of the Hankel operator give the best achievable error. That theory is elegant but hard to compute with at scale.
 
-**tang-compress mapping.** A "Prony atom" is one codec primitive: parameters `(c_k, s_k)`, decoder `Re sum c_k exp2(s_k n / ln2)`. It uses only Exp2, Mul, Add, Sin and Atan2 for phases, all of which tang has. Gradients with respect to `s_k` come for free, so variable projection or L-BFGS refinement after an ESPRIT initialization is easy.
+**cram mapping.** A "Prony atom" is one codec primitive: parameters `(c_k, s_k)`, decoder `Re sum c_k exp2(s_k n / ln2)`. It uses only Exp2, Mul, Add, Sin and Atan2 for phases, all of which tang has. Gradients with respect to `s_k` come for free, so variable projection or L-BFGS refinement after an ESPRIT initialization is easy.
 
 ## 2. Prony, matrix pencil, ESPRIT
 
@@ -72,7 +72,7 @@ Non-convex variants scale better: projected gradient descent over the Burer–Mo
 
 **2024–2026 work.** Work after 2023 extends this in three directions: robust and corrupted Hankel completion, multidimensional and multi-level Hankel structure, and learned or unrolled solvers. I was not able to verify specific 2024–2026 arXiv IDs in this pass, so I cite none rather than invent any. The closest verified recent paper is the QTT compressed-sensing work in §6.
 
-**tang-compress mapping.** The Hankel–vector product is a correlation, so it can be computed matrix-free with an FFT. The factor parameterization `x = H^†(L R^*)` is differentiable, which makes "Hankel rank as a regularizer" a loss term rather than a hard constraint. For lossy coding: transmit `L` and `R`, or better, transmit the poles alone, as in §1.
+**cram mapping.** The Hankel–vector product is a correlation, so it can be computed matrix-free with an FFT. The factor parameterization `x = H^†(L R^*)` is differentiable, which makes "Hankel rank as a regularizer" a loss term rather than a hard constraint. For lossy coding: transmit `L` and `R`, or better, transmit the poles alone, as in §1.
 
 ## 5. Quantized tensor trains (QTT)
 
@@ -151,14 +151,14 @@ A Born machine models `p(x) = |Ψ(x)|^2 / Z`, with `Ψ` an MPS (Han, Wang, Fan, 
 
 **Who has built a real bit-accounted codec?**
 - **Tucker:** yes. TTHRESH (arXiv:1806.05952) bit-plane-codes HOSVD core coefficients with RLE plus arithmetic coding, and reports better rate–distortion than ZFP, SZ and SQ on several smooth scientific volumes at low-to-medium bitrates. Its advantage shrinks or reverses at high fidelity or on turbulent data (as I recall; re-verify the specific datasets and PSNR margins).
-- **TT/QTT:** *no codec has been verified as rigorous and bit-accounted*. Several papers report "compression ratio" as parameter count × 32 or 64 bits. I did not confirm any QTT paper that entropy-codes quantized cores and benchmarks against SZ3/ZFP/MGARD at matched PSNR. **This is a real gap and an opportunity for tang-compress.** If such a paper exists from 2025–2026, I did not find it in this pass.
+- **TT/QTT:** *no codec has been verified as rigorous and bit-accounted*. Several papers report "compression ratio" as parameter count × 32 or 64 bits. I did not confirm any QTT paper that entropy-codes quantized cores and benchmarks against SZ3/ZFP/MGARD at matched PSNR. **This is a real gap and an opportunity for cram.** If such a paper exists from 2025–2026, I did not find it in this pass.
 - **Wavelets:** wavelet-based compressors (e.g. SPERR, from Li, Lindstrom & Clyne, arXiv ID unverified) are the most relevant baseline. Ali–Nouy theory says QTT should *match* wavelet rates on Besov classes, and should beat them only when the data has non-smooth but low-rank structure, such as periodicity, repeated patterns, or separable components.
 
 **Prediction to test:** QTT+entropy coding will win on data with long-range self-similarity, oscillation or separability, roughly tie with wavelets on generic smooth fields, and lose on noisy or turbulent small scales. There, every compressor degrades toward sample-level coding, and TT ranks saturate.
 
 ---
 
-## 12. Design implications for tang-compress
+## 12. Design implications for cram
 
 1. **A single IR for decoders:** `(α, {G_k[i]}, β)`, i.e. products of small matrices. Prony atoms (diagonal `G`), WFAs (stationary `G`), QTT (site-dependent `G`) and Tucker-like trees all lower to it. Codegen emits batched small GEMMs.
 2. **Encoder = classical init + AD refine.** Initialize with ESPRIT, TT-SVD, TCI or spectral WFA (tang-la), then refine the quantized-aware objective `D(θ) + λ R(θ)` with reverse-mode AD, using a straight-through or soft quantizer and a rate proxy from Laplace/logistic entropy (Exp2/Log2).

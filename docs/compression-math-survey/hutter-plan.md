@@ -133,7 +133,7 @@ correctly. Full-size GPU training waits until P2's gate and P3's size choice are
 Training starts in the record's own stack (PyTorch) to move fast. tang comes in where it is
 strongest: the deterministic integer inference path and mixer as generated C (lever E, D), and
 the free-energy trainer once it is proven on the proxy. That keeps the attempt from blocking on
-tang features while still building tang-compress pieces.
+tang features while still building cram pieces.
 
 ## Budget and payoff
 - The record's model took ~8 GPUs × 26 h ≈ 208 GPU-hours per training run. A campaign of

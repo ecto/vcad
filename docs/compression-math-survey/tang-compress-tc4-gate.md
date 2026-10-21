@@ -1,4 +1,4 @@
-# tang-compress Phase 4: the Phase-2 quality-gate misses
+# cram Phase 4: the Phase-2 quality-gate misses
 
 Branch `claude/tc4-quality-gate`. **Frozen code: `ce42b17`**, committed before any tang run on the held-out set. Two crash guards were added after the frozen code met that set; they change nothing unless a candidate panics (see below). Builds and runs on mew, CPU only, cores 4,5,7–11. External codecs (SZ3, ZFP, SPERR, TTHRESH; QTT row-major) were rebuilt and re-run on both sets.
 

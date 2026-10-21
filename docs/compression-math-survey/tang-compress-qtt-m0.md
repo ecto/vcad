@@ -1,6 +1,6 @@
-# tang-compress M0: a bit-accounted QTT codec vs SZ3 / ZFP / wavelets
+# cram M0: a bit-accounted QTT codec vs SZ3 / ZFP / wavelets
 
-**Status (2026-10-19):** M0 is built and benchmarked. Code is on branch `claude/tang-compress-qtt` of `ecto/tang`, in the worktree `/Users/cam/Developer/tang-compress`. It has not been pushed.
+**Status (2026-10-19):** M0 is built and benchmarked. Code is on branch `claude/cram-qtt` of `ecto/tang`, in the worktree `/Users/cam/Developer/cram`. It has not been pushed.
 
 **Gap this addresses.** Survey 03 §11 says that no published QTT work quantizes and entropy-codes its cores and then compares at matched error against SZ3, ZFP, SPERR and TTHRESH. M0 is a first instance of that comparison. Every byte of the QTT stream is counted. SZ3 and ZFP were run through their own libraries, under the same error definitions as QTT.
 
@@ -14,7 +14,7 @@
 
 Details and caveats follow.
 
-All numbers below come from `bench/out/*.csv`. The merged copy is `tang-compress-qtt-m0/tang-compress-qtt-m0-results.csv`, and the plots sit next to this file. No number was typed by hand.
+All numbers below come from `bench/out/*.csv`. The merged copy is `cram-qtt-m0/tang-compress-qtt-m0-results.csv`, and the plots sit next to this file. No number was typed by hand.
 
 ---
 
@@ -34,7 +34,7 @@ Each axis of length `p` is written in mixed radix, and each digit becomes one te
 
 Padding is mirror reflection. Padded cells are coded, which costs bits, but they are cropped on decode and never enter an error metric.
 
-**Measured cost of padding** (`tang-compress-qtt-m0/padding.txt`, PSNR target → bpv):
+**Measured cost of padding** (`cram-qtt-m0/padding.txt`, PSNR target → bpv):
 
 | signal | MixedRadix | Pow2 | Pow2 overhead |
 |---|---|---|---|
@@ -106,14 +106,14 @@ The error pieces are mutually orthogonal, so the SSE is **known exactly at encod
 
 | file | purpose |
 |---|---|
-| `crates/tang-compress/src/tensorize.rs` | Layout, mixed radix and Morton, mirror padding, gather/scatter |
+| `crates/cram/src/tensorize.rs` | Layout, mixed radix and Morton, mirror padding, gather/scatter |
 | `src/tt.rs` | `TensorTrain`, `tt_svd`, `Truncation` (ε, Gavish–Donoho, rank cap), `contract` |
 | `src/linalg.rs` | Gram-route truncated SVD, faer EVD and GEMM, Cholesky, Kronecker-structured products |
 | `src/codec.rs` | `encode_f32` / `encode_f64` / `decode`, `Config`, `ErrorBound::{Rmse, Psnr, MaxAbs}`, `EncodeStats` |
 | `src/rans.rs`, `src/bitio.rs` | rANS with transmitted tables; varints and raw bit I/O |
 | `examples/qtt.rs` | `qtt encode IN.f32 OUT.qtt --dims AxBxC --psnr 60 \| --max-rel 1e-3 …`, `qtt decode`, `qtt bench` (JSON stats) |
 
-**Tests and lint.** `cargo test -p tang-compress` gives 21 unit tests plus 1 doctest, all passing. `cargo clippy -p tang-compress --no-deps --all-targets -- -D warnings` is clean.
+**Tests and lint.** `cargo test -p cram-codec` gives 21 unit tests plus 1 doctest, all passing. `cargo clippy -p cram-codec --no-deps --all-targets -- -D warnings` is clean.
 
 `--no-deps` is needed because pre-existing warnings in `tang-la/src/stats.rs` (`unreachable_code` on aarch64) and in `tang` (`too_many_arguments`) otherwise fail under `-D warnings`. tang's CI runs on x86 with those lints allowed. The crate allows `needless_range_loop`, matching tang CI.
 
@@ -202,7 +202,7 @@ Low end (@40 dB):
 - Hurricane U: QTT 0.031 vs SZ3 0.023.
 - Miranda density: QTT 0.159 vs SZ3 0.126.
 
-Plots: `tang-compress-qtt-m0/rd_<dataset>.png`. Every table row is in `summary.md` in the same folder.
+Plots: `cram-qtt-m0/rd_<dataset>.png`. Every table row is in `summary.md` in the same folder.
 
 ### 3.2 Fixed max-abs bound (b = rel·range): bits per value
 
@@ -309,11 +309,11 @@ Caveats:
 ## 7. Reproduce
 
 ```bash
-git -C /Users/cam/Developer/tang worktree add /Users/cam/Developer/tang-compress claude/tang-compress-qtt   # if not present
-cd /Users/cam/Developer/tang-compress
-cargo test -p tang-compress --release
-cargo clippy -p tang-compress --no-deps --all-targets -- -D warnings
-cargo build --release -p tang-compress --example qtt
+git -C /Users/cam/Developer/tang worktree add /Users/cam/Developer/cram claude/cram-qtt   # if not present
+cd /Users/cam/Developer/cram
+cargo test -p cram-codec --release
+cargo clippy -p cram-codec --no-deps --all-targets -- -D warnings
+cargo build --release -p cram-codec --example qtt
 uv venv --python 3.12 bench/.venv && VIRTUAL_ENV=bench/.venv uv pip install -r bench/requirements.txt
 # data → bench/data (see real_fields() for filenames; SDRBench HF mirrors sdrbench/{miranda,hurricane-isabel,nyx})
 bench/.venv/bin/python bench/run_bench.py 1d-
@@ -373,7 +373,7 @@ Both reshapes introduce artificial discontinuities, so the 1D rows **handicap SP
 
 ### 8.3 Frontier at matched PSNR (bpv, lower is better)
 
-wavelet-H0 is excluded from the frontier because it is an idealized rate with no table cost. QTT is row-major order. The full table is "frontier codec" in `tang-compress-qtt-m0/summary.md`.
+wavelet-H0 is excluded from the frontier because it is an idealized rate with no table cost. QTT is row-major order. The full table is "frontier codec" in `cram-qtt-m0/summary.md`.
 
 | dataset | 40 dB | 60 dB | 80 dB | 100 dB |
 |---|---|---|---|---|

@@ -40,7 +40,7 @@ the size of an interpreter); for finite data like enwik9 the choice of reference
 machine is *the* modeling decision. Hutter Prize rules make this concrete: the
 decompressor's size is counted, so the "reference machine" is x86 + the binary.
 
-**Mapping.** tang-compress should report every result as a *two-part* length:
+**Mapping.** cram should report every result as a *two-part* length:
 `|decoder| + |payload|`. The tang expression graph (11 scalar ops) is a natural
 small reference machine: c_{UV} for tang-expr is the size of its evaluator. For
 vcad, `|loon source|` (or compressed `.vcad` IR) is a literal upper bound on
@@ -74,7 +74,7 @@ single constant. Arithmetic-coding with M is the ideal compressor.
 
 **Mapping.** Every context-mixing compressor (PAQ/cmix) is a crude finite
 Bayesian mixture approximating M: model weights ≈ 2^{−|model|} adjusted by
-past log-loss. tang-compress' mixer layer should be designed explicitly as a
+past log-loss. cram' mixer layer should be designed explicitly as a
 Bayes/Solomonoff mixture (log-loss weights, priors from description length of
 each submodel) rather than an ad hoc gated linear mix — then the regret bound
 "≤ prior-cost of the best expert" is a provable property we can test.
@@ -167,7 +167,7 @@ compressors (e.g. "Language Modeling Is Compression", Delétang et al., arXiv
 2309.10668) achieve much better raw ratios but violate the size/compute
 constraints once the model weights are counted.
 
-**Mapping.** Under the 1-CPU constraint, a tang-compress Hutter attempt should
+**Mapping.** Under the 1-CPU constraint, a cram Hutter attempt should
 target *small online-trained* models (context mixing + small LSTM/transformer
 trained during decompression), exploiting tang's codegen for fast CPU kernels and
 reverse-mode AD for online gradient steps. Determinism (section 12) is
@@ -303,7 +303,7 @@ richer reference machine with potential exponential savings on in-domain data.
 
 **Mapping.** For Hutter (no model weights for free), the actionable idea is the
 *prequential* view: train online during decompression so model cost is paid in
-compute, not bytes. For tang-compress generally: offer a "meta-trained prior"
+compute, not bytes. For cram generally: offer a "meta-trained prior"
 mode (ship weights once, amortised over many files), the regime where LLM
 compression wins.
 
@@ -368,7 +368,7 @@ x86_64/aarch64/GPU must match.
 ## Summary of strongest ideas
 
 1. Every compressor is an upper bound on K(x); report results as two-part code |decoder| + |payload|.
-2. Context-mixing ≈ finite Solomonoff mixture; design tang-compress' mixer as a true Bayes mixture with provable regret ≤ expert prior cost.
+2. Context-mixing ≈ finite Solomonoff mixture; design cram' mixer as a true Bayes mixture with provable regret ≤ expert prior cost.
 3. Hutter Prize = Kt with a hard time cap; prequential (online-trained) models pay model cost in compute, not bytes.
 4. Levin-search time allocation (budget ∝ 2^{−len}) is the principled enumeration order for tang's Sheffer/expression search.
 5. Speed prior is the right prior for replay compression: prefer fast generators.

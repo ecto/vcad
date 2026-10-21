@@ -3,13 +3,13 @@
 Unlike make_figures.py, these are NEW runs (this paper), not copied numbers.
 Every measured point is written to demo_results.json, and the figures read it.
 
-  /Users/cam/Developer/tang-compress/bench/.venv/bin/python make_demos.py
+  /Users/cam/Developer/cram/bench/.venv/bin/python make_demos.py
 
 Codecs are the same binaries/libraries as the benchmark harness (tc example at
 the tang branch tip, SPERR b801258, SZ3 via pysz, ZFP via zfpy). Each codec is
 tuned on its own knob to land at or just under a target bpv; all errors are
 measured here on the decoded output; rate = full stream size.
-Scratch files go to $TMPDIR (never into the tang-compress tree).
+Scratch files go to $TMPDIR (never into the cram tree).
 """
 import json, math, os, subprocess, sys, tempfile
 import numpy as np
@@ -17,7 +17,7 @@ import zfpy
 from pysz import sz, szConfig, szErrorBoundMode
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-TANG = "/Users/cam/Developer/tang-compress"
+TANG = "/Users/cam/Developer/cram"
 TC = f"{TANG}/target/release/examples/tc"
 SP = f"{TANG}/bench/third_party/SPERR/build/bin"
 DATA = f"{TANG}/bench/data"

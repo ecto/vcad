@@ -1,6 +1,6 @@
-# tang-compress M1d: tc-gpu, a GPU-decodable random-access wavelet codec
+# cram M1d: tc-gpu, a GPU-decodable random-access wavelet codec
 
-Repo: `/Users/cam/Developer/tang-compress`, branch `claude/tang-compress-qtt` (not pushed).
+Repo: `/Users/cam/Developer/cram`, branch `claude/cram-qtt` (not pushed).
 Machine: Apple M4 Max (Metal through wgpu 25). The machine was **heavily loaded** for the whole session: load average 10–70, from other sessions sharing the CPU and probably the GPU. **All timings are noisy, ±2× between repeats.** Rates (bpv) are exact.
 
 ## Headline
@@ -53,7 +53,7 @@ Machine: Apple M4 Max (Metal through wgpu 25). The machine was **heavily loaded*
 
 ## 2. Tests
 
-- `cargo test -p tang-compress` (45) and `--features gpu` (46) pass. They cover:
+- `cargo test -p cram-codec` (45) and `--features gpu` (46) pass. They cover:
   - rANS round trip
   - PSNR round trip across brick sizes, with output identical for any thread count
   - max-abs bound plus random-access crop == full-decode crop
@@ -61,7 +61,7 @@ Machine: Apple M4 Max (Metal through wgpu 25). The machine was **heavily loaded*
   - the 64-bit `mulsh` against i128
   - the pass lattice == the parity partition
   - `gpu_matches_cpu`: 4 bounds × 3 brick sizes + 2D
-- `cargo clippy -p tang-compress --all-targets` is clean. The remaining warnings are in other tang crates.
+- `cargo clippy -p cram-codec --all-targets` is clean. The remaining warnings are in other tang crates.
 - **Sweep verification** (`gpubench verify`, results in `bench/out/gpu_verify.jsonl`):
   - All 19 local fields: the original 5 crops and the 14 held-out fields.
   - Targets: 60/80/100 dB and max-abs 1e-3/1e-4.
@@ -266,7 +266,7 @@ Emitting these kernels from tang-expr instead of hand-written WGSL would need:
 
 Items 1, 2 and 4 are mechanical extensions of the codegen. Item 3 is the real change, because tang-expr is a pure expression DAG today.
 
-## 6. Commits (`claude/tang-compress-qtt`)
+## 6. Commits (`claude/cram-qtt`)
 
 - `0b706b6` tc-gpu stream (TCG1): bricks, pass-ordered lane-parallel rANS, integer decode, CPU reference decoder
 - `08b708c` GPU decoder (wgpu + WGSL), bit-identical
@@ -276,7 +276,7 @@ Items 1, 2 and 4 are mechanical extensions of the codegen. Item 3 is the real ch
 ## 7. Reproduce
 
 ```
-cargo build --release -p tang-compress --features gpu --example gpubench
+cargo build --release -p cram-codec --features gpu --example gpubench
 cd bench && .venv/bin/python run_gpu.py 32 && .venv/bin/python summarize_gpu.py
 ../target/release/examples/gpubench speed data/nyx-temperature.f32 512x512x512 --bricks 32,64 --target p80 --lanes 32 --reps 5
 ../target/release/examples/gpubench verify <field> <dims> --bricks 32,64 --targets p60,p80,p100,m1e-3,m1e-4
@@ -655,7 +655,7 @@ Geomean bpv vs serial tc-wavelet. GPU numbers are for NYX 512³ at 80 dB, decode
 - **Mixture / CDF changes.**
 - **NW/NE taps.** The axis grouping takes their place for now.
 - **What remains** is about 3% of rANS lane framing (about 4.9 bytes per lane of 32-bit state flush) and the pass lattice on scale-PRES-like fields.
-- **Reproduce:** `sweep3 <tang-compress>/bench --l3 8 --targets p80 --model3 pretrained:bench/models/pre3v4_16.tcm`
+- **Reproduce:** `sweep3 <cram>/bench --l3 8 --targets p80 --model3 pretrained:bench/models/pre3v4_16.tcm`
 
 ## 13. Per-lane adaptive probability maps on the learned TCG3 coder (Phase 2, Track A)
 

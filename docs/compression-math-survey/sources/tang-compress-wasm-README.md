@@ -1,8 +1,8 @@
-# tang-compress-wasm
+# cram-codec-wasm
 
-Browser decoder for tang-compress GPU streams: **TCG1** (bricks) and
+Browser decoder for cram GPU streams: **TCG1** (bricks) and
 **TCG3** (code-blocks, static or learned probabilities). It runs the native
-WGSL kernels (`tang-compress/src/gpuwav.wgsl`) through wgpu's WebGPU backend.
+WGSL kernels (`cram/src/gpuwav.wgsl`) through wgpu's WebGPU backend.
 It also has a CPU fallback that runs the same integer reference decoder
 compiled to WASM. Both paths produce byte-identical output to native
 `gpuwav::decode_box_parsed` / `gpuwav3::decode3_box`.
@@ -10,17 +10,17 @@ compiled to WASM. Both paths produce byte-identical output to native
 ## Build
 
 ```bash
-cd crates/tang-compress-wasm
+cd crates/cram-codec-wasm
 wasm-pack build --target web --release --out-dir demo/pkg --no-typescript
 ```
 
-This produces `demo/pkg/tang_compress_wasm.js` and `tang_compress_wasm_bg.wasm`
+This produces `demo/pkg/cram_codec_wasm.js` and `cram_codec_wasm_bg.wasm`
 (about 300 KB, after wasm-opt).
 
 ## JS API
 
 ```js
-import init, { TcGpu, decodeCpu, fnv1a, registerModel, streamInfo } from "./pkg/tang_compress_wasm.js";
+import init, { TcGpu, decodeCpu, fnv1a, registerModel, streamInfo } from "./pkg/cram_codec_wasm.js";
 await init();
 registerModel(tcmBytes);              // pretrained net for learned TCG3 (stream carries only its fingerprint)
 const info = JSON.parse(streamInfo(bytes)); // {format, dims, lanes, learned, cells, bytes}
@@ -40,7 +40,7 @@ compilation.
 ## Demo and gate
 
 ```bash
-scripts/corpus.sh /path/to/tang-compress/bench   # 19 fields × 5 targets × {tcg1, tcg3s, tcg3l} + manifest.json
+scripts/corpus.sh /path/to/cram/bench   # 19 fields × 5 targets × {tcg1, tcg3s, tcg3l} + manifest.json
 python3 -m http.server 8765 --directory demo     # open http://localhost:8765/
 python3 scripts/gate.py                          # headless Chrome; exits non-zero on any hash mismatch
 ```

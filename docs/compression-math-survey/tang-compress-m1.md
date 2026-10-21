@@ -1,6 +1,6 @@
-# tang-compress M1: wavelet + Tucker codecs and a learned context coder
+# cram M1: wavelet + Tucker codecs and a learned context coder
 
-Repo: `/Users/cam/Developer/tang-compress`, branch `claude/tang-compress-qtt` (not pushed).
+Repo: `/Users/cam/Developer/cram`, branch `claude/cram-qtt` (not pushed).
 The full frontier table, covering every codec, dataset and target, is in `tang-compress-m1-summary.md`.
 
 **Data and protocol** are the same as in M0 §8:
@@ -169,7 +169,7 @@ The Hurricane-U pretrained decode measured 1.4–1.7 s under load.
 - **Tucker is not universally better.** It loses badly on NYX, because NYX is not low-rank. An automatic chooser between wavelet and Tucker is not implemented. The table reports both codecs.
 - **The QTT codec is kept unchanged.** It still wins on oscillatory and algebraic 1D signals.
 
-## 6. Commits (tang branch `claude/tang-compress-qtt`)
+## 6. Commits (tang branch `claude/cram-qtt`)
 
 - `e422677` wavelet codec: lifting, deadzone quantizer, context-modelled binary range coding, in-band prediction, max-abs outliers, 5/3 lossless
 - `ec0346c` Tucker/HOSVD codec
@@ -180,7 +180,7 @@ The Hurricane-U pretrained decode measured 1.4–1.7 s under load.
 ## 7. Reproduce
 
 ```
-cargo build --release -p tang-compress --examples
+cargo build --release -p cram-codec --examples
 cd bench
 .venv/bin/python run_bench.py --tang --tag=tang
 ./../target/release/examples/pretrain out/models/pre_A.tcm --hidden 64,32 --per 150000 --epochs 8 --per-epoch 3000000 --psnr 40,50,60,70,80,90,100 out/train/{hurricane-U,hurricane-TC,nyx-temperature}-*.f32

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""tang-compress launch figures. Every plotted number is read from a measured
+"""cram launch figures. Every plotted number is read from a measured
 result file (bench/out/*.csv|jsonl) or quoted verbatim from a report line;
 see provenance.csv, which this script writes.
 
@@ -17,7 +17,7 @@ os.makedirs(OUT, exist_ok=True)
 TARGET = 80.0
 prov = []  # figure, series, field, quantity, value, source, row
 
-def pareto(rows):  # copied from tang-compress bench/run_bench.py
+def pareto(rows):  # copied from cram bench/run_bench.py
     rows = sorted(rows, key=lambda r: r["bpv"])
     front, best = [], -1e9
     for r in rows:
@@ -117,7 +117,7 @@ THEMES = {
     "dark": dict(bg="#0E1116", fg="#F2F2F2", sub="#A8A8A8", grid="#2A2F37", accent="#FF8A3D",
                  base=["#D0D0D0", "#9DB0C8", "#9A9A9A", "#B8A6CC", "#7E7E7E"], front="#FF8A3D"),
 }
-NAMES = {"sperr": "SPERR", "sz3": "SZ3", "zfp": "ZFP", "tthresh": "TTHRESH", "qtt": "QTT", "tc-auto": "tang-compress"}
+NAMES = {"sperr": "SPERR", "sz3": "SZ3", "zfp": "ZFP", "tthresh": "TTHRESH", "qtt": "QTT", "tc-auto": "cram"}
 
 def style(ax, T):
     ax.set_facecolor(T["bg"])
@@ -180,7 +180,7 @@ def figA(T, size, path):
     ax2.set_xlabel("encode MB/s (log)", fontsize=15)
     ax2.set_ylim(ax.get_ylim()); ax2.set_xlim(min(a["enc"] for a in agg.values()) / 3, max(a["enc"] for a in agg.values()) * 6)
     ax2.axhline(1.0, color=T["sub"], lw=1, alpha=0.5)
-    fig.text(0.07 if W > H else 0.12, 0.93, "tang-compress: fewer bits than SPERR at matched quality" if W > H else "tang-compress vs SPERR, SZ3, ZFP",
+    fig.text(0.07 if W > H else 0.12, 0.93, "cram: fewer bits than SPERR at matched quality" if W > H else "cram vs SPERR, SZ3, ZFP",
              fontsize=30 if W > H else 26, color=T["fg"], weight="bold")
     fig.text(0.07 if W > H else 0.12, 0.885,
              "14 held-out SDRBench fields, 80 dB PSNR, geo-mean." + (" " if W > H else "\n") + "Dashed = CPU Pareto frontier.",
@@ -234,7 +234,7 @@ def figB(T, size, path):
     axes[0].set_ylabel("PSNR (dB)", fontsize=15) if W > H else [a.set_ylabel("PSNR (dB)", fontsize=13) for a in axes]
     x0 = 0.06 if W > H else 0.11
     fig.text(x0, 0.92, "Rate–distortion on held-out fields", fontsize=30 if W > H else 26, color=T["fg"], weight="bold")
-    fig.text(x0, 0.87 if W > H else 0.885, "Measured Pareto fronts; up and to the left is better. tang-compress = frozen tc-auto.",
+    fig.text(x0, 0.87 if W > H else 0.885, "Measured Pareto fronts; up and to the left is better. cram = frozen tc-auto.",
              fontsize=17 if W > H else 14, color=T["sub"])
     for ext in ("png", "svg"):
         fig.savefig(f"{path}.{ext}", dpi=200 if ext == "png" else 100, facecolor=T["bg"])
