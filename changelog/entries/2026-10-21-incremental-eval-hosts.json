@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-incremental-eval-hosts",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "perf",
+  "title": "Parameter scrubs re-evaluate only what changed",
+  "summary": "The Mac app and web eval worker keep an incremental evaluation session per document, so scrubbing a parameter rebuilds only the features downstream of it.",
+  "features": ["engine", "evaluation", "performance"]
+}

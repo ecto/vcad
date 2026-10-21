@@ -47,6 +47,8 @@ mod callouts;
 #[cfg(feature = "raytrace")]
 pub mod envmap;
 mod exact;
+#[cfg(feature = "raytrace")]
+pub mod look;
 pub mod materials;
 pub mod pcb;
 #[cfg(feature = "raytrace")]
