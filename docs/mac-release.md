@@ -68,11 +68,10 @@ key. The private key never leaves the Keychain and is never committed.
   Back up the Keychain item — losing it means shipped apps can never verify
   another update.
 
-### 4. tang-compress source for CI
+### 4. Field decoder source
 
-The app links tang-compress's decoder (`build-tc-ffi.sh`). Set repository
-variable `TANG_COMPRESS_REPO` (`owner/name`); if that repo is private, add a
-read-only token as secret `TANG_COMPRESS_TOKEN`.
+Nothing to configure: the app's field decoder (`build-tc-ffi.sh`) builds from
+the `crates/cram-codec` crate on ecto/tang main, which CI already checks out.
 
 ### Secrets and variables summary
 
@@ -85,8 +84,6 @@ read-only token as secret `TANG_COMPRESS_TOKEN`.
 | `NOTARY_PASSWORD` | secret | app-specific password |
 | `SPARKLE_ED_PRIVATE_KEY` | secret | `generate_keys -x` output |
 | `SPARKLE_PUBLIC_ED_KEY` | variable | `generate_keys -p` output |
-| `TANG_COMPRESS_REPO` | variable | `owner/name` of tang-compress |
-| `TANG_COMPRESS_TOKEN` | secret (optional) | read token if that repo is private |
 
 ## Cutting a release
 

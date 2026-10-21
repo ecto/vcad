@@ -54,18 +54,8 @@ jobs:
         with: { repository: ecto/tang, path: tang }
       - uses: actions/checkout@v4
         with: { repository: ecto/phyz, path: phyz }
-      # The app links tang-compress's decoder (build-tc-ffi.sh). Its source repo
-      # is configured with the TANG_COMPRESS_REPO variable (owner/name).
-      - name: Check tang-compress source is configured
-        run: |
-          if [ -z "${{ vars.TANG_COMPRESS_REPO }}" ]; then
-            echo "::error::set the TANG_COMPRESS_REPO repository variable (see docs/mac-release.md)"; exit 1
-          fi
-      - uses: actions/checkout@v4
-        with:
-          repository: ${{ vars.TANG_COMPRESS_REPO }}
-          token: ${{ secrets.TANG_COMPRESS_TOKEN || github.token }}
-          path: tang-compress
+      # The app's field-overlay decoder links tang's cram-codec crate
+      # (build-tc-ffi.sh), built from the ecto/tang checkout above.
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -75,7 +65,7 @@ jobs:
         working-directory: vcad/apple/VcadApp
         run: |
           ./build-ffi.sh
-          ./build-tc-ffi.sh "$GITHUB_WORKSPACE/tang-compress"
+          ./build-tc-ffi.sh "$GITHUB_WORKSPACE/tang"
 
       - name: Import Developer ID certificate
         env:
