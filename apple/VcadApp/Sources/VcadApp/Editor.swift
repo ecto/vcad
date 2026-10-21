@@ -3321,3 +3321,20 @@ extension EditorModel {
         detachedEdit(name: name, mutate)
     }
 }
+
+// MARK: - Agent hooks (AgentPanel.swift / FrogAgent.swift)
+
+extension EditorModel {
+    /// Render an agent tool's engine result live, without an undo entry —
+    /// the whole agent turn becomes one entry via `agentEndTurn`.
+    func agentApplied(_ r: DocumentEngine.Result) {
+        engineError = nil
+        adopt(r, reeval: .rebuild)
+    }
+
+    /// Close an agent turn that changed the document: one undo step back to
+    /// the snapshot taken before the turn's first edit.
+    func agentEndTurn(before: Data, name: String = "Agent Edit") {
+        pushUndo(.snapshot(before), name: name)
+    }
+}

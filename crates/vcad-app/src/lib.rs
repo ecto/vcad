@@ -5,6 +5,7 @@
 //! Both the web app (via WASM) and the Rust CLI link against this crate,
 //! eliminating behavioral drift.
 
+pub mod agent;
 pub mod camera;
 pub mod command;
 pub mod commands;

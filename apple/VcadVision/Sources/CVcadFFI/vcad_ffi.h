@@ -48,6 +48,11 @@ bool vcad_engine_can_undo(const VcadEngine *engine);
 bool vcad_engine_can_redo(const VcadEngine *engine);
 void vcad_engine_string_free(char *json);
 void vcad_engine_free(VcadEngine *engine);
+/* Built-in agent: tool manifest + system prompt JSON (free with
+ * vcad_engine_string_free), and read tools (describe_scene, inspect) answered
+ * as {"ok":true,"result":{"text":...}} without mutating the document. */
+char *vcad_agent_manifest(void);
+char *vcad_engine_agent_read(const VcadEngine *engine, const char *tool, const char *args_json);
 
 
 typedef struct VcadSolid VcadSolid;
