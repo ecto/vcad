@@ -34,6 +34,12 @@ pub struct PhotorealRequest {
     pub seed: u64,
     /// Trace on the CPU reference integrator instead of the GPU.
     pub cpu: bool,
+    /// Thin-lens aperture radius as a fraction of the scene radius (0 = pinhole).
+    pub aperture: f64,
+    /// Plane-of-focus distance in mm; `None` focuses on the framed subject.
+    pub focus_dist: Option<f64>,
+    /// Frame (and so focus) on this part instead of the whole document.
+    pub focus_part: Option<String>,
 }
 
 /// Parse `WxH` (e.g. `1600x1000`).
@@ -73,6 +79,7 @@ fn options(req: &PhotorealRequest) -> (RasterOptions, PhotorealOptions) {
         view: req.view,
         size_px: req.width,
         height_px: Some(req.height),
+        focus: req.focus_part.clone(),
         ..RasterOptions::default()
     };
     let pr = PhotorealOptions {
@@ -83,7 +90,8 @@ fn options(req: &PhotorealRequest) -> (RasterOptions, PhotorealOptions) {
         exposure: req.exposure as f32,
         fov_deg: 34.0,
         orthographic: false,
-        aperture_frac: 0.0,
+        aperture_frac: req.aperture,
+        focus_dist: req.focus_dist,
         backdrop: Backdrop::Studio,
         seed: req.seed,
         // The GPU tracer reads back radiance only, so the guided denoiser has
@@ -98,6 +106,15 @@ fn options(req: &PhotorealRequest) -> (RasterOptions, PhotorealOptions) {
 /// Render raw `.vcad` JSON to an encoded image (PNG unless `jpeg`).
 pub fn render_bytes(raw_vcad: &str, req: &PhotorealRequest, jpeg: bool) -> Result<Vec<u8>> {
     let (ro, pr) = options(req);
+    // The GPU camera is a pinhole; depth of field is a CPU-integrator
+    // feature, so an aperture routes there rather than being refused.
+    if !req.cpu && req.aperture > 0.0 {
+        let cpu = PhotorealRequest {
+            cpu: true,
+            ..req.clone()
+        };
+        return render_bytes(raw_vcad, &cpu, jpeg);
+    }
     let out = if req.cpu {
         if jpeg {
             vcad_render::photoreal::render_photoreal_jpeg_str(raw_vcad, &ro, &pr)
@@ -106,13 +123,40 @@ pub fn render_bytes(raw_vcad: &str, req: &PhotorealRequest, jpeg: bool) -> Resul
         }
     } else {
         vcad_render::photoreal_gpu::check_supported(&ro, &pr).map_err(|e| anyhow!(e))?;
-        if jpeg {
+        let gpu = if jpeg {
             vcad_render::photoreal_gpu::render_photoreal_gpu_jpeg_str(raw_vcad, &ro, &pr)
         } else {
             vcad_render::photoreal_gpu::render_photoreal_gpu_png_str(raw_vcad, &ro, &pr)
+        };
+        // No adapter, or a driver that cannot build the tracer: the CPU
+        // integrator renders the same scene, so say so and use it rather
+        // than failing the command.
+        match gpu {
+            Err(e) if gpu_unavailable(&e) => {
+                eprintln!("photoreal: GPU unavailable ({e}); rendering on the CPU instead");
+                let cpu = PhotorealRequest {
+                    cpu: true,
+                    ..req.clone()
+                };
+                FELL_BACK_TO_CPU.store(true, std::sync::atomic::Ordering::Relaxed);
+                return render_bytes(raw_vcad, &cpu, jpeg);
+            }
+            other => other,
         }
     };
     out.map_err(|e| anyhow!("photoreal render failed: {e}"))
+}
+
+/// Set when a GPU render fell back to the CPU, so the summary line reports
+/// the integrator that actually ran.
+static FELL_BACK_TO_CPU: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether a GPU render error means "no usable GPU here" rather than a
+/// problem with the scene.
+fn gpu_unavailable(e: &str) -> bool {
+    e.contains("no compatible GPU adapter")
+        || e.contains("could not initialise the GPU")
+        || e.contains("device was lost")
 }
 
 /// Render a loaded document to `out`.
@@ -130,7 +174,11 @@ pub fn render_document(doc: &vcad_ir::Document, out: &Path, req: &PhotorealReque
     std::fs::write(out, bytes)?;
     eprintln!(
         "photoreal ({}) {}x{} @ {} spp -> {} in {:.1}s",
-        if req.cpu { "cpu" } else { "gpu" },
+        if req.cpu || FELL_BACK_TO_CPU.load(std::sync::atomic::Ordering::Relaxed) {
+            "cpu"
+        } else {
+            "gpu"
+        },
         req.width,
         req.height,
         req.samples,
@@ -175,6 +223,9 @@ mod tests {
             env: "gradient".into(),
             seed: 7,
             cpu,
+            aperture: 0.0,
+            focus_dist: None,
+            focus_part: None,
         }
     }
 

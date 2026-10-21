@@ -393,3 +393,72 @@ jobs:
             exit 1
           fi
           echo "no generated artifacts committed — ok"
+
+  # Decides whether the macOS job needs to run. A PR that touches no Swift,
+  # Rust or build inputs (docs, TS-only) skips it; a skipped job still
+  # satisfies the required "Swift (macOS)" check, and avoids a ~90 min runner.
+  swift-changes:
+    name: Swift change detection
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.diff.outputs.run }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          base="${{ github.event.pull_request.base.sha }}"
+          changed=$(git diff --name-only "$base"...HEAD)
+          echo "$changed"
+          if echo "$changed" | grep -qE '^(apple/|crates/|Cargo\.(toml|lock)$|rust-toolchain|\.github/workflows/ci\.yml$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  swift-mac:
+    name: Swift (macOS)
+    needs: swift-changes
+    if: needs.swift-changes.outputs.run == 'true'
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - name: Clone sibling repos
+        run: |
+          git clone --depth 1 https://github.com/ecto/tang.git ../tang
+          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
+          git clone --depth 1 https://github.com/ecto/loon.git ../loon
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: swift-mac
+          cache-workspace-crates: true
+          cache-on-failure: true
+          workspaces: |
+            . -> target
+            ../tang -> target/tc-ffi
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: apple/VcadApp/.build
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('apple/VcadApp/Package.swift', 'apple/VcadApp/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ hashFiles('apple/VcadApp/Package.swift', 'apple/VcadApp/Package.resolved') }}-
+      - name: Toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Build vcad-ffi
+        run: apple/VcadApp/build-ffi.sh
+      - name: Build tang-compress-ffi
+        run: apple/VcadApp/build-tc-ffi.sh ../tang  # cram-codec lives in tang main
+      - name: swift test
+        run: swift test --package-path apple/VcadApp
+

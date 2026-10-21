@@ -24,6 +24,28 @@ use crate::DocumentApi;
 pub fn lower(tool: &str, args: &Value, doc: &DocumentApi) -> Result<DocCommand, CommandError> {
     match tool {
         "create" => {
+            // Models also nest the whole call one level down:
+            // `{name, params: {type, params: {...}}}`. Unwrap that shape, keeping
+            // the outer name / parent when the inner one doesn't set them.
+            let unwrapped;
+            let args = match args.get("params") {
+                Some(inner)
+                    if args.get("type").is_none()
+                        && inner.get("type").and_then(Value::as_str).is_some() =>
+                {
+                    let mut merged = inner.clone();
+                    for key in ["name", "parent_part_id"] {
+                        if merged.get(key).is_none() {
+                            if let Some(v) = args.get(key) {
+                                merged[key] = v.clone();
+                            }
+                        }
+                    }
+                    unwrapped = merged;
+                    &unwrapped
+                }
+                _ => args,
+            };
             let kind = str_arg(args, "type", "create")?;
             let kind = match kind {
                 // Models sometimes split the digit off (`sketch_2_d`).
@@ -49,9 +71,9 @@ pub fn lower(tool: &str, args: &Value, doc: &DocumentApi) -> Result<DocCommand, 
         "update" => lower_update(args, doc),
         "place" => lower_place(args, doc),
         "place_part" => lower_place_part(args),
-        other => {
-            crate::doc_edits::lower(other, args, doc).unwrap_or_else(|| Err(unsupported(other)))
-        }
+        other => crate::doc_edits::lower(other, args, doc)
+            .or_else(|| crate::ecad_tools::lower(other, args, doc))
+            .unwrap_or_else(|| Err(unsupported(other))),
     }
 }
 

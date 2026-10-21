@@ -7,6 +7,57 @@
 /* eslint-disable */
 
 /**
+ * The agent manifest hosts load (`vcad_agent_manifest`).
+ */
+export type AgentManifest = { 
+/**
+ * Manifest schema version.
+ */
+version: number, 
+/**
+ * Prompt-cache key; changes with the version.
+ */
+cache_key: string, 
+/**
+ * System prompt.
+ */
+system: string, 
+/**
+ * Tool definitions (JSON-schema tool specs).
+ */
+tools: Array<Record<string, unknown>>, 
+/**
+ * Tools only offered to vision-capable models.
+ */
+vision_tools: Array<Record<string, unknown>>, };
+
+/**
+ * The read-tool envelope: `{"ok":true,"result":{"text":…}}` or an error.
+ */
+export type AgentReadEnvelope = { 
+/**
+ * Whether the read succeeded.
+ */
+ok: boolean, 
+/**
+ * Present when `ok`.
+ */
+result?: AgentReadResult, 
+/**
+ * Present when not `ok`.
+ */
+error?: EngineError, };
+
+/**
+ * Text answer of a read tool inside an [`AgentReadEnvelope`].
+ */
+export type AgentReadResult = { 
+/**
+ * The answer, as plain text for the model.
+ */
+text: string, };
+
+/**
  * Ambient occlusion settings.
  */
 export type AmbientOcclusion = { 
@@ -681,9 +732,10 @@ id: string, } | { "kind": "nothing_to",
  */
 action: string, } | { "kind": "invalid", 
 /**
- * Parser message.
+ * Parser message. On the wire it is `detail`: the envelope's
+ * `message` (the display text) shares the error object.
  */
-message: string, } | { "kind": "unsupported", 
+detail: string, } | { "kind": "unsupported", 
 /**
  * Tool or feature kind.
  */
@@ -1897,6 +1949,24 @@ hardware?: Array<HardwareLine>,
 source?: DocumentSource, };
 
 /**
+ * A patch from one materialized IR document to the next.
+ */
+export type DocumentDelta = { 
+/**
+ * Per-key patches for object-valued top-level fields that are objects
+ * on both sides: `nodes`, `materials`, `parameters`, `partIds`, ….
+ */
+maps: Record<string, MapPatch>, 
+/**
+ * Other top-level fields that changed, replaced wholesale (`roots`, …).
+ */
+fields: Record<string, unknown>, 
+/**
+ * Top-level fields that disappeared.
+ */
+removedFields: Array<string>, };
+
+/**
  * The authored source a [`Document`] was evaluated from.
  *
  * A document evaluated from loon used to discard its source immediately, so
@@ -2136,6 +2206,49 @@ color: [number, number, number],
 name: string, };
 
 /**
+ * Successful delta result inside an [`EngineDeltaEnvelope`].
+ */
+export type EngineDelta = { 
+/**
+ * Patch for the previous IR document.
+ */
+document: DocumentDelta, 
+/**
+ * Parts added, updated and removed.
+ */
+parts: PartsDelta, 
+/**
+ * Stable ids of parts consumed by other features (full list; small).
+ */
+consumedPartIds: Array<string>, 
+/**
+ * Non-fatal materialize issues.
+ */
+warnings: Array<string>, 
+/**
+ * Stable id of the feature the command created, if any.
+ */
+createdFeatureId?: string, };
+
+/**
+ * The delta counterpart of [`crate::command::EngineEnvelope`]:
+ * `{"ok":true,"result":EngineDelta}` or `{"ok":false,"error":…}`.
+ */
+export type EngineDeltaEnvelope = { 
+/**
+ * Whether the command succeeded.
+ */
+ok: boolean, 
+/**
+ * Present when `ok`.
+ */
+result?: EngineDelta, 
+/**
+ * Present when not `ok`.
+ */
+error?: EngineError, };
+
+/**
  * The JSON result envelope shared by every binding (wasm, ffi, CLI):
  *
  * - `{"ok":true,"result":{"document":…,"parts":…,"consumedPartIds":…,"warnings":…,"createdFeatureId"?:…}}`
@@ -2173,9 +2286,10 @@ id: string, } | { "kind": "nothing_to",
  */
 action: string, } | { "kind": "invalid", 
 /**
- * Parser message.
+ * Parser message. On the wire it is `detail`: the envelope's
+ * `message` (the display text) shares the error object.
  */
-message: string, } | { "kind": "unsupported", 
+detail: string, } | { "kind": "unsupported", 
 /**
  * Tool or feature kind.
  */
@@ -3877,6 +3991,19 @@ width: number,
 height: number, };
 
 /**
+ * Per-key changes to one object-valued document field.
+ */
+export type MapPatch = { 
+/**
+ * Keys added or changed, with their new values.
+ */
+set: Record<string, unknown>, 
+/**
+ * Keys removed.
+ */
+remove: Array<string>, };
+
+/**
  * A declarative mate between two instances of an assembly.
  */
 export type Mate = { 
@@ -4427,6 +4554,28 @@ value: string,
  * Manufacturer part number, if known.
  */
 mpn?: string, };
+
+/**
+ * Which parts a command added, updated or removed, by stable id.
+ */
+export type PartsDelta = { 
+/**
+ * New parts.
+ */
+added: Array<EnginePartInfo>, 
+/**
+ * Parts whose info or geometry (any node in their subtree) changed.
+ * Hosts re-tessellate exactly these plus `added`.
+ */
+updated: Array<EnginePartInfo>, 
+/**
+ * Stable ids of parts that no longer exist.
+ */
+removed: Array<string>, 
+/**
+ * The full part order (stable ids), present when it changed.
+ */
+order?: Array<string>, };
 
 /**
  * A straight line path from start to end.

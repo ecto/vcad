@@ -185,6 +185,457 @@
       "type": "batch"
     }
   ],
+  "deltas": [
+    {
+      "ok": true,
+      "result": {
+        "consumedPartIds": [],
+        "createdFeatureId": "5:0",
+        "document": {
+          "fields": {
+            "partIds": {
+              "2059927555": "5:0"
+            },
+            "roots": [
+              {
+                "material": "default",
+                "root": 2059927555
+              }
+            ]
+          },
+          "maps": {
+            "nodes": {
+              "remove": [],
+              "set": {
+                "2059927552": {
+                  "id": 2059927552,
+                  "name": "Plate",
+                  "op": {
+                    "size": {
+                      "x": 40.0,
+                      "y": 20.0,
+                      "z": 5.0
+                    },
+                    "type": "Cube"
+                  }
+                },
+                "2059927553": {
+                  "id": 2059927553,
+                  "name": null,
+                  "op": {
+                    "child": 2059927552,
+                    "factor": {
+                      "x": 1.0,
+                      "y": 1.0,
+                      "z": 1.0
+                    },
+                    "type": "Scale"
+                  }
+                },
+                "2059927554": {
+                  "id": 2059927554,
+                  "name": null,
+                  "op": {
+                    "angles": {
+                      "x": 0.0,
+                      "y": 0.0,
+                      "z": 0.0
+                    },
+                    "child": 2059927553,
+                    "type": "Rotate"
+                  }
+                },
+                "2059927555": {
+                  "id": 2059927555,
+                  "name": null,
+                  "op": {
+                    "child": 2059927554,
+                    "offset": {
+                      "x": 0.0,
+                      "y": 0.0,
+                      "z": 0.0
+                    },
+                    "type": "Translate"
+                  }
+                }
+              }
+            }
+          },
+          "removedFields": []
+        },
+        "parts": {
+          "added": [
+            {
+              "id": "5:0",
+              "kind": "cube",
+              "name": "Plate",
+              "primitiveNodeId": 2059927552,
+              "rotateNodeId": 2059927554,
+              "scaleNodeId": 2059927553,
+              "translateNodeId": 2059927555
+            }
+          ],
+          "order": [
+            "5:0"
+          ],
+          "removed": [],
+          "updated": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "consumedPartIds": [],
+        "createdFeatureId": "5:1",
+        "document": {
+          "fields": {
+            "roots": [
+              {
+                "material": "default",
+                "root": 2059927555
+              },
+              {
+                "material": "default",
+                "root": 1297104899
+              }
+            ]
+          },
+          "maps": {
+            "nodes": {
+              "remove": [],
+              "set": {
+                "1297104896": {
+                  "id": 1297104896,
+                  "name": "cylinder",
+                  "op": {
+                    "height": 12.0,
+                    "radius": 3.0,
+                    "segments": 32,
+                    "type": "Cylinder"
+                  }
+                },
+                "1297104897": {
+                  "id": 1297104897,
+                  "name": null,
+                  "op": {
+                    "child": 1297104896,
+                    "factor": {
+                      "x": 1.0,
+                      "y": 1.0,
+                      "z": 1.0
+                    },
+                    "type": "Scale"
+                  }
+                },
+                "1297104898": {
+                  "id": 1297104898,
+                  "name": null,
+                  "op": {
+                    "angles": {
+                      "x": 0.0,
+                      "y": 0.0,
+                      "z": 0.0
+                    },
+                    "child": 1297104897,
+                    "type": "Rotate"
+                  }
+                },
+                "1297104899": {
+                  "id": 1297104899,
+                  "name": null,
+                  "op": {
+                    "child": 1297104898,
+                    "offset": {
+                      "x": 0.0,
+                      "y": 0.0,
+                      "z": 0.0
+                    },
+                    "type": "Translate"
+                  }
+                }
+              }
+            },
+            "partIds": {
+              "remove": [],
+              "set": {
+                "1297104899": "5:1"
+              }
+            }
+          },
+          "removedFields": []
+        },
+        "parts": {
+          "added": [
+            {
+              "id": "5:1",
+              "kind": "cylinder",
+              "name": "cylinder",
+              "primitiveNodeId": 1297104896,
+              "rotateNodeId": 1297104898,
+              "scaleNodeId": 1297104897,
+              "translateNodeId": 1297104899
+            }
+          ],
+          "order": [
+            "5:0",
+            "5:1"
+          ],
+          "removed": [],
+          "updated": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "consumedPartIds": [
+          "5:0",
+          "5:1"
+        ],
+        "createdFeatureId": "5:2",
+        "document": {
+          "fields": {
+            "roots": [
+              {
+                "material": "default",
+                "root": 534282243
+              }
+            ]
+          },
+          "maps": {
+            "nodes": {
+              "remove": [],
+              "set": {
+                "534282240": {
+                  "id": 534282240,
+                  "name": "boolean",
+                  "op": {
+                    "left": 2059927555,
+                    "right": 1297104899,
+                    "type": "Difference"
+                  }
+                },
+                "534282241": {
+                  "id": 534282241,
+                  "name": null,
+                  "op": {
+                    "child": 534282240,
+                    "factor": {
+                      "x": 1.0,
+                      "y": 1.0,
+                      "z": 1.0
+                    },
+                    "type": "Scale"
+                  }
+                },
+                "534282242": {
+                  "id": 534282242,
+                  "name": null,
+                  "op": {
+                    "angles": {
+                      "x": 0.0,
+                      "y": 0.0,
+                      "z": 0.0
+                    },
+                    "child": 534282241,
+                    "type": "Rotate"
+                  }
+                },
+                "534282243": {
+                  "id": 534282243,
+                  "name": null,
+                  "op": {
+                    "child": 534282242,
+                    "offset": {
+                      "x": 0.0,
+                      "y": 0.0,
+                      "z": 0.0
+                    },
+                    "type": "Translate"
+                  }
+                }
+              }
+            },
+            "partIds": {
+              "remove": [
+                "1297104899",
+                "2059927555"
+              ],
+              "set": {
+                "534282243": "5:2"
+              }
+            }
+          },
+          "removedFields": []
+        },
+        "parts": {
+          "added": [
+            {
+              "booleanNodeId": 534282240,
+              "booleanType": "difference",
+              "id": "5:2",
+              "kind": "boolean",
+              "name": "boolean",
+              "rotateNodeId": 534282242,
+              "scaleNodeId": 534282241,
+              "sourcePartIds": [
+                "5:0",
+                "5:1"
+              ],
+              "translateNodeId": 534282243
+            }
+          ],
+          "order": [
+            "5:0",
+            "5:1",
+            "5:2"
+          ],
+          "removed": [],
+          "updated": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "ok": true,
+      "result": {
+        "consumedPartIds": [
+          "5:0",
+          "5:1",
+          "5:2"
+        ],
+        "createdFeatureId": "5:3",
+        "document": {
+          "fields": {
+            "roots": [
+              {
+                "material": "default",
+                "root": 1918943235
+              }
+            ]
+          },
+          "maps": {
+            "nodes": {
+              "remove": [],
+              "set": {
+                "1918943232": {
+                  "id": 1918943232,
+                  "name": "fillet",
+                  "op": {
+                    "child": 534282243,
+                    "radius": 1.5,
+                    "type": "Fillet"
+                  }
+                },
+                "1918943233": {
+                  "id": 1918943233,
+                  "name": null,
+                  "op": {
+                    "child": 1918943232,
+                    "factor": {
+                      "x": 1.0,
+                      "y": 1.0,
+                      "z": 1.0
+                    },
+                    "type": "Scale"
+                  }
+                },
+                "1918943234": {
+                  "id": 1918943234,
+                  "name": null,
+                  "op": {
+                    "angles": {
+                      "x": 0.0,
+                      "y": 0.0,
+                      "z": 0.0
+                    },
+                    "child": 1918943233,
+                    "type": "Rotate"
+                  }
+                },
+                "1918943235": {
+                  "id": 1918943235,
+                  "name": null,
+                  "op": {
+                    "child": 1918943234,
+                    "offset": {
+                      "x": 0.0,
+                      "y": 0.0,
+                      "z": 0.0
+                    },
+                    "type": "Translate"
+                  }
+                }
+              }
+            },
+            "partIds": {
+              "remove": [
+                "534282243"
+              ],
+              "set": {
+                "1918943235": "5:3"
+              }
+            }
+          },
+          "removedFields": []
+        },
+        "parts": {
+          "added": [
+            {
+              "filletNodeId": 1918943232,
+              "id": "5:3",
+              "kind": "fillet",
+              "name": "fillet",
+              "rotateNodeId": 1918943234,
+              "scaleNodeId": 1918943233,
+              "sourcePartId": "5:2",
+              "translateNodeId": 1918943235
+            }
+          ],
+          "order": [
+            "5:0",
+            "5:1",
+            "5:2",
+            "5:3"
+          ],
+          "removed": [],
+          "updated": []
+        },
+        "warnings": []
+      }
+    },
+    {
+      "error": {
+        "id": "9:9",
+        "kind": "unknown_id",
+        "message": "no feature with id `9:9`"
+      },
+      "ok": false
+    },
+    {
+      "error": {
+        "index": 1,
+        "kind": "batch",
+        "message": "batch command 1 failed: no feature with id `9:9`",
+        "source": {
+          "id": "9:9",
+          "kind": "unknown_id"
+        }
+      },
+      "ok": false
+    },
+    {
+      "error": {
+        "detail": "unknown variant `oops`, expected one of `F64`, `Vec3`, `Bool`, `String`, `FeatureRef`, `FeatureRefList`, `Sketch`",
+        "kind": "invalid",
+        "message": "invalid command: unknown variant `oops`, expected one of `F64`, `Vec3`, `Bool`, `String`, `FeatureRef`, `FeatureRefList`, `Sketch`"
+      },
+      "ok": false
+    }
+  ],
   "envelopes": [
     {
       "ok": true,
@@ -194,8 +645,8 @@
         "document": {
           "materials": {},
           "nodes": {
-            "1": {
-              "id": 1,
+            "2059927552": {
+              "id": 2059927552,
               "name": "Plate",
               "op": {
                 "size": {
@@ -206,11 +657,11 @@
                 "type": "Cube"
               }
             },
-            "2": {
-              "id": 2,
+            "2059927553": {
+              "id": 2059927553,
               "name": null,
               "op": {
-                "child": 1,
+                "child": 2059927552,
                 "factor": {
                   "x": 1.0,
                   "y": 1.0,
@@ -219,8 +670,8 @@
                 "type": "Scale"
               }
             },
-            "3": {
-              "id": 3,
+            "2059927554": {
+              "id": 2059927554,
               "name": null,
               "op": {
                 "angles": {
@@ -228,15 +679,15 @@
                   "y": 0.0,
                   "z": 0.0
                 },
-                "child": 2,
+                "child": 2059927553,
                 "type": "Rotate"
               }
             },
-            "4": {
-              "id": 4,
+            "2059927555": {
+              "id": 2059927555,
               "name": null,
               "op": {
-                "child": 3,
+                "child": 2059927554,
                 "offset": {
                   "x": 0.0,
                   "y": 0.0,
@@ -247,13 +698,13 @@
             }
           },
           "partIds": {
-            "4": "5:0"
+            "2059927555": "5:0"
           },
           "part_materials": {},
           "roots": [
             {
               "material": "default",
-              "root": 4
+              "root": 2059927555
             }
           ],
           "version": "0.1"
@@ -263,10 +714,10 @@
             "id": "5:0",
             "kind": "cube",
             "name": "Plate",
-            "primitiveNodeId": 1,
-            "rotateNodeId": 3,
-            "scaleNodeId": 2,
-            "translateNodeId": 4
+            "primitiveNodeId": 2059927552,
+            "rotateNodeId": 2059927554,
+            "scaleNodeId": 2059927553,
+            "translateNodeId": 2059927555
           }
         ],
         "warnings": []
@@ -280,8 +731,57 @@
         "document": {
           "materials": {},
           "nodes": {
-            "1": {
-              "id": 1,
+            "1297104896": {
+              "id": 1297104896,
+              "name": "cylinder",
+              "op": {
+                "height": 12.0,
+                "radius": 3.0,
+                "segments": 32,
+                "type": "Cylinder"
+              }
+            },
+            "1297104897": {
+              "id": 1297104897,
+              "name": null,
+              "op": {
+                "child": 1297104896,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "1297104898": {
+              "id": 1297104898,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 1297104897,
+                "type": "Rotate"
+              }
+            },
+            "1297104899": {
+              "id": 1297104899,
+              "name": null,
+              "op": {
+                "child": 1297104898,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            },
+            "2059927552": {
+              "id": 2059927552,
               "name": "Plate",
               "op": {
                 "size": {
@@ -292,11 +792,11 @@
                 "type": "Cube"
               }
             },
-            "2": {
-              "id": 2,
+            "2059927553": {
+              "id": 2059927553,
               "name": null,
               "op": {
-                "child": 1,
+                "child": 2059927552,
                 "factor": {
                   "x": 1.0,
                   "y": 1.0,
@@ -305,8 +805,8 @@
                 "type": "Scale"
               }
             },
-            "3": {
-              "id": 3,
+            "2059927554": {
+              "id": 2059927554,
               "name": null,
               "op": {
                 "angles": {
@@ -314,64 +814,15 @@
                   "y": 0.0,
                   "z": 0.0
                 },
-                "child": 2,
+                "child": 2059927553,
                 "type": "Rotate"
               }
             },
-            "4": {
-              "id": 4,
+            "2059927555": {
+              "id": 2059927555,
               "name": null,
               "op": {
-                "child": 3,
-                "offset": {
-                  "x": 0.0,
-                  "y": 0.0,
-                  "z": 0.0
-                },
-                "type": "Translate"
-              }
-            },
-            "5": {
-              "id": 5,
-              "name": "cylinder",
-              "op": {
-                "height": 12.0,
-                "radius": 3.0,
-                "segments": 32,
-                "type": "Cylinder"
-              }
-            },
-            "6": {
-              "id": 6,
-              "name": null,
-              "op": {
-                "child": 5,
-                "factor": {
-                  "x": 1.0,
-                  "y": 1.0,
-                  "z": 1.0
-                },
-                "type": "Scale"
-              }
-            },
-            "7": {
-              "id": 7,
-              "name": null,
-              "op": {
-                "angles": {
-                  "x": 0.0,
-                  "y": 0.0,
-                  "z": 0.0
-                },
-                "child": 6,
-                "type": "Rotate"
-              }
-            },
-            "8": {
-              "id": 8,
-              "name": null,
-              "op": {
-                "child": 7,
+                "child": 2059927554,
                 "offset": {
                   "x": 0.0,
                   "y": 0.0,
@@ -382,18 +833,18 @@
             }
           },
           "partIds": {
-            "4": "5:0",
-            "8": "5:1"
+            "1297104899": "5:1",
+            "2059927555": "5:0"
           },
           "part_materials": {},
           "roots": [
             {
               "material": "default",
-              "root": 4
+              "root": 2059927555
             },
             {
               "material": "default",
-              "root": 8
+              "root": 1297104899
             }
           ],
           "version": "0.1"
@@ -403,19 +854,19 @@
             "id": "5:0",
             "kind": "cube",
             "name": "Plate",
-            "primitiveNodeId": 1,
-            "rotateNodeId": 3,
-            "scaleNodeId": 2,
-            "translateNodeId": 4
+            "primitiveNodeId": 2059927552,
+            "rotateNodeId": 2059927554,
+            "scaleNodeId": 2059927553,
+            "translateNodeId": 2059927555
           },
           {
             "id": "5:1",
             "kind": "cylinder",
             "name": "cylinder",
-            "primitiveNodeId": 5,
-            "rotateNodeId": 7,
-            "scaleNodeId": 6,
-            "translateNodeId": 8
+            "primitiveNodeId": 1297104896,
+            "rotateNodeId": 1297104898,
+            "scaleNodeId": 1297104897,
+            "translateNodeId": 1297104899
           }
         ],
         "warnings": []
@@ -432,8 +883,57 @@
         "document": {
           "materials": {},
           "nodes": {
-            "1": {
-              "id": 1,
+            "1297104896": {
+              "id": 1297104896,
+              "name": "cylinder",
+              "op": {
+                "height": 12.0,
+                "radius": 3.0,
+                "segments": 32,
+                "type": "Cylinder"
+              }
+            },
+            "1297104897": {
+              "id": 1297104897,
+              "name": null,
+              "op": {
+                "child": 1297104896,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "1297104898": {
+              "id": 1297104898,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 1297104897,
+                "type": "Rotate"
+              }
+            },
+            "1297104899": {
+              "id": 1297104899,
+              "name": null,
+              "op": {
+                "child": 1297104898,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            },
+            "2059927552": {
+              "id": 2059927552,
               "name": "Plate",
               "op": {
                 "size": {
@@ -444,11 +944,11 @@
                 "type": "Cube"
               }
             },
-            "10": {
-              "id": 10,
+            "2059927553": {
+              "id": 2059927553,
               "name": null,
               "op": {
-                "child": 9,
+                "child": 2059927552,
                 "factor": {
                   "x": 1.0,
                   "y": 1.0,
@@ -457,8 +957,8 @@
                 "type": "Scale"
               }
             },
-            "11": {
-              "id": 11,
+            "2059927554": {
+              "id": 2059927554,
               "name": null,
               "op": {
                 "angles": {
@@ -466,15 +966,15 @@
                   "y": 0.0,
                   "z": 0.0
                 },
-                "child": 10,
+                "child": 2059927553,
                 "type": "Rotate"
               }
             },
-            "12": {
-              "id": 12,
+            "2059927555": {
+              "id": 2059927555,
               "name": null,
               "op": {
-                "child": 11,
+                "child": 2059927554,
                 "offset": {
                   "x": 0.0,
                   "y": 0.0,
@@ -483,112 +983,63 @@
                 "type": "Translate"
               }
             },
-            "2": {
-              "id": 2,
-              "name": null,
-              "op": {
-                "child": 1,
-                "factor": {
-                  "x": 1.0,
-                  "y": 1.0,
-                  "z": 1.0
-                },
-                "type": "Scale"
-              }
-            },
-            "3": {
-              "id": 3,
-              "name": null,
-              "op": {
-                "angles": {
-                  "x": 0.0,
-                  "y": 0.0,
-                  "z": 0.0
-                },
-                "child": 2,
-                "type": "Rotate"
-              }
-            },
-            "4": {
-              "id": 4,
-              "name": null,
-              "op": {
-                "child": 3,
-                "offset": {
-                  "x": 0.0,
-                  "y": 0.0,
-                  "z": 0.0
-                },
-                "type": "Translate"
-              }
-            },
-            "5": {
-              "id": 5,
-              "name": "cylinder",
-              "op": {
-                "height": 12.0,
-                "radius": 3.0,
-                "segments": 32,
-                "type": "Cylinder"
-              }
-            },
-            "6": {
-              "id": 6,
-              "name": null,
-              "op": {
-                "child": 5,
-                "factor": {
-                  "x": 1.0,
-                  "y": 1.0,
-                  "z": 1.0
-                },
-                "type": "Scale"
-              }
-            },
-            "7": {
-              "id": 7,
-              "name": null,
-              "op": {
-                "angles": {
-                  "x": 0.0,
-                  "y": 0.0,
-                  "z": 0.0
-                },
-                "child": 6,
-                "type": "Rotate"
-              }
-            },
-            "8": {
-              "id": 8,
-              "name": null,
-              "op": {
-                "child": 7,
-                "offset": {
-                  "x": 0.0,
-                  "y": 0.0,
-                  "z": 0.0
-                },
-                "type": "Translate"
-              }
-            },
-            "9": {
-              "id": 9,
+            "534282240": {
+              "id": 534282240,
               "name": "boolean",
               "op": {
-                "left": 4,
-                "right": 8,
+                "left": 2059927555,
+                "right": 1297104899,
                 "type": "Difference"
+              }
+            },
+            "534282241": {
+              "id": 534282241,
+              "name": null,
+              "op": {
+                "child": 534282240,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "534282242": {
+              "id": 534282242,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 534282241,
+                "type": "Rotate"
+              }
+            },
+            "534282243": {
+              "id": 534282243,
+              "name": null,
+              "op": {
+                "child": 534282242,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
               }
             }
           },
           "partIds": {
-            "12": "5:2"
+            "534282243": "5:2"
           },
           "part_materials": {},
           "roots": [
             {
               "material": "default",
-              "root": 12
+              "root": 534282243
             }
           ],
           "version": "0.1"
@@ -598,33 +1049,33 @@
             "id": "5:0",
             "kind": "cube",
             "name": "Plate",
-            "primitiveNodeId": 1,
-            "rotateNodeId": 3,
-            "scaleNodeId": 2,
-            "translateNodeId": 4
+            "primitiveNodeId": 2059927552,
+            "rotateNodeId": 2059927554,
+            "scaleNodeId": 2059927553,
+            "translateNodeId": 2059927555
           },
           {
             "id": "5:1",
             "kind": "cylinder",
             "name": "cylinder",
-            "primitiveNodeId": 5,
-            "rotateNodeId": 7,
-            "scaleNodeId": 6,
-            "translateNodeId": 8
+            "primitiveNodeId": 1297104896,
+            "rotateNodeId": 1297104898,
+            "scaleNodeId": 1297104897,
+            "translateNodeId": 1297104899
           },
           {
-            "booleanNodeId": 9,
+            "booleanNodeId": 534282240,
             "booleanType": "difference",
             "id": "5:2",
             "kind": "boolean",
             "name": "boolean",
-            "rotateNodeId": 11,
-            "scaleNodeId": 10,
+            "rotateNodeId": 534282242,
+            "scaleNodeId": 534282241,
             "sourcePartIds": [
               "5:0",
               "5:1"
             ],
-            "translateNodeId": 12
+            "translateNodeId": 534282243
           }
         ],
         "warnings": []
@@ -642,8 +1093,105 @@
         "document": {
           "materials": {},
           "nodes": {
-            "1": {
-              "id": 1,
+            "1297104896": {
+              "id": 1297104896,
+              "name": "cylinder",
+              "op": {
+                "height": 12.0,
+                "radius": 3.0,
+                "segments": 32,
+                "type": "Cylinder"
+              }
+            },
+            "1297104897": {
+              "id": 1297104897,
+              "name": null,
+              "op": {
+                "child": 1297104896,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "1297104898": {
+              "id": 1297104898,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 1297104897,
+                "type": "Rotate"
+              }
+            },
+            "1297104899": {
+              "id": 1297104899,
+              "name": null,
+              "op": {
+                "child": 1297104898,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            },
+            "1918943232": {
+              "id": 1918943232,
+              "name": "fillet",
+              "op": {
+                "child": 534282243,
+                "radius": 1.5,
+                "type": "Fillet"
+              }
+            },
+            "1918943233": {
+              "id": 1918943233,
+              "name": null,
+              "op": {
+                "child": 1918943232,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "1918943234": {
+              "id": 1918943234,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 1918943233,
+                "type": "Rotate"
+              }
+            },
+            "1918943235": {
+              "id": 1918943235,
+              "name": null,
+              "op": {
+                "child": 1918943234,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
+              }
+            },
+            "2059927552": {
+              "id": 2059927552,
               "name": "Plate",
               "op": {
                 "size": {
@@ -654,11 +1202,11 @@
                 "type": "Cube"
               }
             },
-            "10": {
-              "id": 10,
+            "2059927553": {
+              "id": 2059927553,
               "name": null,
               "op": {
-                "child": 9,
+                "child": 2059927552,
                 "factor": {
                   "x": 1.0,
                   "y": 1.0,
@@ -667,8 +1215,8 @@
                 "type": "Scale"
               }
             },
-            "11": {
-              "id": 11,
+            "2059927554": {
+              "id": 2059927554,
               "name": null,
               "op": {
                 "angles": {
@@ -676,15 +1224,15 @@
                   "y": 0.0,
                   "z": 0.0
                 },
-                "child": 10,
+                "child": 2059927553,
                 "type": "Rotate"
               }
             },
-            "12": {
-              "id": 12,
+            "2059927555": {
+              "id": 2059927555,
               "name": null,
               "op": {
-                "child": 11,
+                "child": 2059927554,
                 "offset": {
                   "x": 0.0,
                   "y": 0.0,
@@ -693,160 +1241,63 @@
                 "type": "Translate"
               }
             },
-            "13": {
-              "id": 13,
-              "name": "fillet",
-              "op": {
-                "child": 12,
-                "radius": 1.5,
-                "type": "Fillet"
-              }
-            },
-            "14": {
-              "id": 14,
-              "name": null,
-              "op": {
-                "child": 13,
-                "factor": {
-                  "x": 1.0,
-                  "y": 1.0,
-                  "z": 1.0
-                },
-                "type": "Scale"
-              }
-            },
-            "15": {
-              "id": 15,
-              "name": null,
-              "op": {
-                "angles": {
-                  "x": 0.0,
-                  "y": 0.0,
-                  "z": 0.0
-                },
-                "child": 14,
-                "type": "Rotate"
-              }
-            },
-            "16": {
-              "id": 16,
-              "name": null,
-              "op": {
-                "child": 15,
-                "offset": {
-                  "x": 0.0,
-                  "y": 0.0,
-                  "z": 0.0
-                },
-                "type": "Translate"
-              }
-            },
-            "2": {
-              "id": 2,
-              "name": null,
-              "op": {
-                "child": 1,
-                "factor": {
-                  "x": 1.0,
-                  "y": 1.0,
-                  "z": 1.0
-                },
-                "type": "Scale"
-              }
-            },
-            "3": {
-              "id": 3,
-              "name": null,
-              "op": {
-                "angles": {
-                  "x": 0.0,
-                  "y": 0.0,
-                  "z": 0.0
-                },
-                "child": 2,
-                "type": "Rotate"
-              }
-            },
-            "4": {
-              "id": 4,
-              "name": null,
-              "op": {
-                "child": 3,
-                "offset": {
-                  "x": 0.0,
-                  "y": 0.0,
-                  "z": 0.0
-                },
-                "type": "Translate"
-              }
-            },
-            "5": {
-              "id": 5,
-              "name": "cylinder",
-              "op": {
-                "height": 12.0,
-                "radius": 3.0,
-                "segments": 32,
-                "type": "Cylinder"
-              }
-            },
-            "6": {
-              "id": 6,
-              "name": null,
-              "op": {
-                "child": 5,
-                "factor": {
-                  "x": 1.0,
-                  "y": 1.0,
-                  "z": 1.0
-                },
-                "type": "Scale"
-              }
-            },
-            "7": {
-              "id": 7,
-              "name": null,
-              "op": {
-                "angles": {
-                  "x": 0.0,
-                  "y": 0.0,
-                  "z": 0.0
-                },
-                "child": 6,
-                "type": "Rotate"
-              }
-            },
-            "8": {
-              "id": 8,
-              "name": null,
-              "op": {
-                "child": 7,
-                "offset": {
-                  "x": 0.0,
-                  "y": 0.0,
-                  "z": 0.0
-                },
-                "type": "Translate"
-              }
-            },
-            "9": {
-              "id": 9,
+            "534282240": {
+              "id": 534282240,
               "name": "boolean",
               "op": {
-                "left": 4,
-                "right": 8,
+                "left": 2059927555,
+                "right": 1297104899,
                 "type": "Difference"
+              }
+            },
+            "534282241": {
+              "id": 534282241,
+              "name": null,
+              "op": {
+                "child": 534282240,
+                "factor": {
+                  "x": 1.0,
+                  "y": 1.0,
+                  "z": 1.0
+                },
+                "type": "Scale"
+              }
+            },
+            "534282242": {
+              "id": 534282242,
+              "name": null,
+              "op": {
+                "angles": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "child": 534282241,
+                "type": "Rotate"
+              }
+            },
+            "534282243": {
+              "id": 534282243,
+              "name": null,
+              "op": {
+                "child": 534282242,
+                "offset": {
+                  "x": 0.0,
+                  "y": 0.0,
+                  "z": 0.0
+                },
+                "type": "Translate"
               }
             }
           },
           "partIds": {
-            "16": "5:3"
+            "1918943235": "5:3"
           },
           "part_materials": {},
           "roots": [
             {
               "material": "default",
-              "root": 16
+              "root": 1918943235
             }
           ],
           "version": "0.1"
@@ -856,43 +1307,43 @@
             "id": "5:0",
             "kind": "cube",
             "name": "Plate",
-            "primitiveNodeId": 1,
-            "rotateNodeId": 3,
-            "scaleNodeId": 2,
-            "translateNodeId": 4
+            "primitiveNodeId": 2059927552,
+            "rotateNodeId": 2059927554,
+            "scaleNodeId": 2059927553,
+            "translateNodeId": 2059927555
           },
           {
             "id": "5:1",
             "kind": "cylinder",
             "name": "cylinder",
-            "primitiveNodeId": 5,
-            "rotateNodeId": 7,
-            "scaleNodeId": 6,
-            "translateNodeId": 8
+            "primitiveNodeId": 1297104896,
+            "rotateNodeId": 1297104898,
+            "scaleNodeId": 1297104897,
+            "translateNodeId": 1297104899
           },
           {
-            "booleanNodeId": 9,
+            "booleanNodeId": 534282240,
             "booleanType": "difference",
             "id": "5:2",
             "kind": "boolean",
             "name": "boolean",
-            "rotateNodeId": 11,
-            "scaleNodeId": 10,
+            "rotateNodeId": 534282242,
+            "scaleNodeId": 534282241,
             "sourcePartIds": [
               "5:0",
               "5:1"
             ],
-            "translateNodeId": 12
+            "translateNodeId": 534282243
           },
           {
-            "filletNodeId": 13,
+            "filletNodeId": 1918943232,
             "id": "5:3",
             "kind": "fillet",
             "name": "fillet",
-            "rotateNodeId": 15,
-            "scaleNodeId": 14,
+            "rotateNodeId": 1918943234,
+            "scaleNodeId": 1918943233,
             "sourcePartId": "5:2",
-            "translateNodeId": 16
+            "translateNodeId": 1918943235
           }
         ],
         "warnings": []
@@ -920,6 +1371,7 @@
     },
     {
       "error": {
+        "detail": "unknown variant `oops`, expected one of `F64`, `Vec3`, `Bool`, `String`, `FeatureRef`, `FeatureRefList`, `Sketch`",
         "kind": "invalid",
         "message": "invalid command: unknown variant `oops`, expected one of `F64`, `Vec3`, `Bool`, `String`, `FeatureRef`, `FeatureRefList`, `Sketch`"
       },

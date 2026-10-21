@@ -107,6 +107,15 @@ export {
   type MergeOutcome,
 } from "./diff.js";
 export { SolidCache, hashCsgOp } from "./solid-cache.js";
+export {
+  applyDocumentDelta,
+  applyEngineDelta,
+  applyPartsDelta,
+  EngineRefusal,
+  parseDeltaEnvelope,
+  stateFromEnvelope,
+} from "./delta.js";
+export type { DeltaChanges, EngineState } from "./delta.js";
 export { MeshCache } from "./mesh-cache.js";
 export { DependencyGraph } from "./dependency-graph.js";
 export type { EvaluateOptions } from "./evaluate.js";
@@ -623,6 +632,15 @@ export interface RegisteredStepSolid {
 }
 
 /** Result of registering STEP contents for `step_import` resolution. */
+/** Result of {@link Engine.importStepMeshDocument}, besides the document. */
+export interface StepMeshDocumentResult {
+  report: RegisterStepSourceResult["report"];
+  summary: string | null;
+  bodies: number;
+  triangles: number;
+  vertices: number;
+}
+
 export interface RegisterStepSourceResult {
   /** The key registered — the exact string a `step_import` node must carry. */
   path: string;
@@ -649,6 +667,15 @@ export interface KernelModule {
   /** Register STEP bytes so `step_import` nodes with this path resolve to BRep.
    * Optional: absent on kernel WASM builds older than the registry. */
   registerStepSource?: (path: string, data: Uint8Array) => RegisterStepSourceResult;
+  /** Document for a B-rep STEP import (one step_import node per solid). */
+  stepImportDocument?: (path: string, solid_indices: Uint32Array, part_name: string, material: string) => string;
+  /** Tessellated STEP import straight to a document. */
+  importStepMeshDocument?: (
+    data: Uint8Array,
+    part_name: string,
+    material: string,
+    source: string,
+  ) => StepMeshDocumentResult & { document: string };
   /** Whether STEP contents are registered under a path. */
   stepSourceRegistered?: (path: string) => boolean;
   /** Forget STEP contents registered under a path. */
@@ -678,6 +705,8 @@ export interface KernelModule {
   ) => string;
   /** Name of a floating joint found in a commented-out region, if any. */
   urdfCommentedFloatingJoint?: (data: Uint8Array) => string | undefined;
+  /** Rewrite MeshImport nodes to ImportedMesh from host-read STL bytes. */
+  inlineMeshImports?: (doc_json: string, keys: string[], blobs: Uint8Array[]) => string;
   exportProjectedViewToDxf: (view_json: string) => Uint8Array;
   /** Offset (stepped) section of a mesh; null on parse failure. */
   offsetSectionMesh?: (
@@ -1297,12 +1326,15 @@ export class Engine {
       importStepBufferWithReport: (wasmModule as Record<string, unknown>).importStepBufferWithReport as KernelModule["importStepBufferWithReport"],
       documentToStepBuffer: (wasmModule as Record<string, unknown>).documentToStepBuffer as KernelModule["documentToStepBuffer"],
       registerStepSource: (wasmModule as Record<string, unknown>).registerStepSource as KernelModule["registerStepSource"],
+      stepImportDocument: (wasmModule as Record<string, unknown>).stepImportDocument as KernelModule["stepImportDocument"],
+      importStepMeshDocument: (wasmModule as Record<string, unknown>).importStepMeshDocument as KernelModule["importStepMeshDocument"],
       stepSourceRegistered: (wasmModule as Record<string, unknown>).stepSourceRegistered as KernelModule["stepSourceRegistered"],
       unregisterStepSource: (wasmModule as Record<string, unknown>).unregisterStepSource as KernelModule["unregisterStepSource"],
       inspectDocumentFaces: (wasmModule as Record<string, unknown>).inspectDocumentFaces as KernelModule["inspectDocumentFaces"],
       importUrdfBuffer: (wasmModule as Record<string, unknown>).importUrdfBuffer as KernelModule["importUrdfBuffer"],
       importUrdfBufferWithOptions: (wasmModule as Record<string, unknown>).importUrdfBufferWithOptions as KernelModule["importUrdfBufferWithOptions"],
       urdfCommentedFloatingJoint: (wasmModule as Record<string, unknown>).urdfCommentedFloatingJoint as KernelModule["urdfCommentedFloatingJoint"],
+      inlineMeshImports: (wasmModule as Record<string, unknown>).inlineMeshImports as KernelModule["inlineMeshImports"],
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
       offsetSectionMesh: (wasmModule as Record<string, unknown>).offsetSectionMesh as KernelModule["offsetSectionMesh"],
       renderTitleBlock: (wasmModule as Record<string, unknown>).renderTitleBlock as KernelModule["renderTitleBlock"],
@@ -2052,6 +2084,37 @@ export class Engine {
   }
 
   /**
+   * Build the document for a B-rep STEP import: one lazy `step_import` root
+   * per solid index of the file registered under `path`, named `partName`
+   * (or `partName_N` for several), in `material` (`vcad_eval::step_doc`).
+   */
+  stepImportDocument(path: string, solidIndices: number[], partName: string, material: string): Document {
+    if (typeof this.kernel.stepImportDocument !== "function") {
+      throw new Error("stepImportDocument is not available - rebuild the kernel WASM");
+    }
+    return JSON.parse(
+      this.kernel.stepImportDocument(path, Uint32Array.from(solidIndices), partName, material),
+    ) as Document;
+  }
+
+  /**
+   * Tessellated STEP import straight to a document (one `ImportedMesh` root
+   * per body), built in the kernel. Throws when the file has no geometry.
+   */
+  importStepMeshDocument(
+    data: ArrayBuffer,
+    partName: string,
+    material: string,
+    source: string,
+  ): StepMeshDocumentResult & { document: Document } {
+    if (typeof this.kernel.importStepMeshDocument !== "function") {
+      throw new Error("importStepMeshDocument is not available - rebuild the kernel WASM");
+    }
+    const r = this.kernel.importStepMeshDocument(new Uint8Array(data), partName, material, source);
+    return { ...r, document: JSON.parse(r.document) as Document };
+  }
+
+  /**
    * Register STEP file contents so `step_import` nodes resolve to B-rep.
    *
    * A `step_import` node keeps only a path, and the WASM kernel has no
@@ -2176,6 +2239,27 @@ export class Engine {
    * a commented-out floating joint means the author expected the simulator
    * to supply the free base.
    */
+  /**
+   * Inline STL meshes into `doc` in place: each `MeshImport` node keyed in
+   * `meshes` (node id -> STL bytes) becomes an `ImportedMesh` (metres -> mm,
+   * URDF scale applied) via the kernel's `vcad_eval::mesh_inline`. Returns the
+   * inlined count and per-node failures; failed nodes stay `MeshImport`.
+   */
+  inlineMeshImports(
+    doc: Document,
+    meshes: Map<string, Uint8Array>,
+  ): { inlined: number; errors: Array<[string, string]> } {
+    if (meshes.size === 0) return { inlined: 0, errors: [] };
+    if (typeof this.kernel.inlineMeshImports !== "function") {
+      throw new Error("mesh inlining not available - rebuild the kernel WASM");
+    }
+    const out = JSON.parse(
+      this.kernel.inlineMeshImports(JSON.stringify(doc), [...meshes.keys()], [...meshes.values()]),
+    ) as { document: Document; inlined: number; errors: Array<[string, string]> };
+    doc.nodes = out.document.nodes;
+    return { inlined: out.inlined, errors: out.errors };
+  }
+
   urdfCommentedFloatingJoint(data: ArrayBuffer): string | undefined {
     if (typeof this.kernel.urdfCommentedFloatingJoint !== "function") {
       return undefined;

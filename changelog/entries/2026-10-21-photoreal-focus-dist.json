@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-photoreal-focus-dist",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "Depth of field controls for photoreal renders",
+  "summary": "--focus-dist sets the thin-lens plane of focus in vcad-render; vcad render --photoreal gains --aperture, --focus-dist and --focus-part.",
+  "features": ["photoreal", "render", "cli"]
+}

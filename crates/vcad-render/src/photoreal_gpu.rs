@@ -115,7 +115,7 @@ pub fn render_photoreal_gpu_jpeg_str(
     opts: &RasterOptions,
     pr: &PhotorealOptions,
 ) -> Result<Vec<u8>, String> {
-    encode_jpeg(rasterize(raw_vcad, opts, pr, false)?, opts)
+    encode_jpeg(rasterize(raw_vcad, opts, pr, false, None)?, opts)
 }
 
 /// Render raw `.vcad` document JSON to a photorealistic RGBA PNG on the GPU.
@@ -124,8 +124,27 @@ pub fn render_photoreal_gpu_png_str(
     opts: &RasterOptions,
     pr: &PhotorealOptions,
 ) -> Result<Vec<u8>, String> {
-    encode_png(rasterize(raw_vcad, opts, pr, true)?, opts)
+    encode_png(rasterize(raw_vcad, opts, pr, true, None)?, opts)
 }
+
+/// [`render_photoreal_gpu_png_str`] with progress and cancellation.
+///
+/// The samples are traced in batches of [`PROGRESS_BATCH_SPP`], each with its
+/// own seed, and averaged in linear radiance before the tonemap — the same
+/// estimator as one long dispatch, so the picture is equivalent. After every
+/// batch `report(samples_done, samples_total)` is called; returning `false`
+/// stops the render and yields `Err("cancelled")`.
+pub fn render_photoreal_gpu_png_str_progress(
+    raw_vcad: &str,
+    opts: &RasterOptions,
+    pr: &PhotorealOptions,
+    report: &mut dyn FnMut(u32, u32) -> bool,
+) -> Result<Vec<u8>, String> {
+    encode_png(rasterize(raw_vcad, opts, pr, true, Some(report))?, opts)
+}
+
+/// Samples per dispatch when a render reports progress.
+pub const PROGRESS_BATCH_SPP: u32 = 16;
 
 /// Reject the option combinations the GPU tracer cannot render *faithfully*.
 ///
@@ -315,6 +334,7 @@ fn rasterize(
     opts: &RasterOptions,
     pr: &PhotorealOptions,
     png: bool,
+    mut report: Option<&mut dyn FnMut(u32, u32) -> bool>,
 ) -> Result<Frame, String> {
     photoreal::check_raster_opts(opts)?;
     check_supported(opts, pr)?;
@@ -355,37 +375,77 @@ fn rasterize(
     let canvas = framing.canvas;
     let (w, h) = (canvas.w as u32, canvas.h as u32);
     let cpu_opts = photoreal::trace_options(pr, png);
-    let out = pipeline
-        .render_offline(
-            ctx,
-            &gpu_scene,
-            &camera_for(&framing, w, h),
-            &OfflineOptions {
-                width: w,
-                height: h,
-                spp: cpu_opts.spp,
-                max_depth: cpu_opts.max_depth,
-                rr_start: cpu_opts.rr_start,
-                // Only read for the gradient: an image environment carries
-                // its own intensity, which `offline_render_state` takes from
-                // the packed map.
-                env_intensity: match &scene.env {
-                    Environment::Gradient(g) => g.intensity,
-                    Environment::Image(_) => 1.0,
+    let total = cpu_opts.spp.max(1);
+    // One dispatch when nobody is watching (the CLI): byte-identical to an
+    // unbatched render. Batches only when progress is wanted.
+    let batch_spp = if report.is_some() {
+        PROGRESS_BATCH_SPP.min(total)
+    } else {
+        total
+    };
+    let mut tick = |done: u32| report.as_mut().is_none_or(|r| r(done, total));
+    let mut done = 0u32;
+    let mut weight_sum = 0f32;
+    let mut acc: Vec<f32> = Vec::new();
+    let mut last = None;
+    if !tick(0) {
+        return Err("cancelled".to_string());
+    }
+    while done < total {
+        let batch = batch_spp.min(total - done);
+        let part = pipeline
+            .render_offline(
+                ctx,
+                &gpu_scene,
+                &camera_for(&framing, w, h),
+                &OfflineOptions {
+                    width: w,
+                    height: h,
+                    spp: batch,
+                    max_depth: cpu_opts.max_depth,
+                    rr_start: cpu_opts.rr_start,
+                    // Only read for the gradient: an image environment carries
+                    // its own intensity, which `offline_render_state` takes from
+                    // the packed map.
+                    env_intensity: match &scene.env {
+                        Environment::Gradient(g) => g.intensity,
+                        Environment::Image(_) => 1.0,
+                    },
+                    firefly_clamp: cpu_opts.firefly_clamp.unwrap_or(0.0),
+                    // The floor is real geometry here, so the shader's own
+                    // implicit z=0 ground must stay out of the way — it would
+                    // otherwise add a second, differently-placed floor.
+                    ground_enabled: false,
+                    show_background: cpu_opts.show_background,
+                    // The CPU seed is 64-bit and only ever mixed into a per-pixel
+                    // hash; the shader's is 32. Fold rather than truncate so two
+                    // seeds that differ only in the high word still differ here.
+                    seed: ((pr.seed as u32) ^ ((pr.seed >> 32) as u32))
+                        .wrapping_add(done.wrapping_mul(0x9e37_79b9)),
                 },
-                firefly_clamp: cpu_opts.firefly_clamp.unwrap_or(0.0),
-                // The floor is real geometry here, so the shader's own
-                // implicit z=0 ground must stay out of the way — it would
-                // otherwise add a second, differently-placed floor.
-                ground_enabled: false,
-                show_background: cpu_opts.show_background,
-                // The CPU seed is 64-bit and only ever mixed into a per-pixel
-                // hash; the shader's is 32. Fold rather than truncate so two
-                // seeds that differ only in the high word still differ here.
-                seed: (pr.seed as u32) ^ ((pr.seed >> 32) as u32),
-            },
-        )
-        .map_err(|e| format!("--gpu: render failed: {e}"))?;
+            )
+            .map_err(|e| format!("--gpu: render failed: {e}"))?;
+        let weight = part.spp.max(1) as f32;
+        weight_sum += weight;
+        if acc.is_empty() {
+            acc = part.rgba.iter().map(|v| v * weight).collect();
+        } else {
+            for (a, v) in acc.iter_mut().zip(&part.rgba) {
+                *a += v * weight;
+            }
+        }
+        done += batch;
+        last = Some(part);
+        if !tick(done) && done < total {
+            return Err("cancelled".to_string());
+        }
+    }
+    let mut out = last.ok_or("--gpu: no samples traced")?;
+    if done > batch_spp {
+        let inv = 1.0 / weight_sum;
+        out.rgba = acc.into_iter().map(|v| v * inv).collect();
+        out.spp = weight_sum as u32;
+    }
 
     let film = out.to_film();
     let rgba = film.to_srgb8(pr.exposure, png && pr.backdrop != Backdrop::Studio);
