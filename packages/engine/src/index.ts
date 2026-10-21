@@ -680,6 +680,8 @@ export interface KernelModule {
   urdfCommentedFloatingJoint?: (data: Uint8Array) => string | undefined;
   /** Build a sheet-metal document from a sheet_metal_create request. */
   buildSheetMetalDocument?: (args_json: string) => string;
+  /** Rewrite MeshImport nodes to ImportedMesh from host-read STL bytes. */
+  inlineMeshImports?: (doc_json: string, keys: string[], blobs: Uint8Array[]) => string;
   exportProjectedViewToDxf: (view_json: string) => Uint8Array;
   /** Offset (stepped) section of a mesh; null on parse failure. */
   offsetSectionMesh?: (
@@ -1306,6 +1308,7 @@ export class Engine {
       importUrdfBufferWithOptions: (wasmModule as Record<string, unknown>).importUrdfBufferWithOptions as KernelModule["importUrdfBufferWithOptions"],
       urdfCommentedFloatingJoint: (wasmModule as Record<string, unknown>).urdfCommentedFloatingJoint as KernelModule["urdfCommentedFloatingJoint"],
       buildSheetMetalDocument: (wasmModule as Record<string, unknown>).buildSheetMetalDocument as KernelModule["buildSheetMetalDocument"],
+      inlineMeshImports: (wasmModule as Record<string, unknown>).inlineMeshImports as KernelModule["inlineMeshImports"],
       exportProjectedViewToDxf: wasmModule.exportProjectedViewToDxf,
       offsetSectionMesh: (wasmModule as Record<string, unknown>).offsetSectionMesh as KernelModule["offsetSectionMesh"],
       renderTitleBlock: (wasmModule as Record<string, unknown>).renderTitleBlock as KernelModule["renderTitleBlock"],
@@ -2189,6 +2192,27 @@ export class Engine {
       throw new Error("sheet-metal document builder not available - rebuild the kernel WASM");
     }
     return JSON.parse(this.kernel.buildSheetMetalDocument(JSON.stringify(args))) as Document;
+  }
+
+  /**
+   * Inline STL meshes into `doc` in place: each `MeshImport` node keyed in
+   * `meshes` (node id -> STL bytes) becomes an `ImportedMesh` (metres -> mm,
+   * URDF scale applied) via the kernel's `vcad_eval::mesh_inline`. Returns the
+   * inlined count and per-node failures; failed nodes stay `MeshImport`.
+   */
+  inlineMeshImports(
+    doc: Document,
+    meshes: Map<string, Uint8Array>,
+  ): { inlined: number; errors: Array<[string, string]> } {
+    if (meshes.size === 0) return { inlined: 0, errors: [] };
+    if (typeof this.kernel.inlineMeshImports !== "function") {
+      throw new Error("mesh inlining not available - rebuild the kernel WASM");
+    }
+    const out = JSON.parse(
+      this.kernel.inlineMeshImports(JSON.stringify(doc), [...meshes.keys()], [...meshes.values()]),
+    ) as { document: Document; inlined: number; errors: Array<[string, string]> };
+    doc.nodes = out.document.nodes;
+    return { inlined: out.inlined, errors: out.errors };
   }
 
   urdfCommentedFloatingJoint(data: ArrayBuffer): string | undefined {

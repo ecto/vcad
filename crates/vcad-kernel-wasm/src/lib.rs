@@ -3567,6 +3567,39 @@ pub fn build_sheet_metal_document(args_json: &str) -> Result<String, JsError> {
         .map_err(|e| JsError::new(&format!("serialize: {e}")))
 }
 
+/// Rewrite `MeshImport` nodes to inline `ImportedMesh` geometry from STL
+/// bytes the host read (metres → mm, URDF `<mesh scale>` applied), via
+/// `vcad_eval::mesh_inline`. `keys[i]` is the node id whose STL is
+/// `blobs[i]` (a `Uint8Array`). Returns
+/// `{document, inlined, errors: [[key, reason], ...]}`.
+#[module("urdf")]
+#[wasm_bindgen(js_name = inlineMeshImports)]
+pub fn inline_mesh_imports(
+    doc_json: &str,
+    keys: Vec<String>,
+    blobs: js_sys::Array,
+) -> Result<String, JsError> {
+    if keys.len() as u32 != blobs.length() {
+        return Err(JsError::new(
+            "inlineMeshImports: keys and blobs differ in length",
+        ));
+    }
+    let mut doc = vcad_ir::Document::from_json(doc_json)
+        .map_err(|e| JsError::new(&format!("Document parse error: {e}")))?;
+    let meshes: std::collections::HashMap<String, Vec<u8>> = keys
+        .into_iter()
+        .enumerate()
+        .map(|(i, k)| (k, js_sys::Uint8Array::new(&blobs.get(i as u32)).to_vec()))
+        .collect();
+    let report = vcad_eval::mesh_inline::inline_mesh_imports(&mut doc, &meshes);
+    serde_json::to_string(&serde_json::json!({
+        "document": doc,
+        "inlined": report.inlined,
+        "errors": report.errors,
+    }))
+    .map_err(|e| JsError::new(&format!("serialize: {e}")))
+}
+
 // =========================================================================
 // GPU-Accelerated Geometry Processing
 // =========================================================================
