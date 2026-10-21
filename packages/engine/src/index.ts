@@ -121,6 +121,7 @@ export {
   EngineHostError,
   handleEngineRequest,
   inProcessTransport,
+  sharedEngineTransport,
   workerTransport,
 } from "./engine-host.js";
 export type {

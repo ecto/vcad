@@ -49,14 +49,23 @@ export interface HostedEngineClass {
 export type EngineRequest =
   | { op: "init"; replica?: number }
   | { op: "load"; bytes: Uint8Array }
-  | { op: "apply"; command: DocCommand }
-  | { op: "applyTool"; tool: string; args: unknown }
+  | { op: "apply"; command: DocCommand; expectHash?: string }
+  | { op: "applyTool"; tool: string; args: unknown; expectHash?: string }
   | { op: "state" }
   | { op: "save" };
 
 /** The host's answer: raw engine JSON, so the wire stays the engine's own. */
 export type EngineResponse =
-  | { ok: true; envelope?: string; bytes?: Uint8Array; hash: string; canUndo: boolean; canRedo: boolean }
+  | {
+      ok: true;
+      envelope?: string;
+      bytes?: Uint8Array;
+      hash: string;
+      canUndo: boolean;
+      canRedo: boolean;
+      /** The engine was not at `expectHash`, so nothing was applied. */
+      stale?: boolean;
+    }
   | { ok: false; message: string };
 
 /** Host-side state: the engine class and the live engine. */
@@ -87,6 +96,22 @@ export function handleEngineRequest(host: EngineHostState, req: EngineRequest): 
       default: {
         const engine = host.engine;
         if (!engine) return { ok: false, message: "engine not initialized" };
+        if (
+          (req.op === "apply" || req.op === "applyTool") &&
+          req.expectHash !== undefined &&
+          engine.stateHash() !== req.expectHash
+        ) {
+          // The engine moved since the client's last view (a synchronous
+          // caller sharing it, a remote merge): a delta would fold onto the
+          // wrong base, so apply nothing and let the client resync.
+          return {
+            ok: true,
+            stale: true,
+            hash: engine.stateHash(),
+            canUndo: engine.can_undo(),
+            canRedo: engine.can_redo(),
+          };
+        }
         if (req.op === "apply") envelope = engine.applyDelta(JSON.stringify(req.command));
         else if (req.op === "applyTool") envelope = engine.applyToolDelta(req.tool, JSON.stringify(req.args));
         else if (req.op === "state") envelope = engine.stateEnvelope();
@@ -122,6 +147,26 @@ export function inProcessTransport(Engine: HostedEngineClass): EngineTransport {
       host.engine?.free();
       host.engine = null;
     },
+  };
+}
+
+/**
+ * Host requests against an engine someone else owns and may also mutate
+ * directly (the document store, while its commands move to async). `init`
+ * and `load` only read the current state; `dispose` never frees the engine.
+ * The client's hash check resyncs its view after direct mutations.
+ */
+export function sharedEngineTransport(getEngine: () => HostedEngine | null): EngineTransport {
+  const ownerOnly = function () {
+    throw new Error("shared engine: the owner constructs engines");
+  } as unknown as HostedEngineClass;
+  return {
+    request: async (req) => {
+      const host: EngineHostState = { Engine: ownerOnly, engine: getEngine() };
+      const r = req.op === "init" || req.op === "load" ? ({ op: "state" } as const) : req;
+      return handleEngineRequest(host, r);
+    },
+    dispose: () => undefined,
   };
 }
 
@@ -232,11 +277,18 @@ export class DocumentEngineClient {
     });
   }
 
-  private delta(req: EngineRequest): Promise<CommandOutcome> {
+  private delta(req: Extract<EngineRequest, { op: "apply" | "applyTool" }>): Promise<CommandOutcome> {
     return this.enqueue(async () => {
+      if (!this.view) throw new EngineHostError("engine not initialized");
+      let r = this.check(await this.transport.request({ ...req, expectHash: this.flags.hash }));
+      if (r.stale) {
+        // The engine moved under the view: resync, then apply on top.
+        const full = this.check(await this.transport.request({ op: "state" }));
+        this.view = stateFromEnvelope(full.envelope!);
+        r = this.check(await this.transport.request({ ...req, expectHash: this.flags.hash }));
+        if (r.stale) throw new EngineHostError("engine changed during resync");
+      }
       const base = this.view;
-      if (!base) throw new EngineHostError("engine not initialized");
-      const r = this.check(await this.transport.request(req));
       const delta = parseDeltaEnvelope(r.envelope!); // throws EngineRefusal
       const { state, changes } = applyEngineDelta(base, delta);
       this.view = state;
