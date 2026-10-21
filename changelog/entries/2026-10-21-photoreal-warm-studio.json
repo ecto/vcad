@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-photoreal-warm-studio",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "Warm studio lighting preset for photoreal renders",
+  "summary": "--lighting warm-studio adds a camera-relative warm key, cool fill and rim rig, with every light kept outside the frame.",
+  "features": ["photoreal", "render", "lighting"]
+}

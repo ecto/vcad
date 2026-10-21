@@ -458,6 +458,12 @@ struct Cli {
     #[arg(long, requires = "photoreal")]
     focus_dist: Option<f64>,
 
+    /// Light rig for `--photoreal` with the gradient environment:
+    /// `studio` (neutral three-softbox) or `warm-studio` (warm key,
+    /// cool fill and rim placed relative to the camera, all out of frame).
+    #[arg(long, default_value = "studio", requires = "photoreal")]
+    lighting: vcad_render::photoreal::Lighting,
+
     /// Backdrop for `--photoreal`: studio sweep, shadow-catcher (transparent
     /// but keeps the contact shadow), or none.
     #[arg(long, value_enum, default_value_t = BackdropArg::Studio, requires = "photoreal")]
@@ -673,6 +679,7 @@ fn photoreal_options(cli: &Cli) -> vcad_render::photoreal::PhotorealOptions {
             BackdropArg::Shadow => Backdrop::ShadowCatcher,
             BackdropArg::None => Backdrop::None,
         },
+        lighting: cli.lighting,
         seed: cli.seed,
         denoise: !cli.no_denoise,
         adaptive: !cli.no_adaptive,
