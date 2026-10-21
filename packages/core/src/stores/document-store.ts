@@ -918,18 +918,34 @@ function getPcbBoardFeatureId(state: DocumentState): string {
   return pcb?.id ?? "";
 }
 
-/** Write the entire schematic sheet back to the CRDT feature. */
-function setCrdtSchematic(state: DocumentState, schematic: NonNullable<Document["schematic"]>): void {
-  const schId = getOrCreateSchematicFeature(state);
-  applyCommand(state._crdtEngine!, { type: "set_param", id: schId, key: "sheet", value: crdtStr(JSON.stringify(schematic)) });
-}
-
 /** Write the entire PCB board back to the CRDT pcb-board feature. */
 function setCrdtPcb(state: DocumentState, pcb: Pcb): Partial<DocumentState> {
   const pcbFid = getPcbBoardFeatureId(state);
   if (!pcbFid) return {};
   const result = applyCommand(state._crdtEngine!, { type: "set_param", id: pcbFid, key: "board", value: crdtStr(JSON.stringify(pcb)) });
   return applyLegacyResult(result);
+}
+
+/**
+ * Apply a blob-edit tool (PCB board, schematic sheet, design constraints)
+ * through the engine's Rust lowering. A refused edit (no board, index out of
+ * range, unknown id) leaves the document untouched; returns whether it applied.
+ */
+function applyEdit(
+  get: () => DocumentState,
+  set: (patch: Partial<DocumentState>) => void,
+  tool: string,
+  args: unknown,
+): boolean {
+  const engine = get()._crdtEngine;
+  if (!engine) return false;
+  const envelope = applyToolCall(engine, tool, args);
+  if (!envelope.ok) {
+    console.warn(`[document-store] ${tool}: ${envelope.error.message}`);
+    return false;
+  }
+  set(applyApiResult(envelope.result));
+  return true;
 }
 
 /** Shared logic for adding a Pcb board to the document. */
@@ -2254,292 +2270,109 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   moveSchematicComponent: (idx, position) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    if (sch.components[idx]) {
-      sch.components[idx]!.position = { x: position.x, y: position.y };
-    }
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_move_component", { index: idx, position: { x: position.x, y: position.y } });
   },
 
   moveSchematicComponentWithWires: (idx, position, wireUpdates) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    if (sch.components[idx]) {
-      sch.components[idx]!.position = { x: position.x, y: position.y };
-    }
-    for (const wu of wireUpdates) {
-      const wire = sch.wires[wu.wireIdx];
-      if (wire) {
-        wire[wu.endpoint] = { x: wu.pos.x, y: wu.pos.y };
-      }
-    }
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_move_component", {
+      index: idx,
+      position: { x: position.x, y: position.y },
+      wire_updates: wireUpdates.map((wu) => ({
+        wire_index: wu.wireIdx,
+        endpoint: wu.endpoint,
+        position: { x: wu.pos.x, y: wu.pos.y },
+      })),
+    });
   },
 
   moveFootprint: (_nodeId, idx, position) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    const fp = pcb.footprints[idx];
-    if (!fp) return;
-    const dx = position.x - fp.position.x;
-    const dy = position.y - fp.position.y;
-    // Direct manipulation: drag connected trace endpoints along with the
-    // footprint so routed copper stays attached to its pads. Pad world
-    // positions are computed with the (unchanged) footprint rotation; any
-    // trace endpoint coincident with a pad shifts by the same delta.
-    if (dx !== 0 || dy !== 0) {
-      const TOL = 0.08; // mm
-      const ang = ((fp.rotation ?? 0) * Math.PI) / 180;
-      const cos = Math.cos(ang);
-      const sin = Math.sin(ang);
-      const padWorld = fp.pads.map((p) => ({
-        x: fp.position.x + (p.position.x * cos - p.position.y * sin),
-        y: fp.position.y + (p.position.x * sin + p.position.y * cos),
-      }));
-      for (const tr of pcb.traces) {
-        for (const end of [tr.start, tr.end]) {
-          if (
-            padWorld.some(
-              (pw) => Math.abs(end.x - pw.x) < TOL && Math.abs(end.y - pw.y) < TOL,
-            )
-          ) {
-            end.x += dx;
-            end.y += dy;
-          }
-        }
-      }
-    }
-    fp.position = { x: position.x, y: position.y };
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    // The engine drags trace endpoints on the footprint's pads along with it.
+    applyEdit(get, set, "pcb_move_footprint", { index: idx, position: { x: position.x, y: position.y } });
   },
 
   rotateFootprint: (_nodeId, idx, angleDeg) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    if (pcb.footprints[idx]) {
-      const fp = pcb.footprints[idx]!;
-      fp.rotation = ((fp.rotation ?? 0) + angleDeg) % 360;
-    }
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_rotate_footprint", { index: idx, angle: angleDeg });
   },
 
   flipFootprint: (_nodeId, idx) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    if (pcb.footprints[idx]) {
-      const fp = pcb.footprints[idx]!;
-      fp.front = !(fp.front ?? true);
-    }
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_flip_footprint", { index: idx });
   },
 
   addTrace: (_nodeId, trace) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.traces.push({
-      start: { x: trace.start.x, y: trace.start.y },
-      end: { x: trace.end.x, y: trace.end.y },
-      width: trace.width, layer: trace.layer as Pcb["traces"][number]["layer"], net: trace.net,
+    applyEdit(get, set, "pcb_add_trace", {
+      trace: {
+        start: { x: trace.start.x, y: trace.start.y },
+        end: { x: trace.end.x, y: trace.end.y },
+        width: trace.width, layer: trace.layer, net: trace.net,
+      },
     });
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 
   removeTrace: (_nodeId, idx) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.traces.splice(idx, 1);
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_remove_trace", { index: idx });
   },
 
   addVia: (_nodeId, via) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.vias.push({
-      position: { x: via.position.x, y: via.position.y },
-      diameter: via.diameter, drill: via.drill,
-      startLayer: via.startLayer as Pcb["vias"][number]["startLayer"],
-      endLayer: via.endLayer as Pcb["vias"][number]["endLayer"],
-      net: via.net,
+    applyEdit(get, set, "pcb_add_via", {
+      via: {
+        position: { x: via.position.x, y: via.position.y },
+        diameter: via.diameter, drill: via.drill,
+        startLayer: via.startLayer, endLayer: via.endLayer, net: via.net,
+      },
     });
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 
   removeVia: (_nodeId, idx) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.vias.splice(idx, 1);
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_remove_via", { index: idx });
   },
 
   addSchematicComponent: (comp, _boardNodeId) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    sch.components.push(structuredClone(comp));
-    setCrdtSchematic(state, sch);
-    // Auto-add footprint to PCB
-    if (state.document.pcb && comp.footprintId && comp.properties?.footprintTemplate) {
-      const pcb = structuredClone(state.document.pcb);
-      try {
-        const template = JSON.parse(comp.properties.footprintTemplate);
-        const fpCount = pcb.footprints.length;
-        pcb.footprints.push({
-          ref: comp.ref, value: comp.value, footprintName: comp.footprintId,
-          position: { x: 10 + (fpCount % 5) * 10, y: 10 + Math.floor(fpCount / 5) * 10 },
-          pads: template.pads ?? [], graphics: template.graphics ?? [],
-        });
-      } catch { /* skip */ }
-      set({ ...setCrdtPcb(state, pcb), isDirty: true });
-      return;
-    }
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    // The engine also places the component's footprint template on the board.
+    applyEdit(get, set, "sch_add_component", { component: comp });
   },
 
   removeSchematicComponent: (idx, _boardNodeId) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    const removed = sch.components.splice(idx, 1);
-    setCrdtSchematic(state, sch);
-    if (state.document.pcb && removed[0]) {
-      const pcb = structuredClone(state.document.pcb);
-      pcb.footprints = pcb.footprints.filter((fp) => fp.ref !== removed[0]!.ref);
-      set({ ...setCrdtPcb(state, pcb), isDirty: true });
-      return;
-    }
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_remove_component", { index: idx });
   },
 
   updateSchematicComponent: (idx, updates, _boardNodeId) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    if (sch.components[idx]) {
-      Object.assign(sch.components[idx]!, updates);
-    }
-    setCrdtSchematic(state, sch);
-    if (updates.value !== undefined && state.document.pcb) {
-      const pcb = structuredClone(state.document.pcb);
-      const ref = sch.components[idx]?.ref;
-      if (ref) {
-        const fp = pcb.footprints.find((f) => f.ref === ref);
-        if (fp) fp.value = updates.value;
-      }
-      set({ ...setCrdtPcb(state, pcb), isDirty: true });
-      return;
-    }
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_update_component", { index: idx, updates });
   },
 
   addSchematicWire: (wire) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    sch.wires.push({ start: { ...wire.start }, end: { ...wire.end } });
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_add_wire", { wire: { start: { ...wire.start }, end: { ...wire.end } } });
   },
 
   removeSchematicWire: (idx) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    sch.wires.splice(idx, 1);
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_remove_wire", { index: idx });
   },
 
   addSchematicLabel: (label) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    sch.labels.push(structuredClone(label));
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_add_label", { label });
   },
 
   removeSchematicLabel: (idx) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    sch.labels.splice(idx, 1);
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_remove_label", { index: idx });
   },
 
   addSchematicJunction: (junction) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    sch.junctions.push({ position: { ...junction.position } });
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_add_junction", { junction: { position: { ...junction.position } } });
   },
 
   addFootprint: (_nodeId, fp) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.footprints.push(structuredClone(fp));
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_add_footprint", { footprint: fp });
   },
 
   removeFootprint: (_nodeId, idx) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.footprints.splice(idx, 1);
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_remove_footprint", { index: idx });
   },
 
   setBoardOutline: (outline) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.outline = structuredClone(outline);
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_set_outline", { outline });
   },
 
   resizeBoard: (width, height) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const w = Math.max(1, width);
-    const h = Math.max(1, height);
-    const pcb = structuredClone(state.document.pcb);
-    // Rectangular resize: origin corner at [0,0] (matches initPcb), keep
-    // thickness + cutouts. Custom (non-rect) outlines are rectangularized.
-    pcb.outline = {
-      ...pcb.outline,
-      vertices: [
-        { x: 0, y: 0 },
-        { x: w, y: 0 },
-        { x: w, y: h },
-        { x: 0, y: h },
-      ],
-    };
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_resize", { width, height });
   },
 
   persistSketchConstraints: (partId, session) => {
@@ -2557,41 +2390,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
 
   addDesignConstraint: (constraint) => {
-    const state = get();
-    const existing = state.document.constraints ?? [];
-    let max = 0;
-    for (const c of existing) {
-      const m = /^c(\d+)$/.exec(c.id);
-      if (m) max = Math.max(max, Number(m[1]));
-    }
-    const next = [...existing, { ...constraint, id: `c${max + 1}` } as DesignConstraint];
-    set({ ...setCrdtConstraints(state, next), isDirty: true });
+    // The engine assigns the next free `cN` id.
+    if (!applyEdit(get, set, "add_design_constraint", { constraint })) return null;
     return get().solveDesignConstraints();
   },
 
   removeDesignConstraint: (id) => {
-    const state = get();
-    const existing = state.document.constraints ?? [];
-    const next = existing.filter((c) => c.id !== id);
-    if (next.length === existing.length) return;
     // Deleting only frees degrees of freedom — no re-solve needed.
-    set({ ...setCrdtConstraints(state, next), isDirty: true });
+    applyEdit(get, set, "remove_design_constraint", { id });
   },
 
   updateDesignConstraint: (id, patch) => {
-    const state = get();
-    const existing = state.document.constraints ?? [];
-    const next = existing.map((c) => {
-      if (c.id !== id) return c;
-      const kind = { ...c.kind } as Record<string, unknown>;
-      if (patch.value !== undefined && "value" in kind) kind.value = patch.value;
-      return {
-        ...c,
-        kind: kind as DesignConstraint["kind"],
-        ...(patch.driven !== undefined ? { driven: patch.driven } : {}),
-      };
-    });
-    set({ ...setCrdtConstraints(state, next), isDirty: true });
+    if (!applyEdit(get, set, "update_design_constraint", { id, value: patch.value, driven: patch.driven })) return null;
     return get().solveDesignConstraints();
   },
 

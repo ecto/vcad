@@ -49,7 +49,9 @@ pub fn lower(tool: &str, args: &Value, doc: &DocumentApi) -> Result<DocCommand, 
         "update" => lower_update(args, doc),
         "place" => lower_place(args, doc),
         "place_part" => lower_place_part(args),
-        other => Err(unsupported(other)),
+        other => {
+            crate::doc_edits::lower(other, args, doc).unwrap_or_else(|| Err(unsupported(other)))
+        }
     }
 }
 
