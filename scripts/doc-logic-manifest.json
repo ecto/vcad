@@ -52,7 +52,7 @@
     { "path": "packages/app/src/stores/version-timeline-store.ts", "reason": "Document version history, restore and merge into the live document", "partial": true }
   ],
   "excluded": [
-    { "path": "packages/mcp/src/tools/ecad.ts", "reason": "PCB/ECAD tools (excluded by policy); likewise engine/src/ecad.ts, core/src/stores/{ecad-sync,electronics-store}.ts, core/src/utils/receipt/*, mcp tools import-pcb.ts and pcb-*.ts" },
+    { "path": "packages/mcp/src/tools/ecad.ts", "reason": "PCB/ECAD tools (excluded by policy); likewise engine/src/ecad.ts, core/src/stores/electronics-store.ts, core/src/utils/receipt/*, mcp tools import-pcb.ts and pcb-*.ts" },
     { "path": "packages/ir/**", "reason": "Generated IR types, not under counted packages" },
     { "path": "packages/core/src/commands/static-schemas.ts", "reason": "Generated tool schemas" },
     { "path": "packages/engine/src/index.ts", "reason": "Engine class: kernel-call wrappers; bakeStepImports is the only document rewrite and is small" },
