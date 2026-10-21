@@ -166,7 +166,7 @@ final class FrogAgentTests: XCTestCase {
 
     func testReadToolsDescribeAndInspect() async throws {
         let engine = DocumentEngine(replicaId: 1)
-        let created = try engine.applyTool("create", ["type": "cube", "params": ["size": ["x": 10, "y": 10, "z": 10]]])
+        let created = try engine.applyTool(ToolCall(tool: "create", args: ["type": "cube", "params": ["size": ["x": 10, "y": 10, "z": 10]]]))
         let id = try XCTUnwrap(created.createdFeatureId)
         let ex = FrogToolExecutor(engine: engine)
         let scene = await ex.execute(FrogToolCall(id: "1", name: "describe_scene", arguments: ""))
@@ -198,7 +198,7 @@ final class FrogAgentTests: XCTestCase {
 
     func testVisionOffFallsBackToTextScene() async throws {
         let engine = DocumentEngine(replicaId: 1)
-        try engine.applyTool("create", ["type": "sphere", "params": ["radius": 4]])
+        try engine.applyTool(ToolCall(tool: "create", args: ["type": "sphere", "params": ["radius": 4]]))
         let transport = MockFrogTransport([
             { _ in SSE.toolCall(id: "v1", name: "render_view", args: "{}") },
             { _ in SSE.text(["ok"]) },

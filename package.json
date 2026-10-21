@@ -13,6 +13,8 @@
     "changelog:build": "node scripts/build-changelog.mjs",
     "ir:gen": "cargo test -p vcad-ir -p vcad-receipt -p vcad-app --features vcad-ir/ts-rs,vcad-receipt/ts-rs,vcad-app/ts-rs export_bindings -- --ignored && node scripts/gen-ir-types.mjs",
     "engine:check": "node scripts/check-engine-boundary.mjs",
+    "swift:gen": "cargo test -p vcad-ir -p vcad-app --features vcad-ir/ts-rs,vcad-app/ts-rs export_bindings -- --ignored && node scripts/gen-swift-types.mjs",
+    "swift:check": "cargo test -p vcad-ir -p vcad-app --features vcad-ir/ts-rs,vcad-app/ts-rs export_bindings -- --ignored && node scripts/gen-swift-types.mjs --check",
     "ir:check": "cargo test -p vcad-ir -p vcad-receipt -p vcad-app --features vcad-ir/ts-rs,vcad-receipt/ts-rs,vcad-app/ts-rs export_bindings -- --ignored && node scripts/gen-ir-types.mjs --check",
     "build:ecad-diff-wasm": "wasm-pack build crates/vcad-ecad-diff-wasm --target nodejs --out-dir pkg",
     "version:sync": "node scripts/sync-version.mjs",

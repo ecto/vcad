@@ -71,7 +71,9 @@ final class FrogToolExecutor {
             }
         }
         do {
-            let r = try engine.applyTool(call.name, args)
+            let typed = try JSONDecoder().decode([String: EngineJSON].self,
+                                                 from: JSONSerialization.data(withJSONObject: args))
+            let r = try engine.applyTool(ToolCall(tool: call.name, args: typed))
             var text = "ok"
             if let id = r.createdFeatureId { text += "; created part \(id)" }
             text += "; document has \(counted(r.partCount, "part"))"

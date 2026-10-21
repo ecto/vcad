@@ -15,6 +15,7 @@ use vcad_crdt::Value;
 
 use crate::document_api::{ApiResult, DocumentApi};
 use crate::feature::FeatureInput;
+use crate::part_info::PartInfo;
 
 /// One document mutation (or history step).
 ///
@@ -91,6 +92,14 @@ pub enum DocCommand {
         id: String,
         /// Material key.
         material: String,
+    },
+    /// Add or replace a definition in the document's `materials` table.
+    DefineMaterial {
+        /// Material key (what `set_material` references).
+        key: String,
+        /// The definition.
+        #[cfg_attr(feature = "ts-rs", ts(type = "MaterialDef"))]
+        definition: vcad_ir::MaterialDef,
     },
     /// Show or hide a feature.
     SetVisible {
@@ -316,6 +325,9 @@ impl DocumentApi {
             DocCommand::SetRotation { id, angles } => self.set_rotation(&id, angles),
             DocCommand::SetScale { id, factor } => self.set_scale(&id, factor),
             DocCommand::SetMaterial { id, material } => self.set_material(&id, &material),
+            DocCommand::DefineMaterial { key, definition } => {
+                self.define_material(&key, &definition)
+            }
             DocCommand::SetVisible { id, visible } => self.set_visible(&id, visible),
             DocCommand::Rename { id, name } => self.rename_feature(&id, &name),
             DocCommand::Reorder { id, index } => self.reorder_feature(&id, index),
@@ -349,31 +361,107 @@ impl DocumentApi {
     }
 }
 
-/// The JSON result envelope shared by every binding:
+/// Successful result payload inside an [`EngineEnvelope`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+#[serde(rename_all = "camelCase")]
+pub struct EngineResult {
+    /// The materialized IR document.
+    #[cfg_attr(feature = "ts-rs", ts(type = "Document"))]
+    pub document: vcad_ir::Document,
+    /// Part metadata per materialized feature.
+    pub parts: Vec<PartInfo>,
+    /// Stable ids of parts consumed by other features.
+    pub consumed_part_ids: Vec<String>,
+    /// Non-fatal materialize issues.
+    pub warnings: Vec<String>,
+    /// Stable id of the feature the command created, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub created_feature_id: Option<String>,
+}
+
+/// A refused command inside an [`EngineEnvelope`]: the [`CommandError`]
+/// fields plus its display message.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct EngineError {
+    /// The structured error.
+    #[serde(flatten)]
+    pub error: CommandError,
+    /// Human-readable message.
+    pub message: String,
+}
+
+/// The JSON result envelope shared by every binding (wasm, ffi, CLI):
 ///
 /// - `{"ok":true,"result":{"document":…,"parts":…,"consumedPartIds":…,"warnings":…,"createdFeatureId"?:…}}`
 /// - `{"ok":false,"error":{"kind":"unknown_id",…,"message":"…"}}`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct EngineEnvelope {
+    /// Whether the command succeeded.
+    pub ok: bool,
+    /// Present when `ok`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub result: Option<EngineResult>,
+    /// Present when not `ok`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub error: Option<EngineError>,
+}
+
+/// An AI tool call as hosts hand it to the engine
+/// ([`DocumentApi::apply_tool_envelope`]). `args` stays JSON: each tool
+/// lowers its own argument shape in [`crate::tools::lower`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct ToolCall {
+    /// Tool name (`create`, `translate`, `place`, …).
+    pub tool: String,
+    /// Tool arguments (a JSON object).
+    #[cfg_attr(feature = "ts-rs", ts(type = "Record<string, unknown>"))]
+    pub args: serde_json::Value,
+}
+
+impl From<Result<ApiResult, CommandError>> for EngineEnvelope {
+    fn from(result: Result<ApiResult, CommandError>) -> Self {
+        match result {
+            Ok(r) => Self {
+                ok: true,
+                result: Some(EngineResult {
+                    document: r.document,
+                    parts: r.parts,
+                    consumed_part_ids: r.consumed_part_ids,
+                    warnings: r.warnings,
+                    created_feature_id: r.created_feature_id,
+                }),
+                error: None,
+            },
+            Err(e) => Self {
+                ok: false,
+                result: None,
+                error: Some(EngineError {
+                    message: e.to_string(),
+                    error: e,
+                }),
+            },
+        }
+    }
+}
+
+/// Serialize the [`EngineEnvelope`] for `result`. Goes through
+/// `serde_json::Value` so object keys come out sorted (stable bytes across
+/// hosts, whatever order the IR's maps iterate in).
 fn envelope(result: Result<ApiResult, CommandError>) -> String {
-    let value = match result {
-        Ok(r) => {
-            let mut result = serde_json::json!({
-                "document": r.document,
-                "parts": r.parts,
-                "consumedPartIds": r.consumed_part_ids,
-                "warnings": r.warnings,
-            });
-            if let Some(id) = r.created_feature_id {
-                result["createdFeatureId"] = id.into();
-            }
-            serde_json::json!({ "ok": true, "result": result })
-        }
-        Err(e) => {
-            let mut error = serde_json::to_value(&e).unwrap_or_default();
-            error["message"] = e.to_string().into();
-            serde_json::json!({ "ok": false, "error": error })
-        }
-    };
-    value.to_string()
+    serde_json::to_value(EngineEnvelope::from(result))
+        .unwrap_or_default()
+        .to_string()
 }
 
 #[cfg(all(test, feature = "ts-rs"))]
@@ -391,6 +479,8 @@ mod ts_export {
         FeatureInput::export_all().expect("FeatureInput export failed");
         crate::feature::BooleanType::export_all().expect("BooleanType export failed");
         Value::export_all().expect("Value export failed");
+        EngineEnvelope::export_all().expect("EngineEnvelope export failed");
+        ToolCall::export_all().expect("ToolCall export failed");
     }
 }
 
@@ -574,6 +664,84 @@ mod tests {
             .map(|(fid, _)| api.stable_ids().stable_id(*fid).unwrap().to_string())
             .collect();
         assert_eq!(order, [ids[1].clone(), ids[0].clone(), ids[2].clone()]);
+    }
+
+    fn steel() -> vcad_ir::MaterialDef {
+        serde_json::from_str(r#"{"name":"steel","color":[0.6,0.6,0.65],"metallic":1.0,"roughness":0.4,"density":7850.0}"#)
+            .unwrap()
+    }
+
+    #[test]
+    fn define_material_adds_to_materials_and_survives_reload() {
+        let mut api = api();
+        let id = api
+            .apply(DocCommand::AddFeature {
+                feature: cube(),
+                name: None,
+            })
+            .unwrap()
+            .created_feature_id
+            .unwrap();
+        let cmd = DocCommand::from_json(
+            &serde_json::json!({"type":"define_material","key":"steel","definition":steel()})
+                .to_string(),
+        )
+        .unwrap();
+        let r = api.apply(cmd).unwrap();
+        assert!(r.created_feature_id.is_none());
+        assert_eq!(r.document.materials["steel"].density, Some(7850.0));
+        let r = api
+            .apply(DocCommand::SetMaterial {
+                id,
+                material: "steel".into(),
+            })
+            .unwrap();
+        assert_eq!(r.document.roots[0].material, "steel");
+
+        // Saved and reopened, the definition is still there — and defining a
+        // second key on the imported doc keeps the first.
+        let saved = serde_json::to_string(&r.document).unwrap();
+        let mut reopened = DocumentApi::from_ir(&saved, ReplicaId(9)).unwrap();
+        let mut abs = steel();
+        abs.name = "abs".into();
+        let r = reopened
+            .apply(DocCommand::DefineMaterial {
+                key: "abs".into(),
+                definition: abs,
+            })
+            .unwrap();
+        let mut keys: Vec<_> = r.document.materials.keys().cloned().collect();
+        keys.sort();
+        assert_eq!(keys, ["abs", "steel"]);
+        assert_eq!(r.document.roots[0].material, "steel");
+
+        // One undo step removes just the new definition.
+        let r = reopened.apply(DocCommand::Undo).unwrap();
+        assert!(!r.document.materials.contains_key("abs"));
+        assert!(r.document.materials.contains_key("steel"));
+    }
+
+    #[test]
+    fn envelope_shape_is_stable() {
+        let mut api = api();
+        let ok: serde_json::Value = serde_json::from_str(&api.apply_json_envelope(
+            r#"{"type":"add_feature","feature":{"type":"Sphere","radius":1}}"#,
+        ))
+        .unwrap();
+        assert_eq!(ok["ok"], true);
+        assert!(ok["result"]["createdFeatureId"].is_string());
+        assert!(ok["result"]["consumedPartIds"].is_array());
+        assert!(ok.get("error").is_none());
+        let err = api.apply_json_envelope(r#"{"type":"delete_feature","id":"9:9"}"#);
+        assert_eq!(
+            err,
+            r#"{"error":{"id":"9:9","kind":"unknown_id","message":"no feature with id `9:9`"},"ok":false}"#
+        );
+        let env: EngineEnvelope = serde_json::from_str(&err).unwrap();
+        assert!(matches!(
+            env.error.unwrap().error,
+            CommandError::UnknownId { .. }
+        ));
     }
 
     #[test]

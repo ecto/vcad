@@ -1076,9 +1076,18 @@ final class EditorModel {
     /// Assign a material to a part — recolors live (no geometry rebuild).
     func setPartMaterial(_ partIndex: Int, _ key: String) {
         guard let id = partId(forPart: partIndex) else { return }
-        // The root material lives on the scene entry; renderers resolve an
-        // undefined key through the preset table.
-        send(["type": "set_material", "id": id, "material": key], name: "Change Material", reeval: .none)
+        // The root material lives on the scene entry. A preset the document
+        // doesn't define yet gets its definition written into `materials` in
+        // the same step, so it renders and survives save/reload.
+        var commands: [DocCommand] = []
+        if engineState?.definesMaterial(key) == false, let p = MaterialPreset.byKey(key) {
+            commands.append(.defineMaterial(key: key, definition: MaterialDef(
+                name: key, color: [p.color.0, p.color.1, p.color.2],
+                metallic: Double(p.metallic), roughness: Double(p.roughness),
+                density: 1000, friction: 0.5, transmission: Double(p.transmission))))
+        }
+        commands.append(.setMaterial(id: id, material: key))
+        send(commands.count == 1 ? commands[0] : .batch(commands: commands), name: "Change Material", reeval: .none)
         selectionDirty = true
     }
 
@@ -1231,7 +1240,7 @@ final class EditorModel {
 
     /// One `DocCommand`, one undo step.
     @discardableResult
-    private func send(_ command: [String: Any], name: String, reeval: Reeval) -> DocumentEngine.Result? {
+    private func send(_ command: DocCommand, name: String, reeval: Reeval) -> DocumentEngine.Result? {
         engineEdit(name, undo: .step, reeval: reeval) { try $0.apply(command) }
     }
 
@@ -1251,9 +1260,9 @@ final class EditorModel {
     /// Engine command for a node-field edit, when the field maps onto the
     /// owning feature (transform chain, primitive dimensions, modifier
     /// size). Nil → the field has no command yet; fall back to an IR edit.
-    private func nodeFieldCommand(nodeId: Int, key: String, axis: String?, value: Double) -> [String: Any]? {
-        guard let (part, role) = engineState?.owner(ofNode: nodeId),
-              let id = part["id"] as? String, let kind = part["kind"] as? String else { return nil }
+    private func nodeFieldCommand(nodeId: Int, key: String, axis: String?, value: Double) -> DocCommand? {
+        guard let (part, role) = engineState?.owner(ofNode: nodeId) else { return nil }
+        let id = part.id, kind = part.kind
         func vec(_ field: String) -> [Double] {
             let v = (DocEdit.op(documentJSON ?? [:], nodeId: nodeId)?[field] as? [String: Any]) ?? [:]
             return ["x", "y", "z"].map { (v[$0] as? NSNumber)?.doubleValue ?? 0 }
@@ -1263,13 +1272,13 @@ final class EditorModel {
             var v = vec(field); v[i] = value
             return v
         }
-        func param(_ k: String) -> [String: Any] {
-            ["type": "set_param", "id": id, "key": k, "value": ["F64": value]]
+        func param(_ k: String) -> DocCommand {
+            .setParam(id: id, key: k, value: .f64(value))
         }
         switch (role, key) {
-        case ("translate", "offset"): return with("offset").map { ["type": "set_translation", "id": id, "offset": $0] }
-        case ("rotate", "angles"): return with("angles").map { ["type": "set_rotation", "id": id, "angles": $0] }
-        case ("scale", "factor"): return with("factor").map { ["type": "set_scale", "id": id, "factor": $0] }
+        case ("translate", "offset"): return with("offset").map { .setTranslation(id: id, offset: $0) }
+        case ("rotate", "angles"): return with("angles").map { .setRotation(id: id, angles: $0) }
+        case ("scale", "factor"): return with("factor").map { .setScale(id: id, factor: $0) }
         case ("primitive", "size") where kind == "cube":
             guard let axis, ["x", "y", "z"].contains(axis) else { return nil }
             return param("size_\(axis)")
@@ -1325,22 +1334,36 @@ final class EditorModel {
 
     /// Add a fresh primitive as a new part in the loaded document.
     func addPrimitive(_ shape: BaseShape) {
-        guard send(Self.addCommand(shape), name: "Add \(shape.label)", reeval: .rebuild) != nil else { return }
+        guard addFeature(Self.addCommand(shape), name: "Add \(shape.label)",
+                         material: engineState?.defaultMaterial) != nil else { return }
         selectedFeatureID = featureNodes.last?.id        // focus the new part
     }
 
     /// `add_feature` for a palette primitive (sizes in mm).
-    private static func addCommand(_ shape: BaseShape) -> [String: Any] {
+    private static func addCommand(_ shape: BaseShape) -> DocCommand {
         switch shape {
         case .cube:
-            return ["type": "add_feature", "name": "Box",
-                    "feature": ["type": "Cube", "size_x": 30.0, "size_y": 30.0, "size_z": 30.0]]
+            return .addFeature(feature: .cube(sizeX: 30, sizeY: 30, sizeZ: 30), name: "Box")
         case .cylinder:
-            return ["type": "add_feature", "name": "Cylinder",
-                    "feature": ["type": "Cylinder", "radius": 15.0, "height": 30.0, "segments": 64]]
+            return .addFeature(feature: .cylinder(radius: 15, height: 30, segments: 64), name: "Cylinder")
         case .sphere:
-            return ["type": "add_feature", "name": "Sphere",
-                    "feature": ["type": "Sphere", "radius": 15.0, "segments": 48]]
+            return .addFeature(feature: .sphere(radius: 15, segments: 48), name: "Sphere")
+        }
+    }
+
+    /// Add a feature as one undo step, giving the new part `material`
+    /// (otherwise the engine's `default`) and optionally moving it.
+    @discardableResult
+    private func addFeature(_ add: DocCommand, name: String, material: String?,
+                            offset: [Double]? = nil) -> DocumentEngine.Result? {
+        let material = material == "default" ? nil : material
+        guard material != nil || offset != nil else { return send(add, name: name, reeval: .rebuild) }
+        return engineEdit(name, undo: .snapshot, reeval: .rebuild) { engine in
+            var r = try engine.apply(add)
+            guard let id = r.createdFeatureId else { return r }
+            if let material { r = try engine.apply(.setMaterial(id: id, material: material)) }
+            if let offset { r = try engine.apply(.setTranslation(id: id, offset: offset)) }
+            return r
         }
     }
 
@@ -1348,12 +1371,9 @@ final class EditorModel {
     /// palette's click-to-place. Two edits, one undo step apart: the add is the
     /// creation, the move is where you put it.
     func addPrimitive(_ shape: BaseShape, at p: SIMD3<Float>) {
-        let placed = engineEdit("Add \(shape.label)", undo: .snapshot, reeval: .rebuild) { engine in
-            let added = try engine.apply(Self.addCommand(shape))
-            guard let id = added.createdFeatureId else { return added }
-            return try engine.apply(["type": "set_translation", "id": id,
-                                     "offset": [Double(p.x), Double(p.y), Double(p.z)]])
-        }
+        let placed = addFeature(Self.addCommand(shape), name: "Add \(shape.label)",
+                                material: engineState?.defaultMaterial,
+                                offset: [Double(p.x), Double(p.y), Double(p.z)])
         if placed != nil { selectedFeatureID = featureNodes.last?.id }
     }
 
@@ -1381,10 +1401,12 @@ final class EditorModel {
         guard multiSelectedParts.count == 2,
               let a = partId(forPart: multiSelectedParts[0]),
               let b = partId(forPart: multiSelectedParts[1]), a != b else { return }
-        let feature: [String: Any] = ["type": "Boolean", "boolean_type": op.opType.lowercased(),
-                                      "input_a": a, "input_b": b]
-        guard send(["type": "add_feature", "feature": feature, "name": op.opType],
-                   name: op.label, reeval: .rebuild) != nil else { return }
+        guard let type = BooleanType(rawValue: op.opType.lowercased()) else { return }
+        // The combined part keeps the base part's material.
+        guard addFeature(.addFeature(feature: .boolean(booleanType: type, inputA: a, inputB: b), name: op.opType),
+                         name: op.label,
+                         material: engineState?.material(ofPart: a) ?? engineState?.defaultMaterial) != nil
+        else { return }
         multiSelectedParts = []
         hiddenParts.removeAll(); isolatedPart = nil       // indices collapsed
         selectedFeatureID = featureNodes.last?.id          // the new combined part
@@ -1397,11 +1419,10 @@ final class EditorModel {
     func applyModifierToSelected(_ mod: Modifier) {
         guard mod != .none, let pi = selectedPartIndex, let id = partId(forPart: pi) else { return }
         let selBefore = selectedPartIndex
-        let feature: [String: Any] = mod == .fillet
-            ? ["type": "Fillet", "input": id, "radius": 2.0]
-            : ["type": "Chamfer", "input": id, "distance": 2.0]
-        guard send(["type": "add_feature", "feature": feature, "name": mod.label],
-                   name: mod.label, reeval: .rebuild) != nil else { return }
+        let feature: FeatureInput = mod == .fillet ? .fillet(input: id, radius: 2) : .chamfer(input: id, distance: 2)
+        // The wrapped part keeps its material.
+        guard addFeature(.addFeature(feature: feature, name: mod.label), name: mod.label,
+                         material: engineState?.material(ofPart: id)) != nil else { return }
         // Keep the same part selected (its root node id changed → select its row).
         if let pi = selBefore, pi < featureNodes.count { selectedFeatureID = featureNodes[pi].id }
     }
@@ -1642,8 +1663,7 @@ final class EditorModel {
         gizmoPartId = nil
         gizmoBase = DocEdit.rootTranslateOffset(json, partIndex: pi) ?? (0, 0, 0)
         if case .rotate = h {} else if let id = partId(forPart: pi),
-           let part = engineState?.parts.first(where: { $0["id"] as? String == id }),
-           let tn = (part["translateNodeId"] as? NSNumber)?.intValue {
+           let tn = engineState?.parts.first(where: { $0.id == id })?.translateNodeId {
             gizmoPartId = id
             let o = DocEdit.op(json, nodeId: tn)?["offset"] as? [String: Any] ?? [:]
             gizmoBase = ((o["x"] as? NSNumber)?.doubleValue ?? 0,
@@ -1697,7 +1717,7 @@ final class EditorModel {
             let target = [gizmoBase.0 + Double(off.x), gizmoBase.1 + Double(off.y), gizmoBase.2 + Double(off.z)]
             if let id = gizmoPartId {
                 engineEdit("Move Part", undo: .none, reeval: .inPlace) {
-                    try $0.apply(["type": "set_translation", "id": id, "offset": target])
+                    try $0.apply(.setTranslation(id: id, offset: target))
                 }
                 return
             }
@@ -1857,15 +1877,15 @@ final class EditorModel {
     func renameFeature(_ nodeId: Int, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        if let id = engineState?.owner(ofNode: nodeId)?.part["id"] as? String {
-            send(["type": "rename", "id": id, "name": trimmed], name: "Rename", reeval: .none)
+        if let id = engineState?.owner(ofNode: nodeId)?.part.id {
+            send(.rename(id: id, name: trimmed), name: "Rename", reeval: .none)
         } else {
             irEdit("Rename", reeval: .none) { DocEdit.setName(&$0, nodeId: nodeId, name: trimmed) }
         }
     }
     func deletePart(_ partIndex: Int) {
         guard let id = partId(forPart: partIndex),
-              send(["type": "delete_feature", "id": id], name: "Delete Part", reeval: .rebuild) != nil else { return }
+              send(.deleteFeature(id: id), name: "Delete Part", reeval: .rebuild) != nil else { return }
         // Indices shifted; clear visibility/multi-select and re-anchor selection.
         hiddenParts.removeAll(); isolatedPart = nil; multiSelectedParts = []
         if selectedFeatureNode == nil { selectedFeatureID = featureNodes.first?.id }
@@ -1884,8 +1904,7 @@ final class EditorModel {
     func deleteSelectedParts() {
         let ids = highlightedParts.compactMap { partId(forPart: $0) }
         guard !ids.isEmpty else { return }
-        let deletes: [[String: Any]] = ids.map { ["type": "delete_feature", "id": $0] }
-        guard send(["type": "batch", "commands": deletes],
+        guard send(.batch(commands: ids.map { .deleteFeature(id: $0) }),
                    name: ids.count == 1 ? "Delete Part" : "Delete \(ids.count) Parts",
                    reeval: .rebuild) != nil else { return }
         hiddenParts.removeAll(); isolatedPart = nil; multiSelectedParts = []
@@ -1918,7 +1937,7 @@ final class EditorModel {
     private func step(_ entry: UndoEntry, forward: Bool) -> UndoEntry? {
         switch entry.step {
         case .engine:
-            guard let engine, let r = try? engine.apply(["type": forward ? "redo" : "undo"]) else { return nil }
+            guard let engine, let r = try? engine.apply(forward ? .redo : .undo) else { return nil }
             adopt(r, reeval: .rebuild)
             afterHistoryStep()
             return entry

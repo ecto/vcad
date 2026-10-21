@@ -119,6 +119,11 @@ jobs:
       - name: IR types in sync (Rust → TS codegen)
         if: matrix.toolchain == 'stable'
         run: npm run ir:check
+      # Same idea for the Mac app: apple/VcadApp/Sources/VcadApp/Generated/
+      # is generated from the same ts-rs bindings (`npm run swift:gen`).
+      - name: Swift engine types in sync (Rust → Swift codegen)
+        if: matrix.toolchain == 'stable'
+        run: npm run swift:check
       - name: Upload Rust timing and test reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
