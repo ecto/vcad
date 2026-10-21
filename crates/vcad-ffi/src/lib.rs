@@ -58,8 +58,8 @@ pub mod engine;
 mod err;
 pub mod export;
 pub mod gym;
-pub mod session;
 pub mod sensitivity;
+pub mod session;
 pub mod train;
 
 pub use err::vcad_last_error;
