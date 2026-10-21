@@ -40,6 +40,33 @@ pub enum Backdrop {
     None,
 }
 
+/// Light rig for a photoreal render under the analytic gradient (an image
+/// environment always replaces the rig).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Lighting {
+    /// The neutral three-softbox studio rig, fixed in world space.
+    #[default]
+    Studio,
+    /// Warm product-shot rig placed relative to the camera: a large warm
+    /// key high and to camera-left, a dim cool fill camera-right, and a hot
+    /// rim behind the subject that edges its silhouette. Every light sits
+    /// outside the frame.
+    WarmStudio,
+}
+
+impl std::str::FromStr for Lighting {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "studio" => Ok(Lighting::Studio),
+            "warm-studio" | "warm" => Ok(Lighting::WarmStudio),
+            other => Err(format!(
+                "unknown lighting '{other}' (expected studio|warm-studio)"
+            )),
+        }
+    }
+}
+
 /// Options for the photoreal path, layered on top of [`RasterOptions`]
 /// (which still controls canvas size, framing, trim, and JPEG quality).
 #[derive(Debug, Clone)]
@@ -72,6 +99,8 @@ pub struct PhotorealOptions {
     pub focus_dist: Option<f64>,
     /// Backdrop treatment.
     pub backdrop: Backdrop,
+    /// Light rig used with the analytic gradient environment.
+    pub lighting: Lighting,
     /// Random seed, for reproducible noise.
     pub seed: u64,
     /// Run the edge-aware à-trous denoiser over the film before tonemapping.
@@ -162,6 +191,7 @@ impl Default for PhotorealOptions {
             aperture_frac: 0.0,
             focus_dist: None,
             backdrop: Backdrop::Studio,
+            lighting: Lighting::Studio,
             seed: 0x5eed_1234,
             denoise: true,
             adaptive: true,
@@ -469,7 +499,10 @@ pub(crate) fn dress_scene(
     // something to make highlights with. An HDRI already carries its own
     // lights, so keeping the rig would double-light the subject.
     let lights: Vec<AreaLight> = match env {
-        Environment::Gradient(_) => pathtrace::studio_rig(framing.center, framing.radius),
+        Environment::Gradient(_) => match pr.lighting {
+            Lighting::Studio => pathtrace::studio_rig(framing.center, framing.radius),
+            Lighting::WarmStudio => warm_studio_rig(framing),
+        },
         Environment::Image(_) => Vec::new(),
     };
 
@@ -502,6 +535,75 @@ pub(crate) fn dress_scene(
         // spelling: a document has geometry, not a captured radiance field.
         splats: None,
     })
+}
+
+/// The `warm-studio` rig: key, fill and rim placed in the camera's frame so
+/// the look holds from any viewing angle.
+///
+/// Positions are built from the camera basis (screen-right, screen-up, and
+/// the direction back toward the camera) and pushed out to several scene
+/// radii, so each light lands outside the frame and the CPU integrator,
+/// which does not hide lights from camera rays, never shows a softbox.
+/// Emission is radiance; the values match the default rig's exposure (key
+/// around 3 units of irradiance on a facing surface) with a ~3200 K key, a
+/// ~6500 K fill and a neutral-warm rim.
+pub(crate) fn warm_studio_rig(framing: &Framing) -> Vec<AreaLight> {
+    let c = framing.center;
+    let r = framing.radius.max(1e-6);
+    let cam = &framing.camera;
+    let back = -cam.forward.normalize(); // subject -> camera
+    let right = cam.right.normalize();
+    let up = Vec3::new(0.0, 0.0, 1.0);
+    // Ground-plane direction toward the camera: "behind the subject" for the
+    // rim means behind it as seen from above, whatever the camera's tilt.
+    let back_h = {
+        let h = Vec3::new(back.x, back.y, 0.0);
+        if h.norm() < 1e-6 {
+            -cam.up.normalize()
+        } else {
+            h.normalize()
+        }
+    };
+    let mk = |dir: Vec3, dist: f64, size: f64, emission: [f32; 3]| -> AreaLight {
+        let pos = c + dir.normalize() * (r * dist);
+        let n = (c - pos).normalize();
+        // Any perpendicular pair spans the rectangle; keep one edge level.
+        let mut u = n.cross(up);
+        if u.norm() < 1e-6 {
+            u = n.cross(right);
+        }
+        let u = u.normalize();
+        let v = n.cross(u).normalize();
+        AreaLight {
+            center: pos,
+            u: u * (r * size),
+            v: v * (r * size),
+            emission,
+        }
+    };
+    vec![
+        // Key: big, warm, 45 degrees camera-left and well above.
+        mk(
+            back * 0.7 - right * 1.0 + up * 1.6,
+            4.0,
+            1.6,
+            [6.4, 5.1, 3.7],
+        ),
+        // Fill: broad and cool, camera-right and low, ~1/6 of the key.
+        mk(
+            back * 0.6 + right * 1.6 + up * 0.4,
+            4.2,
+            1.9,
+            [0.61, 0.71, 0.88],
+        ),
+        // Rim: small and hot, behind the subject and high, outside the frame.
+        mk(
+            -back_h * 1.2 + right * 0.4 + up * 3.0,
+            3.6,
+            0.5,
+            [15.2, 14.0, 12.2],
+        ),
+    ]
 }
 
 pub(crate) fn trace_options(pr: &PhotorealOptions, png: bool) -> PathTraceOptions {
@@ -912,6 +1014,58 @@ mod tests {
 
         pr.focus_dist = Some(-1.0);
         assert!(frame_scene(&solids, &objects, &opts, &pr).is_err());
+    }
+
+    /// `warm-studio` places a warm key camera-left in front, a cooler fill
+    /// camera-right, and a rim behind the subject, all outside the frame,
+    /// from whatever angle the camera looks.
+    #[test]
+    fn warm_studio_rig_follows_the_camera_and_stays_out_of_frame() {
+        let solids = crate::evaluate_vcad(&cube_doc()).unwrap();
+        let pr = PhotorealOptions::default();
+        let objects = build_objects(&solids, pr.mesh_segments()).unwrap();
+        for view in [
+            crate::View::Isometric,
+            crate::View::Orbit {
+                azimuth: 200.0,
+                elevation: 10.0,
+            },
+        ] {
+            let opts = RasterOptions {
+                view,
+                ..RasterOptions::default()
+            };
+            let f = frame_scene(&solids, &objects, &opts, &pr).unwrap();
+            let rig = warm_studio_rig(&f);
+            assert_eq!(rig.len(), 3);
+            let (key, fill, rim) = (&rig[0], &rig[1], &rig[2]);
+            let back = -f.camera.forward.normalize();
+            let right = f.camera.right.normalize();
+            let rel = |l: &AreaLight| l.center - f.center;
+            assert!(
+                rel(key).dot(back) > 0.0 && rel(key).dot(right) < 0.0,
+                "key camera-left, in front"
+            );
+            assert!(rel(fill).dot(right) > 0.0, "fill camera-right");
+            let back_h = Vec3::new(back.x, back.y, 0.0).normalize();
+            assert!(rel(rim).dot(back_h) < 0.0, "rim behind the subject");
+            assert!(key.emission[0] > key.emission[2], "key is warm");
+            assert!(fill.emission[2] > fill.emission[0], "fill is cool");
+            // Outside the frame: farther off-axis than the frame's diagonal
+            // half-angle (fov is vertical; allow the 16:9 width).
+            let half_diag = (f.camera.fov_deg.to_radians() * 0.5).tan()
+                * (1.0f64 + (16.0f64 / 9.0).powi(2)).sqrt();
+            for l in &rig {
+                let d = (l.center - f.camera.eye).normalize();
+                let along = d.dot(f.camera.forward.normalize());
+                let off = (1.0 - along * along).sqrt() / along.max(1e-9);
+                assert!(
+                    along <= 0.0 || off > half_diag,
+                    "light {:?} would be in frame",
+                    l.center
+                );
+            }
+        }
     }
 
     #[test]
