@@ -17,6 +17,8 @@ mod log_capture;
 mod photoreal;
 #[cfg(feature = "print-server")]
 mod print_server;
+#[cfg(feature = "printer")]
+mod printer_cmd;
 mod raycast;
 mod render;
 mod repl;
@@ -585,6 +587,15 @@ enum Commands {
         json: bool,
     },
 
+    /// Talk to a Bambu printer on the LAN (LAN Only + Developer Mode):
+    /// discover, status, camera-snapshot, upload-test. `print` refuses
+    /// without --confirm-print and a passing printcheck + file/printer match.
+    #[cfg(feature = "printer")]
+    Printer {
+        #[command(subcommand)]
+        command: printer_cmd::PrinterCommands,
+    },
+
     /// Start the print relay server for web app → printer communication
     #[cfg(feature = "print-server")]
     PrintServer {
@@ -1094,6 +1105,10 @@ fn run_command(cli: Cli) -> Result<()> {
                 &allow_bridge,
                 json,
             )?;
+        }
+        #[cfg(feature = "printer")]
+        Some(Commands::Printer { command }) => {
+            printer_cmd::run(command)?;
         }
         #[cfg(feature = "print-server")]
         Some(Commands::PrintServer { port }) => {

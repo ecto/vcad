@@ -88,7 +88,10 @@ anyhow.workspace = true
 thiserror.workspace = true
 
 [features]
+default = ["printer"]
 print-server = ["dep:axum", "dep:tower-http", "vcad-slicer-bambu/network"]
+# `vcad printer`: LAN control of a Bambu printer (MQTT/FTPS/camera).
+printer = ["vcad-slicer-bambu/network"]
 
 
 [dev-dependencies]
