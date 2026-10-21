@@ -3991,19 +3991,6 @@ width: number,
 height: number, };
 
 /**
- * Per-key changes to one object-valued document field.
- */
-export type MapPatch = { 
-/**
- * Keys added or changed, with their new values.
- */
-set: Record<string, unknown>, 
-/**
- * Keys removed.
- */
-remove: Array<string>, };
-
-/**
  * A declarative mate between two instances of an assembly.
  */
 export type Mate = { 
