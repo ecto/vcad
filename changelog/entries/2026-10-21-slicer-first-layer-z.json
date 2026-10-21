@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-slicer-first-layer-z",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "fix",
+  "title": "Slicer: layers print at full height, not half",
+  "summary": "Sliced G-code sent the nozzle to each layer's mid-plane, so the first layer was squashed to half height into the plate. Layers now print at their top.",
+  "features": ["printing", "slicer"]
+}

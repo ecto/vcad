@@ -17,6 +17,7 @@
 use std::sync::Arc;
 
 use vcad_kernel::vcad_kernel_math::{Point3, Vec3};
+use vcad_kernel::vcad_kernel_tessellate::TriangleMesh;
 use vcad_kernel_raytrace::pathtrace::{
     self, AreaLight, Camera, Environment, Ground, Object, PathTraceOptions, Pbr, Scene,
 };
@@ -38,6 +39,17 @@ pub enum Backdrop {
     ShadowCatcher,
     /// No floor at all — the subject floats in the environment gradient.
     None,
+    /// Seamless photo cyclorama: a matte floor that curves up into a back
+    /// wall behind the subject (relative to the camera), sized well past the
+    /// frame so neither a horizon nor an edge is ever visible.
+    Cyclorama,
+}
+
+impl Backdrop {
+    /// Whether the backdrop is part of the picture (opaque background).
+    pub(crate) fn is_opaque(self) -> bool {
+        matches!(self, Backdrop::Studio | Backdrop::Cyclorama)
+    }
 }
 
 /// Light rig for a photoreal render under the analytic gradient (an image
@@ -506,8 +518,22 @@ pub(crate) fn dress_scene(
         Environment::Image(_) => Vec::new(),
     };
 
+    let mut objects = objects;
+    if pr.backdrop == Backdrop::Cyclorama {
+        let mesh = cyclorama_mesh(framing);
+        objects.push(Object::new(
+            Arc::new(Bvh::build_mesh(&mesh)),
+            Pbr {
+                base_color: [0.72, 0.72, 0.73],
+                metallic: 0.0,
+                roughness: 0.75,
+                clearcoat: 0.0,
+                ..Default::default()
+            },
+        ));
+    }
     let ground = match pr.backdrop {
-        Backdrop::None => None,
+        Backdrop::None | Backdrop::Cyclorama => None,
         mode => Some(Ground {
             // Sit the floor exactly on the subject's lowest point so parts
             // read as resting on it rather than floating.
@@ -535,6 +561,101 @@ pub(crate) fn dress_scene(
         // spelling: a document has geometry, not a captured radiance field.
         splats: None,
     })
+}
+
+/// The seamless cyclorama: a flat floor at the subject's base that sweeps up
+/// through a quarter circle into a tall back wall behind the subject.
+///
+/// Oriented by the camera's ground-plane direction, so the wall is always
+/// what the camera sees behind the subject. Sized in scene radii far past
+/// the frame (the floor runs under and behind the camera, the wall rises
+/// well above the top of frame), so no edge or horizon line can appear.
+/// Vertex normals follow the profile, so the curve shades as one smooth
+/// surface rather than as facets.
+pub(crate) fn cyclorama_mesh(framing: &Framing) -> TriangleMesh {
+    let r = framing.radius.max(1e-6);
+    let c = framing.center;
+    let z0 = framing.floor_z;
+    let fwd = framing.camera.forward;
+    // Ground-plane direction from camera toward subject (into the wall).
+    let into = {
+        let h = Vec3::new(fwd.x, fwd.y, 0.0);
+        if h.norm() < 1e-6 {
+            framing.camera.up
+        } else {
+            h
+        }
+    }
+    .normalize();
+    let side = Vec3::new(-into.y, into.x, 0.0);
+    // Profile in (s along `into`, h above the floor).
+    let (front, wall, bend, height, half_w) = (-80.0 * r, 6.0 * r, 6.0 * r, 80.0 * r, 80.0 * r);
+    let mut prof: Vec<(f64, f64, f64, f64)> = Vec::new(); // s, h, ns, nh
+    let floor_end = wall - bend;
+    for i in 0..=8 {
+        let s = front + (floor_end - front) * i as f64 / 8.0;
+        prof.push((s, 0.0, 0.0, 1.0));
+    }
+    let arc = 24;
+    for i in 1..=arc {
+        let a = std::f64::consts::FRAC_PI_2 * i as f64 / arc as f64;
+        // Centre of the bend sits `bend` above the floor at s = floor_end.
+        prof.push((
+            floor_end + bend * a.sin(),
+            bend - bend * a.cos(),
+            -a.sin(),
+            a.cos(),
+        ));
+    }
+    for i in 1..=6 {
+        let h = bend + (height - bend) * i as f64 / 6.0;
+        prof.push((wall, h, -1.0, 0.0));
+    }
+    let cols = 16usize;
+    let mut vertices = Vec::new();
+    let mut normals = Vec::new();
+    for &(s, h, ns, nh) in &prof {
+        let n = into * ns + Vec3::new(0.0, 0.0, nh);
+        for j in 0..=cols {
+            let w = -half_w + 2.0 * half_w * j as f64 / cols as f64;
+            let p = Point3::new(c.x, c.y, z0) + into * s + side * w + Vec3::new(0.0, 0.0, h);
+            vertices.extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
+            normals.extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+        }
+    }
+    let row = (cols + 1) as u32;
+    let mut indices = Vec::new();
+    for i in 0..prof.len() as u32 - 1 {
+        for j in 0..cols as u32 {
+            let a = i * row + j;
+            let b = a + row;
+            // Wound so the face normal points up / toward the camera.
+            indices.extend_from_slice(&[a, a + 1, b + 1, a, b + 1, b]);
+        }
+    }
+    let mut mesh = TriangleMesh {
+        vertices,
+        indices,
+        normals,
+        face_kinds: Vec::new(),
+        face_ids: Vec::new(),
+    };
+    // Match winding to the profile normals: flip if the first face disagrees.
+    let v = |k: u32| -> Vec3 {
+        let k = k as usize * 3;
+        Vec3::new(
+            mesh.vertices[k] as f64,
+            mesh.vertices[k + 1] as f64,
+            mesh.vertices[k + 2] as f64,
+        )
+    };
+    let (a, b, cc) = (mesh.indices[0], mesh.indices[1], mesh.indices[2]);
+    if (v(b) - v(a)).cross(v(cc) - v(a)).z < 0.0 {
+        for t in mesh.indices.chunks_mut(3) {
+            t.swap(1, 2);
+        }
+    }
+    mesh
 }
 
 /// The `warm-studio` rig: key, fill and rim placed in the camera's frame so
@@ -612,7 +733,7 @@ pub(crate) fn trace_options(pr: &PhotorealOptions, png: bool) -> PathTraceOption
         max_depth: pr.max_depth.max(1),
         rr_start: 3,
         firefly_clamp: Some(12.0),
-        show_background: !png || pr.backdrop == Backdrop::Studio,
+        show_background: !png || pr.backdrop.is_opaque(),
         seed: pr.seed,
         denoise: pr.denoise,
         // Adaptive sampling is a property of the integrator, and the
@@ -637,7 +758,7 @@ pub(crate) fn trace_frame(
         canvas.h as u32,
         &trace_options(pr, png),
     );
-    let rgba = film.to_srgb8(pr.exposure, png && pr.backdrop != Backdrop::Studio);
+    let rgba = film.to_srgb8(pr.exposure, png && !pr.backdrop.is_opaque());
 
     // Split into the (rgb, mask) pair the shared encoders expect.
     let n = canvas.len();
@@ -1066,6 +1187,69 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The cyclorama sits under the subject, curves up behind it (as seen
+    /// from the camera), rises past the top of frame, and replaces the
+    /// ground plane; the render is opaque everywhere.
+    #[test]
+    fn cyclorama_wraps_the_frame_with_no_edge() {
+        let solids = crate::evaluate_vcad(&cube_doc()).unwrap();
+        let pr = PhotorealOptions {
+            backdrop: Backdrop::Cyclorama,
+            ..PhotorealOptions::default()
+        };
+        let objects = build_objects(&solids, pr.mesh_segments()).unwrap();
+        let n_parts = objects.len();
+        let opts = RasterOptions {
+            view: crate::View::Orbit {
+                azimuth: 30.0,
+                elevation: 5.0,
+            },
+            ..RasterOptions::default()
+        };
+        let f = frame_scene(&solids, &objects, &opts, &pr).unwrap();
+        let mesh = cyclorama_mesh(&f);
+        let pts: Vec<Vec3> = mesh
+            .vertices
+            .chunks(3)
+            .map(|p| Vec3::new(p[0] as f64, p[1] as f64, p[2] as f64))
+            .collect();
+        let min_z = pts.iter().map(|p| p.z).fold(f64::INFINITY, f64::min);
+        let max_z = pts.iter().map(|p| p.z).fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            (min_z - f.floor_z).abs() < 1e-3,
+            "floor at the subject's base"
+        );
+        // The wall top is above where the top frame edge reaches at the wall.
+        let eye = f.camera.eye;
+        let fwd = f.camera.forward.normalize();
+        let wall_dist = pts
+            .iter()
+            .filter(|p| p.z > f.floor_z + 10.0 * f.radius)
+            .map(|p| ((p.x - eye.x).powi(2) + (p.y - eye.y).powi(2)).sqrt())
+            .fold(f64::INFINITY, f64::min);
+        let pitch = fwd.z.asin();
+        let top = pitch + (f.camera.fov_deg.to_radians() * 0.5);
+        if top < std::f64::consts::FRAC_PI_2 {
+            assert!(
+                max_z > eye.z + wall_dist * top.tan(),
+                "wall must clear the top of frame"
+            );
+        }
+        // Normals face the camera side everywhere (smooth, no backfacing).
+        for (k, t) in mesh.indices.chunks(3).enumerate().take(50) {
+            let (a, b, c) = (pts[t[0] as usize], pts[t[1] as usize], pts[t[2] as usize]);
+            let n = (b - a).cross(c - a);
+            assert!(
+                n.dot(Vec3::new(eye.x, eye.y, eye.z) - a) > 0.0,
+                "triangle {k} faces away from the camera"
+            );
+        }
+        let scene = dress_scene(objects, &f, &pr).unwrap();
+        assert!(scene.ground.is_none());
+        assert_eq!(scene.objects.len(), n_parts + 1);
+        assert!(Backdrop::Cyclorama.is_opaque());
     }
 
     #[test]

@@ -1,0 +1,43 @@
+; Your first part in loon
+; =======================
+;
+; This file is the part. Open it in any text editor, change a number, save,
+; and vcad rebuilds the model on screen. Make a mistake and the error shows
+; up with its line number; the last good model stays put until you fix it.
+;
+; Units are millimetres. Z is up.
+
+; 1. Dimensions you'll want to change later are parameters. They show up in
+;    the inspector, so you can also drag them there.
+[defparam width 60.0 :unit "mm" :min 30 :max 120]
+[defparam depth 40.0 :unit "mm" :min 20 :max 80]
+[defparam thick 6.0 :unit "mm" :min 2 :max 12]
+[defparam hole 4.0 :unit "mm" :min 2 :max 8]
+
+; 2. A plate: a box from the origin out to (width, depth, thick), with its
+;    edges rounded. Operations take the shape LAST: [fillet radius shape].
+[let plate [fillet 1.0 [cube width depth thick]]]
+
+; 3. One mounting hole: a cylinder (radius, height) along Z, taller than the
+;    plate so it cuts all the way through.
+[let drill [cylinder [/ hole 2] [* thick 3]]]
+
+; 4. Put a hole near each corner. `translate` takes x y z, then the shape.
+[let inset 8.0]
+[let holes
+  [union [translate inset inset -1 drill]
+  [union [translate [- width inset] inset -1 drill]
+  [union [translate inset [- depth inset] -1 drill]
+         [translate [- width inset] [- depth inset] -1 drill]]]]]
+
+; 5. Cut the holes out of the plate: [difference tool shape] is
+;    "shape minus tool".
+[let drilled [difference holes plate]]
+
+; 6. Tell vcad this is a part, and what it's made of.
+[root drilled "aluminum"]
+
+; Try it:
+;   - change `width` to 90 and save
+;   - add a boss:  [root [translate 30 20 thick [cylinder 8 10]] "aluminum"]
+;   - misspell `plate` as `plat` and save, then fix it

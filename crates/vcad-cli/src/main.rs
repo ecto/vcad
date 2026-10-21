@@ -271,6 +271,9 @@ enum Commands {
         /// Light rig for `--photoreal`: studio or warm-studio
         #[arg(long, default_value = "studio", requires = "photoreal")]
         lighting: vcad_render::photoreal::Lighting,
+        /// Seamless cyclorama backdrop (floor curving into a back wall)
+        #[arg(long, requires = "photoreal")]
+        cyclorama: bool,
         /// Image width in pixels
         #[arg(long, default_value = "1920")]
         width: u32,
@@ -872,6 +875,7 @@ fn run_command(cli: Cli) -> Result<()> {
             focus_dist,
             focus_part,
             lighting,
+            cyclorama,
             width,
             height,
             azimuth,
@@ -905,6 +909,7 @@ fn run_command(cli: Cli) -> Result<()> {
                     focus_dist,
                     focus_part,
                     lighting,
+                    cyclorama,
                 };
                 let doc = load_posed_document(&input, &pose)?;
                 return photoreal::render_document(&doc, &output, &req);

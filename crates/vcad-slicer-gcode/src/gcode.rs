@@ -484,4 +484,31 @@ mod tests {
         assert!(g.find("G29").unwrap() < hot);
         assert!(g.contains("M106 P1 S"));
     }
+
+    #[test]
+    fn first_layer_prints_at_full_layer_height() {
+        let mesh = vcad_kernel_tessellate::TriangleMesh {
+            vertices: vec![
+                0., 0., 0., 10., 0., 0., 10., 10., 0., 0., 10., 0., 0., 0., 10., 10., 0., 10., 10.,
+                10., 10., 0., 10., 10.,
+            ],
+            indices: vec![
+                0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 2, 3, 7, 2, 7, 6, 0, 4, 7, 0,
+                7, 3, 1, 2, 6, 1, 6, 5,
+            ],
+            normals: Vec::new(),
+            face_kinds: Vec::new(),
+            face_ids: Vec::new(),
+        };
+        let settings = vcad_slicer::SliceSettings {
+            layer_height: 0.2,
+            first_layer_height: 0.2,
+            ..Default::default()
+        };
+        let result = vcad_slicer::slice(&mesh, &settings).unwrap();
+        let g = generate_gcode(&result, GcodeSettings::default());
+        let after = &g[g.find("Layer 0").unwrap()..];
+        let z = after.lines().find(|l| l.starts_with("G1 Z")).unwrap();
+        assert!(z.starts_with("G1 Z0.200"), "{z}");
+    }
 }

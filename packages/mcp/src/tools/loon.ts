@@ -12,7 +12,6 @@ import { hydrateMacros, macroPrelude, type InlineLoon } from "./loon-macros.js";
 import { documents, getSession, recordTriangles } from "./session-core.js";
 import { assetNote, resolveLoonAssets } from "./loon-assets.js";
 import { isRemoteDeployment } from "./remote.js";
-import { attachLoonSource } from "./source-provenance.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
 
@@ -252,15 +251,13 @@ export function evalCadLoon(
   const modules = composeLoonModules(input);
   let doc: Document | null;
   try {
-    doc = engine.evalVcadSourceWithModules(source, modules);
+    // The kernel evaluates and records what made this document: the COMPOSED
+    // program (macro prelude inlined, so it re-evaluates with no dependency
+    // on a macro registry a restart may have emptied) plus its modules.
+    doc = engine.evalLoonDocument(source, modules, { baseDir: base_dir });
   } catch (e) {
     throw explainEvalError(e, parsed, missingModules(source, modules));
   }
-  // Record what made this document. The COMPOSED program is stored rather
-  // than the bare `source` argument: it inlines the macro prelude, so the
-  // stored text re-evaluates to the same geometry with no dependency on a
-  // macro registry that a restart may have emptied.
-  if (doc) attachLoonSource(doc, { text: source, modules, base_dir });
   if (!doc) {
     // Distinguish "no loon at all" from "loon, but a kernel too old to
     // resolve modules" — otherwise a stale kernel reads as a broken program.
