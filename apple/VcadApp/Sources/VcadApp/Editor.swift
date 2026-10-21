@@ -40,6 +40,8 @@ enum Workspace: String, CaseIterable, Identifiable, Codable {
         case .manufacture: return "wrench.and.screwdriver"
         }
     }
+    /// Workspaces the UI offers: Design, plus the Labs ones when enabled.
+    static var available: [Workspace] { Prefs.labs ? allCases : [.design] }
     var keyEquivalent: KeyEquivalent {
         switch self {
         case .design: return "1"
@@ -328,7 +330,7 @@ final class EditorModel {
         cnc.rightPanelShown = m.cncRight
         cnc.bottomPanelShown = m.cncBottom
         measurementsShown = m.measurementsShown
-        if let ws = Workspace(rawValue: m.workspace) { workspace = ws }
+        if let ws = Workspace(rawValue: m.workspace), Workspace.available.contains(ws) { workspace = ws }
     }
     /// Whether the last session ran in a window (the presentation to restore).
     var remembersWindowed: Bool { LayoutMemory.load().windowed }
@@ -513,6 +515,8 @@ final class EditorModel {
 
     /// Whether the current document can be simulated: an assembly with bodies.
     var canSimulate: Bool { assemblyInstanceCount > 0 && documentJSON != nil }
+    /// Simulation UI is a Labs feature; the capability stays for hooks/tests.
+    var showsSimulation: Bool { Prefs.labs && canSimulate }
 
     /// Build a simulation for the current document and bind it to the resident
     /// scene, so simulated transforms arrive in the renderer's index order.
@@ -2657,6 +2661,10 @@ final class EditorModel {
         // A DXF is an outline to machine, not a document: it lands in
         // Manufacture as contour operations on the current part.
         if url.pathExtension.lowercased() == "dxf" {
+            guard Prefs.labs else {
+                loadError = "Opening DXF outlines needs the Manufacture workspace (Settings ▸ Labs)."
+                return
+            }
             workspace = .manufacture
             do {
                 try cnc.importOutline(try CNCOutline.parseDXF(String(contentsOf: url, encoding: .utf8), name: url.lastPathComponent))

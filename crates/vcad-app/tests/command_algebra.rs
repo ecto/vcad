@@ -204,3 +204,51 @@ fn deltas_reproduce_the_full_materialize() {
         }
     }
 }
+
+/// Incremental evaluation is exact: across random edit sequences (including
+/// undo), evaluating each materialized document through one reused
+/// `IncrementalCache` gives the same meshes and failures as a cold
+/// evaluation — and it does reuse work.
+#[test]
+fn incremental_evaluation_matches_a_cold_one() {
+    use vcad_eval::incremental::IncrementalCache;
+    let opts = vcad_eval::EvalOptions {
+        skip_clash_detection: true,
+        ..Default::default()
+    };
+    let view = |s: &vcad_eval::EvaluatedScene| {
+        let meshes: Vec<Value> = s
+            .parts
+            .iter()
+            .map(
+                |p| json!({"mesh": serde_json::to_value(&p.mesh).unwrap(), "material": p.material}),
+            )
+            .collect();
+        let failures: Vec<String> = s.failures.iter().map(|f| f.error.clone()).collect();
+        (meshes, failures)
+    };
+    let mut reused = 0;
+    for seed in 1..=(cases() / 10).max(5) {
+        let mut rng = Rng(seed.wrapping_mul(0xa076_1d64_78bd_642f) | 1);
+        let mut api = DocumentApi::new(ReplicaId(1));
+        let mut inc = IncrementalCache::new();
+        for i in 0..10 {
+            let s = match rng.below(8) {
+                0 => (false, r#"{"type":"undo"}"#.to_string(), String::new()),
+                _ => step(&mut rng, &api),
+            };
+            run(&mut api, &s);
+            let doc = api.get_state().document;
+            let cold = vcad_eval::evaluate_document(&doc, &opts).unwrap();
+            let warm =
+                vcad_eval::evaluate::evaluate_document_incremental(&doc, &opts, &mut inc).unwrap();
+            assert_eq!(
+                view(&warm),
+                view(&cold),
+                "seed {seed} step {i}: incremental drifted after {s:?}"
+            );
+            reused += inc.stats().reused_solids;
+        }
+    }
+    assert!(reused > 0, "incremental evaluation never reused a solid");
+}

@@ -20,11 +20,13 @@ pub mod cache;
 pub mod convert;
 pub mod diff;
 pub mod evaluate;
+pub mod incremental;
 pub mod kinematics;
 pub mod mesh_inline;
 pub mod pcb_preview;
 pub mod placement;
 pub mod sensitivity;
+pub mod sheet_build;
 pub mod step_doc;
 pub mod step_sources;
 

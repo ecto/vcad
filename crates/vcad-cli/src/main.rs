@@ -264,6 +264,9 @@ enum Commands {
         /// Frame and focus `--photoreal` on this part (name or id)
         #[arg(long, requires = "photoreal")]
         focus_part: Option<String>,
+        /// Light rig for `--photoreal`: studio or warm-studio
+        #[arg(long, default_value = "studio", requires = "photoreal")]
+        lighting: vcad_render::photoreal::Lighting,
         /// Image width in pixels
         #[arg(long, default_value = "1920")]
         width: u32,
@@ -831,6 +834,7 @@ fn run_command(cli: Cli) -> Result<()> {
             aperture,
             focus_dist,
             focus_part,
+            lighting,
             width,
             height,
             azimuth,
@@ -863,6 +867,7 @@ fn run_command(cli: Cli) -> Result<()> {
                     aperture,
                     focus_dist,
                     focus_part,
+                    lighting,
                 };
                 let doc = load_posed_document(&input, &pose)?;
                 return photoreal::render_document(&doc, &output, &req);
