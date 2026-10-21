@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-mac-exports-photoreal",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "feat",
+  "title": "Mac app exports STEP and GLB, renders photoreal",
+  "summary": "File ▸ Export now writes STL, STEP and GLB with the CLI's writers, and File ▸ Render Photoreal… path-traces the current view with progress and cancel, no external binary.",
+  "features": ["desktop", "mac", "export", "photoreal"]
+}

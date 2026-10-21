@@ -1883,8 +1883,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 [[package]]
 name = "kosm-render"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f34e90e3f7552416125f7652e504526e79269fb7b9c1abe4db1b68396ffae87"
+source = "git+https://github.com/ecto/kosm?rev=59b1d03ec45cf9e9a04ccbbbef0bcc06d8f559d4#59b1d03ec45cf9e9a04ccbbbef0bcc06d8f559d4"
 dependencies = [
  "bytemuck",
  "js-sys",
@@ -4594,12 +4593,14 @@ dependencies = [
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-cam",
+ "vcad-kernel-export",
  "vcad-kernel-gpu",
  "vcad-kernel-math",
  "vcad-kernel-physics",
  "vcad-kernel-raytrace",
  "vcad-kernel-tessellate",
  "vcad-loon",
+ "vcad-render",
  "vcad-sim",
 ]
 

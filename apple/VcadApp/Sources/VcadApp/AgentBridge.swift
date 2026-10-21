@@ -270,7 +270,7 @@ enum AgentTools {
          "description": "PNG of the shared viewport exactly as the user sees it (geometry, highlights; labels are an overlay and not included).",
          "inputSchema": schema([:])],
         ["name": "photoreal",
-         "description": "Path-trace the current pose/explode from the current camera (vcad-render --photoreal, ~30-60 s). Returns the image and its saved path.",
+         "description": "Path-trace the current pose/explode from the current camera (the vcad render --photoreal renderer, ~30-60 s). Returns the image and its saved path.",
          "inputSchema": schema(["spp": ["type": "integer", "description": "samples per pixel, default 64"]])],
     ]
 
