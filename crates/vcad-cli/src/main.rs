@@ -2841,12 +2841,12 @@ fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Resul
 /// Read a .vcad file and return the materialized IR document.
 /// Auto-detects CRDT (v0.4) vs legacy v1 JSON shapes. A `.loon` input is
 /// evaluated to a document first.
-fn load_vcad_document(file: &Path) -> Result<vcad_ir::Document> {
+fn load_vcad_document(file: &PathBuf) -> Result<vcad_ir::Document> {
     // Work from the absolute path. `.loon` evaluation already anchors
     // `import-mesh` paths to the file's directory; with a relative input that
     // anchor is itself relative, and re-anchoring it below doubled the
     // directory (`a/b/a/b/m.stl`), silently dropping every mesh part.
-    let abs = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
+    let abs = file.canonicalize().unwrap_or_else(|_| file.clone());
     let file = &abs;
     let mut doc = load_vcad_document_raw(file)?;
     // Anchor relative mesh references to the document's own directory — see
