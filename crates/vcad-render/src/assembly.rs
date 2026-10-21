@@ -117,7 +117,7 @@ impl Instance {
 fn read_source(path: &Path) -> Result<String, String> {
     if path.extension().and_then(|e| e.to_str()) == Some("loon") {
         return Err(format!(
-            "{}: `.loon` source needs the vcad CLI — run `vcad build` and \
+            "{}: `.loon` source needs the vcad CLI — run `vcad export <in>.loon <out>.vcad` and \
              reference the exported `.vcad` document instead",
             path.display()
         ));

@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-19-import-mesh-units",
+  "version": "0.10.0",
+  "date": "2026-10-19",
+  "category": "feat",
+  "title": "import-mesh :units option + size warning",
+  "summary": "[import-mesh \"x.stl\" :units \"mm\"] imports millimetre STLs at true size; the loader warns when an import lands over 10 m or under 1 mm.",
+  "features": ["loon", "import", "stl"],
+  "mcpTools": ["create_cad_loon"]
+}

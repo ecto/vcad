@@ -4,7 +4,7 @@ Instructions for AI agents working on vcad.
 
 ## Overview
 
-vcad is an open-source parametric CAD system aiming to replace Fusion 360, Onshape, and similar tools. It features a custom BRep kernel written in Rust, a React/Three.js web app, and AI-native interfaces via MCP.
+vcad is an open-source parametric CAD system aiming to replace Fusion 360, Onshape, and similar tools. It features a custom BRep kernel written in Rust, a React/Three.js web app, a native SwiftUI Mac app (`apple/VcadApp`), and AI-native interfaces via MCP.
 
 **Live app:** https://vcad.io
 
@@ -26,9 +26,7 @@ Cargo paths in the workspace (`tang`, `tang-la`, `tang-expr`) all point at
 `../../../phyz/crates/*` (i.e. `../phyz` relative to the repo root).
 
 **Fresh worktrees** (`.claude/worktrees/*`) start with no `node_modules` — run `npm ci`
-before any npm/tauri command. Tauri needs the `cargo-tauri` binary (installed globally
-via `cargo install tauri-cli`); the npm scripts invoke it as `cargo tauri`, so no local
-`tauri` on PATH is required.
+before any npm command.
 
 Worktree roots live at `.claude/worktrees/<name>`, so the sibling path deps
 resolve to `.claude/worktrees/tang` and `.claude/worktrees/phyz`. Symlinks
@@ -43,7 +41,7 @@ ln -sfn "$(cd .. && pwd)/phyz" .claude/worktrees/phyz
 
 After `npm ci`, the app imports from `@vcad/core`, `@vcad/engine`, `@vcad/ir`, `@vcad/mcp`
 which all resolve to `dist/index.js` — so workspace packages must be built before
-`npm run dev` or `tauri:dev` will start. Fastest path:
+`npm run dev` will start. Fastest path:
 
 ```bash
 VCAD_WASM_SKIP=1 npm run build --workspaces --if-present
@@ -77,7 +75,10 @@ npm test --workspaces --if-present # run tests
 
 # App
 npm run dev -w @vcad/app           # run web app locally (browser)
-npm run tauri:dev -w @vcad/app     # run desktop app (Tauri shell + Vite)
+
+# Native Mac app (SwiftUI, apple/VcadApp — macOS only)
+apple/VcadApp/build-ffi.sh         # build the vcad-ffi static library
+apple/VcadApp/bundle.sh            # assemble apple/VcadApp/dist/vcad.app
 
 # Supabase (database)
 supabase db push --dry-run         # preview migration changes
@@ -307,6 +308,7 @@ vcad/
 │   ├── mcp/                       # MCP server for AI agents
 │   ├── training/                  # ML training pipeline
 │   └── docs/                      # Documentation site
+├── apple/VcadApp/                 # Native SwiftUI Mac app (build-ffi.sh, bundle.sh)
 ├── supabase/                      # Database migrations and config
 │   └── migrations/                # SQL migrations (pushed via `supabase db push`)
 ├── lib/                           # Stdlib for vcad: loon CAD library + DFM rule packs

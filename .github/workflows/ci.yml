@@ -79,7 +79,7 @@ jobs:
           cargo metadata --no-deps --format-version 1 \
             | python3 -c "import json,sys; d=json.load(sys.stdin); print('\n'.join(p['name'] for p in d['packages']))" \
             | xargs -n 1 -I{} cargo fmt -p {} --check
-      - run: cargo clippy --workspace --exclude vcad-desktop -- -D warnings
+      - run: cargo clippy --workspace -- -D warnings
       - name: Install nextest
         uses: taiki-e/install-action@v2
         with:
@@ -88,18 +88,22 @@ jobs:
       # actual bottleneck. Keep optimized test builds: the numerics tests are
       # dramatically slower without them.
       - name: Compile Rust tests
-        run: cargo nextest run --workspace --exclude vcad-desktop --profile ci --no-run --timings
+        run: cargo nextest run --workspace --profile ci --no-run --timings
       # Schedule tests across binaries instead of serializing entire binaries.
       # Keep collecting failures across the full workspace, with no retries.
       - name: Run Rust tests
         id: rust-tests
-        run: cargo nextest run --workspace --exclude vcad-desktop --profile ci --no-fail-fast
+        run: cargo nextest run --workspace --profile ci --no-fail-fast
+        env:
+          # DocCommand property tests (crates/vcad-app/tests/command_algebra.rs):
+          # a quick sweep on PRs, a deep one on the nightly schedule.
+          VCAD_ALGEBRA_CASES: ${{ github.event_name == 'schedule' && '20000' || '200' }}
       # nextest does not execute doctests; retain cargo's coverage explicitly.
       - name: Rust doctests
         if: ${{ !cancelled() && (success() || steps.rust-tests.outcome == 'failure') }}
-        run: cargo test --workspace --exclude vcad-desktop --doc --no-fail-fast
-      - run: cargo build --workspace --exclude vcad-desktop --examples
-      - run: cargo doc --workspace --exclude vcad-desktop --no-deps
+        run: cargo test --workspace --doc --no-fail-fast
+      - run: cargo build --workspace --examples
+      - run: cargo doc --workspace --no-deps
       # packages/ir/src/generated.ts is generated from the Rust `vcad-ir` types
       # via ts-rs (`npm run ir:gen`). Fail if the committed file has drifted —
       # i.e. an IR type changed without regenerating. Unlike the wasm-bindgen
@@ -115,6 +119,11 @@ jobs:
       - name: IR types in sync (Rust → TS codegen)
         if: matrix.toolchain == 'stable'
         run: npm run ir:check
+      # Same idea for the Mac app: apple/VcadApp/Sources/VcadApp/Generated/
+      # is generated from the same ts-rs bindings (`npm run swift:gen`).
+      - name: Swift engine types in sync (Rust → Swift codegen)
+        if: matrix.toolchain == 'stable'
+        run: npm run swift:check
       - name: Upload Rust timing and test reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
@@ -297,6 +306,9 @@ jobs:
       # (~23s) and the native compile step.
       - run: npm ci --prefer-offline --no-audit --no-fund --ignore-scripts
       - run: npm run version:check
+      # Engine boundary: core/app mutate the Rust engine only via
+      # engine-command.ts, and TS geometry math may only shrink.
+      - run: node scripts/check-engine-boundary.mjs
       # VCAD_WASM_SKIP short-circuits vcad-kernel-wasm's build script
       # (the `wasm` job already produced pkg/ via the artifact above).
       # turbo's task graph still includes vcad-kernel-wasm#build as a
@@ -381,3 +393,47 @@ jobs:
             exit 1
           fi
           echo "no generated artifacts committed — ok"
+
+  swift-mac:
+    name: Swift (macOS)
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+      - name: Clone sibling repos
+        run: |
+          git clone --depth 1 https://github.com/ecto/tang.git ../tang
+          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
+          git clone --depth 1 https://github.com/ecto/loon.git ../loon
+          # The field-overlay decoder (CTangCompress) links libtang_compress_ffi,
+          # built from tang's tang-compress branch by build-tc-ffi.sh.
+          git clone --depth 1 --branch claude/tang-compress-qtt https://github.com/ecto/tang.git ../tang-compress
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: swift-mac
+          cache-workspace-crates: true
+          cache-on-failure: true
+          workspaces: |
+            . -> target
+            ../tang-compress -> target/tc-ffi
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: apple/VcadApp/.build
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('apple/VcadApp/Package.swift', 'apple/VcadApp/Package.resolved') }}-${{ github.sha }}
+          restore-keys: |
+            swiftpm-${{ runner.os }}-${{ hashFiles('apple/VcadApp/Package.swift', 'apple/VcadApp/Package.resolved') }}-
+      - name: Toolchain versions
+        run: |
+          xcodebuild -version
+          swift --version
+      - name: Build vcad-ffi
+        run: apple/VcadApp/build-ffi.sh
+      - name: Build tang-compress-ffi
+        run: apple/VcadApp/build-tc-ffi.sh ../tang-compress
+      - name: swift test
+        run: swift test --package-path apple/VcadApp
+

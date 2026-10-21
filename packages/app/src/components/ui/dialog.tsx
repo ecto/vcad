@@ -39,7 +39,6 @@ export function DialogContent({
         )}
       >
         <div
-          data-tauri-drag-region=""
           className="flex h-10 items-center justify-between border-b border-border/40 px-4"
         >
           <RadixDialog.Title className="text-sm font-medium text-text">

@@ -1,0 +1,18 @@
+{
+  "id": "2026-10-20-schematic-power-flags",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "feat",
+  "title": "Schematic power flags (PWR_FLAG)",
+  "summary": "Mark a net as driven when it is fed through a ferrite, FET or connector. ERC treats it as powered, flags never reach the BOM, and KiCad PWR_FLAG symbols import as flags.",
+  "features": [
+    "schematic",
+    "ecad",
+    "erc"
+  ],
+  "mcpTools": [
+    "create_schematic",
+    "update_schematic",
+    "run_erc"
+  ]
+}

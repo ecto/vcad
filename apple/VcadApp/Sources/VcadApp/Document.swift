@@ -66,6 +66,17 @@ struct DocJoint: Identifiable {
     let kind: String
     /// Authored driven state (degrees for revolute, mm for slider).
     let state: Double
+    /// Parent instance (nil = attached to the world).
+    var parentInstanceId: String? = nil
+    /// Child instance the joint places.
+    var childInstanceId: String = ""
+    /// Joint origin in the parent instance's local frame (mm).
+    var parentAnchor: SIMD3<Double> = .zero
+    /// Travel limits (degrees / mm), when the document declares them.
+    var limits: ClosedRange<Double>? = nil
+
+    /// A joint you can drive: revolute or slider (fixed joints only weld).
+    var isDriven: Bool { kind == "Revolute" || kind == "Slider" || kind == "Prismatic" }
 }
 
 /// One keyframe of an animation track (port of `vcad_ir::animation::AnimKey`).
@@ -134,7 +145,7 @@ struct DocumentGraph {
     var visibleRoots: [DocRoot] { roots.filter { $0.visible } }
 
     static func load(path: String) -> DocumentGraph? {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else { return nil }
+        guard let data = EditorModel.documentBytes(path: path) else { return nil }
         return parse(data)
     }
 
@@ -210,11 +221,24 @@ struct DocumentGraph {
         if let raw = obj["joints"] as? [[String: Any]] {
             for j in raw {
                 guard let id = j["id"] as? String else { continue }
-                let kind = (j["kind"] as? [String: Any])?["type"] as? String ?? "Revolute"
-                joints.append(DocJoint(id: id,
-                                       name: j["name"] as? String,
-                                       kind: kind,
-                                       state: (j["state"] as? NSNumber)?.doubleValue ?? 0))
+                let kindObj = j["kind"] as? [String: Any]
+                let kind = kindObj?["type"] as? String ?? "Revolute"
+                var joint = DocJoint(id: id,
+                                     name: j["name"] as? String,
+                                     kind: kind,
+                                     state: (j["state"] as? NSNumber)?.doubleValue ?? 0)
+                joint.parentInstanceId = (j["parentInstanceId"] ?? j["parent_instance_id"]) as? String
+                joint.childInstanceId = ((j["childInstanceId"] ?? j["child_instance_id"]) as? String) ?? ""
+                if let a = (j["parentAnchor"] ?? j["parent_anchor"]) as? [String: Any] {
+                    joint.parentAnchor = SIMD3((a["x"] as? NSNumber)?.doubleValue ?? 0,
+                                               (a["y"] as? NSNumber)?.doubleValue ?? 0,
+                                               (a["z"] as? NSNumber)?.doubleValue ?? 0)
+                }
+                if let l = kindObj?["limits"] as? [NSNumber], l.count == 2,
+                   l[0].doubleValue <= l[1].doubleValue {
+                    joint.limits = l[0].doubleValue...l[1].doubleValue
+                }
+                joints.append(joint)
             }
         }
 
@@ -422,12 +446,13 @@ struct PatternInstancing {
     let transforms: [simd_float4x4]
 }
 
-// MARK: in-place JSON edits
-// The kernel is a pure `JSON → meshes` evaluator, so editing a document is just
-// mutating its JSON dict and re-evaluating — no editable-doc FFI needed. These
-// operate on the model's live `documentJSON` and are deliberately total (a bad
-// path is a silent no-op, never a crash) since the UI only offers valid edits.
-// Node-map keys equal the node id stringified, which the .vcad format guarantees.
+// MARK: IR JSON helpers
+// Document mutations go through the Rust engine (`DocumentEngine`). What's left
+// here reads the materialized IR, and authors the few edits the engine's
+// command vocabulary has no verb for yet (sketch extrude, rotate-about-center,
+// document parameters, raw node fields) — the editor applies those to a copy
+// of the IR and reloads it into the engine. Deliberately total (a bad path is
+// a silent no-op, never a crash). Node-map keys equal the node id stringified.
 
 enum DocEdit {
     static func serialize(_ json: [String: Any]) -> Data? {
@@ -450,24 +475,6 @@ enum DocEdit {
         if let m = (json["materials"] as? [String: Any])?.keys.sorted().first { return m }
         if let r = (json["roots"] as? [[String: Any]])?.first?["material"] as? String { return r }
         return "default"
-    }
-
-    /// Append a fresh primitive as a new scene root (the Create tools, on docs).
-    static func addPrimitiveRoot(_ json: inout [String: Any], shape: BaseShape) {
-        let id = nextNodeId(json)
-        var nodes = json["nodes"] as? [String: Any] ?? [:]
-        let op: [String: Any]
-        let name: String
-        switch shape {
-        case .cube: op = ["type": "Cube", "size": ["x": 30.0, "y": 30.0, "z": 30.0]]; name = "Box"
-        case .cylinder: op = ["type": "Cylinder", "radius": 15.0, "height": 30.0, "segments": 64]; name = "Cylinder"
-        case .sphere: op = ["type": "Sphere", "radius": 15.0, "segments": 48]; name = "Sphere"
-        }
-        nodes[String(id)] = ["id": id, "name": name, "op": op]
-        json["nodes"] = nodes
-        var roots = json["roots"] as? [[String: Any]] ?? []
-        roots.append(["root": id, "material": anyMaterial(json)])
-        json["roots"] = roots
     }
 
     /// Author a Sketch2D (closed Line loop) + Extrude as a new part — the
@@ -500,53 +507,6 @@ enum DocEdit {
         var roots = json["roots"] as? [[String: Any]] ?? []
         roots.append(["root": eid, "material": anyMaterial(json)])
         json["roots"] = roots
-    }
-
-    /// Combine two visible parts (by part index, `a` first = base/left) into one
-    /// boolean root. The two source roots are removed and a single new root
-    /// referencing both their nodes is appended. `op` is "Union"/"Difference"/
-    /// "Intersection". Order matters for Difference (a − b).
-    static func combineRoots(_ json: inout [String: Any], _ a: Int, _ b: Int, op: String) {
-        guard a != b, var roots = json["roots"] as? [[String: Any]] else { return }
-        var visToRaw: [Int] = []
-        for (i, r) in roots.enumerated() where (r["visible"] as? Bool) ?? true { visToRaw.append(i) }
-        guard a < visToRaw.count, b < visToRaw.count else { return }
-        let ra = visToRaw[a], rb = visToRaw[b]
-        guard let nodeA = (roots[ra]["root"] as? NSNumber)?.intValue,
-              let nodeB = (roots[rb]["root"] as? NSNumber)?.intValue else { return }
-        let material = (roots[ra]["material"] as? String) ?? anyMaterial(json)
-        let id = nextNodeId(json)
-        var nodes = json["nodes"] as? [String: Any] ?? [:]
-        nodes[String(id)] = ["id": id, "name": op, "op": ["type": op, "left": nodeA, "right": nodeB]]
-        json["nodes"] = nodes
-        // Remove both source roots (higher raw index first), append the combined one.
-        roots.remove(at: max(ra, rb))
-        roots.remove(at: min(ra, rb))
-        roots.append(["root": id, "material": material])
-        json["roots"] = roots
-    }
-
-    /// Wrap the `partIndex`-th visible root's node in a Fillet/Chamfer (the
-    /// Modify tools, on docs). Re-points the root at the new modifier node.
-    static func wrapRootWithModifier(_ json: inout [String: Any], partIndex: Int, fillet: Bool) {
-        guard var roots = json["roots"] as? [[String: Any]] else { return }
-        var vis = 0
-        for (i, r) in roots.enumerated() where (r["visible"] as? Bool) ?? true {
-            if vis == partIndex {
-                guard let childId = (r["root"] as? NSNumber)?.intValue else { return }
-                let id = nextNodeId(json)
-                var nodes = json["nodes"] as? [String: Any] ?? [:]
-                let op: [String: Any] = fillet
-                    ? ["type": "Fillet", "child": childId, "radius": 2.0]
-                    : ["type": "Chamfer", "child": childId, "distance": 2.0]
-                nodes[String(id)] = ["id": id, "name": fillet ? "Fillet" : "Chamfer", "op": op]
-                json["nodes"] = nodes
-                roots[i]["root"] = id
-                json["roots"] = roots
-                return
-            }
-            vis += 1
-        }
     }
 
     /// Instancing plan for a visible root whose node is a Linear/CircularPattern.
@@ -705,28 +665,6 @@ enum DocEdit {
         }
     }
 
-    /// Assign a material to the `partIndex`-th visible root, and ensure the
-    /// document carries a definition for the key (from the preset table) so it
-    /// renders + survives save/reload.
-    static func setRootMaterial(_ json: inout [String: Any], partIndex: Int, key: String) {
-        guard var roots = json["roots"] as? [[String: Any]] else { return }
-        var vis = 0
-        for (i, r) in roots.enumerated() where (r["visible"] as? Bool) ?? true {
-            if vis == partIndex { roots[i]["material"] = key; json["roots"] = roots; break }
-            vis += 1
-        }
-        var mats = json["materials"] as? [String: Any] ?? [:]
-        if mats[key] == nil, let p = MaterialPreset.byKey(key) {
-            mats[key] = ["name": key,
-                         "color": [p.color.0, p.color.1, p.color.2],
-                         "metallic": Double(p.metallic),
-                         "roughness": Double(p.roughness),
-                         "transmission": Double(p.transmission),
-                         "density": 1000.0, "friction": 0.5]
-            json["materials"] = mats
-        }
-    }
-
     static func setName(_ json: inout [String: Any], nodeId: Int, name: String) {
         guard var nodes = json["nodes"] as? [String: Any],
               var node = nodes[String(nodeId)] as? [String: Any] else { return }
@@ -761,18 +699,6 @@ enum DocEdit {
             var v = (op[key] as? [String: Any]) ?? [:]
             v[axis] = value
             op[key] = v
-        }
-    }
-
-    /// Remove the `partIndex`-th VISIBLE root (mapping back into the raw roots
-    /// array, which may contain hidden entries). The orphaned subtree is left in
-    /// `nodes` — harmless, the evaluator only walks reachable roots.
-    static func removeRoot(_ json: inout [String: Any], partIndex: Int) {
-        guard var roots = json["roots"] as? [[String: Any]] else { return }
-        var vis = 0
-        for (i, r) in roots.enumerated() where (r["visible"] as? Bool) ?? true {
-            if vis == partIndex { roots.remove(at: i); json["roots"] = roots; return }
-            vis += 1
         }
     }
 

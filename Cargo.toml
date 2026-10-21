@@ -91,7 +91,6 @@ members = [
     "crates/vcad-embroidery",
     "crates/vcad-embroidery-pes",
     "crates/vcad-embroidery-dst",
-    "crates/vcad-desktop",
     "crates/vcad-ffi",
     "crates/vcad-tool-derive",
     "crates/vcad-i18n",
@@ -99,10 +98,6 @@ members = [
     "mecheval/graders",
 ]
 
-# vcad-desktop pulls in tauri/gtk/atk which requires system dev libraries
-# on Linux. Keep it out of the default build set so bare `cargo build`,
-# `cargo test`, and `cargo clippy` work on stock dev boxes; CI or whoever
-# is actually working on the desktop shell opts in with `-p vcad-desktop`.
 default-members = [
     "crates/vcad-ir",
     "crates/vcad-receipt",
@@ -208,7 +203,9 @@ repository = "https://github.com/ecto/vcad"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# float_roundtrip: exact f64 parsing, so save → load never perturbs geometry
+# (the default parser can be off by one ulp).
+serde_json = { version = "1", features = ["float_roundtrip"] }
 thiserror = "2"
 # Sibling-repo deps are declared by registry version and redirected to the
 # sibling checkout by `[patch.crates-io]` below, so a downstream that pulls
@@ -364,6 +361,27 @@ panic = "unwind"
 # checks stay on, unlike `--release` — see the vcad-kernel-fea override below,
 # which is the same trick applied to one crate before this was workspace-wide.
 opt-level = 2
+# Line tables keep panics/backtraces and profilers useful; full variable-level
+# DWARF was most of the debug-build codegen + link time and target-dir size.
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+# Third-party deps: no debuginfo at all (we never step into them), and full
+# optimization — they compile once and are cached, so opt-level 3 costs a clean
+# build a little and makes every test run that leans on them faster.
+[profile.dev.package."*"]
+opt-level = 3
+debug = false
+
+# Shipping binaries (`cargo build --profile dist -p vcad-render`): thin LTO +
+# one codegen unit + stripped symbols. `release` stays as-is for fast local
+# release builds. panic stays "unwind" — vcad-eval, vcad-render and vcad-ffi
+# rely on catch_unwind to turn kernel panics into errors.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+codegen-units = 1
+strip = true
 
 # Size-optimized profile for the Typst plugin WASM
 # (scripts/build-typst-plugin.sh).

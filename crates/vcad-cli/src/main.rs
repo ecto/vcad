@@ -14,6 +14,7 @@ mod input;
 mod keybinding_adapter;
 mod kit;
 mod log_capture;
+mod photoreal;
 #[cfg(feature = "print-server")]
 mod print_server;
 mod raycast;
@@ -40,6 +41,11 @@ struct Cli {
     /// bypasses it regardless.
     #[arg(long, global = true)]
     no_cache: bool,
+
+    /// Print every boolean fallback as it happens instead of one summary
+    /// line at the end (same as `VCAD_BOOLEAN_VERBOSE=1`).
+    #[arg(long, short = 'v', global = true)]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
@@ -82,8 +88,18 @@ enum Commands {
     Export {
         /// Input .vcad or .loon file
         input: PathBuf,
-        /// Output file (format determined by extension: .stl, .glb, .step, .stp, .urdf, .kicad_sch)
+        /// Output file (format determined by extension: .stl, .glb, .step, .stp, .urdf, .kicad_sch,
+        /// .vcad — the evaluated document, assemblies included)
         output: PathBuf,
+        /// Pose a jointed assembly first: `name=deg[,name=deg...]` (joint id
+        /// or name; degrees, mm for sliders). Out-of-limit states are clamped
+        /// with a warning; an unknown joint is an error. Repeatable.
+        #[arg(long, value_name = "NAME=DEG,...")]
+        pose: Vec<String>,
+        /// Pose from JSON: `{"joint": deg, ...}` or a keyframe file (first
+        /// key per track). Applied before `--pose`.
+        #[arg(long, value_name = "POSE.json")]
+        pose_file: Option<PathBuf>,
         /// Refuse to write a STEP that contains tessellated (triangle-soup)
         /// faces. Without this flag such a fallback is a stderr warning
         /// naming the node and the reason; with it, it is an error.
@@ -198,10 +214,45 @@ enum Commands {
 
     /// Render document to image
     Render {
-        /// Input .vcad or .loon file
+        /// Input .vcad or .loon file (`[use]` imports resolve relative to it)
         input: PathBuf,
+        /// Output image (PNG, JPEG). Same as `--out`.
+        output: Option<PathBuf>,
         /// Output image (PNG, JPEG)
-        output: PathBuf,
+        #[arg(long = "out", short = 'o', conflicts_with = "output")]
+        out: Option<PathBuf>,
+        /// Path-trace with the app's photoreal renderer (materials, studio
+        /// lights, environment, ACES tonemap) on a headless GPU device
+        #[arg(long)]
+        photoreal: bool,
+        /// Camera preset for `--photoreal`: iso|front|side|top
+        #[arg(long, requires = "photoreal")]
+        preset: Option<String>,
+        /// Camera for `--photoreal` as `<azimuth>,<elevation>` degrees
+        #[arg(long, requires = "photoreal", conflicts_with = "preset")]
+        camera: Option<String>,
+        /// Image size `WxH` for `--photoreal` (default 1600x1000)
+        #[arg(long, requires = "photoreal")]
+        size: Option<String>,
+        /// Samples per pixel for `--photoreal`
+        #[arg(long, default_value_t = 128, requires = "photoreal")]
+        samples: u32,
+        /// Maximum light bounces for `--photoreal`
+        #[arg(long, default_value_t = 6, requires = "photoreal")]
+        max_depth: u32,
+        /// Exposure multiplier before the tonemap (`--photoreal`)
+        #[arg(long, default_value_t = 1.0, requires = "photoreal")]
+        exposure: f64,
+        /// Environment for `--photoreal`: `gradient` or an equirect `.hdr`
+        #[arg(long, default_value = "gradient", requires = "photoreal")]
+        env: String,
+        /// Sampling seed for `--photoreal`
+        #[arg(long, default_value_t = 0x5eed_1234, requires = "photoreal")]
+        seed: u64,
+        /// Trace `--photoreal` on the CPU reference integrator instead of the
+        /// GPU (same BSDF; adds the denoiser)
+        #[arg(long, requires = "photoreal")]
+        cpu: bool,
         /// Image width in pixels
         #[arg(long, default_value = "1920")]
         width: u32,
@@ -223,6 +274,15 @@ enum Commands {
         /// World up axis: z (kernel/CAD convention, default) or y
         #[arg(long, value_enum, default_value = "z")]
         up: UpAxisArg,
+        /// Pose a jointed assembly first: `name=deg[,name=deg...]` (joint id
+        /// or name; degrees, mm for sliders). Out-of-limit states are clamped
+        /// with a warning; an unknown joint is an error. Repeatable.
+        #[arg(long, value_name = "NAME=DEG,...")]
+        pose: Vec<String>,
+        /// Pose from JSON: `{"joint": deg, ...}` or a keyframe file (first
+        /// key per track). Applied before `--pose`.
+        #[arg(long, value_name = "POSE.json")]
+        pose_file: Option<PathBuf>,
     },
 
     /// Apply boolean operation
@@ -297,6 +357,14 @@ enum Commands {
 
     /// Display information about a .vcad (or .loon source) file
     Info {
+        /// Path to the .vcad or .loon file
+        file: PathBuf,
+    },
+
+    /// Evaluate a .vcad or .loon file without rendering and print a per-part
+    /// JSON report: name, ok/failed + reason, posed bbox, volume, triangle
+    /// count, eval time. Exits non-zero when any part failed.
+    EvalJson {
         /// Path to the .vcad or .loon file
         file: PathBuf,
     },
@@ -523,6 +591,37 @@ enum Commands {
         quiet: bool,
     },
 
+    /// Sweep each revolute joint over its limits (others at zero) and report
+    /// the first angle each way where the moving subtree's overlap with the
+    /// rest of the assembly grows past its zero-pose overlap, plus which
+    /// part pairs collide. Exits 1 when any swept side collides before its
+    /// limit.
+    CheckJointRange {
+        /// Input .vcad or .loon assembly
+        input: PathBuf,
+        /// Joints to sweep (id or name, comma-separated); default: every
+        /// revolute joint
+        #[arg(long, value_delimiter = ',')]
+        joints: Vec<String>,
+        /// Sweep increment, degrees
+        #[arg(long, default_value = "5")]
+        step: f64,
+        /// New overlap past the zero pose that counts as a collision, mm³
+        #[arg(long, default_value = "200")]
+        threshold: f64,
+        /// Overlap-measurement column pitch, mm
+        #[arg(long, default_value = "1")]
+        resolution: f64,
+        /// Check only against the joint's own kinematic chain (geometry
+        /// moved by no joint or only by this joint's ancestors), ignoring
+        /// other limbs
+        #[arg(long)]
+        chain: bool,
+        /// Emit the report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Sign in so the chat panel uses your account's quota instead of
     /// the anonymous limit. Without `--token` this opens a browser
     /// and polls for the device-code flow to complete.
@@ -613,6 +712,15 @@ fn main() -> Result<()> {
         std::env::set_var("VCAD_CACHE", "0");
     }
 
+    vcad_kernel::vcad_kernel_booleans::recut_log::set_verbose(cli.verbose);
+    let result = run_command(cli);
+    if let Some(line) = vcad_kernel::vcad_kernel_booleans::recut_log::take_summary() {
+        eprintln!("{line}");
+    }
+    result
+}
+
+fn run_command(cli: Cli) -> Result<()> {
     match cli.command {
         Some(Commands::Tui { file }) => {
             app::run_tui(file)?;
@@ -627,8 +735,11 @@ fn main() -> Result<()> {
             input,
             output,
             strict_brep,
+            pose,
+            pose_file,
         }) => {
-            export_file(&input, &output, strict_brep)?;
+            let pose = cli_pose(&pose, pose_file.as_deref())?;
+            export_file(&input, &output, strict_brep, &pose)?;
         }
         Some(Commands::Route {
             input,
@@ -695,6 +806,17 @@ fn main() -> Result<()> {
         Some(Commands::Render {
             input,
             output,
+            out,
+            photoreal,
+            preset,
+            camera,
+            size,
+            samples,
+            max_depth,
+            exposure,
+            env,
+            seed,
+            cpu,
             width,
             height,
             azimuth,
@@ -702,7 +824,32 @@ fn main() -> Result<()> {
             distance,
             background,
             up,
+            pose,
+            pose_file,
         }) => {
+            let pose = cli_pose(&pose, pose_file.as_deref())?;
+            let output = output
+                .or(out)
+                .ok_or_else(|| anyhow::anyhow!("render: give an output path (or --out)"))?;
+            if photoreal {
+                let (width, height) = match size.as_deref() {
+                    Some(s) => photoreal::parse_size(s)?,
+                    None => (1600, 1000),
+                };
+                let req = photoreal::PhotorealRequest {
+                    width,
+                    height,
+                    view: photoreal::resolve_view(preset.as_deref(), camera.as_deref())?,
+                    samples,
+                    max_depth,
+                    exposure,
+                    env,
+                    seed,
+                    cpu,
+                };
+                let doc = load_posed_document(&input, &pose)?;
+                return photoreal::render_document(&doc, &output, &req);
+            }
             render_to_image(
                 &input,
                 &output,
@@ -713,6 +860,7 @@ fn main() -> Result<()> {
                 distance,
                 &background,
                 up.into(),
+                &pose,
             )?;
         }
         Some(Commands::Boolean {
@@ -754,6 +902,9 @@ fn main() -> Result<()> {
         }
         Some(Commands::Info { file }) => {
             show_info(&file)?;
+        }
+        Some(Commands::EvalJson { file }) => {
+            run_eval_json(&file)?;
         }
         Some(Commands::Kit { spec, output }) => {
             kit::run(&kit::KitArgs { spec, output })?;
@@ -851,6 +1002,44 @@ fn main() -> Result<()> {
             json,
         }) => {
             run_dfm_ruleset(&input, &ruleset, pack.as_deref(), json)?;
+        }
+        Some(Commands::CheckJointRange {
+            input,
+            joints,
+            step,
+            threshold,
+            resolution,
+            chain,
+            json,
+        }) => {
+            let doc = load_doc(&input)?;
+            let opts = vcad_kernel_assembly::JointRangeOptions {
+                step_deg: step,
+                threshold_mm3: threshold,
+                resolution_mm: resolution,
+                joints,
+                scope: if chain {
+                    vcad_kernel_assembly::RangeScope::Chain
+                } else {
+                    vcad_kernel_assembly::RangeScope::All
+                },
+                ..Default::default()
+            };
+            let ranges = vcad_kernel_assembly::check_joint_range(&doc, &opts)
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&ranges)?);
+            } else {
+                for r in &ranges {
+                    println!("{}", r.summary());
+                }
+            }
+            if ranges
+                .iter()
+                .any(|r| !r.negative.is_free() || !r.positive.is_free())
+            {
+                std::process::exit(1);
+            }
         }
         Some(Commands::Check {
             input,
@@ -990,6 +1179,23 @@ fn eval_loon(path: &std::path::Path) -> Result<vcad_ir::Document> {
     vcad_loon::eval_vcad_file(path).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
+/// `vcad eval-json`: the same report as `vcad-render --eval-json`, with
+/// `.loon` source evaluated first.
+fn run_eval_json(path: &std::path::Path) -> Result<()> {
+    let doc = load_doc(path)?;
+    let raw = serde_json::to_string(&doc)?;
+    let report = vcad_render::report::eval_report(&raw).map_err(|e| anyhow::anyhow!("{e}"))?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if report.parts_failed > 0 {
+        anyhow::bail!(
+            "{} of {} part(s) failed to evaluate",
+            report.parts_failed,
+            report.parts_total
+        );
+    }
+    Ok(())
+}
+
 fn load_doc(path: &std::path::Path) -> Result<vcad_ir::Document> {
     if is_loon(path) {
         return eval_loon(path);
@@ -1052,12 +1258,53 @@ fn run_merge(
     }
 }
 
-fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<()> {
+/// `--pose-file` then `--pose`, in order — later entries win. Same parsing
+/// as vcad-render's flags of the same names.
+fn cli_pose(specs: &[String], file: Option<&std::path::Path>) -> Result<Vec<(String, f64)>> {
+    let mut pose = Vec::new();
+    if let Some(path) = file {
+        let json = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
+        pose.extend(
+            vcad_render::pose::parse_pose_json(&json)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?,
+        );
+    }
+    for spec in specs {
+        pose.extend(vcad_render::pose::parse_pose_spec(spec).map_err(|e| anyhow::anyhow!(e))?);
+    }
+    Ok(pose)
+}
+
+/// Load a document and apply a pose to its joints (no-op for an empty pose).
+fn load_posed_document(input: &PathBuf, pose: &[(String, f64)]) -> Result<vcad_ir::Document> {
+    let mut doc = load_vcad_document(input)?;
+    if !pose.is_empty() {
+        for w in vcad_render::pose::pose_document(&mut doc, pose).map_err(|e| anyhow::anyhow!(e))? {
+            eprintln!("warning: {w}");
+        }
+    }
+    Ok(doc)
+}
+
+fn export_file(
+    input: &PathBuf,
+    output: &PathBuf,
+    strict_brep: bool,
+    pose: &[(String, f64)],
+) -> Result<()> {
     use std::fs;
 
-    let doc = load_vcad_document(input)?;
+    let doc = load_posed_document(input, pose)?;
 
     let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("");
+    // The evaluated document itself: what `vcad-render` (which does not read
+    // `.loon`) and the app consume. Assemblies, joints and a `--pose` survive.
+    if ext.eq_ignore_ascii_case("vcad") {
+        fs::write(output, doc.to_json()?)?;
+        println!("Exported document to {}", output.display());
+        return Ok(());
+    }
     if ext.eq_ignore_ascii_case("loon") {
         return export_loon(&doc, output);
     }
@@ -1083,11 +1330,13 @@ fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<(
             .schematic
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("{} has no schematic", input.display()))?;
+        // Count the flattened design (hierarchical sheets elaborated).
+        let flat = vcad_ecad_symbols::flatten_schematic(sheet);
         fs::write(output, vcad_ecad_symbols::write_kicad_sch(sheet))?;
-        let nets = sheet.nets.as_ref().map_or(0, |n| n.len());
+        let nets = flat.nets.as_ref().map_or(0, |n| n.len());
         println!(
             "Exported schematic ({} parts, {} nets) to {}",
-            sheet.components.len(),
+            flat.components.len(),
             nets,
             output.display()
         );
@@ -1143,8 +1392,7 @@ fn export_file(input: &PathBuf, output: &PathBuf, strict_brep: bool) -> Result<(
 fn plan_bga_escapes(
     pcb: &mut vcad_ir::ecad::Pcb,
     layers: &[vcad_ir::ecad::PcbLayer],
-    via_d: f64,
-    via_drill: f64,
+    via: Option<(f64, f64)>,
     width: f64,
 ) -> (usize, usize) {
     use vcad_ecad_pcb::router::escape;
@@ -1227,6 +1475,14 @@ fn plan_bga_escapes(
             })
             .collect();
         let session = vcad_ecad_pcb::RouteSession::from_pcb(pcb);
+        // An explicit via size wins; else each drop gets its span's size
+        // (microvia for one dielectric, drilled deeper — `via_sizing`).
+        let size_to = |net: &str, l: vcad_ir::ecad::PcbLayer| {
+            via.unwrap_or_else(|| {
+                let s = session.via_spec(net, copper[0], l);
+                (s.diameter, s.drill)
+            })
+        };
         let plans = escape::plan_multilayer_escapes(
             &session,
             pcb,
@@ -1234,7 +1490,7 @@ fn plan_bga_escapes(
             &endpoints,
             layers,
             &fixed,
-            via_d / 2.0,
+            &|l| size_to("", l).0 / 2.0,
             width,
         );
         let mut per_layer = vec![0usize; layers.len()];
@@ -1242,6 +1498,7 @@ fn plan_bga_escapes(
             let Some((li, plan)) = plan else { continue };
             per_layer[li] += 1;
             if plan.layer != copper[0] {
+                let (via_d, via_drill) = size_to(net, plan.layer);
                 pcb.vias.push(Via {
                     via_type: None,
                     position: *at,
@@ -1370,7 +1627,7 @@ fn route_file(
     only: Vec<String>,
     escape: Option<&str>,
 ) -> Result<()> {
-    use vcad_ir::ecad::{CopperSource, Trace, Via};
+    use vcad_ir::ecad::{CopperSource, Trace};
     // RUST_LOG=info shows the router's own account (legalization, pruning)
     let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
         .try_init();
@@ -1594,11 +1851,7 @@ fn route_file(
             .map(|l| serde_json::from_str(&format!("\"{}\"", l.trim().replace('.', ""))))
             .collect::<std::result::Result<_, _>>()
             .map_err(|e| anyhow::anyhow!("--escape: bad layer list: {e}"))?;
-        let (vd, vdr) = microvia.unwrap_or((
-            route_pcb.rules.default_rules.via_diameter,
-            route_pcb.rules.default_rules.via_drill,
-        ));
-        let (t, v) = plan_bga_escapes(&mut route_pcb, &layers, vd, vdr, w);
+        let (t, v) = plan_bga_escapes(&mut route_pcb, &layers, microvia, w);
         progress(format!("escape: laid {t} escape traces, {v} microvias"));
         // the board copy written out carries them too
         pcb.traces.extend(
@@ -1632,10 +1885,6 @@ fn route_file(
         r.traces.len(),
         r.vias.len()
     ));
-    let (vd, vdrill) = (
-        pcb.rules.default_rules.via_diameter,
-        pcb.rules.default_rules.via_drill,
-    );
     pcb.traces.extend(r.traces.iter().map(|t| Trace {
         start: t.start,
         end: t.end,
@@ -1644,16 +1893,12 @@ fn route_file(
         net: t.net.clone(),
         source: Some(CopperSource::Autoroute),
     }));
-    pcb.vias.extend(r.vias.iter().map(|v| Via {
-        via_type: None,
-        position: v.position,
-        diameter: vd,
-        drill: vdrill,
-        start_layer: v.start_layer,
-        end_layer: v.end_layer,
-        net: v.net.clone(),
-        source: Some(CopperSource::Autoroute),
-    }));
+    let sized = pcb.clone();
+    pcb.vias.extend(
+        r.vias
+            .iter()
+            .map(|v| v.to_board_via(&sized, Some(CopperSource::Autoroute))),
+    );
     pcb.zones.extend(r.zones.iter().cloned());
     if let Some(raw) = std::env::var_os("VCAD_ROUTE_RAW") {
         std::fs::write(&raw, vcad_ecad_symbols::write_kicad_pcb_for_project(&pcb))?;
@@ -1770,18 +2015,12 @@ fn route_file(
                         source: Some(CopperSource::Autoroute),
                     }),
             );
-            trial
-                .vias
-                .extend(r2.vias.iter().filter(|v| in_split(&v.net)).map(|v| Via {
-                    via_type: None,
-                    position: v.position,
-                    diameter: vd,
-                    drill: vdrill,
-                    start_layer: v.start_layer,
-                    end_layer: v.end_layer,
-                    net: v.net.clone(),
-                    source: Some(CopperSource::Autoroute),
-                }));
+            trial.vias.extend(
+                r2.vias
+                    .iter()
+                    .filter(|v| in_split(&v.net))
+                    .map(|v| v.to_board_via(&again, Some(CopperSource::Autoroute))),
+            );
             anchor_track_ends(&mut trial);
             let after: usize = vcad_ecad_pcb::drc::net_islands(&trial, &split)
                 .values()
@@ -2262,6 +2501,34 @@ fn write_glb(doc: &vcad_ir::Document, output: &PathBuf) -> Result<usize> {
             mesh_key: None,
         });
     }
+    // Assembly instances, placed in world space at the document's pose.
+    for (name, mesh) in crate::app::placed_instance_meshes(doc, &scene) {
+        let pos_off = f32_data.len();
+        f32_data.extend_from_slice(&mesh.positions);
+        let normals = mesh.normals.as_ref().map(|n| {
+            let off = f32_data.len();
+            f32_data.extend_from_slice(n);
+            [off, n.len()]
+        });
+        let idx_off = u32_data.len();
+        u32_data.extend_from_slice(&mesh.indices);
+        meshes.push(GlbMeshSpec {
+            name,
+            positions: [pos_off, mesh.positions.len()],
+            indices: [idx_off, mesh.indices.len()],
+            normals,
+            color: [0.71, 0.71, 0.75],
+            metallic: 0.1,
+            roughness: 0.7,
+            emissive: None,
+            emissive_strength: None,
+            clearcoat: None,
+            clearcoat_roughness: None,
+            alpha: None,
+            transform: None,
+            mesh_key: None,
+        });
+    }
     if meshes.is_empty() {
         anyhow::bail!("Document has no geometry to export");
     }
@@ -2574,7 +2841,14 @@ fn import_step(input: &PathBuf, output: &PathBuf, name: Option<String>) -> Resul
 /// Read a .vcad file and return the materialized IR document.
 /// Auto-detects CRDT (v0.4) vs legacy v1 JSON shapes. A `.loon` input is
 /// evaluated to a document first.
+#[allow(clippy::ptr_arg)] // callers all hold PathBufs
 fn load_vcad_document(file: &PathBuf) -> Result<vcad_ir::Document> {
+    // Work from the absolute path. `.loon` evaluation already anchors
+    // `import-mesh` paths to the file's directory; with a relative input that
+    // anchor is itself relative, and re-anchoring it below doubled the
+    // directory (`a/b/a/b/m.stl`), silently dropping every mesh part.
+    let abs = file.canonicalize().unwrap_or_else(|_| file.clone());
+    let file = &abs;
     let mut doc = load_vcad_document_raw(file)?;
     // Anchor relative mesh references to the document's own directory — see
     // the note in `load_doc`. Without this, a committed URDF import evaluates
@@ -3486,11 +3760,12 @@ fn render_to_image(
     distance: Option<f64>,
     background: &str,
     up_axis: crate::render::UpAxis,
+    pose: &[(String, f64)],
 ) -> Result<()> {
     use crate::render::{Camera, GraphicsOutput, RenderBuffer};
 
     // Load and evaluate document (`.loon` source is evaluated on the way in)
-    let doc = load_vcad_document(input)?;
+    let doc = load_posed_document(input, pose)?;
     let meshes = crate::app::evaluate_document(&doc)?;
 
     if meshes.is_empty() {
@@ -3814,6 +4089,99 @@ mod tests {
     use super::*;
     use vcad_ir::{CsgOp, Document, Node, SceneEntry, Vec3};
 
+    /// A `.loon` given by a *relative* path keeps its `import-mesh` paths
+    /// valid: resolved once against the file's directory, never twice.
+    #[test]
+    fn relative_loon_mesh_paths_resolve_once() {
+        let dir = tempfile::tempdir_in(".").unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir_all(sub.join("stl")).unwrap();
+        std::fs::write(
+            sub.join("stl/m.stl"),
+            "solid m\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid m\n",
+        )
+        .unwrap();
+        std::fs::write(sub.join("part.loon"), r#"[import-mesh "stl/m.stl"]"#).unwrap();
+        let rel = PathBuf::from(".")
+            .join(dir.path().file_name().unwrap())
+            .join("sub/part.loon");
+        let doc = load_vcad_document(&rel).unwrap();
+        let paths: Vec<String> = doc
+            .nodes
+            .values()
+            .filter_map(|n| match &n.op {
+                CsgOp::MeshImport { path, .. } => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(paths.len(), 1);
+        assert!(
+            std::path::Path::new(&paths[0]).exists(),
+            "mesh path does not exist: {}",
+            paths[0]
+        );
+    }
+
+    const ARM_LOON: &str = r#"
+[assembly
+  #[[part "base" [cube 10.0 10.0 10.0] "steel"]
+    [part "arm" [cube 80.0 10.0 10.0] "aluminum"]]
+  #[[instance "base-inst" "base" 0.0 0.0 0.0]
+    [instance "arm-inst" "arm" 0.0 0.0 10.0]]
+  #[[revolute-joint "shoulder" 0.0 1.0 0.0 -90.0 90.0
+      "base-inst" 0.0 0.0 10.0
+      "arm-inst" 0.0 0.0 0.0]]
+  "base-inst"]
+"#;
+
+    fn z_extent(m: &crate::app::EvaluatedMesh) -> f32 {
+        let zs = m.vertices.chunks_exact(3).map(|v| v[2]);
+        let (lo, hi) = zs.fold((f32::MAX, f32::MIN), |(lo, hi), z| (lo.min(z), hi.max(z)));
+        hi - lo
+    }
+
+    /// A `.loon` assembly has no roots; render/STL must still see its
+    /// instances, placed by FK, and `--pose` must move them.
+    #[test]
+    fn loon_assembly_evaluates_and_poses() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("arm.loon");
+        std::fs::write(&src, ARM_LOON).unwrap();
+
+        let rest = crate::app::evaluate_document(&load_posed_document(&src, &[]).unwrap()).unwrap();
+        assert_eq!(rest.len(), 2, "both instances become meshes");
+        assert!(
+            (z_extent(&rest[1]) - 10.0).abs() < 1e-3,
+            "arm lies flat at rest"
+        );
+
+        let pose = cli_pose(&["shoulder=90".into()], None).unwrap();
+        let posed =
+            crate::app::evaluate_document(&load_posed_document(&src, &pose).unwrap()).unwrap();
+        assert!(
+            (z_extent(&posed[1]) - 80.0).abs() < 1e-3,
+            "arm stands up at 90°"
+        );
+
+        assert!(cli_pose(&["shoulder".into()], None).is_err());
+        assert!(load_posed_document(&src, &[("elbow".into(), 1.0)]).is_err());
+    }
+
+    /// `export x.loon x.vcad` writes the evaluated document, assembly and
+    /// pose included, so vcad-render can take it from there.
+    #[test]
+    fn loon_assembly_exports_vcad() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("arm.loon");
+        let out = dir.path().join("arm.vcad");
+        std::fs::write(&src, ARM_LOON).unwrap();
+        export_file(&src, &out, false, &[("shoulder".into(), 45.0)]).unwrap();
+        let doc = Document::from_json(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!(doc.instances.as_ref().map(Vec::len), Some(2));
+        let joint = &doc.joints.as_ref().unwrap()[0];
+        assert_eq!(joint.state, 45.0);
+    }
+
     fn cube_doc() -> Document {
         let mut doc = Document::new();
         doc.nodes.insert(
@@ -4117,10 +4485,6 @@ fn stitch_to_planes(
     let mut work = route_pcb.clone();
     work.traces = pcb.traces.clone();
     work.vias = pcb.vias.clone();
-    let (vd, vdrill) = (
-        pcb.rules.default_rules.via_diameter,
-        pcb.rules.default_rules.via_drill,
-    );
     let copper: Vec<PcbLayer> = work
         .stackup
         .layers
@@ -4205,6 +4569,11 @@ fn stitch_to_planes(
                 }
                 let w = session.width_for(net, width);
                 let clearance = session.clearance_for(net);
+                // A through stitch, at the through size for this net.
+                let (vd, vdrill) = {
+                    let s = session.via_spec(net, front, back);
+                    (s.diameter, s.drill)
+                };
                 'found: for ring in [-1.0, 0.5, 0.8, 1.1, 1.5, 2.0, 2.6] {
                     for k in 0..if ring < 0.0 { 1 } else { 24 } {
                         let a = k as f64 * std::f64::consts::TAU / 24.0;
@@ -4215,7 +4584,7 @@ fn stitch_to_planes(
                             r + vd / 2.0 + ring - 0.4
                         };
                         let v = vcad_ir::Vec2::new(c.x + d * a.cos(), c.y + d * a.sin());
-                        if !session.probe_via_drill(v, net).legal {
+                        if !session.probe_via_span(v, net, front, back).legal {
                             continue;
                         }
                         let disc = CopperGeom::Disc {

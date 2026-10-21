@@ -329,8 +329,7 @@ fn rasterize(
     }
     // `mesh_segments()` is Some here: --exact is refused above.
     let objects = photoreal::build_objects(&solids, pr.mesh_segments())?;
-    let corners: Vec<[f64; 3]> = objects.iter().flat_map(photoreal::object_corners).collect();
-    let framing = photoreal::frame_view(&corners, opts, pr)?;
+    let framing = photoreal::frame_scene(&solids, &objects, opts, pr)?;
     let scene = photoreal::dress_scene(objects, &framing, pr)?;
 
     let gpu_scene = build_scene(&scene, &framing)?;
@@ -350,9 +349,7 @@ fn rasterize(
         );
     }
     gpu_scene
-        .validate(Some(
-            ctx.device.limits().max_storage_buffer_binding_size as u64,
-        ))
+        .validate(Some(ctx.device.limits().max_storage_buffer_binding_size))
         .map_err(|e| format!("--gpu: {e}"))?;
 
     let canvas = framing.canvas;

@@ -7,12 +7,9 @@
  * the existing Supabase client (the code verifier is in shared
  * `localStorage`) so `onAuthStateChange` fires in the original tab and
  * the user keeps their place — no navigation, no state loss.
- *
- * Tauri uses a separate flow (external browser + deep-link bridge); the
- * caller should branch on `isTauriRuntime()` before calling this.
  */
 
-import { applyAuthCallback } from "./auth-deep-link";
+import { applyAuthCallback } from "./auth-callback";
 import { getPopupCallbackUrl, getSupabase } from "./client";
 
 export type OAuthPopupProvider = "google" | "github";

@@ -1,0 +1,17 @@
+{
+  "id": "2026-10-19-microvia-stack-rule",
+  "version": "0.10.0",
+  "date": "2026-10-19",
+  "category": "feat",
+  "title": "MicroviaStack DRC rule + stacked microvia inference",
+  "summary": "New MicroviaStack DRC rule and allowStackedMicrovias design-rule field, inferred from imported boards, flag stacked microvias the fab can't build.",
+  "features": [
+    "pcb",
+    "drc",
+    "routing"
+  ],
+  "mcpTools": [
+    "run_drc",
+    "set_design_rules"
+  ]
+}

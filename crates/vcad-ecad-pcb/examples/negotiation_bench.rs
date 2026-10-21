@@ -98,7 +98,9 @@ fn board(w: f64, h: f64, footprints: Vec<Footprint>, keepouts: Vec<Keepout>) -> 
         },
         nets: vec![],
         rules: DesignRules {
+            allow_stacked_microvias: false,
             inferred_floors: Vec::new(),
+            rule_areas: Vec::new(),
             min_microvia_drill: 0.1,
             min_microvia_diameter: 0.2,
             default_rules: NetClassRules {
@@ -274,17 +276,9 @@ fn run(pcb: &Pcb, negotiation_rounds: usize) -> Score {
             source: None,
         });
     }
+    let sized = applied.clone();
     for v in &r.vias {
-        applied.vias.push(Via {
-            via_type: None,
-            position: v.position,
-            diameter: applied.rules.default_rules.via_diameter,
-            drill: applied.rules.default_rules.via_drill,
-            start_layer: v.start_layer,
-            end_layer: v.end_layer,
-            net: v.net.clone(),
-            source: None,
-        });
+        applied.vias.push(v.to_board_via(&sized, None));
     }
     // Compare against the bare board so any pre-existing land-pattern
     // violations don't count against the router — only copper it added can

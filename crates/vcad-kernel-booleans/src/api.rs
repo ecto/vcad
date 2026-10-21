@@ -152,6 +152,12 @@ pub enum DegradeReason {
     /// Degradation is therefore contagious: one fallback poisons every
     /// downstream boolean on that branch.
     SoupOperand,
+    /// An operand was a dense faceted polyhedron (e.g. a ruled loft of
+    /// dense polyline sections): hundreds of planar quads and nothing
+    /// analytic to preserve. The B-rep pipeline is skipped for the mesh
+    /// boolean, which is exact on planar input and orders of magnitude
+    /// faster than face-pair SSI at that face count.
+    FacetedOperand,
     /// The B-rep result had negative or non-finite volume — provably wrong,
     /// since a bounded solid always has positive volume.
     InvertedVolume,
@@ -178,6 +184,7 @@ impl DegradeReason {
         match self {
             DegradeReason::SteinmetzCylinders => "steinmetz-cylinders",
             DegradeReason::SoupOperand => "soup-operand",
+            DegradeReason::FacetedOperand => "faceted-operand",
             DegradeReason::InvertedVolume => "inverted-volume",
             DegradeReason::VolumeDisagreement => "volume-disagreement",
             DegradeReason::DifferenceRemovedNothing => "difference-removed-nothing",
@@ -195,6 +202,9 @@ impl std::fmt::Display for DegradeReason {
             }
             DegradeReason::SoupOperand => {
                 "an operand was already triangle soup from an earlier fallback"
+            }
+            DegradeReason::FacetedOperand => {
+                "an operand was a dense faceted polyhedron with no analytic surfaces"
             }
             DegradeReason::InvertedVolume => "the B-rep result had negative or non-finite volume",
             DegradeReason::VolumeDisagreement => {
@@ -395,6 +405,20 @@ pub fn boolean_op_reported(
         return Ok((result, report));
     }
 
+    // Dense faceted operands (a loft of dense polyline sections): nothing
+    // analytic to keep, and the face-pair stages are what cost minutes.
+    // Unrefined, like the soup path: the membrane/watertightness passes
+    // are quadratic-ish in triangle count and were the next ~60 s on the
+    // field file, while the BSP result on clean planar input is closed.
+    if crate::mesh::is_dense_faceted(solid_a) || crate::mesh::is_dense_faceted(solid_b) {
+        let mesh_a = tessellate_brep(solid_a, segments);
+        let mesh_b = tessellate_brep(solid_b, segments);
+        let result = mesh_fallback(&mesh_a, &mesh_b, op, &quadrics, false)?;
+        let report =
+            BooleanReport::degraded(op, DegradeReason::FacetedOperand).with_result(&result);
+        return Ok((result, report));
+    }
+
     // Flag arrangements the splitters provably cannot represent. This is a
     // capability declaration, not a verdict: the B-rep pipeline often
     // copes anyway (a crossing may be resolved through other, analytic
@@ -492,11 +516,7 @@ pub fn boolean_op_reported(
     if !broken && op == BooleanOp::Difference {
         if let Some((mesh_a, mesh_b)) = &operands {
             if crate::validate::difference_removed_nothing(&result_mesh, mesh_a, mesh_b) {
-                eprintln!(
-                    "vcad boolean: Difference removed no volume from a subtrahend that \
-                     overlaps the minuend — rejecting the B-rep result and re-cutting \
-                     with the mesh boolean"
-                );
+                crate::recut_log::difference_recut();
                 broken = true;
                 broken_reason = Some(DegradeReason::DifferenceRemovedNothing);
             }

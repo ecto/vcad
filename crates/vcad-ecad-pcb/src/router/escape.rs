@@ -51,7 +51,7 @@ pub struct PinField {
     /// Nearest-neighbor pad pitch (mm) — the lattice spacing.
     pitch: f64,
     /// Copper layer the field's pads (and thus escapes) live on.
-    layer: PcbLayer,
+    pub(crate) layer: PcbLayer,
 }
 
 impl PinField {
@@ -704,7 +704,10 @@ pub fn plan_field_escapes_toward(
 /// there: on the pad layer every pad; below it the fixed vias whose span
 /// crosses the layer (`fixed`: a plane net's ball vias stop at their plane)
 /// plus a via under every endpoint still going down. Returns, per endpoint,
-/// the index into `layers` it escapes on and its escape.
+/// the index into `layers` it escapes on and its escape. `via_r(layer)` is
+/// the radius of the via from the pad layer down to `layer` — per-span, so a
+/// one-dielectric hop is a microvia and a deeper drop a drilled via
+/// ([`crate::via_sizing`]).
 #[allow(clippy::too_many_arguments)]
 pub fn plan_multilayer_escapes(
     session: &RouteSession,
@@ -713,7 +716,7 @@ pub fn plan_multilayer_escapes(
     endpoints: &[(String, Vec2, Vec2)],
     layers: &[PcbLayer],
     fixed: &[(Vec2, f64, Vec<PcbLayer>)],
-    via_r: f64,
+    via_r: &dyn Fn(PcbLayer) -> f64,
     width: f64,
 ) -> Vec<Option<(usize, EscapePlan)>> {
     let mut out: Vec<Option<(usize, EscapePlan)>> = vec![None; endpoints.len()];
@@ -751,7 +754,7 @@ pub fn plan_multilayer_escapes(
                 .map(|(p, r, _)| FieldPad { pos: *p, r: *r })
                 .chain(left.iter().map(|&k| FieldPad {
                     pos: endpoints[k].1,
-                    r: via_r,
+                    r: via_r(layer),
                 }))
                 .collect()
         };
@@ -877,7 +880,9 @@ mod tests {
             },
             nets: vec![],
             rules: DesignRules {
+                allow_stacked_microvias: false,
                 inferred_floors: Vec::new(),
+                rule_areas: Vec::new(),
                 min_microvia_drill: 0.1,
                 min_microvia_diameter: 0.2,
                 default_rules: NetClassRules {

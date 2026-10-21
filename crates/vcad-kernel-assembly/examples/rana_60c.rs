@@ -19,9 +19,8 @@
 //! cargo run -p vcad-kernel-assembly --example rana_60c -- <dir> 0.0
 //! ```
 //!
-//! Note the `import-mesh-scaled 0.001` — `import-mesh` treats STL units as
-//! metres (a URDF convention) and multiplies by 1000, so a millimetre STL has
-//! to be scaled back down.
+//! Note the `:units "mm"` — `import-mesh` treats STL units as metres (a URDF
+//! convention) and multiplies by 1000 unless told otherwise.
 
 use vcad_kernel_assembly::{check_interference, check_mates, pose_document, InterferenceOptions};
 
@@ -30,9 +29,7 @@ use vcad_kernel_assembly::{check_interference, check_mates, pose_document, Inter
 const MODELLING_OVERLAP_MM: f64 = 0.05;
 
 fn document_source(dir: &str) -> String {
-    let stl = |name: &str| {
-        format!("[import-mesh-scaled 0.001 0.001 0.001 \"{dir}/rana-60c-{name}.stl\"]")
-    };
+    let stl = |name: &str| format!("[import-mesh \"{dir}/rana-60c-{name}.stl\" :units \"mm\"]");
     format!(
         r#"; rana-60c — mini assembly document (3 of 10 parts).
 ; Transforms are probe-60c.py's A table, which this file replaces as the

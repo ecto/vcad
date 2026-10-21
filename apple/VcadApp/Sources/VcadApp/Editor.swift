@@ -68,11 +68,27 @@ enum CameraPreset {
     }
 }
 
-/// One undo step: the document before the edit, and what the edit was called
-/// so the Edit menu can say "Undo Extrude" rather than "Undo".
+/// One undo step, and what the edit was called so the Edit menu can say
+/// "Undo Extrude" rather than "Undo".
 struct UndoEntry: Equatable {
-    let data: Data
+    enum Step: Equatable {
+        /// Exactly one engine history group: undone with the engine's own
+        /// `undo` command.
+        case engine
+        /// An engine snapshot (document + history) from before a compound
+        /// edit — a drag, a scrub, or an IR edit the command vocabulary has
+        /// no verb for yet.
+        case snapshot(Data)
+        /// Serialized document JSON, for documents edited outside the engine
+        /// (electronics, which the command vocabulary doesn't cover yet).
+        case json(Data)
+    }
+    let step: Step
     let name: String
+
+    init(step: Step, name: String) { self.step = step; self.name = name }
+    /// A detached-JSON step (the electronics workspace's grouping).
+    init(data: Data, name: String) { self.init(step: .json(data), name: name) }
 }
 
 enum GeometrySource: Hashable, Identifiable {
@@ -322,6 +338,8 @@ final class EditorModel {
     var source: GeometrySource = .sandbox {
         didSet {
             geometryDirty = true
+            if source.id != oldValue.id { jointPose = [:]; explode = 0 }
+            watchDocumentFile()                   // hot reload on regenerate
             loadDocumentTree()                    // parse the DAG for a .vcad
             if !availableTabs.contains(toolTab) { toolTab = .create }
             selectedFeatureID = defaultSelection()
@@ -421,6 +439,11 @@ final class EditorModel {
     /// tree row lights every instance drawn from that row's part def, because
     /// the row *is* the definition — one row, four elbows on a quadruped.
     var hoveredInstances: Set<Int> = []
+    /// Instances an agent (over the app's MCP bridge) is pointing at — painted
+    /// like a selection so the user sees what the agent means.
+    var agentHighlights: Set<Int> = []
+    /// Labels an agent pinned to instances, drawn in the viewport overlay.
+    var agentAnnotations: [AgentAnnotation] = []
     /// The tree row that is hot, whichever side the pointer is on. Hovering
     /// geometry highlights its row; hovering a row highlights its geometry.
     var hoveredFeatureID: String?
@@ -475,7 +498,7 @@ final class EditorModel {
 
     /// The resident evaluated assembly scene (owns instance meshes + the
     /// parsed doc the FK solver re-poses). Freed on rebuild / source change.
-    nonisolated(unsafe) private var residentAssemblyScene: OpaquePointer?
+    nonisolated(unsafe) var residentAssemblyScene: OpaquePointer?
 
     // MARK: dynamics (physics simulation)
     //
@@ -558,6 +581,44 @@ final class EditorModel {
     /// simulation's output for bodies physics doesn't own.
     @ObservationIgnored var authoredInstanceTransforms: [float4x4] = []
     var playbackDirty = false
+
+    // MARK: pose studio (interactive joints + explode + hot reload)
+    // Implemented in PoseStudio.swift; the stored state lives here because an
+    // extension can't hold it.
+
+    /// Interactive joint values, keyed by joint NAME (falling back to id) so a
+    /// pose survives the file being regenerated with renumbered joint ids.
+    var jointPose: [String: Double] = [:]
+    /// Explode amount, 0 (assembled) … 1 (fully exploded).
+    var explode: Double = 0
+    /// Instance ids + part-local AABB centres, scene order — what explode
+    /// reasons about. Filled when an assembly scene is adopted.
+    @ObservationIgnored var assemblyInstanceIDs: [String] = []
+    @ObservationIgnored var assemblyLocalCenters: [SIMD3<Float>] = []
+    /// Watches the open document's file; a regenerate reloads it in place.
+    @ObservationIgnored var fileWatch: DispatchSourceFileSystemObject?
+    @ObservationIgnored var fileWatchPath: String?
+    @ObservationIgnored var reloadPending: DispatchWorkItem?
+    /// When the open document last reloaded from disk (shown in the pose panel).
+    var lastReload: Date?
+    /// Photoreal snapshot state.
+    var photorealBusy = false
+    var photorealStatus: String?
+
+    // MARK: path-traced viewport (PathTracer.swift)
+    /// The live irys path-traced view is on.
+    var pathTraceEnabled = false
+    /// Why it isn't running, or what it's doing (nil when converging normally).
+    var pathTraceStatus: String?
+    /// Samples per pixel in the image on screen.
+    var pathTraceSamples: UInt32 = 0
+    /// A still was asked for and is waiting for enough samples.
+    var pathTraceStillPending = false
+    @ObservationIgnored let pathTracer = PathTracer()
+    /// Bumped whenever a new scene's meshes are adopted, so the path tracer
+    /// knows to rebuild its scene (pose changes go through `poseTick`).
+    @ObservationIgnored var sceneGeneration = 0
+
     var isPlaying = false
     /// Current playback time in seconds (drives the scrubber).
     var playbackTime: Double = 0
@@ -660,7 +721,7 @@ final class EditorModel {
     /// (Z-up, mm). Display world = zUpRot(kernel − displayCenter) · displayScale,
     /// so kernel = zUpRotInv(world / displayScale) + displayCenter, where
     /// zUpRotInv maps (x, y, z)world → (x, −z, y)kernel.
-    private func kernelCamera() -> (cam: SIMD3<Double>, target: SIMD3<Double>)? {
+    func kernelCamera() -> (cam: SIMD3<Double>, target: SIMD3<Double>)? {
         guard displayScale > 1e-9 else { return nil }
         func toKernel(_ w: SIMD3<Float>) -> SIMD3<Double> {
             let u = w / displayScale
@@ -678,7 +739,7 @@ final class EditorModel {
         guard usesDocumentTree, let (cam, target) = kernelCamera() else { return nil }
         let data: Data?
         if let json = documentJSON { data = DocEdit.serialize(json) }
-        else if case let .document(path, _) = source { data = try? Data(contentsOf: URL(fileURLWithPath: path)) }
+        else if case let .document(path, _) = source { data = Self.documentBytes(path: path) }
         else if case let .generated(loon, _) = source { data = Data(loon.utf8) }
         else { data = nil }
         guard let data else { return nil }
@@ -753,18 +814,29 @@ final class EditorModel {
         expandedFeatureIDs.removeAll()
         docPartMeshes = []
         documentJSON = nil
+        engine = nil; engineState = nil; engineError = nil; savedHash = nil
         undoStack.removeAll(); redoStack.removeAll()
         renamingFeatureID = nil
         documentDirty = false
         savedSnapshot = nil
         if case let .document(path, _) = source,
-           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+           let data = Self.documentBytes(path: path),
            let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-           let g = DocumentGraph.parse(dict) {
-            documentJSON = dict
+           DocumentGraph.parse(dict) != nil {
+            // The engine owns the document from here on. A file it can't
+            // round-trip faithfully opens view-only rather than being
+            // silently rewritten on the first edit.
+            let opened = Self.openInEngine(dict)
+            let live = opened?.state.document ?? dict
+            guard let g = DocumentGraph.parse(live) else { return }
+            engine = opened?.engine
+            engineState = opened?.state
+            savedHash = opened?.engine.stateHash
+            if opened == nil { engineError = "This document opens view-only: the document engine can't edit it yet." }
+            documentJSON = live
             documentGraph = g
             featureNodes = g.featureRoots()
-            savedSnapshot = DocEdit.serialize(dict)
+            savedSnapshot = DocEdit.serialize(live)
             // Auto-expand a single-root doc so its history reads at a glance.
             if featureNodes.count == 1, let only = featureNodes.first {
                 expandedFeatureIDs.insert(only.id)
@@ -1003,10 +1075,19 @@ final class EditorModel {
 
     /// Assign a material to a part — recolors live (no geometry rebuild).
     func setPartMaterial(_ partIndex: Int, _ key: String) {
-        guard documentJSON != nil else { return }
-        applyEdit(snapshot: true, reeval: .none, name: "Change Material") {
-            DocEdit.setRootMaterial(&$0, partIndex: partIndex, key: key)
+        guard let id = partId(forPart: partIndex) else { return }
+        // The root material lives on the scene entry. A preset the document
+        // doesn't define yet gets its definition written into `materials` in
+        // the same step, so it renders and survives save/reload.
+        var commands: [DocCommand] = []
+        if engineState?.definesMaterial(key) == false, let p = MaterialPreset.byKey(key) {
+            commands.append(.defineMaterial(key: key, definition: MaterialDef(
+                name: key, color: [p.color.0, p.color.1, p.color.2],
+                metallic: Double(p.metallic), roughness: Double(p.roughness),
+                density: 1000, friction: 0.5, transmission: Double(p.transmission))))
         }
+        commands.append(.setMaterial(id: id, material: key))
+        send(commands.count == 1 ? commands[0] : .batch(commands: commands), name: "Change Material", reeval: .none)
         selectionDirty = true
     }
 
@@ -1020,20 +1101,36 @@ final class EditorModel {
     // static-mesh colliders and scene raycasts do the hit testing (Shell.swift).
 
     // MARK: document editing
-    // The kernel is a pure JSON→meshes evaluator, so editing = mutate the live
-    // doc dict + re-evaluate. `documentJSON` is the source of truth; `featureNodes`
-    // / geometry are re-derived after each edit. Undo/redo are JSON snapshots.
+    // The Rust document engine (`DocumentEngine` → `vcad_app::DocumentApi`)
+    // owns the document: every mutation is a `DocCommand`, and `documentJSON`
+    // is the engine's materialized IR, re-read after each command. Swift keeps
+    // view state only. Commands address parts by stable part id
+    // (`"replica:seq"`, the document's `partIds`), never node ids — the engine
+    // renumbers IR nodes on every materialize.
 
+    /// The engine for the open document; nil for sources with no editable
+    /// document and for files it can't round-trip (opened view-only).
+    @ObservationIgnored private(set) var engine: DocumentEngine?
+    /// The engine's last result (document + part table).
+    @ObservationIgnored private(set) var engineState: DocumentEngine.Result?
+    /// The last refusal, or why the document is view-only.
+    var engineError: String?
+    /// The engine's materialized document — read-only from Swift's side
+    /// except for the detached electronics path.
     @ObservationIgnored var documentJSON: [String: Any]?
     var undoStack: [UndoEntry] = []
     var redoStack: [UndoEntry] = []
     var documentDirty = false
-    /// The document as last saved (or loaded), so undoing back to it clears
+    /// Engine state hash as last saved (or loaded): undoing back to it clears
     /// the edited state instead of leaving a phantom dot in the title bar.
+    @ObservationIgnored private var savedHash: String?
+    /// Same, for detached (non-engine) documents.
     @ObservationIgnored private var savedSnapshot: Data?
     /// The source the intent bar replaced, so a generation can be undone as a
     /// whole even though the generated program has no document JSON.
     @ObservationIgnored private var generationUndo: (source: GeometrySource, json: [String: Any]?,
+                                                     engine: DocumentEngine?, state: DocumentEngine.Result?,
+                                                     savedHash: String?,
                                                      undo: [UndoEntry], redo: [UndoEntry], dirty: Bool)?
     /// What ⌘Z would undo, for the Edit menu.
     var undoActionName: String? {
@@ -1047,6 +1144,186 @@ final class EditorModel {
     var docParamDirty = false
     /// The feature row currently being renamed inline, if any.
     var renamingFeatureID: String?
+    /// Whether the open document accepts edits (it has an engine).
+    var canEditDocument: Bool { engine != nil }
+
+    /// Open `dict` in a fresh engine, or nil when the engine can't carry it
+    /// faithfully: a refusal, materialize warnings, a different scene shape,
+    /// or electronics (schematic/board JSON the vocabulary doesn't cover).
+    static func openInEngine(_ dict: [String: Any]) -> (engine: DocumentEngine, state: DocumentEngine.Result)? {
+        func count(_ d: [String: Any], _ k: String) -> Int { (d[k] as? [Any])?.count ?? 0 }
+        let nodes = dict["nodes"] as? [String: Any] ?? [:]
+        let hasBoard = nodes.values.contains {
+            (($0 as? [String: Any])?["op"] as? [String: Any])?["type"] as? String == "PcbBoard"
+        }
+        guard dict["schematic"] == nil, dict["pcb"] == nil, !hasBoard else { return nil }
+        let engine = DocumentEngine()
+        guard let state = try? engine.loadIR(dict), state.warnings.isEmpty,
+              count(state.document, "roots") == count(dict, "roots"),
+              count(state.document, "instances") == count(dict, "instances"),
+              count(state.document, "joints") == count(dict, "joints")
+        else { return nil }
+        return (engine, state)
+    }
+
+    /// Stable part id of the `partIndex`-th visible root.
+    func partId(forPart partIndex: Int) -> String? {
+        guard let g = documentGraph, partIndex >= 0, partIndex < g.visibleRoots.count else { return nil }
+        return engineState?.partId(forRootNode: g.visibleRoots[partIndex].nodeId)
+    }
+
+    private enum Reeval { case inPlace, rebuild, none }
+    /// How an edit lands on the undo stack.
+    private enum UndoMode {
+        /// The edit is exactly one engine command → one engine history group.
+        case step
+        /// Snapshot the engine first (compound edits, first event of a gesture).
+        case snapshot
+        /// Continue the current gesture: no new entry.
+        case none
+    }
+
+    private func pushUndo(_ step: UndoEntry.Step, name: String) {
+        undoStack.append(UndoEntry(step: step, name: name))
+        if undoStack.count > 64 { undoStack.removeFirst() }
+        redoStack.removeAll()
+    }
+
+    /// Render an engine result: it is the document now.
+    private func adopt(_ r: DocumentEngine.Result, reeval: Reeval) {
+        engineState = r
+        documentJSON = r.document
+        documentDirty = engine.map { $0.stateHash != savedHash } ?? true
+        if let g = DocumentGraph.parse(r.document) {
+            documentGraph = g
+            featureNodes = g.featureRoots()
+        }
+        markReeval(reeval)
+    }
+
+    private func markReeval(_ reeval: Reeval) {
+        switch reeval {
+        case .inPlace:
+            docParamDirty = true
+        case .rebuild:
+            suppressMaterializePop = true
+            geometryDirty = true; selectionDirty = true; visibilityDirty = true
+        case .none:
+            break
+        }
+    }
+
+    /// Run engine commands as one edit. With `.step` the body must issue
+    /// exactly one command (use a `batch` for several). A refusal leaves the
+    /// document and the undo stack untouched and lands in `engineError`.
+    @discardableResult
+    private func engineEdit(_ name: String, undo mode: UndoMode, reeval: Reeval,
+                            _ body: (DocumentEngine) throws -> DocumentEngine.Result) -> DocumentEngine.Result? {
+        guard let engine else { return nil }
+        let before = mode == .snapshot ? engine.save() : nil
+        do {
+            let r = try body(engine)
+            switch mode {
+            case .step: pushUndo(.engine, name: name)
+            case .snapshot: pushUndo(.snapshot(before ?? Data()), name: name)
+            case .none: break
+            }
+            engineError = nil
+            adopt(r, reeval: reeval)
+            return r
+        } catch {
+            if let before { _ = try? engine.restore(before) }
+            engineError = String(describing: error)
+            return nil
+        }
+    }
+
+    /// One `DocCommand`, one undo step.
+    @discardableResult
+    private func send(_ command: DocCommand, name: String, reeval: Reeval) -> DocumentEngine.Result? {
+        engineEdit(name, undo: .step, reeval: reeval) { try $0.apply(command) }
+    }
+
+    /// An edit the command vocabulary has no verb for yet (sketch extrude,
+    /// rotate-about-center, document parameters, raw node fields): edit the
+    /// materialized IR and reload it into the engine. Always snapshot-undone,
+    /// since a reload starts the engine's history over.
+    @discardableResult
+    private func irEdit(_ name: String, gestureStart: Bool = true, reeval: Reeval,
+                        base: [String: Any]? = nil,
+                        _ mutate: (inout [String: Any]) -> Void) -> DocumentEngine.Result? {
+        guard var json = base ?? documentJSON else { return nil }
+        mutate(&json)
+        return engineEdit(name, undo: gestureStart ? .snapshot : .none, reeval: reeval) { try $0.loadIR(json) }
+    }
+
+    /// Engine command for a node-field edit, when the field maps onto the
+    /// owning feature (transform chain, primitive dimensions, modifier
+    /// size). Nil → the field has no command yet; fall back to an IR edit.
+    private func nodeFieldCommand(nodeId: Int, key: String, axis: String?, value: Double) -> DocCommand? {
+        guard let (part, role) = engineState?.owner(ofNode: nodeId) else { return nil }
+        let id = part.id, kind = part.kind
+        func vec(_ field: String) -> [Double] {
+            let v = (DocEdit.op(documentJSON ?? [:], nodeId: nodeId)?[field] as? [String: Any]) ?? [:]
+            return ["x", "y", "z"].map { (v[$0] as? NSNumber)?.doubleValue ?? 0 }
+        }
+        func with(_ field: String) -> [Double]? {
+            guard let axis, let i = ["x", "y", "z"].firstIndex(of: axis) else { return nil }
+            var v = vec(field); v[i] = value
+            return v
+        }
+        func param(_ k: String) -> DocCommand {
+            .setParam(id: id, key: k, value: .f64(value))
+        }
+        switch (role, key) {
+        case ("translate", "offset"): return with("offset").map { .setTranslation(id: id, offset: $0) }
+        case ("rotate", "angles"): return with("angles").map { .setRotation(id: id, angles: $0) }
+        case ("scale", "factor"): return with("factor").map { .setScale(id: id, factor: $0) }
+        case ("primitive", "size") where kind == "cube":
+            guard let axis, ["x", "y", "z"].contains(axis) else { return nil }
+            return param("size_\(axis)")
+        case ("primitive", _) where axis == nil:
+            let keys: [String: Set<String>] = [
+                "cylinder": ["radius", "height", "segments"],
+                "sphere": ["radius", "segments"],
+                "cone": ["radius_bottom", "radius_top", "height", "segments"],
+                "fillet": ["radius"], "chamfer": ["distance"],
+            ]
+            return keys[kind]?.contains(key) == true ? param(key) : nil
+        default:
+            return nil
+        }
+    }
+
+    /// Scrub one node field: the owning feature's command when there is one,
+    /// otherwise an IR edit. `snapshot` marks the first event of a gesture.
+    private func editNodeField(nodeId: Int, key: String, axis: String?, value: Double,
+                               snapshot: Bool, name: String,
+                               fallback: (inout [String: Any]) -> Void) {
+        if let cmd = nodeFieldCommand(nodeId: nodeId, key: key, axis: axis, value: value) {
+            engineEdit(name, undo: snapshot ? .snapshot : .none, reeval: .inPlace) { try $0.apply(cmd) }
+        } else {
+            irEdit(name, gestureStart: snapshot, reeval: .inPlace, fallback)
+        }
+    }
+
+    /// Edits outside the engine: the electronics workspace's schematic/board
+    /// JSON has no `DocCommand` vocabulary yet, so the document detaches from
+    /// the engine (engine history can't follow it) and edits the JSON directly.
+    private func detachedEdit(name: String, _ mutate: (inout [String: Any]) -> Void) {
+        if engine != nil {
+            engine = nil; engineState = nil
+            undoStack.removeAll { if case .json = $0.step { return false }; return true }
+            redoStack.removeAll()
+        }
+        guard var json = documentJSON else { return }
+        if let data = DocEdit.serialize(json) { pushUndo(.json(data), name: name) }
+        mutate(&json)
+        documentJSON = json
+        documentDirty = true
+        if let g = DocumentGraph.parse(json) { documentGraph = g; featureNodes = g.featureRoots() }
+        markReeval(.rebuild)
+    }
 
     var canUndo: Bool { !undoStack.isEmpty || generationUndo != nil }
     var canRedo: Bool { !redoStack.isEmpty }
@@ -1057,23 +1334,47 @@ final class EditorModel {
 
     /// Add a fresh primitive as a new part in the loaded document.
     func addPrimitive(_ shape: BaseShape) {
-        guard documentJSON != nil else { return }
-        applyEdit(snapshot: true, reeval: .rebuild, name: "Add \(shape.label)") {
-            DocEdit.addPrimitiveRoot(&$0, shape: shape)
-        }
+        guard addFeature(Self.addCommand(shape), name: "Add \(shape.label)",
+                         material: engineState?.defaultMaterial) != nil else { return }
         selectedFeatureID = featureNodes.last?.id        // focus the new part
+    }
+
+    /// `add_feature` for a palette primitive (sizes in mm).
+    private static func addCommand(_ shape: BaseShape) -> DocCommand {
+        switch shape {
+        case .cube:
+            return .addFeature(feature: .cube(sizeX: 30, sizeY: 30, sizeZ: 30), name: "Box")
+        case .cylinder:
+            return .addFeature(feature: .cylinder(radius: 15, height: 30, segments: 64), name: "Cylinder")
+        case .sphere:
+            return .addFeature(feature: .sphere(radius: 15, segments: 48), name: "Sphere")
+        }
+    }
+
+    /// Add a feature as one undo step, giving the new part `material`
+    /// (otherwise the engine's `default`) and optionally moving it.
+    @discardableResult
+    private func addFeature(_ add: DocCommand, name: String, material: String?,
+                            offset: [Double]? = nil) -> DocumentEngine.Result? {
+        let material = material == "default" ? nil : material
+        guard material != nil || offset != nil else { return send(add, name: name, reeval: .rebuild) }
+        return engineEdit(name, undo: .snapshot, reeval: .rebuild) { engine in
+            var r = try engine.apply(add)
+            guard let id = r.createdFeatureId else { return r }
+            if let material { r = try engine.apply(.setMaterial(id: id, material: material)) }
+            if let offset { r = try engine.apply(.setTranslation(id: id, offset: offset)) }
+            return r
+        }
     }
 
     /// Add a primitive and move it to a point in kernel space (mm) — the
     /// palette's click-to-place. Two edits, one undo step apart: the add is the
     /// creation, the move is where you put it.
     func addPrimitive(_ shape: BaseShape, at p: SIMD3<Float>) {
-        addPrimitive(shape)
-        guard let pi = selectedPartIndex else { return }
-        applyEdit(snapshot: false, reeval: .rebuild) {
-            DocEdit.setRootTranslate(&$0, partIndex: pi,
-                                     Double(p.x), Double(p.y), Double(p.z))
-        }
+        let placed = addFeature(Self.addCommand(shape), name: "Add \(shape.label)",
+                                material: engineState?.defaultMaterial,
+                                offset: [Double(p.x), Double(p.y), Double(p.z)])
+        if placed != nil { selectedFeatureID = featureNodes.last?.id }
     }
 
     // MARK: armed tool (the Borland palette idiom: pick a component, then place it)
@@ -1097,9 +1398,15 @@ final class EditorModel {
 
     /// Combine the two ⌘-selected parts with a boolean op (first = base).
     func combineSelected(_ op: BooleanOp) {
-        guard documentJSON != nil, multiSelectedParts.count == 2 else { return }
-        let a = multiSelectedParts[0], b = multiSelectedParts[1]
-        applyEdit(snapshot: true, reeval: .rebuild, name: op.label) { DocEdit.combineRoots(&$0, a, b, op: op.opType) }
+        guard multiSelectedParts.count == 2,
+              let a = partId(forPart: multiSelectedParts[0]),
+              let b = partId(forPart: multiSelectedParts[1]), a != b else { return }
+        guard let type = BooleanType(rawValue: op.opType.lowercased()) else { return }
+        // The combined part keeps the base part's material.
+        guard addFeature(.addFeature(feature: .boolean(booleanType: type, inputA: a, inputB: b), name: op.opType),
+                         name: op.label,
+                         material: engineState?.material(ofPart: a) ?? engineState?.defaultMaterial) != nil
+        else { return }
         multiSelectedParts = []
         hiddenParts.removeAll(); isolatedPart = nil       // indices collapsed
         selectedFeatureID = featureNodes.last?.id          // the new combined part
@@ -1110,11 +1417,12 @@ final class EditorModel {
 
     /// Wrap the selected part with a fillet/chamfer over all its edges.
     func applyModifierToSelected(_ mod: Modifier) {
-        guard documentJSON != nil, mod != .none, let pi = selectedPartIndex else { return }
+        guard mod != .none, let pi = selectedPartIndex, let id = partId(forPart: pi) else { return }
         let selBefore = selectedPartIndex
-        applyEdit(snapshot: true, reeval: .rebuild, name: mod.label) {
-            DocEdit.wrapRootWithModifier(&$0, partIndex: pi, fillet: mod == .fillet)
-        }
+        let feature: FeatureInput = mod == .fillet ? .fillet(input: id, radius: 2) : .chamfer(input: id, distance: 2)
+        // The wrapped part keeps its material.
+        guard addFeature(.addFeature(feature: feature, name: mod.label), name: mod.label,
+                         material: engineState?.material(ofPart: id)) != nil else { return }
         // Keep the same part selected (its root node id changed → select its row).
         if let pi = selBefore, pi < featureNodes.count { selectedFeatureID = featureNodes[pi].id }
     }
@@ -1240,12 +1548,12 @@ final class EditorModel {
 
     /// Realize the closed profile as a Sketch2D + Extrude, then leave sketch mode.
     func finishSketch() {
-        guard canFinishSketch, documentJSON != nil else { return }
+        guard canFinishSketch, canEditDocument else { return }
         let verts = sketchVerts.map { (Double($0.x), Double($0.y)) }
         let n = sketchPlane.normal
         let dir = (n.0 * sketchExtrudeDepth, n.1 * sketchExtrudeDepth, n.2 * sketchExtrudeDepth)
         let plane = sketchPlane
-        applyEdit(snapshot: true, reeval: .rebuild, name: "Extrude Sketch") {
+        irEdit("Extrude Sketch", reeval: .rebuild) {
             DocEdit.addExtrudedProfile(&$0, verts: verts, origin: (0, 0, 0),
                                        xDir: plane.xDir, yDir: plane.yDir, direction: dir)
         }
@@ -1274,6 +1582,12 @@ final class EditorModel {
     @ObservationIgnored private var gizmoRotU2: SIMD3<Float> = .zero
     @ObservationIgnored private var gizmoRotPrev: Float = 0
     @ObservationIgnored private var gizmoRotAccum: Float = 0
+    /// Stable id of the dragged part when its feature carries a translate
+    /// (drags send `set_translation`); nil → IR edits against `gizmoWorkJSON`.
+    @ObservationIgnored private var gizmoPartId: String?
+    /// The pre-drag IR the fallback path edits each event (its node ids stay
+    /// put, unlike the engine's renumbered output).
+    @ObservationIgnored private var gizmoWorkJSON: [String: Any]?
     /// Live displacement of the part during a drag, so the viewport can slide the
     /// gizmo with it instead of leaving it at the grab point.
     @ObservationIgnored var gizmoLiveOffset: SIMD3<Float> = .zero
@@ -1282,6 +1596,7 @@ final class EditorModel {
         case axis(SIMD3<Float>)
         case plane(SIMD3<Float>, SIMD3<Float>)   // two in-plane unit axes
         case rotate(SIMD3<Float>)                // spin axis
+        var isRotate: Bool { if case .rotate = self { return true }; return false }
     }
     func gizmoHandle(for name: String) -> GizmoHandle? {
         switch name {
@@ -1336,13 +1651,25 @@ final class EditorModel {
     var gizmoPlaneSize: Float { gizmoArmLength() * 0.17 }
 
     func beginGizmoDrag(handle name: String, ray: (o: SIMD3<Float>, d: SIMD3<Float>)) {
-        guard let pi = selectedPartIndex, let json = documentJSON,
+        guard let pi = selectedPartIndex, let engine, let json = documentJSON,
               let c = gizmoCenterKernel(), let h = gizmoHandle(for: name) else { return }
-        if case .rotate = h { pushUndo(name: "Rotate Part") } else { pushUndo(name: "Move Part") }
+        // The whole drag is one undo step: snapshot now, edit freely after.
+        if case .rotate = h { pushUndo(.snapshot(engine.save()), name: "Rotate Part") }
+        else { pushUndo(.snapshot(engine.save()), name: "Move Part") }
         gizmoPart = pi
         gizmoActive = h
         gizmoStartCenter = c
+        gizmoWorkJSON = json
+        gizmoPartId = nil
         gizmoBase = DocEdit.rootTranslateOffset(json, partIndex: pi) ?? (0, 0, 0)
+        if case .rotate = h {} else if let id = partId(forPart: pi),
+           let tn = engineState?.parts.first(where: { $0.id == id })?.translateNodeId {
+            gizmoPartId = id
+            let o = DocEdit.op(json, nodeId: tn)?["offset"] as? [String: Any] ?? [:]
+            gizmoBase = ((o["x"] as? NSNumber)?.doubleValue ?? 0,
+                         (o["y"] as? NSNumber)?.doubleValue ?? 0,
+                         (o["z"] as? NSNumber)?.doubleValue ?? 0)
+        }
         gizmoLiveOffset = .zero
         switch h {
         case .axis(let ax):
@@ -1358,12 +1685,11 @@ final class EditorModel {
             gizmoRotPrev = Self.ringAngle(o: ray.o, d: ray.d, center: c, axis: ax, u1: u1, u2: u2) ?? 0
             var j = json
             gizmoRotNode = DocEdit.wrapRotate(&j, partIndex: pi, Double(c.x), Double(c.y), Double(c.z))
-            documentJSON = j
-            if let g = DocumentGraph.parse(j) { documentGraph = g; featureNodes = g.featureRoots() }
+            gizmoWorkJSON = j
         }
     }
     func gizmoDragTo(ray: (o: SIMD3<Float>, d: SIMD3<Float>)) {
-        guard let pi = gizmoPart, var json = documentJSON, let h = gizmoActive else { return }
+        guard let pi = gizmoPart, var json = gizmoWorkJSON, let h = gizmoActive else { return }
         switch h {
         case .rotate(let ax):
             guard let rn = gizmoRotNode,
@@ -1388,20 +1714,25 @@ final class EditorModel {
                 break
             }
             gizmoLiveOffset = off
-            DocEdit.setRootTranslate(&json, partIndex: pi,
-                                     gizmoBase.0 + Double(off.x),
-                                     gizmoBase.1 + Double(off.y),
-                                     gizmoBase.2 + Double(off.z))
+            let target = [gizmoBase.0 + Double(off.x), gizmoBase.1 + Double(off.y), gizmoBase.2 + Double(off.z)]
+            if let id = gizmoPartId {
+                engineEdit("Move Part", undo: .none, reeval: .inPlace) {
+                    try $0.apply(.setTranslation(id: id, offset: target))
+                }
+                return
+            }
+            DocEdit.setRootTranslate(&json, partIndex: pi, target[0], target[1], target[2])
         }
-        documentJSON = json
-        documentDirty = true
-        if let g = DocumentGraph.parse(json) { documentGraph = g; featureNodes = g.featureRoots() }
-        docParamDirty = true        // in-place re-eval → smooth
+        // Edit the stable pre-drag IR, then reload: smooth in-place re-eval.
+        gizmoWorkJSON = json
+        irEdit(h.isRotate ? "Rotate Part" : "Move Part", gestureStart: false, reeval: .inPlace, base: json) { _ in }
     }
     func endGizmoDrag() {
         gizmoPart = nil
         gizmoActive = nil
         gizmoRotNode = nil
+        gizmoPartId = nil
+        gizmoWorkJSON = nil
         gizmoLiveOffset = .zero
         gizmoDirty = true
     }
@@ -1448,12 +1779,20 @@ final class EditorModel {
             #endif
             return
         }
+        if isLoonDocument {
+            // Never overwrite generated loon source with compiled JSON.
+            #if os(macOS)
+            saveAsPanel(self)
+            #endif
+            return
+        }
         guard case let .document(path, _) = source,
               let json = documentJSON, let data = DocEdit.serializePretty(json) else { return }
         // Atomic: the file on disk is never half-written if the app dies mid-save.
         if (try? data.write(to: URL(fileURLWithPath: path), options: .atomic)) != nil {
             documentDirty = false
             savedSnapshot = DocEdit.serialize(json)
+            savedHash = engine?.stateHash
             writeMeshBundle(for: URL(fileURLWithPath: path))
         }
     }
@@ -1463,8 +1802,16 @@ final class EditorModel {
     func saveDocumentAs(_ url: URL) {
         guard let json = documentJSON, let data = DocEdit.serializePretty(json) else { return }
         guard (try? data.write(to: url, options: .atomic)) != nil else { return }
+        // Keep the engine (and with it the history the undo stack points
+        // into) rather than reopening the file we just wrote.
         let keptUndo = undoStack, keptRedo = redoStack
+        let keptEngine = engine, keptState = engineState
         source = .document(path: url.path, label: url.deletingPathExtension().lastPathComponent)
+        if let keptEngine, let keptState {
+            engine = keptEngine; engineError = nil
+            savedHash = keptEngine.stateHash
+            adopt(keptState, reeval: .none)
+        }
         undoStack = keptUndo; redoStack = keptRedo
         writeMeshBundle(for: url)
         rememberRecent(url)
@@ -1491,37 +1838,6 @@ final class EditorModel {
         selectedFeatureID = featureNodes.first?.id
     }
 
-    private enum Reeval { case inPlace, rebuild, none }
-
-    private func pushUndo(name: String) {
-        guard let json = documentJSON, let data = DocEdit.serialize(json) else { return }
-        undoStack.append(UndoEntry(data: data, name: name))
-        if undoStack.count > 64 { undoStack.removeFirst() }
-        redoStack.removeAll()
-    }
-
-    private func applyEdit(snapshot: Bool, reeval: Reeval, name: String = "Edit",
-                           _ mutate: (inout [String: Any]) -> Void) {
-        guard var json = documentJSON else { return }
-        if snapshot { pushUndo(name: name) }
-        mutate(&json)
-        documentJSON = json
-        documentDirty = true
-        if let g = DocumentGraph.parse(json) {
-            documentGraph = g
-            featureNodes = g.featureRoots()
-        }
-        switch reeval {
-        case .inPlace:
-            docParamDirty = true
-        case .rebuild:
-            suppressMaterializePop = true
-            geometryDirty = true; selectionDirty = true; visibilityDirty = true
-        case .none:
-            break
-        }
-    }
-
     /// Current op dict for a node — feeds the inspector's parameter editors.
     func opDict(nodeId: Int) -> [String: Any]? {
         documentJSON.flatMap { DocEdit.op($0, nodeId: nodeId) }
@@ -1538,37 +1854,38 @@ final class EditorModel {
         var v = value
         if let lo = p.min { v = Swift.max(lo, v) }
         if let hi = p.max { v = Swift.min(hi, v) }
-        applyEdit(snapshot: snapshot, reeval: .inPlace, name: "Change \(name)") {
+        irEdit("Change \(name)", gestureStart: snapshot, reeval: .inPlace) {
             DocEdit.setParameter(&$0, name: name, value: v)
         }
     }
 
     func editScalar(nodeId: Int, key: String, value: Double, snapshot: Bool, name: String = "Change Value") {
-        applyEdit(snapshot: snapshot, reeval: .inPlace, name: name) {
+        editNodeField(nodeId: nodeId, key: key, axis: nil, value: value, snapshot: snapshot, name: name) {
             DocEdit.setScalar(&$0, nodeId: nodeId, key: key, value: value)
         }
     }
     func editVec(nodeId: Int, key: String, axis: String, value: Double, snapshot: Bool, name: String = "Change Value") {
-        applyEdit(snapshot: snapshot, reeval: .inPlace, name: name) {
+        editNodeField(nodeId: nodeId, key: key, axis: axis, value: value, snapshot: snapshot, name: name) {
             DocEdit.setVecComponent(&$0, nodeId: nodeId, key: key, axis: axis, value: value)
         }
     }
     func editInt(nodeId: Int, key: String, value: Int, snapshot: Bool, name: String = "Change Value") {
-        applyEdit(snapshot: snapshot, reeval: .inPlace, name: name) {
+        editNodeField(nodeId: nodeId, key: key, axis: nil, value: Double(value), snapshot: snapshot, name: name) {
             DocEdit.setInt(&$0, nodeId: nodeId, key: key, value: value)
         }
     }
     func renameFeature(_ nodeId: Int, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        applyEdit(snapshot: true, reeval: .none, name: "Rename") {
-            DocEdit.setName(&$0, nodeId: nodeId, name: trimmed)
+        if let id = engineState?.owner(ofNode: nodeId)?.part.id {
+            send(.rename(id: id, name: trimmed), name: "Rename", reeval: .none)
+        } else {
+            irEdit("Rename", reeval: .none) { DocEdit.setName(&$0, nodeId: nodeId, name: trimmed) }
         }
     }
     func deletePart(_ partIndex: Int) {
-        applyEdit(snapshot: true, reeval: .rebuild, name: "Delete Part") {
-            DocEdit.removeRoot(&$0, partIndex: partIndex)
-        }
+        guard let id = partId(forPart: partIndex),
+              send(.deleteFeature(id: id), name: "Delete Part", reeval: .rebuild) != nil else { return }
         // Indices shifted; clear visibility/multi-select and re-anchor selection.
         hiddenParts.removeAll(); isolatedPart = nil; multiSelectedParts = []
         if selectedFeatureNode == nil { selectedFeatureID = featureNodes.first?.id }
@@ -1585,12 +1902,11 @@ final class EditorModel {
     /// Delete every highlighted part as one undo step. Highest index first so
     /// the remaining indices stay valid while removing.
     func deleteSelectedParts() {
-        let parts = highlightedParts.sorted(by: >)
-        guard !parts.isEmpty, documentJSON != nil else { return }
-        applyEdit(snapshot: true, reeval: .rebuild,
-                  name: parts.count == 1 ? "Delete Part" : "Delete \(parts.count) Parts") {
-            for pi in parts { DocEdit.removeRoot(&$0, partIndex: pi) }
-        }
+        let ids = highlightedParts.compactMap { partId(forPart: $0) }
+        guard !ids.isEmpty else { return }
+        guard send(.batch(commands: ids.map { .deleteFeature(id: $0) }),
+                   name: ids.count == 1 ? "Delete Part" : "Delete \(ids.count) Parts",
+                   reeval: .rebuild) != nil else { return }
         hiddenParts.removeAll(); isolatedPart = nil; multiSelectedParts = []
         selectedFeatureID = featureNodes.first?.id
     }
@@ -1608,24 +1924,49 @@ final class EditorModel {
 
     func undo() {
         guard let entry = undoStack.popLast() else { undoGeneration(); return }
-        if let cur = documentJSON, let curData = DocEdit.serialize(cur) {
-            redoStack.append(UndoEntry(data: curData, name: entry.name))
-        }
-        restore(entry.data)
+        guard let back = step(entry, forward: false) else { return }
+        redoStack.append(back)
     }
     func redo() {
         guard let entry = redoStack.popLast() else { return }
-        if let cur = documentJSON, let curData = DocEdit.serialize(cur) {
-            undoStack.append(UndoEntry(data: curData, name: entry.name))
-        }
-        restore(entry.data)
+        guard let back = step(entry, forward: true) else { return }
+        undoStack.append(back)
     }
+
+    /// Apply one history entry; returns the entry that reverses it.
+    private func step(_ entry: UndoEntry, forward: Bool) -> UndoEntry? {
+        switch entry.step {
+        case .engine:
+            guard let engine, let r = try? engine.apply(forward ? .redo : .undo) else { return nil }
+            adopt(r, reeval: .rebuild)
+            afterHistoryStep()
+            return entry
+        case .snapshot(let data):
+            guard let engine else { return nil }
+            let current = engine.save()
+            guard let r = try? engine.restore(data) else { return nil }
+            adopt(r, reeval: .rebuild)
+            afterHistoryStep()
+            return UndoEntry(step: .snapshot(current), name: entry.name)
+        case .json(let data):
+            guard let cur = documentJSON.flatMap({ DocEdit.serialize($0) }) else { return nil }
+            restoreJSON(data)
+            return UndoEntry(step: .json(cur), name: entry.name)
+        }
+    }
+
+    private func afterHistoryStep() {
+        hiddenParts.removeAll(); isolatedPart = nil
+        if selectedFeatureNode == nil { selectedFeatureID = featureNodes.first?.id }
+    }
+
     /// Put back whatever the intent bar replaced.
     private func undoGeneration() {
         guard let g = generationUndo else { return }
         generationUndo = nil
         source = g.source
         if let json = g.json {
+            engine = g.engine; engineState = g.state; savedHash = g.savedHash
             documentJSON = json
             if let graph = DocumentGraph.parse(json) { documentGraph = graph; featureNodes = graph.featureRoots() }
             geometryDirty = true
@@ -1633,15 +1974,13 @@ final class EditorModel {
         undoStack = g.undo; redoStack = g.redo
         documentDirty = g.dirty
     }
-    private func restore(_ data: Data) {
+    private func restoreJSON(_ data: Data) {
         guard let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
         documentJSON = dict
         documentDirty = savedSnapshot != data
         if let g = DocumentGraph.parse(dict) { documentGraph = g; featureNodes = g.featureRoots() }
-        hiddenParts.removeAll(); isolatedPart = nil
-        suppressMaterializePop = true
-        geometryDirty = true; selectionDirty = true; visibilityDirty = true
-        if selectedFeatureNode == nil { selectedFeatureID = featureNodes.first?.id }
+        markReeval(.rebuild)
+        afterHistoryStep()
     }
 
     /// Re-evaluate the edited doc and return fresh part meshes for an in-place
@@ -1702,6 +2041,7 @@ final class EditorModel {
         }
         guard !meshes.isEmpty else { return nil }
         docPartMeshes = picks
+        sceneGeneration &+= 1
         docPartEdges = edges
         docPartInstancing = instancing
         solveMillis = Date().timeIntervalSince(start) * 1000
@@ -1724,7 +2064,7 @@ final class EditorModel {
         case .document, .generated:
             let data: Data?
             if let json = documentJSON { data = DocEdit.serialize(json) }
-            else if case let .document(path, _) = source { data = try? Data(contentsOf: URL(fileURLWithPath: path)) }
+            else if case let .document(path, _) = source { data = Self.documentBytes(path: path) }
             else if case let .generated(loon, _) = source { data = Data(loon.utf8) }
             else { data = nil }
             guard let data else { return [] }
@@ -2265,11 +2605,18 @@ final class EditorModel {
         // A loon program opens the way the intent bar's output does: compiled
         // by the kernel, shown as generated geometry. It has no node DAG to
         // edit, so it is not a `.document`.
-        if url.pathExtension.lowercased() == "loon",
-           let text = try? String(contentsOf: url, encoding: .utf8) {
-            if applyGenerated(loon: text, label: label) == nil {
-                loadError = "\(label).loon did not evaluate to geometry."
+        //
+        // A loon FILE opens as a document: the kernel compiles it to `.vcad`
+        // JSON with its `[use]` modules and relative mesh imports resolved
+        // against its own directory, so a generated assembly gets the full
+        // document path — progressive solve, materials, joints, posing — and
+        // is watched for regeneration. It is read-only: Save goes to Save As.
+        if url.pathExtension.lowercased() == "loon" {
+            guard Self.documentBytes(path: url.path) != nil else {
+                loadError = "\(label).loon did not compile: \(SimError.pending() ?? "unknown error")"
+                return
             }
+            source = .document(path: url.path, label: label)
             rememberRecent(url)
             return
         }
@@ -2451,7 +2798,7 @@ final class EditorModel {
         guard let stats else { return nil }
         // A generation replaces the document; remember what it replaced so
         // ⌘Z brings it back — the intent bar must never be a one-way door.
-        generationUndo = (source, documentJSON, undoStack, redoStack, documentDirty)
+        generationUndo = (source, documentJSON, engine, engineState, savedHash, undoStack, redoStack, documentDirty)
         source = .generated(loon: loon, label: label)
         return stats
     }
@@ -2742,7 +3089,7 @@ final class EditorModel {
         let plan = documentInstancingPlan()
         let data: Data?
         if documentJSON != nil { data = evalData(applying: plan) }
-        else { data = try? Data(contentsOf: URL(fileURLWithPath: path)) }
+        else { data = Self.documentBytes(path: path) }
         guard let data, !data.isEmpty else { return .empty }
         // Resolve the document's relative mesh references against its own
         // directory. A robot document ships its meshes alongside itself; with
@@ -2821,6 +3168,7 @@ final class EditorModel {
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
         var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var tris = 0
+        var centers = [SIMD3<Float>](repeating: .zero, count: count)
         for i in 0..<count {
             var m16 = [Double](repeating: 0, count: 16)
             _ = vcad_scene_instance_transform(scene, i, &m16)
@@ -2829,6 +3177,7 @@ final class EditorModel {
 
             let km = KernelMesh.fromView(vcad_scene_instance_mesh(scene, i))
             guard !km.isEmpty else { continue }
+            centers[i] = (km.minBound + km.maxBound) / 2
             tris += km.triangleCount
             // World bounds: transform the local AABB's 8 corners.
             for cx in [km.minBound.x, km.maxBound.x] {
@@ -2872,8 +3221,13 @@ final class EditorModel {
         let size = Self.extent(lo, hi)
         displayCenter = center
         displayScale = 0.6 / max(size, 0.0001)
+        sceneGeneration &+= 1
+        assemblyInstanceIDs = (0..<count).map { instString(vcad_scene_instance_id, $0) }
+        assemblyLocalCenters = centers
         // Land on the authored pose at t=0 when a timeline exists.
         if timeline != nil { applyPlaybackPose() }
+        // A reload keeps the pose you were looking at.
+        if timeline == nil, !jointPose.isEmpty || explode > 0 { applyStudioPose() }
         return RenderScene(meshes: [], center: center, size: size,
                            triangleCount: tris, partCount: instances.count,
                            instances: instances)
@@ -2942,6 +3296,7 @@ final class EditorModel {
         }
         guard !meshes.isEmpty else { return .empty }
         docPartMeshes = picks
+        sceneGeneration &+= 1
         docPartEdges = edges
         docPartInstancing = instancing
         lastRootKeys = (0..<count).compactMap { i in
@@ -2982,6 +3337,44 @@ extension EditorModel {
         if documentJSON == nil {
             documentJSON = ["version": "0.1", "nodes": ECObject(), "materials": ECObject(), "part_materials": ECObject(), "roots": [ECObject]()]
         }
-        applyEdit(snapshot: true, reeval: .rebuild, name: name, mutate)
+        detachedEdit(name: name, mutate)
+    }
+}
+
+// MARK: - Agent hooks (AgentPanel.swift / FrogAgent.swift)
+
+extension EditorModel {
+    /// Render an agent tool's engine result live, without an undo entry —
+    /// the whole agent turn becomes one entry via `agentEndTurn`.
+    func agentApplied(_ r: DocumentEngine.Result) {
+        engineError = nil
+        adopt(r, reeval: .rebuild)
+    }
+
+    /// Close an agent turn that changed the document: one undo step back to
+    /// the snapshot taken before the turn's first edit.
+    func agentEndTurn(before: Data, name: String = "Agent Edit") {
+        pushUndo(.snapshot(before), name: name)
+    }
+
+    /// The agent can work here: an engine document, or a blank canvas that
+    /// can be given one.
+    var agentCanEdit: Bool { engine != nil || (source.isSandbox && documentJSON == nil) }
+
+    /// The engine the agent edits. A blank canvas (Untitled, nothing in it)
+    /// gets an empty engine document on first use; Save then goes to Save As
+    /// like any untitled document. Nil for view-only documents.
+    func agentEnsureEngine() -> DocumentEngine? {
+        if let engine { return engine }
+        guard source.isSandbox, documentJSON == nil else { return nil }
+        let empty: [String: Any] = ["version": "0.1", "nodes": [String: Any](), "materials": [String: Any](),
+                                    "part_materials": [String: Any](), "roots": [Any]()]
+        let fresh = DocumentEngine()
+        guard let state = try? fresh.loadIR(empty) else { return nil }
+        engine = fresh
+        engineError = nil
+        savedHash = fresh.stateHash
+        adopt(state, reeval: .rebuild)
+        return fresh
     }
 }

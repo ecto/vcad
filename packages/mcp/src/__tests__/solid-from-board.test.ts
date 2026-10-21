@@ -6,6 +6,7 @@ import { addZone, solidFromBoard } from "../tools/ecad.js";
 import { checkEnclosureFit } from "../tools/enclosure.js";
 import { computeInspection } from "../tools/inspect.js";
 import { documents, getSession, openDocument, registerSession } from "../tools/session.js";
+import { rootForPartId } from "../tools/part-ids.js";
 // Proven showcase case geometry (untyped demo module; src/__tests__ is
 // excluded from tsc so the JS import needs no declarations).
 import { f405CaseDocument } from "../../../../examples/f405-enclosure/geometry.mjs";
@@ -257,7 +258,8 @@ describe("solid_from_board (58mm rotor board round trip)", () => {
     expect(res.created_session).toBe(false);
     expect(res.document_id).toBe(enc.document_id);
     expect(getSession(enc.document_id).roots.length).toBe(rootsBefore + 1);
-    const partNode = getSession(enc.document_id).nodes[res.part_id];
+    const encSession = getSession(enc.document_id);
+    const partNode = encSession.nodes[String(rootForPartId(encSession, res.part_id)!.entry.root)];
     expect(partNode?.name).toBe("rotor-board");
     expect((partNode?.op as { type?: string }).type).toBe("Extrude");
 

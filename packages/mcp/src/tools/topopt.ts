@@ -23,6 +23,7 @@ import type {
 } from "@vcad/engine";
 import { getSession, registerSession } from "./session-core.js";
 import { behavior, type ToolDef } from "./tool-def.js";
+import { partIdForNode, rootForPartId } from "./part-ids.js";
 
 const regionSchema = {
   type: "object" as const,
@@ -171,11 +172,12 @@ export function resolvePartMesh(
 ): { mesh: TriangleMesh; rootIndex: number; name?: string; material?: string } {
   const scene = engine.evaluate(doc);
   const visibleRoots = doc.roots.filter((e) => e.visible !== false);
+  const target = rootForPartId(doc, wanted)?.entry;
   for (let i = 0; i < scene.parts.length && i < visibleRoots.length; i++) {
     const root = visibleRoots[i];
     const rootId = String(root.root);
     const node = doc.nodes[rootId];
-    if (rootId !== wanted && node?.name !== wanted) continue;
+    if (root !== target && node?.name !== wanted) continue;
     const mesh = scene.parts[i].mesh;
     if (!mesh || mesh.positions.length === 0) {
       throw new Error(`part "${wanted}" evaluated to an empty mesh`);
@@ -292,7 +294,7 @@ export function topologyOptimizeTool(
         text: JSON.stringify(
           {
             document_id: documentId,
-            part_id: String(nodeId),
+            part_id: partIdForNode(doc, nodeId),
             name: partName,
             iterations: result.iterations,
             converged: result.converged,

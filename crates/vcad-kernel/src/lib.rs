@@ -17,25 +17,36 @@
 
 use std::path::Path;
 
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_acoustics;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_antenna;
 pub use vcad_kernel_booleans;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_calibration;
 pub use vcad_kernel_cam;
 pub use vcad_kernel_constraints;
 pub use vcad_kernel_cost;
 pub use vcad_kernel_dfm;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_em;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_enclosure;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_fea;
 pub use vcad_kernel_fillet;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_flow;
 pub use vcad_kernel_geom;
 pub use vcad_kernel_math;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_neutronics;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_particle;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_photonics;
 pub use vcad_kernel_primitives;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_qcd;
 pub use vcad_kernel_sheet;
 pub use vcad_kernel_shell;
@@ -45,12 +56,18 @@ pub use vcad_kernel_stocksim;
 pub use vcad_kernel_sweep;
 pub use vcad_kernel_tessellate;
 pub use vcad_kernel_text;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_thermal;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_tolerance;
 pub use vcad_kernel_topo;
+#[cfg(feature = "analysis")]
 pub use vcad_kernel_topopt;
 
 pub mod faces;
+
+/// Quickhull convex hull of a point cloud (mesh-backed `Hull` op).
+pub mod hull;
 pub use faces::{inspect_faces, FaceInfo, FaceQueryError, FaceReport};
 
 pub mod cam_verify;
@@ -58,6 +75,9 @@ pub use cam_verify::verify_toolpaths;
 
 pub mod sheet_fold;
 pub use sheet_fold::folded_sheet_solid;
+
+mod sweep_rotate;
+pub use sweep_rotate::{DEFAULT_COVER_MM, DEFAULT_SAG_MM, MAX_SWEEP_SAMPLES};
 
 pub mod provenance;
 pub use provenance::{DegradeEvent, LossKind, SolidFidelity};
@@ -386,6 +406,34 @@ impl Solid {
             repr: SolidRepr::Mesh(mesh),
             segments: 32,
         }
+    }
+
+    /// Convex hull of the union of `solids`' vertices plus `points` (flat
+    /// `[x, y, z, ...]`). Curved operands are tessellated at their own
+    /// segment count first, so the hull is faceted (planar triangle faces). `None` when the inputs don't span a volume.
+    pub fn hull(solids: &[&Solid], points: &[f64]) -> Option<Self> {
+        let mut cloud: Vec<[f64; 3]> = points.as_chunks::<3>().0.to_vec();
+        for s in solids {
+            let mesh = s.to_mesh(s.segments);
+            cloud.extend(
+                mesh.vertices
+                    .as_chunks::<3>()
+                    .0
+                    .iter()
+                    .map(|c| [c[0] as f64, c[1] as f64, c[2] as f64]),
+            );
+        }
+        let mesh = hull::convex_hull(&cloud)?;
+        // Wrap as a planar-faced B-rep (one face per hull triangle) rather
+        // than a mesh-only solid: mesh-only operands make downstream
+        // booleans concatenate instead of cut.
+        let brep = vcad_kernel_booleans::mesh::mesh_to_brep(&mesh);
+        Some(Self {
+            names: None,
+            provenance: solids.iter().flat_map(|s| s.provenance.clone()).collect(),
+            repr: SolidRepr::BRep(Box::new(brep)),
+            segments: 32,
+        })
     }
 
     /// Create a solid from a raw BRep. Intended for callers that produce
@@ -1577,6 +1625,7 @@ impl Solid {
     /// optimized organic structure as a mesh-backed solid together with
     /// the run diagnostics (compliance history, achieved volume fraction,
     /// grid size).
+    #[cfg(feature = "analysis")]
     pub fn topology_optimize(
         &self,
         spec: &vcad_kernel_topopt::TopoOptSpec,

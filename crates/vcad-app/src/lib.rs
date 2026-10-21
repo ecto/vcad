@@ -5,10 +5,14 @@
 //! Both the web app (via WASM) and the Rust CLI link against this crate,
 //! eliminating behavioral drift.
 
+pub mod agent;
 pub mod camera;
+pub mod command;
 pub mod commands;
 pub mod context;
+pub mod doc_edits;
 pub mod document_api;
+pub mod ecad_tools;
 pub mod engine;
 pub mod evaluate;
 pub mod feature;
@@ -16,11 +20,14 @@ pub mod keybinding;
 pub mod materializer;
 pub mod migrate;
 pub mod mode;
+pub mod parity;
 pub mod part_info;
 pub mod registry;
 pub mod selection;
+pub mod tools;
 
 pub use camera::Camera;
+pub use command::{CommandError, DocCommand};
 pub use commands::{Command, CommandCategory, ToolbarTab};
 pub use context::{WhenContext, WhenExpr, WhenParseError};
 pub use document_api::{ApiResult, DocumentApi, StableIdMap};

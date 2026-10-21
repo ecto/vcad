@@ -23,6 +23,9 @@ serde_json = { workspace = true }
 toml = { workspace = true }
 thiserror = { workspace = true }
 rstar = { workspace = true }
+# Delaunay triangulation for the flow router's cut graph (already in the
+# workspace lock via `geo`; no new transitive dependencies).
+spade = "2.15"
 rayon = "1.10"
 log = "0.4"
 # IPC-2141 impedance closed forms — the same model behind the

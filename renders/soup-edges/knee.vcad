@@ -1,0 +1,102 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "0": {
+      "id": 0,
+      "name": null,
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 56.0,
+          "y": 44.0,
+          "z": 150.0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": -150.0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "r",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 4
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": null,
+      "op": {
+        "type": "SweepRotate",
+        "child": 3,
+        "axis_origin": {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "axis_dir": {
+          "x": 1.0,
+          "y": 0.0,
+          "z": 0.0
+        },
+        "angle_lo_deg": 0.0,
+        "angle_hi_deg": 120.0,
+        "clearance": 1.0
+      }
+    },
+    "1": {
+      "id": 1,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 0,
+        "offset": {
+          "x": -28.0,
+          "y": -22.0,
+          "z": -30.0
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": null,
+      "op": {
+        "type": "Cylinder",
+        "radius": 14.0,
+        "height": 160.0,
+        "segments": 0
+      }
+    }
+  },
+  "materials": {
+    "default": {
+      "name": "default",
+      "color": [
+        0.8,
+        0.8,
+        0.8
+      ],
+      "metallic": 0.0,
+      "roughness": 0.5
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "aluminum"
+    }
+  ]
+}

@@ -11,6 +11,8 @@ function makeMockDocStore(parts: MockPart[] = []) {
     partIndex,
     parts,
     document: { nodes: {} as Record<string, unknown>, roots: [] },
+    // Pre-apply_tool kernel: exercises the TS fallback path.
+    applyTool: () => null,
     addPrimitive: (kind: string) => {
       const id = `mock:${nextId++}`;
       partIndex.set(id, { id, name: kind, kind });
@@ -329,139 +331,6 @@ describe("CommandRegistry", () => {
   });
 
   describe("ExecutionResult display", () => {
-    it("cube create returns summary with part link and size field", () => {
-      const doc = makeMockDocStore();
-      const ui = makeMockUiStore();
-      const result = executeCrud(
-        "create",
-        { type: "cube", params: { size: { x: 50, y: 30, z: 10 } } },
-        doc,
-        ui,
-      );
-      expect(result.status).toBe("success");
-      expect(result.display).toBeDefined();
-      const summary = result.display!.summary;
-      expect(summary.some((s) => s.type === "text" && s.text.includes("Cube"))).toBe(true);
-      expect(summary.some((s) => s.type === "partLink")).toBe(true);
-      expect(result.display!.fields).toContainEqual({ label: "size", value: "50×30×10 mm" });
-      expect(result.display!.affectedPartIds).toHaveLength(1);
-    });
-
-    it("cylinder create returns summary with radius and height fields", () => {
-      const doc = makeMockDocStore();
-      const ui = makeMockUiStore();
-      const result = executeCrud(
-        "create",
-        { type: "cylinder", params: { radius: 8, height: 20 } },
-        doc,
-        ui,
-      );
-      expect(result.status).toBe("success");
-      expect(result.display!.fields).toContainEqual({ label: "radius", value: "8 mm" });
-      expect(result.display!.fields).toContainEqual({ label: "height", value: "20 mm" });
-    });
-
-    it("translate returns summary with part link and offset field", () => {
-      const doc = makeMockDocStore([{ id: "part-1", name: "Base", kind: "cube" }]);
-      const ui = makeMockUiStore();
-      const result = executeCrud(
-        "create",
-        { type: "translate", params: { child: "part-1", offset: { x: 10, y: 0, z: 0 } } },
-        doc,
-        ui,
-      );
-      expect(result.status).toBe("success");
-      const segments = result.display!.summary;
-      expect(segments.some((s) => s.type === "partLink" && s.partId === "part-1")).toBe(true);
-      expect(result.display!.fields).toContainEqual({
-        label: "offset",
-        value: "(10, 0, 0) mm",
-      });
-    });
-
-    it("difference returns summary with two input part links and result link", () => {
-      const doc = makeMockDocStore([
-        { id: "a", name: "Base", kind: "cube" },
-        { id: "b", name: "Hole", kind: "cylinder" },
-      ]);
-      const ui = makeMockUiStore();
-      const result = executeCrud(
-        "create",
-        { type: "difference", params: { left: "a", right: "b" } },
-        doc,
-        ui,
-      );
-      expect(result.status).toBe("success");
-      const links = result.display!.summary.filter((s) => s.type === "partLink");
-      expect(links).toHaveLength(3);
-      expect(result.display!.affectedPartIds).toEqual(expect.arrayContaining(["a", "b"]));
-    });
-
-    it("fillet returns summary with target link and radius field", () => {
-      const doc = makeMockDocStore([{ id: "p1", name: "Body", kind: "cube" }]);
-      const ui = makeMockUiStore();
-      const result = executeCrud(
-        "create",
-        { type: "fillet", params: { child: "p1", radius: 3 } },
-        doc,
-        ui,
-      );
-      expect(result.status).toBe("success");
-      expect(result.display!.fields).toContainEqual({ label: "radius", value: "3 mm" });
-      expect(result.display!.summary.some((s) => s.type === "partLink")).toBe(true);
-    });
-
-    it("extrude returns summary with segment count and depth field", () => {
-      const doc = makeMockDocStore();
-      const ui = makeMockUiStore();
-      const result = executeCrud(
-        "create",
-        {
-          type: "extrude",
-          params: {
-            sketch: {
-              origin: { x: 0, y: 0, z: 0 },
-              x_dir: { x: 1, y: 0, z: 0 },
-              y_dir: { x: 0, y: 1, z: 0 },
-              segments: [
-                { type: "Line", start: { x: 0, y: 0 }, end: { x: 10, y: 0 } },
-                { type: "Line", start: { x: 10, y: 0 }, end: { x: 10, y: 10 } },
-                { type: "Line", start: { x: 10, y: 10 }, end: { x: 0, y: 10 } },
-                { type: "Line", start: { x: 0, y: 10 }, end: { x: 0, y: 0 } },
-              ],
-            },
-            direction: { x: 0, y: 0, z: 5 },
-          },
-        },
-        doc,
-        ui,
-      );
-      expect(result.status).toBe("success");
-      expect(result.display!.fields).toContainEqual({ label: "segments", value: "4" });
-      expect(result.display!.fields).toContainEqual({ label: "depth", value: "5.00 mm" });
-    });
-
-    it("delete returns summary with deleted part link", () => {
-      const doc = makeMockDocStore([{ id: "p1", name: "Body", kind: "cube" }]);
-      const ui = makeMockUiStore();
-      const result = executeCrud("delete", { part_id: "p1" }, doc, ui);
-      expect(result.status).toBe("success");
-      expect(result.display!.summary.some((s) => s.type === "partLink" && s.partId === "p1")).toBe(true);
-    });
-
-    it("set_material returns summary with part link and material field", () => {
-      const doc = makeMockDocStore([{ id: "p1", name: "Body", kind: "cube" }]);
-      const ui = makeMockUiStore();
-      const result = executeCrud(
-        "set_material",
-        { part_id: "p1", material: "aluminum" },
-        doc,
-        ui,
-      );
-      expect(result.status).toBe("success");
-      expect(result.display!.fields).toContainEqual({ label: "material", value: "aluminum" });
-    });
-
     it("executeCrud populates duration on all successful results", () => {
       const doc = makeMockDocStore();
       const ui = makeMockUiStore();
@@ -477,6 +346,75 @@ describe("CommandRegistry", () => {
       const result = executeCrud("create", { type: "cone", params: {} }, doc, ui);
       expect(result.status).toBe("error");
       expect(result.display).toBeUndefined();
+    });
+  });
+});
+
+describe("executeCrud via the Rust engine (applyTool)", () => {
+  function engineDoc(envelope: unknown) {
+    const calls: Array<[string, unknown]> = [];
+    const doc = makeMockDocStore() as unknown as Record<string, unknown>;
+    doc.applyTool = (tool: string, args: unknown) => {
+      calls.push([tool, args]);
+      return envelope;
+    };
+    return { doc: doc as never, calls };
+  }
+  const ok = (createdFeatureId?: string) => ({
+    ok: true,
+    result: { document: { nodes: {}, roots: [] }, parts: [], consumedPartIds: [], createdFeatureId },
+  });
+
+  it("routes create through applyTool and selects the new part", () => {
+    const { doc, calls } = engineDoc(ok("5:0"));
+    const ui = makeMockUiStore() as unknown as { selectedPartIds: Set<string> };
+    const result = executeCrud("create", { type: "cube", params: { size: { x: 1, y: 2, z: 3 } } }, doc, ui as never);
+    expect(result.status).toBe("success");
+    expect(result.partId).toBe("5:0");
+    expect(ui.selectedPartIds.has("5:0")).toBe(true);
+    expect(calls[0]![0]).toBe("create");
+    expect(result.display!.fields).toContainEqual({ label: "size", value: "(1, 2, 3)" });
+  });
+
+  it("fills boolean operands from a two-part selection", () => {
+    const { doc, calls } = engineDoc(ok("9:0"));
+    const ui = makeMockUiStore() as unknown as { select: (id: string) => void };
+    ui.select("a");
+    ui.select("b");
+    executeCrud("create", { type: "difference", params: {} }, doc, ui as never);
+    expect((calls[0]![1] as { params: unknown }).params).toEqual({ left: "a", right: "b" });
+  });
+
+  it("surfaces engine refusals as errors", () => {
+    const { doc } = engineDoc({ ok: false, error: { kind: "unknown_id", id: "x", message: "no feature with id `x`" } });
+    const result = executeCrud("mirror", { child: "x", plane: "XY" }, doc, makeMockUiStore());
+    expect(result).toMatchObject({ status: "error", result: "no feature with id `x`" });
+  });
+
+  it("routes edits through the engine and clears selection on delete", () => {
+    const { doc, calls } = engineDoc(ok());
+    const ui = makeMockUiStore() as unknown as { select: (id: string) => void; selectedPartIds: Set<string> };
+    ui.select("p1");
+    const res = executeCrud("delete", { part_id: "p1" }, doc, ui as never);
+    expect(res).toMatchObject({ status: "success", result: "Applied delete to p1" });
+    expect(ui.selectedPartIds.size).toBe(0);
+    executeCrud("set_material", { selector: { by: "kind", value: "cube" }, material: "steel" }, doc, ui as never);
+    expect(calls.map((c) => c[0])).toEqual(["delete", "set_material"]);
+  });
+
+  it("falls through to the TS path for tools the engine reports unsupported", () => {
+    const { doc } = engineDoc({ ok: false, error: { kind: "unsupported", tool: "sketch_2d", message: "" } });
+    const result = executeCrud("create", { type: "sketch_2d", params: {} }, doc, makeMockUiStore());
+    expect(result.status).toBe("success");
+    expect(result.result).toContain("inline with extrude/revolve");
+  });
+
+  it("reports a missing engine instead of guessing", () => {
+    const doc = makeMockDocStore() as unknown as Record<string, unknown>;
+    doc.applyTool = () => null;
+    expect(executeCrud("create", { type: "cube" }, doc as never, makeMockUiStore())).toMatchObject({
+      status: "error",
+      result: "engine not ready",
     });
   });
 });

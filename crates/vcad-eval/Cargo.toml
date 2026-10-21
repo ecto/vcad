@@ -13,7 +13,7 @@ build = "build.rs"
 
 [dependencies]
 vcad-ir.workspace = true
-vcad-kernel.workspace = true
+vcad-kernel = { path = "../vcad-kernel", version = "0.10.0", default-features = false }
 vcad-ecad-pcb.workspace = true
 vcad-kernel-math.workspace = true
 vcad-kernel-sketch.workspace = true

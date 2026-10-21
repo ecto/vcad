@@ -219,14 +219,10 @@ pub(crate) fn build_objects(
         .par_iter()
         .map(|s| match (mesh_segments, s.solid.as_brep()) {
             (None, Some(brep)) => Bvh::build_brep(brep),
-            (segments, _) => {
-                // `to_mesh` ignores the segment count for a mesh-backed
-                // solid, so `unwrap_or(0)` keeps --exact's mesh-only branch
-                // byte-identical to what it did before this parameter existed.
-                let mut mesh = s.solid.to_mesh(segments.unwrap_or(0));
-                vcad_kernel::vcad_kernel_tessellate::render_bake_default(&mut mesh);
-                Bvh::build_mesh(&mesh)
-            }
+            // `to_mesh` ignores the segment count for a mesh-backed solid,
+            // so `unwrap_or(0)` keeps --exact's mesh-only branch
+            // byte-identical to what it did before this parameter existed.
+            (segments, _) => Bvh::build_mesh(&traced_mesh(&s.solid, segments.unwrap_or(0))),
         })
         .collect();
 
@@ -259,6 +255,21 @@ pub(crate) fn build_objects(
         ));
     }
     Ok(objects)
+}
+
+/// The triangles a solid is traced as in mesh mode: tessellated, then
+/// crease-baked so facets meeting at under 30° share one interpolated shading
+/// normal. This is what keeps a polyline loft (every strip its own planar
+/// BRep face) reading as the smooth round it stands for. Traced analytically
+/// (`--exact`, and every build before #825) those strips are flat, and each
+/// one catches the light on its own.
+pub(crate) fn traced_mesh(
+    solid: &vcad_kernel::Solid,
+    segments: u32,
+) -> vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
+    let mut mesh = solid.to_mesh(segments);
+    vcad_kernel::vcad_kernel_tessellate::render_bake_default(&mut mesh);
+    mesh
 }
 
 /// The eight corners of an object's BVH root AABB, in world space after
@@ -297,6 +308,31 @@ pub(crate) fn object_corners_with(
             [w.x, w.y, w.z]
         })
         .collect()
+}
+
+/// Frame the scene, honouring `opts.focus`: the camera fits the focused
+/// part(s), while the studio floor stays under the *whole* scene so the rest
+/// of the document (a desk under a product, say) is never cut by it.
+pub(crate) fn frame_scene(
+    solids: &[crate::SceneSolid],
+    objects: &[Object],
+    opts: &RasterOptions,
+    pr: &PhotorealOptions,
+) -> Result<Framing, String> {
+    let all: Vec<[f64; 3]> = objects.iter().flat_map(object_corners).collect();
+    let Some(focus) = opts.focus.as_deref() else {
+        return frame_view(&all, opts, pr);
+    };
+    let mask = crate::focus_mask(solids, focus)?;
+    let focused: Vec<[f64; 3]> = objects
+        .iter()
+        .zip(&mask)
+        .filter(|(_, &m)| m)
+        .flat_map(|(o, _)| object_corners(o))
+        .collect();
+    let mut framing = frame_view(&focused, opts, pr)?;
+    framing.floor_z = all.iter().map(|c| c[2]).fold(f64::INFINITY, f64::min);
+    Ok(framing)
 }
 
 /// Camera, canvas, and the floor height a set of world points implies.
@@ -513,8 +549,7 @@ fn rasterize(
         return Err("no solids produced".to_string());
     }
     let objects = build_objects(&solids, pr.mesh_segments())?;
-    let corners: Vec<[f64; 3]> = objects.iter().flat_map(object_corners).collect();
-    let framing = frame_view(&corners, opts, pr)?;
+    let framing = frame_scene(&solids, &objects, opts, pr)?;
     let scene = dress_scene(objects, &framing, pr)?;
     Ok(trace_frame(&scene, &framing, pr, png))
 }
@@ -802,6 +837,42 @@ mod tests {
     /// solid without an analytic BRep, so a mesh part beside a BRep part
     /// was silently omitted. Asserts the mesh actually covers pixels, not
     /// merely that the render succeeded.
+    /// `--focus` frames the focused part's bounds, while the studio floor
+    /// still sits under the whole scene (here, a slab under a small cube).
+    #[test]
+    fn focus_frames_part_but_floor_spans_scene() {
+        let vcad = r#"{ "version": "0.1", "nodes": {
+            "1": { "id": 1, "name": "slab", "op": { "type": "Cube", "size": { "x": 200, "y": 200, "z": 5 } } },
+            "2": { "id": 2, "name": "small_raw", "op": { "type": "Cube", "size": { "x": 10, "y": 10, "z": 10 } } },
+            "3": { "id": 3, "name": "small", "op": { "type": "Translate", "child": 2, "offset": { "x": 95, "y": 95, "z": 5 } } } },
+          "materials": {}, "part_materials": {},
+          "roots": [{ "root": 1, "material": "default" }, { "root": 3, "material": "default" }] }"#;
+        let solids = crate::evaluate_vcad(vcad).unwrap();
+        let pr = PhotorealOptions::default();
+        let objects = build_objects(&solids, pr.mesh_segments()).unwrap();
+        let whole = frame_scene(&solids, &objects, &RasterOptions::default(), &pr).unwrap();
+        let opts = RasterOptions {
+            focus: Some("small".into()),
+            ..RasterOptions::default()
+        };
+        let focused = frame_scene(&solids, &objects, &opts, &pr).unwrap();
+
+        // Camera fits the cube (half-diagonal ~8.7mm), not the slab (~141mm).
+        assert!(focused.radius < 10.0, "focused radius {}", focused.radius);
+        assert!(whole.radius > 100.0, "whole radius {}", whole.radius);
+        let c = focused.center;
+        assert!((c.x - 100.0).abs() < 1.0 && (c.y - 100.0).abs() < 1.0 && (c.z - 10.0).abs() < 1.0);
+        // Floor stays at the slab's underside, not the cube's base (z = 5).
+        assert!(focused.floor_z.abs() < 1e-6, "floor_z {}", focused.floor_z);
+        assert!(whole.floor_z.abs() < 1e-6);
+        // An unknown focus is an error, not a silent whole-scene frame.
+        let bad = RasterOptions {
+            focus: Some("nope".into()),
+            ..RasterOptions::default()
+        };
+        assert!(frame_scene(&solids, &objects, &bad, &pr).is_err());
+    }
+
     #[test]
     fn renders_both_brep_and_mesh_parts() {
         // Cube at x 0..20, raw-triangle box at x 60..80 — a 40mm gap, so
@@ -884,5 +955,134 @@ mod tests {
             "both the BRep and the mesh part must cover pixels: \
              left={left} right={right} cols={cols:?}"
         );
+    }
+
+    /// A rounded-rectangle loft drawn as line segments, the way loon sketches
+    /// a round (7.5° steps), is a stack of flat BRep strips. Mesh mode must
+    /// hand the tracer one continuous shading normal across neighbouring
+    /// strips, or the rounds render as jagged facets (the cortex head).
+    #[test]
+    fn polyline_loft_traces_with_continuous_normals() {
+        use crate::{cross, sub};
+        use vcad_kernel::vcad_kernel_math::{Point2, Point3, Vec3};
+        use vcad_kernel::vcad_kernel_sketch::{SketchProfile, SketchSegment};
+
+        let section = |z: f64, d: f64| {
+            let (hx, hy, r) = (40.0 - d, 25.0 - d, 12.0);
+            let mut pts: Vec<Point2> = Vec::new();
+            for (cx, cy, a0) in [
+                (hx - r, hy - r, 0.0),
+                (r - hx, hy - r, 90.0),
+                (r - hx, r - hy, 180.0),
+                (hx - r, r - hy, 270.0),
+            ] {
+                for k in 0..=12 {
+                    let a = (a0 + 7.5 * k as f64).to_radians();
+                    pts.push(Point2::new(cx + r * a.cos(), cy + r * a.sin()));
+                }
+            }
+            let segs = (0..pts.len())
+                .map(|i| SketchSegment::Line {
+                    start: pts[i],
+                    end: pts[(i + 1) % pts.len()],
+                })
+                .collect();
+            SketchProfile::new(Point3::new(0.0, 0.0, z), Vec3::x(), Vec3::y(), segs).unwrap()
+        };
+        let solid =
+            vcad_kernel::Solid::loft(&[section(0.0, 0.0), section(30.0, 0.0)], Default::default())
+                .expect("loft");
+        let mesh = traced_mesh(&solid, MESH_SEGMENTS);
+
+        let v = |i: usize| -> [f64; 3] { std::array::from_fn(|k| mesh.vertices[i * 3 + k] as f64) };
+        let n = |i: usize| -> [f64; 3] { std::array::from_fn(|k| mesh.normals[i * 3 + k] as f64) };
+        let key = |p: [f64; 3]| p.map(|c| (c * 1e3).round() as i64);
+        let mut at: std::collections::HashMap<[i64; 3], Vec<usize>> = Default::default();
+        for i in 0..mesh.vertices.len() / 3 {
+            at.entry(key(v(i))).or_default().push(i);
+        }
+
+        // Shading normals at one point either agree (same smooth surface) or
+        // differ by a real crease (wall vs cap, 90°). Anything in between is a
+        // strip seam that would show as a facet edge.
+        let (cos_same, cos_crease) = (0.5f64.to_radians().cos(), 45f64.to_radians().cos());
+        let mut seams = 0;
+        for ids in at.values() {
+            for (a, &i) in ids.iter().enumerate() {
+                for &j in &ids[a + 1..] {
+                    let d = dot(n(i), n(j));
+                    if d < cos_same && d > cos_crease {
+                        seams += 1;
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            seams, 0,
+            "shading normals split between neighbouring loft strips"
+        );
+
+        // And they really are interpolated: a wall corner on a round must not
+        // carry its strip's flat face normal (a 7.5° strip's corner averages
+        // to 3.75° off it).
+        let smoothed = (0..mesh.vertices.len() / 9).any(|t| {
+            let [a, b, c] = [v(3 * t), v(3 * t + 1), v(3 * t + 2)];
+            let face = normalize(cross(sub(b, a), sub(c, a)));
+            face[2].abs() < 0.1 && (0..3).any(|k| dot(face, n(3 * t + k)) < 2f64.to_radians().cos())
+        });
+        assert!(smoothed, "loft walls traced with flat facet normals");
+
+        // The flat caps keep their exact plane normal at every corner (#970 —
+        // streaks on glass): a cap triangle must never pick up a smoothed
+        // normal from a wall strip or a sliver neighbour. Checked on the plain
+        // loft and on a visor-style one whose top edge is a 0.4 mm chamfer.
+        let assert_flat_caps = |mesh: &vcad_kernel::vcad_kernel_tessellate::TriangleMesh,
+                                top: f64| {
+            let v =
+                |i: usize| -> [f64; 3] { std::array::from_fn(|k| mesh.vertices[i * 3 + k] as f64) };
+            let n =
+                |i: usize| -> [f64; 3] { std::array::from_fn(|k| mesh.normals[i * 3 + k] as f64) };
+            let mut cap_tris = 0;
+            for t in 0..mesh.vertices.len() / 9 {
+                let zs = [v(3 * t)[2], v(3 * t + 1)[2], v(3 * t + 2)[2]];
+                let on = |z0: f64| zs.iter().all(|z| (z - z0).abs() < 1e-4);
+                let want = if on(0.0) {
+                    [0.0, 0.0, -1.0]
+                } else if on(top) {
+                    [0.0, 0.0, 1.0]
+                } else {
+                    continue;
+                };
+                cap_tris += 1;
+                for k in 0..3 {
+                    assert!(
+                        dot(want, n(3 * t + k)) > 0.05f64.to_radians().cos(),
+                        "cap triangle {t} corner {k} normal {:?} is not the cap normal {want:?}",
+                        n(3 * t + k)
+                    );
+                }
+            }
+            assert!(cap_tris > 0, "loft produced no cap triangles");
+            // And nothing beside a cap leans toward it: a wall or chamfer
+            // corner on the top rim is a real crease (past the 30 degree crease angle off the
+            // cap), not a normal half-smoothed into the cap.
+            for i in 0..mesh.vertices.len() / 3 {
+                let (p, nn) = (v(i), n(i));
+                if (p[2] - top).abs() < 1e-4 {
+                    let d = nn[2];
+                    assert!(
+                        d > 0.05f64.to_radians().cos() || d < 30f64.to_radians().cos(),
+                        "rim corner at {p:?} has normal {nn:?} smoothed toward the cap"
+                    );
+                }
+            }
+        };
+        assert_flat_caps(&mesh, 30.0);
+        let visor = vcad_kernel::Solid::loft(
+            &[section(0.0, 0.0), section(30.0, 0.0), section(30.4, 0.4)],
+            Default::default(),
+        )
+        .expect("chamfered loft");
+        assert_flat_caps(&traced_mesh(&visor, MESH_SEGMENTS), 30.4);
     }
 }

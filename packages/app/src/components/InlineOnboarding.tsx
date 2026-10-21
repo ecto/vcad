@@ -179,7 +179,6 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
       />
 
       <div
-        data-tauri-drag-region=""
         className={cn(
           "relative rounded-xl border border-border bg-surface/95 backdrop-blur-md shadow-xl select-none overflow-hidden",
           "w-[560px] max-w-[92vw]",

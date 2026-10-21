@@ -408,6 +408,7 @@ function getPartIcon(part: PartInfo): typeof Cube {
   if (part.kind === "pcb-board") return Circuitry;
   if (part.kind === "embroidery-pattern") return Scissors;
   if (part.kind === "stitch") return Scissors;
+  if (part.kind === "ir-subgraph") return Cube;
   return KIND_ICONS[part.kind];
 }
 

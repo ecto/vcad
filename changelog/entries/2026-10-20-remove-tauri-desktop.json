@@ -1,0 +1,13 @@
+{
+  "id": "2026-10-20-remove-tauri-desktop",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "breaking",
+  "title": "Tauri desktop app removed",
+  "summary": "The Tauri desktop app (.dmg/.msi/.AppImage) is discontinued. Use vcad.io in the browser, or the native SwiftUI Mac app in apple/VcadApp on macOS.",
+  "features": ["desktop", "app"],
+  "breaking": {
+    "description": "No more desktop installers or auto-updates. Desktop-only features are gone: native menus, context menus, file dialogs and recent files, OS notifications, the vcad:// deep links and desktop magic-link sign-in, and the built-in Bambu printer bridge.",
+    "migration": "Use https://vcad.io (printing works through the local relay at 127.0.0.1:7878) or build apple/VcadApp with build-ffi.sh and bundle.sh."
+  }
+}

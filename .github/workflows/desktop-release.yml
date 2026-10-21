@@ -1,287 +1,157 @@
-name: Desktop Release
-
-# Phase 5 of the desktop plan. Builds vcad-desktop for macOS (universal),
-# Windows, and Linux, and (when triggered by a tag) publishes the
-# installers as a draft GitHub release. Signing/notarization only kicks
-# in when the relevant secrets are set — unsigned builds still succeed,
-# they just show OS warnings on first launch.
-#
-# Triggers
-#   - workflow_dispatch: ad-hoc matrix build; artifacts only, no release.
-#   - push of a `v*` tag: matrix build + draft release with installers.
-#
-# Adding a platform is a one-line change in the matrix.
+# Release the native Mac app: build-ffi -> bundle -> Developer ID sign ->
+# notarize -> DMG -> GitHub Release -> appcast PR. See docs/mac-release.md for
+# the one-time setup and the secrets this needs.
+name: desktop-release
 
 on:
-  workflow_dispatch:
   push:
-    tags:
-      - 'v*'
+    tags: ["desktop-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the prefix, e.g. 0.10.0 (tags desktop-v<version>)"
+        required: true
+      prerelease:
+        description: "Mark the GitHub Release as a prerelease"
+        type: boolean
+        default: false
 
 permissions:
-  contents: write  # needed to create the draft release
+  contents: write
+  pull-requests: write
 
 concurrency:
-  group: desktop-release-${{ github.ref }}
+  group: desktop-release
   cancel-in-progress: false
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  # Generate the Markdown body once per release so all three matrix builds
-  # upload the same signed latest.json with matching `notes`, and the GitHub
-  # release page shows a single coherent write-up instead of whichever
-  # platform's tauri-action won the create race.
-  notes:
-    name: Release notes
-    runs-on: ubuntu-latest
-    outputs:
-      body: ${{ steps.gen.outputs.body }}
+  release:
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      CARGO_INCREMENTAL: "0"
     steps:
-      - uses: actions/checkout@v6
-        with:
-          # Enough history for release-notes.mjs to pull recent commit
-          # subjects as flavor for the humanized summary.
-          fetch-depth: 100
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install npm deps
-        # Only need the root workspace for the script + @anthropic-ai/sdk;
-        # skip workspace postinstall scripts to keep this fast.
-        run: npm ci --prefer-offline --no-audit --no-fund --ignore-scripts
-
-      - name: Generate release notes
-        id: gen
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        shell: bash
+      - name: Resolve version
+        id: v
         run: |
-          set -euo pipefail
-          notes=$(node scripts/release-notes.mjs)
-          {
-            echo 'body<<RELEASE_NOTES_EOF'
-            echo "$notes"
-            echo 'RELEASE_NOTES_EOF'
-          } >> "$GITHUB_OUTPUT"
-
-  # Push the publishable workspace crates to crates.io. Runs in parallel with
-  # `build` so a crates.io flake doesn't block desktop bundles (and vice-versa).
-  # Only fires on a real `v*` tag — workflow_dispatch runs skip publishing.
-  # Idempotent: if a previous run partially succeeded, re-running this job
-  # picks up where it left off because the script skips already-indexed
-  # versions.
-  crates:
-    name: Publish to crates.io
-    needs: notes
-    runs-on: ubuntu-22.04
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - uses: actions/checkout@v6
-
-      # Same sibling-repo clones as `build`; `cargo publish` runs the in-tree
-      # verify pass which compiles the crate, and that resolves path deps on
-      # tang/phyz.
-      - name: Clone sibling repos
-        shell: bash
-        run: |
-          git clone --depth 1 https://github.com/ecto/tang.git ../tang
-          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
-          git clone --depth 1 https://github.com/ecto/loon.git ../loon
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: crates-publish
-
-      - name: Install Linux system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev
-
-      - name: Install npm deps
-        run: npm ci --prefer-offline --no-audit --no-fund --ignore-scripts
-
-      - name: Publish crates in dependency order
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: node scripts/publish-crates.mjs
-
-  build:
-    name: Build (${{ matrix.label }})
-    needs: notes
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: macOS (universal)
-            platform: macos-latest
-            rust-target: aarch64-apple-darwin,x86_64-apple-darwin
-            tauri-args: --target universal-apple-darwin
-          - label: Windows (x64)
-            platform: windows-latest
-            rust-target: ''
-            tauri-args: ''
-          - label: Linux (x64)
-            platform: ubuntu-22.04
-            rust-target: ''
-            tauri-args: ''
-    runs-on: ${{ matrix.platform }}
-    steps:
-      - uses: actions/checkout@v6
-
-      # Path-dep sibling workspaces (mirrors ci.yml / agent.yml).
-      - name: Clone sibling repos
-        shell: bash
-        run: |
-          git clone --depth 1 https://github.com/ecto/tang.git ../tang
-          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
-          git clone --depth 1 https://github.com/ecto/loon.git ../loon
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-          targets: ${{ matrix.rust-target != '' && format('{0},wasm32-unknown-unknown', matrix.rust-target) || 'wasm32-unknown-unknown' }}
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # Keep the desktop crate's cache keyed per-platform so macOS and
-          # Linux builds don't stomp on each other.
-          key: ${{ matrix.platform }}
-          cache-workspace-crates: true
-
-      - name: Install Linux system deps
-        if: startsWith(matrix.platform, 'ubuntu')
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            librsvg2-dev \
-            libsoup-3.0-dev \
-            libatk1.0-dev \
-            libayatana-appindicator3-dev \
-            libcairo2-dev \
-            libjpeg-dev \
-            libpango1.0-dev \
-            libgif-dev \
-            rpm
-
-      - name: Install wasm-pack
-        shell: bash
-        run: cargo install wasm-pack --locked --version 0.13.1
-
-      - name: Install npm deps
-        run: npm ci --prefer-offline --no-audit --no-fund
-
-      # Warm up @vcad/app's workspace dependencies via turbo so tauri-action's
-      # subsequent beforeBuildCommand (which only runs the app's own build)
-      # finds @vcad/{core,engine,ir,auth,kernel-wasm} already built.
-      - name: Build @vcad/app
-        run: npm run build -- --filter=@vcad/app
-
-      # Only expose signing secrets to tauri-action when the workflow is
-      # running on a real release tag. On workflow_dispatch (ad-hoc runs
-      # from a branch) we build unsigned artifacts — a compromised branch
-      # should not be able to lift the signing/notarization keys into its
-      # build output. Dependabot (see .github/dependabot.yml) pins
-      # tauri-apps/tauri-action to a commit SHA on its first update.
-      #
-      # Apple codesign env vars are gated on APPLE_CERTIFICATE actually being
-      # set (not just "we're on a tag") because `env:` can't distinguish an
-      # unset secret from an empty-string secret — any non-null value lands
-      # as "" in the action, which then pipes an empty blob into
-      # `security import` and fails with SecKeychainItemImport. We set the
-      # vars here via $GITHUB_ENV only when the cert secret is non-empty;
-      # absent that, tauri-action builds unsigned bundles. Users get a
-      # Gatekeeper warning on first open but install works; when the Apple
-      # secrets are added to the repo, signing lights up automatically.
-      - name: Configure Apple code signing
-        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/')
-        shell: bash
-        env:
-          CERT: ${{ secrets.APPLE_CERTIFICATE }}
-          CERT_PW: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID_IN: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD_IN: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID_IN: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          if [ -z "$CERT" ]; then
-            echo "APPLE_CERTIFICATE secret not set; building macOS bundles unsigned."
-            exit 0
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#desktop-v}"
           fi
-          {
-            echo "APPLE_CERTIFICATE=$CERT"
-            echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PW"
-            echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
-            echo "APPLE_ID=$APPLE_ID_IN"
-            echo "APPLE_PASSWORD=$APPLE_PASSWORD_IN"
-            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID_IN"
-          } >> "$GITHUB_ENV"
-          echo "Apple codesign env configured from repo secrets."
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "::error::bad version '$version'"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=desktop-v$version" >> "$GITHUB_OUTPUT"
+          # CFBundleVersion must increase on every release Sparkle sees.
+          echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
-      - name: Build and publish desktop bundles
-        uses: tauri-apps/tauri-action@v0
+      # vcad needs tang + phyz at sibling paths (see CLAUDE.md).
+      - uses: actions/checkout@v4
+        with: { path: vcad }
+      - uses: actions/checkout@v4
+        with: { repository: ecto/tang, path: tang }
+      - uses: actions/checkout@v4
+        with: { repository: ecto/phyz, path: phyz }
+      # The app links tang-compress's decoder (build-tc-ffi.sh). Its source repo
+      # is configured with the TANG_COMPRESS_REPO variable (owner/name).
+      - name: Check tang-compress source is configured
+        run: |
+          if [ -z "${{ vars.TANG_COMPRESS_REPO }}" ]; then
+            echo "::error::set the TANG_COMPRESS_REPO repository variable (see docs/mac-release.md)"; exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.TANG_COMPRESS_REPO }}
+          token: ${{ secrets.TANG_COMPRESS_TOKEN || github.token }}
+          path: tang-compress
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: vcad }
+
+      - name: Build Rust static libs
+        working-directory: vcad/apple/VcadApp
+        run: |
+          ./build-ffi.sh
+          ./build-tc-ffi.sh "$GITHUB_WORKSPACE/tang-compress"
+
+      - name: Import Developer ID certificate
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ startsWith(github.ref, 'refs/tags/') && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/') && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-          # APPLE_* env vars are set by the preceding "Configure Apple code
-          # signing" step (only when APPLE_CERTIFICATE is truly populated), so
-          # no placeholder empty strings leak into tauri-action here.
-        with:
-          projectPath: crates/vcad-desktop
-          # Only create a release when triggered by a tag push.
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
-          releaseName: 'vcad ${{ github.ref_name }}'
-          # Markdown body generated once in the notes job. tauri-action forwards
-          # this verbatim to the GitHub release AND to latest.json's `notes`
-          # field, so the desktop updater and web banner can show the same
-          # write-up to users deciding whether to install.
-          releaseBody: ${{ needs.notes.outputs.body }}
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.tauri-args }}
+          APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
+          APPLE_P12_PASSWORD: ${{ secrets.APPLE_P12_PASSWORD }}
+        run: |
+          kc="$RUNNER_TEMP/release.keychain-db"
+          kc_pw="$(uuidgen)"
+          security create-keychain -p "$kc_pw" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kc_pw" "$kc"
+          printf '%s' "$APPLE_DEVELOPER_ID_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$APPLE_P12_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kc_pw" "$kc" >/dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$kc" | grep 'Developer ID Application' | head -1 | sed -E 's/.*"(.*)"/\1/')"
+          if [ -z "$identity" ]; then echo "::error::no Developer ID Application identity in the p12"; exit 1; fi
+          echo "VCAD_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          echo "NOTARY_KEYCHAIN=$kc" >> "$GITHUB_ENV"
 
-      # For workflow_dispatch runs (no tag), preserve the installers as
-      # workflow artifacts so a maintainer can inspect them without
-      # cutting a release.
-      - name: Upload artifacts (non-release runs)
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: vcad-desktop-${{ matrix.platform }}
-          if-no-files-found: warn
-          path: |
-            target/release/bundle/**/*.dmg
-            target/release/bundle/**/*.app
-            target/release/bundle/**/*.msi
-            target/release/bundle/**/*.exe
-            target/release/bundle/**/*.AppImage
-            target/release/bundle/**/*.deb
-            target/release/bundle/**/*.rpm
-            target/universal-apple-darwin/release/bundle/**/*.dmg
-            target/universal-apple-darwin/release/bundle/**/*.app
+      - name: Store notarytool credentials
+        env:
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: |
+          xcrun notarytool store-credentials vcad-notary \
+            --apple-id "$NOTARY_APPLE_ID" --team-id "$NOTARY_TEAM_ID" \
+            --password "$NOTARY_PASSWORD" --keychain "$NOTARY_KEYCHAIN"
+          echo "VCAD_NOTARY_PROFILE=vcad-notary" >> "$GITHUB_ENV"
+
+      - name: Build, sign, notarize, DMG
+        working-directory: vcad/apple/VcadApp
+        env:
+          SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
+          VCAD_VERSION: ${{ steps.v.outputs.version }}
+          VCAD_BUILD: ${{ steps.v.outputs.build }}
+        run: ./release.sh
+
+      - name: Create GitHub Release
+        working-directory: vcad
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dmg="apple/VcadApp/dist/vcad-${{ steps.v.outputs.version }}.dmg"
+          pre=""
+          [ "${{ inputs.prerelease }}" = "true" ] && pre="--prerelease"
+          gh release create "${{ steps.v.outputs.tag }}" "$dmg" \
+            --target "$GITHUB_SHA" --title "vcad for Mac ${{ steps.v.outputs.version }}" \
+            --generate-notes $pre
+
+      - name: Update appcast and open a PR
+        working-directory: vcad
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          version="${{ steps.v.outputs.version }}"
+          tag="${{ steps.v.outputs.tag }}"
+          git fetch origin main
+          git checkout -B "desktop-appcast/$version" origin/main
+          apple/VcadApp/scripts/make-appcast.sh \
+            "apple/VcadApp/dist/vcad-$version.dmg" \
+            "https://github.com/${{ github.repository }}/releases/download/$tag/"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/app/public/desktop/appcast.xml
+          git commit -m "chore(desktop): appcast for vcad $version"
+          git push -u origin "desktop-appcast/$version"
+          gh pr create --base main --head "desktop-appcast/$version" \
+            --title "chore(desktop): appcast for vcad $version" \
+            --body "Adds the signed Sparkle item for [$tag](https://github.com/${{ github.repository }}/releases/tag/$tag). Merging publishes the update to https://vcad.io/desktop/appcast.xml."
+
+      - name: Clean up keychain
+        if: always()
+        run: |
+          [ -n "${NOTARY_KEYCHAIN:-}" ] && security delete-keychain "$NOTARY_KEYCHAIN" || true

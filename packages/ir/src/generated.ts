@@ -372,6 +372,11 @@ b: number,
 order?: number, };
 
 /**
+ * Boolean operation type.
+ */
+export type BooleanType = "union" | "difference" | "intersection";
+
+/**
  * An axis-aligned 3D bounding box (millimeters), used for component bodies
  * and courtyards.
  */
@@ -664,6 +669,35 @@ to: number,
 steps: number, };
 
 /**
+ * Why a command was refused.
+ */
+export type CommandError = { "kind": "unknown_id", 
+/**
+ * The id that didn't resolve.
+ */
+id: string, } | { "kind": "nothing_to", 
+/**
+ * `undo` or `redo`.
+ */
+action: string, } | { "kind": "invalid", 
+/**
+ * Parser message.
+ */
+message: string, } | { "kind": "unsupported", 
+/**
+ * Tool or feature kind.
+ */
+tool: string, } | { "kind": "batch", 
+/**
+ * Index of the failing command.
+ */
+index: number, 
+/**
+ * The underlying error.
+ */
+source: CommandError, };
+
+/**
  * The geometric relationship a [`DesignConstraint`] asserts.
  *
  * Dimensional variants carry an [`Expr`] value (literal number or a formula
@@ -822,6 +856,11 @@ value: Expr, };
  * autorouted, matching the rip-up behavior those documents already had.
  */
 export type CopperSource = "autoroute" | "manual";
+
+/**
+ * A parameter value in the CRDT document.
+ */
+export type CrdtValue = { "F64": number } | { "Vec3": [number, number, number] } | { "Bool": boolean } | { "String": string } | { "FeatureRef": string } | { "FeatureRefList": Array<string> } | { "Sketch": string };
 
 /**
  * CSG operation — the core building block of the IR DAG.
@@ -1049,7 +1088,36 @@ count: number,
 /**
  * Total angle span in degrees.
  */
-angle_deg: number, } | { "type": "Shell", 
+angle_deg: number, } | { "type": "SweepRotate", 
+/**
+ * Child node to sweep.
+ */
+child: number, 
+/**
+ * A point on the rotation axis.
+ */
+axis_origin: Vec3, 
+/**
+ * Direction of the rotation axis (right-hand rule).
+ */
+axis_dir: Vec3, 
+/**
+ * Start angle in degrees.
+ */
+angle_lo_deg: number, 
+/**
+ * End angle in degrees.
+ */
+angle_hi_deg: number, 
+/**
+ * Sample step in degrees. Omitted = automatic (≤0.25 mm chord sag
+ * and ≤15 mm copy spacing at the furthest point).
+ */
+step_deg?: number, 
+/**
+ * Outward dilation (mm) applied to the child before sweeping.
+ */
+clearance?: number, } | { "type": "Shell", 
 /**
  * Child node to shell.
  */
@@ -1161,7 +1229,15 @@ sketches: number[],
 /**
  * Connect last profile to first (creates tube).
  */
-closed?: boolean, } | { "type": "ImportedMesh", 
+closed?: boolean, } | { "type": "Hull", 
+/**
+ * Solid operands whose (tessellated) vertices join the hull.
+ */
+children: number[], 
+/**
+ * Extra points, flat `[x0, y0, z0, x1, y1, z1, ...]`.
+ */
+points: Array<number>, } | { "type": "ImportedMesh", 
 /**
  * Flat array of vertex positions (x, y, z, x, y, z, ...).
  */
@@ -1541,7 +1617,153 @@ minMicroviaDiameter: number,
  * that were INFERRED from the board's own copper because the source
  * file authored none. DRC findings against an inferred floor say so.
  */
-inferredFloors: Array<string>, };
+inferredFloors: Array<string>, 
+/**
+ * Whether the fab may STACK microvias (a microvia landing on the one
+ * below, which needs filled/planarized microvias). `false` (default):
+ * consecutive microvias must be staggered (DRC `MicroviaStack`). An
+ * importer may infer `true` from a board that already stacks them; it
+ * then lists `allowStackedMicrovias` in [`Self::inferred_floors`].
+ */
+allowStackedMicrovias?: boolean, 
+/**
+ * Rule areas: polygons inside which a reduced minimum trace width (and
+ * optionally clearance) applies — dense pin fields and their escapes.
+ * An importer may infer them from the board's own copper; such areas
+ * carry `inferred: true` and their provenance.
+ */
+ruleAreas?: Array<RuleArea>, };
+
+/**
+ * One document mutation (or history step).
+ *
+ * JSON shape: `{"type": "set_material", "id": "123:4", "material": "steel"}`.
+ */
+export type DocCommand = { "type": "add_feature", 
+/**
+ * Typed feature payload.
+ */
+feature: FeatureInput, 
+/**
+ * Optional display name.
+ */
+name?: string, } | { "type": "create_feature", 
+/**
+ * CRDT feature kind.
+ */
+kind: string, 
+/**
+ * Initial params.
+ */
+params?: Record<string, CrdtValue>, } | { "type": "update_feature", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * New typed payload.
+ */
+feature: FeatureInput, } | { "type": "set_param", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Param key.
+ */
+key: string, 
+/**
+ * New value.
+ */
+value: CrdtValue, } | { "type": "delete_feature", 
+/**
+ * Stable id of the feature.
+ */
+id: string, } | { "type": "set_translation", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Offset along X, Y, Z.
+ */
+offset: [number, number, number], } | { "type": "set_rotation", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Euler angles.
+ */
+angles: [number, number, number], } | { "type": "set_scale", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Per-axis factor.
+ */
+factor: [number, number, number], } | { "type": "set_material", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Material key.
+ */
+material: string, } | { "type": "define_material", 
+/**
+ * Material key (what `set_material` references).
+ */
+key: string, 
+/**
+ * The definition.
+ */
+definition: MaterialDef, } | { "type": "set_visible", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Visibility.
+ */
+visible: boolean, } | { "type": "rename", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * New name.
+ */
+name: string, } | { "type": "reorder", 
+/**
+ * Stable id of the feature.
+ */
+id: string, 
+/**
+ * Target index.
+ */
+index: number, } | { "type": "duplicate", 
+/**
+ * Stable ids to copy.
+ */
+ids: Array<string>, } | { "type": "set_joint_state", 
+/**
+ * Stable id of the joint feature.
+ */
+id: string, 
+/**
+ * New state.
+ */
+state: number, } | { "type": "import_ir", 
+/**
+ * IR `Document` as JSON.
+ */
+document: Document, } | { "type": "undo" } | { "type": "redo" } | { "type": "batch", 
+/**
+ * Commands, applied in order.
+ */
+commands: Array<DocCommand>, };
 
 /**
  * A vcad document — the `.vcad` file format.
@@ -1653,6 +1875,13 @@ drawing?: DrawingSettings,
  * camera shots. Absent for static models.
  */
 timeline?: Timeline, 
+/**
+ * Stable part ids, keyed by scene-root node id (stringified). Written by
+ * the document engine's materializer and honored on import, so a part's
+ * `"replica:seq"` id survives any round trip through IR — the id MCP
+ * tools and the app hand out as `part_id`. Absent for hand-written IR.
+ */
+partIds?: Record<string, string>, 
 /**
  * Off-the-shelf hardware contributed by the geometry itself — every
  * fastener form placed in the model emits a line here, so a BOM is
@@ -1907,6 +2136,665 @@ color: [number, number, number],
 name: string, };
 
 /**
+ * The JSON result envelope shared by every binding (wasm, ffi, CLI):
+ *
+ * - `{"ok":true,"result":{"document":…,"parts":…,"consumedPartIds":…,"warnings":…,"createdFeatureId"?:…}}`
+ * - `{"ok":false,"error":{"kind":"unknown_id",…,"message":"…"}}`
+ */
+export type EngineEnvelope = { 
+/**
+ * Whether the command succeeded.
+ */
+ok: boolean, 
+/**
+ * Present when `ok`.
+ */
+result?: EngineResult, 
+/**
+ * Present when not `ok`.
+ */
+error?: EngineError, };
+
+/**
+ * A refused command inside an [`EngineEnvelope`]: the [`CommandError`]
+ * fields plus its display message.
+ */
+export type EngineError = { 
+/**
+ * Human-readable message.
+ */
+message: string, } & ({ "kind": "unknown_id", 
+/**
+ * The id that didn't resolve.
+ */
+id: string, } | { "kind": "nothing_to", 
+/**
+ * `undo` or `redo`.
+ */
+action: string, } | { "kind": "invalid", 
+/**
+ * Parser message.
+ */
+message: string, } | { "kind": "unsupported", 
+/**
+ * Tool or feature kind.
+ */
+tool: string, } | { "kind": "batch", 
+/**
+ * Index of the failing command.
+ */
+index: number, 
+/**
+ * The underlying error.
+ */
+source: CommandError, });
+
+/**
+ * Information about a materialized feature (part) in the document.
+ *
+ * Generated by the materializer as a byproduct of creating IR nodes.
+ * Replaces the 17-variant `PartInfo` union type from TypeScript.
+ */
+export type EnginePartInfo = { "kind": "cube", 
+/**
+ * Part identifier (serialized FeatureId).
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * The primitive IR node.
+ */
+primitiveNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "cylinder", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * The primitive IR node.
+ */
+primitiveNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "sphere", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * The primitive IR node.
+ */
+primitiveNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "cone", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * The primitive IR node.
+ */
+primitiveNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "boolean", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * Boolean type (union, difference, intersection).
+ */
+booleanType: string, 
+/**
+ * The boolean IR node.
+ */
+booleanNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, 
+/**
+ * The two source part IDs.
+ */
+sourcePartIds: [string, string], } | { "kind": "extrude", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * The sketch IR node.
+ */
+sketchNodeId: number, 
+/**
+ * The extrude IR node.
+ */
+extrudeNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "revolve", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * The sketch IR node.
+ */
+sketchNodeId: number, 
+/**
+ * The revolve IR node.
+ */
+revolveNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "sweep", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * The sketch IR node.
+ */
+sketchNodeId: number, 
+/**
+ * The sweep IR node.
+ */
+sweepNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "loft", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * The sketch IR nodes.
+ */
+sketchNodeIds: Array<number>, 
+/**
+ * The loft IR node.
+ */
+loftNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "fillet", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * Source part ID.
+ */
+sourcePartId: string, 
+/**
+ * The fillet IR node.
+ */
+filletNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "chamfer", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * Source part ID.
+ */
+sourcePartId: string, 
+/**
+ * The chamfer IR node.
+ */
+chamferNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "shell", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * Source part ID.
+ */
+sourcePartId: string, 
+/**
+ * The shell IR node.
+ */
+shellNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "linear-pattern", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * Source part ID.
+ */
+sourcePartId: string, 
+/**
+ * The pattern IR node.
+ */
+patternNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "circular-pattern", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * Source part ID.
+ */
+sourcePartId: string, 
+/**
+ * The pattern IR node.
+ */
+patternNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "mirror", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * Source part ID.
+ */
+sourcePartId: string, 
+/**
+ * The mirror IR node.
+ */
+mirrorNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "text", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * The text IR node.
+ */
+textNodeId: number, 
+/**
+ * The extrude IR node.
+ */
+extrudeNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "imported-mesh", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * The mesh IR node.
+ */
+meshNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, 
+/**
+ * Source filename.
+ */
+source: string | null, } | { "kind": "pcb-board", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * The board IR node.
+ */
+boardNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "embroidery-pattern", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * The pattern IR node.
+ */
+patternNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, 
+/**
+ * Source filename.
+ */
+source: string | null, } | { "kind": "ir-subgraph", 
+/**
+ * Part identifier (serialized FeatureId).
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * Root node of the re-emitted subgraph.
+ */
+subgraphNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, } | { "kind": "part-instance", 
+/**
+ * Part identifier.
+ */
+id: string, 
+/**
+ * Human-readable name.
+ */
+name: string, 
+/**
+ * Part source path, e.g. `"std:fastener.bolt.socket-head"`.
+ */
+path: string, 
+/**
+ * Pinned version.
+ */
+version: string, 
+/**
+ * The PartInstance IR node.
+ */
+partNodeId: number, 
+/**
+ * Scale transform node.
+ */
+scaleNodeId: number, 
+/**
+ * Rotation transform node.
+ */
+rotateNodeId: number, 
+/**
+ * Translation transform node.
+ */
+translateNodeId: number, };
+
+/**
+ * Successful result payload inside an [`EngineEnvelope`].
+ */
+export type EngineResult = { 
+/**
+ * The materialized IR document.
+ */
+document: Document, 
+/**
+ * Part metadata per materialized feature.
+ */
+parts: Array<EnginePartInfo>, 
+/**
+ * Stable ids of parts consumed by other features.
+ */
+consumedPartIds: Array<string>, 
+/**
+ * Non-fatal materialize issues.
+ */
+warnings: Array<string>, 
+/**
+ * Stable id of the feature the command created, if any.
+ */
+createdFeatureId?: string, };
+
+/**
  * Environment lighting configuration.
  */
 export type Environment = { "type": "Preset", 
@@ -1940,6 +2828,378 @@ export type EnvironmentPreset = "studio" | "warehouse" | "apartment" | "park" | 
  * while old numeric docs remain wire-compatible.
  */
 export type Expr = number | string;
+
+/**
+ * Every feature kind and its typed parameters.
+ *
+ * This is THE schema — encoding, decoding, validation, and the WASM API
+ * are all derived from this enum.
+ */
+export type FeatureInput = { "type": "Cube", 
+/**
+ * Width (X).
+ */
+size_x: number, 
+/**
+ * Depth (Y).
+ */
+size_y: number, 
+/**
+ * Height (Z).
+ */
+size_z: number, } | { "type": "Cylinder", 
+/**
+ * Radius.
+ */
+radius: number, 
+/**
+ * Height along Z.
+ */
+height: number, 
+/**
+ * Tessellation segments.
+ */
+segments?: number, } | { "type": "Sphere", 
+/**
+ * Radius.
+ */
+radius: number, 
+/**
+ * Tessellation segments.
+ */
+segments?: number, } | { "type": "Cone", 
+/**
+ * Bottom radius.
+ */
+radius_bottom: number, 
+/**
+ * Top radius (0 for a point).
+ */
+radius_top: number, 
+/**
+ * Height along Z.
+ */
+height: number, 
+/**
+ * Tessellation segments.
+ */
+segments?: number, } | { "type": "Boolean", 
+/**
+ * Union, difference, or intersection.
+ */
+boolean_type: BooleanType, 
+/**
+ * First input feature ID.
+ */
+input_a: string, 
+/**
+ * Second input feature ID.
+ */
+input_b: string, } | { "type": "Extrude", 
+/**
+ * Sketch data (JSON-serialized CsgOp::Sketch2D).
+ */
+sketch: string, 
+/**
+ * Extrusion depth.
+ */
+depth: number, 
+/**
+ * Extrusion direction (unit vector).
+ */
+direction: [number, number, number], 
+/**
+ * Optional twist angle (degrees).
+ */
+twist_angle?: number, 
+/**
+ * Optional end scale factor.
+ */
+scale_end?: number, } | { "type": "Revolve", 
+/**
+ * Sketch data (JSON-serialized CsgOp::Sketch2D).
+ */
+sketch: string, 
+/**
+ * Axis origin point.
+ */
+axis_origin: [number, number, number], 
+/**
+ * Axis direction vector.
+ */
+axis_dir: [number, number, number], 
+/**
+ * Angle of revolution (degrees).
+ */
+angle_deg: number, } | { "type": "Sweep", 
+/**
+ * Sketch data (JSON-serialized CsgOp::Sketch2D).
+ */
+sketch: string, 
+/**
+ * Path curve (JSON-serialized PathCurve).
+ */
+path?: string, 
+/**
+ * Optional twist angle.
+ */
+twist_angle?: number, 
+/**
+ * Optional start scale.
+ */
+scale_start?: number, 
+/**
+ * Optional end scale.
+ */
+scale_end?: number, } | { "type": "Loft", 
+/**
+ * Sketch data for each profile (JSON-serialized CsgOp::Sketch2D).
+ */
+profiles: Array<string>, 
+/**
+ * Whether the loft is closed (wraps around).
+ */
+closed?: boolean, } | { "type": "Fillet", 
+/**
+ * Source feature ID.
+ */
+input: string, 
+/**
+ * Fillet radius.
+ */
+radius: number, } | { "type": "Chamfer", 
+/**
+ * Source feature ID.
+ */
+input: string, 
+/**
+ * Chamfer distance.
+ */
+distance: number, } | { "type": "Shell", 
+/**
+ * Source feature ID.
+ */
+input: string, 
+/**
+ * Wall thickness.
+ */
+thickness: number, } | { "type": "LinearPattern", 
+/**
+ * Source feature ID.
+ */
+input: string, 
+/**
+ * Pattern direction vector.
+ */
+direction: [number, number, number], 
+/**
+ * Number of copies.
+ */
+count: number, 
+/**
+ * Spacing between copies.
+ */
+spacing: number, } | { "type": "CircularPattern", 
+/**
+ * Source feature ID.
+ */
+input: string, 
+/**
+ * Axis origin point.
+ */
+axis_origin: [number, number, number], 
+/**
+ * Axis direction vector.
+ */
+axis_dir: [number, number, number], 
+/**
+ * Number of copies.
+ */
+count: number, 
+/**
+ * Total angle (degrees).
+ */
+angle_deg: number, } | { "type": "Mirror", 
+/**
+ * Source feature ID.
+ */
+input: string, 
+/**
+ * Mirror plane ("XY", "XZ", or "YZ").
+ */
+plane: string, } | { "type": "Text", 
+/**
+ * The text content.
+ */
+text: string, 
+/**
+ * Font height.
+ */
+height: number, 
+/**
+ * Extrusion depth.
+ */
+depth: number, 
+/**
+ * Text alignment ("left", "center", "right").
+ */
+alignment?: string, 
+/**
+ * Letter spacing multiplier.
+ */
+letter_spacing?: number, 
+/**
+ * Line spacing multiplier.
+ */
+line_spacing?: number, } | { "type": "ImportedMesh", 
+/**
+ * Vertex positions as JSON array of f64.
+ */
+positions_json: string, 
+/**
+ * Triangle indices as JSON array of u32.
+ */
+indices_json: string, 
+/**
+ * Vertex normals as JSON array of f64.
+ */
+normals_json?: string, 
+/**
+ * Source filename.
+ */
+source?: string, } | { "type": "PcbBoard", 
+/**
+ * Board data (JSON-serialized Pcb).
+ */
+board?: string, } | { "type": "EmbroideryPattern", 
+/**
+ * Design data (JSON-serialized EmbroideryDesign).
+ */
+design?: string, 
+/**
+ * Source filename.
+ */
+source?: string, } | { "type": "PartInstance", 
+/**
+ * Part source path, e.g. `"std:fastener.bolt.socket-head"`.
+ */
+path: string, 
+/**
+ * Pinned version string, e.g. `"1.0"`.
+ */
+version: string, 
+/**
+ * Parameters as a JSON-serialized object.
+ */
+params_json: string, } | { "type": "PartDef", 
+/**
+ * Source feature ID that defines the geometry.
+ */
+source_feature: string, 
+/**
+ * Optional human-readable name.
+ */
+name?: string, } | { "type": "Instance", 
+/**
+ * Part definition feature ID.
+ */
+part_def: string, 
+/**
+ * Optional name.
+ */
+name?: string, 
+/**
+ * Transform data (JSON-serialized Transform3D).
+ */
+transform?: string, } | { "type": "Joint", 
+/**
+ * Joint kind ("Fixed", "Revolute", "Slider", "Cylindrical", "Ball").
+ */
+kind: string, 
+/**
+ * Child instance feature ID.
+ */
+child_instance: string, 
+/**
+ * Parent instance feature ID.
+ */
+parent_instance?: string, 
+/**
+ * Parent anchor point.
+ */
+anchor_a: [number, number, number], 
+/**
+ * Child anchor point.
+ */
+anchor_b: [number, number, number], 
+/**
+ * Joint axis (for revolute/slider/cylindrical).
+ */
+axis?: [number, number, number], 
+/**
+ * Optional name.
+ */
+name?: string, 
+/**
+ * Joint limits (JSON-serialized JointLimits).
+ */
+limits?: string, } | { "type": "SceneSettings", 
+/**
+ * Environment settings (JSON).
+ */
+environment?: string, 
+/**
+ * Light definitions (JSON).
+ */
+lights?: string, 
+/**
+ * Background settings (JSON).
+ */
+background?: string, 
+/**
+ * Post-processing settings (JSON).
+ */
+post_processing?: string, 
+/**
+ * Camera presets (JSON).
+ */
+camera_presets?: string, } | { "type": "Schematic", 
+/**
+ * Sheet title.
+ */
+title?: string, 
+/**
+ * Sheet data (JSON-serialized SchematicSheet).
+ */
+sheet?: string, } | { "type": "DrawingSettings", 
+/**
+ * Title block fields (JSON-serialized `DrawingTitleBlock`).
+ */
+title_block?: string, 
+/**
+ * Section lines (JSON-serialized `Vec<DrawingSectionLine>`).
+ */
+sections?: string, 
+/**
+ * BOM table visibility (JSON bool).
+ */
+show_bom?: string, } | { "type": "Molecule", 
+/**
+ * System data (JSON-serialized `MoleculeSystem`).
+ */
+system?: string, } | { "type": "AnalysisStudies", 
+/**
+ * Studies data (JSON-serialized `Vec<AnalysisStudy>`).
+ */
+studies?: string, } | { "type": "DesignConstraints", 
+/**
+ * Constraints data (JSON-serialized `Vec<DesignConstraint>`).
+ */
+constraints?: string, } | { "type": "Timeline", 
+/**
+ * Timeline data (JSON-serialized `vcad_ir::Timeline`).
+ */
+timeline?: string, };
 
 /**
  * Parameters controlling how a stitch group is filled.
@@ -2201,6 +3461,20 @@ qty: number,
  * heads without re-deriving them from the catalog.
  */
 head_protrusion_mm?: number, };
+
+/**
+ * A hierarchical port (KiCad sheet pin / hierarchical label): a net of a
+ * child sheet that the parent connects through the sheet instance.
+ */
+export type HierarchicalPort = { 
+/**
+ * Port name — also the name of the child-sheet net it exposes.
+ */
+name: string, 
+/**
+ * Electrical direction, as documentation and for ERC.
+ */
+direction?: PinType, };
 
 /**
  * Authored mass / inertia / center-of-mass for a part.
@@ -3341,6 +4615,23 @@ toneMapping?: ToneMapping,
 exposure?: number, };
 
 /**
+ * A power flag: marks a net as driven for ERC (KiCad `PWR_FLAG`).
+ */
+export type PowerFlag = { 
+/**
+ * Net name the flag sits on, in the scope of the sheet that holds it.
+ */
+net: string, 
+/**
+ * Optional drawing position (display only — connectivity is by name).
+ */
+position?: Vec2, 
+/**
+ * Why the net is driven (e.g. "fed through FB1 from VBAT").
+ */
+note?: string, };
+
+/**
  * Realized-copper continuity for one power/plane net, captured in a receipt.
  *
  * A split power plane is an electrically *open* PDN even when DRC reports zero
@@ -3536,6 +4827,41 @@ verdict: ReceiptVerdict, };
 export type ReceiptVerdict = "pass" | "provisional" | "fail" | "unverifiable";
 
 /**
+ * A design-rule area: inside `outline` (on `layers`, or every copper layer
+ * when empty) a trace may run at `min_trace_width`, and copper keeps
+ * `clearance` when given.
+ */
+export type RuleArea = { 
+/**
+ * Name (e.g. the footprint reference it was derived from).
+ */
+name: string, 
+/**
+ * Closed polygon outline.
+ */
+outline: Array<Vec2>, 
+/**
+ * Layers it applies to (empty = all copper layers).
+ */
+layers?: Array<PcbLayer>, 
+/**
+ * Minimum trace width inside the area (mm).
+ */
+minTraceWidth: number, 
+/**
+ * Clearance inside the area (mm), if it overrides the class clearance.
+ */
+clearance?: number, 
+/**
+ * Inferred by an importer rather than authored.
+ */
+inferred?: boolean, 
+/**
+ * How it was derived (logged and quoted by the DRC).
+ */
+provenance?: string, };
+
+/**
  * Count of violations of one rule.
  */
 export type RuleCount = { 
@@ -3638,6 +4964,24 @@ pads?: Array<Pad>,
 properties?: Record<string, string>, };
 
 /**
+ * The sheet tree of a hierarchical schematic.
+ */
+export type SchematicHierarchy = { 
+/**
+ * Sheet definitions.
+ */
+sheets?: Array<SheetDefinition>, 
+/**
+ * Sheet instances placed on the root sheet.
+ */
+instances?: Array<SheetInstance>, 
+/**
+ * Net names shared by every sheet (power rails, GND). Global-scope
+ * labels in any sheet are global too.
+ */
+global_nets?: Array<string>, };
+
+/**
  * An explicit wire junction point.
  */
 export type SchematicJunction = { 
@@ -3718,7 +5062,23 @@ labels: Array<SchematicLabel>,
  * callers can declare nets as data instead of relying on coordinate
  * coincidence.
  */
-nets?: Record<string, Array<string>>, };
+nets?: Record<string, Array<string>>, 
+/**
+ * Power flags (KiCad `PWR_FLAG`): nets declared as driven even though no
+ * `PowerOutput` pin sits on them — a rail fed through a ferrite, a load
+ * switch FET, or straight off a connector. ERC treats a flagged net as
+ * having a power source. Flags are not components: they never reach the
+ * BOM, placement or the board.
+ */
+power_flags?: Array<PowerFlag>, 
+/**
+ * Hierarchical design. When present, `components`/`wires`/`labels`/
+ * `nets`/`power_flags` above are the ROOT sheet only, and the child
+ * sheets live here. Every consumer that needs the whole design (ERC,
+ * netlist, BOM, board, export) flattens first; a sheet without a
+ * hierarchy is already flat, so single-sheet documents are unchanged.
+ */
+hierarchy?: SchematicHierarchy, };
 
 /**
  * A wire connection on a schematic.
@@ -3770,6 +5130,64 @@ camera: CameraPose,
  * any parameter track exists).
  */
 geometryDirty: boolean, };
+
+/**
+ * A reusable child sheet.
+ */
+export type SheetDefinition = { 
+/**
+ * Definition name, referenced by [`SheetInstance::sheet`].
+ */
+name: string, 
+/**
+ * Ports the parent connects. Hierarchical-scope labels in `body` are
+ * ports too.
+ */
+ports?: Array<HierarchicalPort>, 
+/**
+ * The sheet contents. Net names are LOCAL unless they are a port or a
+ * global net; its own `hierarchy` must be empty (nest via `instances`).
+ */
+body: SchematicSheet, 
+/**
+ * Child sheets placed inside this one.
+ */
+instances?: Array<SheetInstance>, };
+
+/**
+ * One placement of a sheet definition inside a parent sheet.
+ */
+export type SheetInstance = { 
+/**
+ * Instance name, unique among its siblings (e.g. "CAN1"). Local nets of
+ * the instance flatten to `<path>/<net>`, path = instance names from
+ * the root joined by `/`.
+ */
+name: string, 
+/**
+ * Name of the [`SheetDefinition`] this instantiates.
+ */
+sheet: string, 
+/**
+ * Port name → net name in the PARENT sheet's scope.
+ */
+connections?: Record<string, string>, 
+/**
+ * Explicit reference-designator map for this instance (local ref →
+ * flattened ref). Wins over `ref_offset` for the refs it names.
+ */
+ref_map?: Record<string, string>, 
+/**
+ * Add this to the numeric part of every ref (`U1` + 100 → `U101`),
+ * KiCad-style per-sheet annotation. Without a map or an offset, a
+ * sheet instantiated once keeps its refs and a repeated sheet gets
+ * `<ref>_<instance>` (`U1_CAN1`).
+ */
+ref_offset?: number, 
+/**
+ * Offset added to the child's component positions in the flat sheet.
+ */
+position?: Vec2, };
 
 /**
  * Direction tag for sheet-metal flanges. Wire-compatible with
@@ -4151,6 +5569,21 @@ camera: Array<CameraShot>, };
  * Tone mapping algorithm.
  */
 export type ToneMapping = "none" | "reinhard" | "cineon" | "acesFilmic" | "agX" | "neutral";
+
+/**
+ * An AI tool call as hosts hand it to the engine
+ * ([`DocumentApi::apply_tool_envelope`]). `args` stays JSON: each tool
+ * lowers its own argument shape in [`crate::tools::lower`].
+ */
+export type ToolCall = { 
+/**
+ * Tool name (`create`, `translate`, `place`, …).
+ */
+tool: string, 
+/**
+ * Tool arguments (a JSON object).
+ */
+args: Record<string, unknown>, };
 
 /**
  * A tool schema entry generated by the ToolSchema derive macro.

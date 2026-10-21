@@ -238,25 +238,47 @@ describe("apply_edits (atomic multi-op batch)", () => {
     await server.close();
   });
 
-  it("keeps back-compat: raw numeric node ids still work as child refs", async () => {
+  it("keeps back-compat: raw numeric node ids (from the current doc) still work as child refs", async () => {
     const { client, server } = await connect(engine);
     const id = await openDoc(client);
 
-    // Fresh document: node ids are assigned sequentially from 1.
-    const res = await client.callTool({
+    // Seed two parts, then address them by the node ids the session document
+    // actually holds. The engine renumbers nodes when it materializes, so a
+    // raw NodeId names a node of the document as it stands when the op runs;
+    // within a batch, "@N" is the stable way to name earlier ops' parts.
+    await client.callTool({
       name: "apply_edits",
       arguments: {
         document_id: id,
         ops: [
           { op: "create", type: "cylinder", params: { radius: 10, height: 20 } },
-          { op: "create", type: "translate", params: { child: 1, offset: { x: 1, y: 2, z: 0 } } },
           { op: "create", type: "cylinder", params: { radius: 4, height: 20 } },
-          { op: "create", type: "translate", params: { child: 3, offset: { x: 1, y: 2, z: 0 } } },
-          { op: "create", type: "difference", params: { left: 2, right: 4 } },
+        ],
+      },
+    });
+    const seeded = (await getDoc(client, id)) as unknown as {
+      roots: Array<{ root: number }>;
+      partIds: Record<string, string>;
+    };
+    expect(seeded.roots).toHaveLength(2);
+    const [bigRoot, smallRoot] = seeded.roots.map((r) => r.root);
+    const bigId = seeded.partIds[String(bigRoot)];
+
+    const res = await client.callTool({
+      name: "apply_edits",
+      arguments: {
+        document_id: id,
+        ops: [
+          // Numeric and digit-string forms are both accepted.
+          { op: "create", type: "difference", params: { left: bigRoot, right: String(smallRoot) } },
+          { op: "set_material", part_id: "@0", material: "brass" },
         ],
       },
     });
     expect(res.isError ?? false).toBe(false);
+    const parsed = JSON.parse(firstText(res));
+    expect(parsed.ops[0].part_id).toEqual(expect.any(String));
+    expect(parsed.ops[0].consumed_part_ids).toBeDefined();
 
     const read = await client.callTool({
       name: "read",
@@ -264,7 +286,10 @@ describe("apply_edits (atomic multi-op batch)", () => {
     });
     const parts = JSON.parse(firstText(read)).parts as Array<{ id: string }>;
     expect(parts).toHaveLength(1);
-    expect(parts[0].id).toBe("5");
+    expect(parts[0].id).toBe(parsed.ops[0].part_id);
+    expect(parts[0].id).not.toBe(bigId);
+    const doc = (await getDoc(client, id)) as unknown as { roots: Array<{ material: string }> };
+    expect(doc.roots[0].material).toBe("brass");
 
     await client.close();
     await server.close();
@@ -351,6 +376,53 @@ describe("apply_edits (atomic multi-op batch)", () => {
     // Nothing applied — the valid op 0 rolled back with the batch.
     const doc = await getDoc(client, id);
     expect(doc.roots).toHaveLength(0);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("runs ops through the engine: @N is the stable part id, in-place edits keep it, engine refusals roll back", async () => {
+    const { client, server } = await connect(engine);
+    const id = await openDoc(client);
+
+    const res = await client.callTool({
+      name: "apply_edits",
+      arguments: {
+        document_id: id,
+        ops: [
+          { op: "create", type: "cube", params: { size: { x: 10, y: 10, z: 10 } } },
+          { op: "create", type: "translate", params: { child: "@0", offset: { x: 50, y: 0, z: 0 } } },
+          { op: "create", type: "rotate", params: { child: "@1", angles: { x: 0, y: 0, z: 90 } } },
+        ],
+      },
+    });
+    expect(res.isError ?? false).toBe(false);
+    const parsed = JSON.parse(firstText(res));
+    const partId = parsed.ops[0].part_id as string;
+    // Engine stable ids ("replica:counter"), not NodeIds.
+    expect(partId).toMatch(/^\d+:\d+$/);
+    // translate / rotate edit the part's own transform: same part throughout.
+    expect(parsed.ops[1].part_id).toBe(partId);
+    expect(parsed.ops[2].part_id).toBe(partId);
+    const doc = (await getDoc(client, id)) as unknown as { roots: unknown[]; partIds: Record<string, string> };
+    expect(doc.roots).toHaveLength(1);
+    expect(Object.values(doc.partIds)).toEqual([partId]);
+    const before = JSON.stringify(doc);
+
+    // The engine refuses an unknown operand at op 1: op 0 is rolled back too.
+    const bad = await client.callTool({
+      name: "apply_edits",
+      arguments: {
+        document_id: id,
+        ops: [
+          { op: "set_material", part_id: partId, material: "steel" },
+          { op: "create", type: "difference", params: { left: partId, right: "9:999" } },
+        ],
+      },
+    });
+    expect(bad.isError).toBe(true);
+    expect(firstText(bad)).toMatch(/op 1/);
+    expect(JSON.stringify(await getDoc(client, id))).toBe(before);
 
     await client.close();
     await server.close();

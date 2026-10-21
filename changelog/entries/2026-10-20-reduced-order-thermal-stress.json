@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-reduced-order-thermal-stress",
+  "version": "undefined",
+  "date": "2026-10-20",
+  "category": "perf",
+  "title": "10x faster thermal-stress sweeps via superposition",
+  "summary": "Voxel FEA now exposes per-element stress tensors; a POD reduced-order sweep solves 61 transient thermal-stress frames with 6 solves (2e-4 MPa vs full).",
+  "features": ["fea", "thermal", "simulation", "animation"]
+}

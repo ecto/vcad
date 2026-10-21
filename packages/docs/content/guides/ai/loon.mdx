@@ -175,6 +175,34 @@ For regular arrays of holes, prefer patterns over manual placement:
 [root result "steel"]
 ```
 
+## Pattern: Clearance Cuts Along a Joint's Swing
+
+A housing that wraps a joint must clear the neighbouring link over its whole
+range of motion — a knee fold, an elbow, a hip. `sweep-rotate` is the swept
+volume of a solid rotated about an axis, so the relief is one subtraction:
+
+```lisp
+; knee axis = +X through the origin; 0..120° folds the calf toward +Y
+[let calf [pipe [cube 24 24 140] [translate -12 -12 -128]]]
+[let thigh [pipe [cube 60 50 110] [translate -30 -25 -30]]]
+[let thigh-relieved
+  [pipe thigh [difference [sweep-rotate-clear 0 0 0  1 0 0  0 120  0 1 calf]]]]
+[root thigh-relieved "aluminum"]
+```
+
+| Form | Meaning |
+|------|---------|
+| `[sweep-rotate ox oy oz ax ay az lo hi s]` | union of `s` rotated about the axis through `(ox,oy,oz)` along `(ax,ay,az)` for every angle in `[lo, hi]` degrees |
+| `[sweep-rotate-n ox oy oz ax ay az lo hi step s]` | same, sampled every `step` degrees |
+| `[sweep-rotate-clear ox oy oz ax ay az lo hi step c s]` | dilate `s` outward by `c` mm first (`step 0` = automatic) |
+
+The automatic step keeps the chord sag of the envelope under 0.25 mm and the
+spacing between copies under 15 mm at the part's furthest point from the axis;
+a moving part thinner than that needs an explicit `-n` step or the copies
+leave wedge gaps. The sweep evaluates as a single flat mesh union of rotated
+copies, so it is triangle soup — use it as the *tool* of a difference, not as
+a part you will fillet or export to STEP.
+
 ## Pattern: Modules — Shared Vocabulary in Its Own File
 
 When several files (or several hundred roots) share the same helpers —
@@ -250,6 +278,31 @@ end]]
 ```
 
 Sketch planes: `xy` (horizontal), `xz` (front), `yz` (side). The profile must form a closed loop — the last point must connect back to the first.
+
+## Pattern: Plates with Holes (`polygon`)
+
+A router-cut or laser-cut plate is one outline plus cutouts. Write it as a
+single `polygon` segment instead of one `line` per edge and a `difference`
+of extruded cutters per hole:
+
+```lisp
+[extrude 0 0 3.2
+  [sketch 0 0 0  1 0 0  0 1 0
+    #[[polygon #[0 0  120 0  120 50  110 60  0 60]
+               #[#[6 6 1.6] #[114 6 1.6] #[6 54 1.6]
+                 #[50 20  70 20  70 40  50 40]]]]]]
+```
+
+- The outline is a flat `#[x0 y0 x1 y1 ...]` list, closed implicitly (a
+  repeated first point is accepted and dropped). Winding is free.
+- Each hole is either a flat point loop or exactly `#[cx cy r]`, a true
+  circle (two arcs, not a faceted n-gon).
+- Extrude cuts the holes as walls directly — no boolean pass, no
+  coplanar-cap warnings, and the source is roughly 10x smaller.
+- Holes must lie strictly inside the outline and not touch each other.
+  A sketch holding a `polygon` holds nothing else.
+- `[polygon #[...]]` without holes works anywhere a sketch does, including
+  `loft` sections. Revolve, loft and sweep refuse holes.
 
 ## Pattern: Multi-Part Scenes
 
@@ -329,6 +382,18 @@ Relative paths resolve against the directory of the `.loon` file that names
 them, so a model and its vendor files move together. `import-step-body` picks
 one body out of a multi-body STEP; `import-mesh` and `import-mesh-scaled`
 place an STL.
+
+STL has no unit field, and `import-mesh` reads its coordinates as **metres**
+(the URDF convention — Unitree/ROS meshes are metres) and converts to mm. A
+millimetre STL therefore comes in 1000x too big unless it says so:
+
+```clojure
+[import-mesh "vendor/bracket.stl" :units "mm"]   ; also "cm", "m" (default), "in"
+[import-mesh-scaled 1.0 1.0 2.0 "b.stl" :units "mm"]  ; extra scale on top
+```
+
+The loader prints a `WARNING MeshImport` line (path, raw STL bbox, applied
+scale) when an import lands over 10 m or under 1 mm.
 
 Substituting "a cylinder of about the right size" for a purchased part means
 fit checks only ever test the envelope you invented — and real parts have

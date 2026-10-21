@@ -1,0 +1,6 @@
+// Types only: the app dlopen()s libirys_ffi.dylib at runtime (PathTracer.swift)
+// so it builds and runs without irys. Copied from irys/crates/irys-ffi/include.
+module CIrys {
+    header "irys.h"
+    export *
+}

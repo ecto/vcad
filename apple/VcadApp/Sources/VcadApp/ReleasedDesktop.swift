@@ -102,6 +102,7 @@ final class ReleaseWindowController {
     private var pointerOverScene = false
 
     func show(model: EditorModel, intent: IntentEngine) {
+        AgentBridge.shared.start(model: model)
         guard window == nil else { return }
         self.model = model
         model.evaluatesOffMainThread = true
@@ -475,7 +476,8 @@ final class ReleaseWindowController {
         (model?.highlightedParts.contains(i) ?? false) ? .selected : .none
     }
     private func liftForInstance(_ i: Int) -> Lift {
-        (model?.selectedInstances.contains(i) ?? false) ? .selected : .none
+        guard let model else { return .none }
+        return model.selectedInstances.contains(i) || model.agentHighlights.contains(i) ? .selected : .none
     }
 
     /// The three states a body can be in. Selection is brand orange; hover on
@@ -718,6 +720,13 @@ struct ReleasedOverlayView: View {
                           lookAt: model.panOffset,
                           geometryKey: geometryKey)
                 .ignoresSafeArea()
+            // Live irys path tracing over the raster view (the raster view
+            // keeps running underneath, so picking and the gizmo still work).
+            if model.pathTraceEnabled {
+                PathTracedViewport(model: model)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
             // ARView consumes mouse events — capture orbit/zoom on a clear
             // layer above it instead.
             Color.clear
@@ -775,7 +784,13 @@ struct ReleasedOverlayView: View {
                         .modifier(ChromeRegion(key: "tree"))
                 }
                 // Dynamics, as its own panel: one panel per concern.
-                if model.canSimulate {
+                // Posing first: on a jointed assembly it's the main job, and
+                // the column runs out of height before the dojo panel matters.
+                if model.hasPoseStudio {
+                    PoseStudioWindow(model: model)
+                        .modifier(ChromeRegion(key: "pose"))
+                }
+                if model.canSimulate && !model.hasPoseStudio {
                     SimulationWindow(model: model)
                         .modifier(ChromeRegion(key: "sim"))
                 }
@@ -844,6 +859,16 @@ struct ReleasedOverlayView: View {
                     .modifier(ChromeRegion(key: "designViewportTools"))
             }
         }
+        .overlay {
+            // Labels an agent pinned over the MCP bridge (AgentBridge.swift).
+            AgentAnnotationOverlay(model: model)
+        }
+        .overlay(alignment: .topLeading) {
+            // Decoded compressed scalar field (FieldOverlay.swift).
+            FieldHud(store: FieldOverlayStore.shared)
+                .padding(Theme.Space.l)
+                .modifier(ChromeRegion(key: "fieldHud"))
+        }
         .overlay(alignment: .bottomLeading) {
             // Orientation triad: which way X, Y and Z point right now.
             if Prefs.showsTriad {
@@ -871,6 +896,10 @@ struct ReleasedOverlayView: View {
                     if model.canSimulate {
                         SimBar(model: model)
                             .modifier(ChromeRegion(key: "simBar"))
+                    }
+                    if AgentSession.shared.isOpen {
+                        AgentPanel(session: AgentSession.shared, model: model)
+                            .modifier(ChromeRegion(key: "agentPanel"))
                     }
                     CommandBar(engine: intent, model: model)
                         .modifier(ChromeRegion(key: "composer"))
@@ -1241,6 +1270,9 @@ struct ReleasedARView: NSViewRepresentable {
     let cncRevision: Int
     let cncOrigin: CNCVector
     let cncOverlay: Bool
+    /// Compressed-field overlay revision (FieldOverlay.swift) — an input so a
+    /// load or slice change runs `updateNSView`.
+    let fieldRevision: Int
     let cncStock: Double
     let poseTick: Int
     /// The model's own "the geometry changed" flag, the same one the studio
@@ -1359,6 +1391,7 @@ struct ReleasedARView: NSViewRepresentable {
         }
         if let parent = ReleaseWindowController.shared.centeringEntity {
             syncCNCOverlay(model.cnc, in: parent, model: model)
+            syncFieldOverlay(FieldOverlayStore.shared, in: parent)
             if model.workspace == .manufacture && model.cnc.autoFit && !model.cnc.followSpindle && context.coordinator.framedCNCRevision != cncRevision {
                 context.coordinator.framedCNCRevision = cncRevision
                 Task { @MainActor in
@@ -1842,6 +1875,7 @@ struct ReleasedScene: View {
                        cncRevision: model.cnc.revision,
                        cncOrigin: model.cnc.origin,
                        cncOverlay: model.cnc.overlay,
+                       fieldRevision: FieldOverlayStore.shared.revision,
                        cncStock: model.cnc.stockThickness,
                        poseTick: model.poseTick,
                        geometryDirty: model.geometryDirty,

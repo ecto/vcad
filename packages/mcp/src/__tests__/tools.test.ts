@@ -61,8 +61,8 @@ function makeCubeDoc(): Document {
   };
 }
 
-/** Wire the kernel WASM into the registry. Required for `planCrud` to
- *  work — same bootstrap createServer does at startup. */
+/** Wire the kernel WASM into the registry (kernel-authored tool schemas) —
+ *  same bootstrap createServer does at startup. */
 async function bootstrapRegistry(): Promise<void> {
   const wasm = (await getKernelWasm()) as unknown as Record<string, unknown>;
   const getToolSchemas = wasm.get_tool_schemas as (() => string) | undefined;
@@ -441,9 +441,27 @@ describe("registry-driven tool surface", () => {
       getDocumentTool({ document_id }).content[0].text,
     ) as Document;
     expect(after.roots[0].material).toBe("aluminum");
-    expect(after.part_materials["1"]).toBe("aluminum");
+    // The material lives on the part (its scene root), not a node-id-keyed
+    // `part_materials` entry — engine edits renumber nodes. What matters is
+    // that it survives the next engine round trip.
+    const sphere = JSON.parse(
+      dispatchRegistryTool("create", {
+        document_id,
+        type: "sphere",
+        params: { radius: 1 },
+      }).content[0].text,
+    );
+    const later = JSON.parse(
+      getDocumentTool({ document_id }).content[0].text,
+    ) as Document;
+    expect(later.roots.map((r) => r.material).sort()).toEqual(["aluminum", "default"]);
+    dispatchRegistryTool("delete", { document_id, part_id: sphere.part_id });
 
-    dispatchRegistryTool("delete", { document_id, part_id: "1" });
+    // The seeded part's stable id ("1" as a legacy NodeId no longer names a
+    // node once the engine has renumbered the document).
+    const cubeId = after.partIds?.[String(after.roots[0].root)];
+    expect(cubeId).toBeTruthy();
+    dispatchRegistryTool("delete", { document_id, part_id: cubeId! });
     const final = JSON.parse(
       getDocumentTool({ document_id }).content[0].text,
     ) as Document;
@@ -1369,7 +1387,7 @@ describe("GLB part-identity node names", () => {
     expect(glb.subarray(0, 4).toString()).toBe("glTF");
     const jsonLen = glb.readUInt32LE(12);
     const json = JSON.parse(glb.subarray(20, 20 + jsonLen).toString());
-    expect(json.nodes[0].name).toBe("1:test_cube");
+    expect(json.nodes[0].name).toBe("0:1:test_cube");
   });
 
   it("buildPartLabels skips hidden roots to stay aligned with scene.parts", async () => {
@@ -1379,7 +1397,7 @@ describe("GLB part-identity node names", () => {
     doc.roots.push({ root: 2, material: "default", visible: false });
     doc.nodes["3"] = { id: 3, name: null, op: { type: "Cube", size: { x: 2, y: 2, z: 2 } } };
     doc.roots.push({ root: 3, material: "default" });
-    expect(buildPartLabels(doc)).toEqual(["1:test_cube", "3:"]);
+    expect(buildPartLabels(doc)).toEqual(["0:1:test_cube", "0:3:"]);
   });
 });
 

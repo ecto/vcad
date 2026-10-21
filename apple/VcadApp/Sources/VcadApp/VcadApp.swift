@@ -55,6 +55,10 @@ struct VcadApp: App {
             MainActor.assumeIsolated { gizmoSmoke(path: path) }
             exit(0)
         }
+        if let path = ProcessInfo.processInfo.environment["VCAD_POSE_SMOKE"] {
+            MainActor.assumeIsolated { poseSmoke(path: path) }
+            exit(0)
+        }
         if let path = ProcessInfo.processInfo.environment["VCAD_PLAYBACK_SMOKE"] {
             MainActor.assumeIsolated { playbackSmoke(path: path) }
             exit(0)
@@ -70,9 +74,14 @@ struct VcadApp: App {
     var body: some Scene {
         WindowGroup {
             EditorView(model: model, intent: intent)
+                .task { FieldOverlayStore.shared.loadFromEnvironment() }
         }
         .windowStyle(.automatic)
-        .commands { DocumentCommands(model: model, intent: intent) }
+        .commands {
+            DocumentCommands(model: model, intent: intent)
+            FieldCommands()
+            UpdateCommands()
+        }
 
         Settings {
             SettingsView()
@@ -319,6 +328,53 @@ private func rgb(_ c: NSColor) -> String {
     emit(String(format: "[VCAD_PLAY] inst%d t=%.2f pos (%.1f, %.1f, %.1f)",
                 end.count - 1, dur,
                 end.last!.columns.3.x, end.last!.columns.3.y, end.last!.columns.3.z))
+}
+
+/// Pose studio: open a jointed assembly (a `.loon` file too), drive one joint,
+/// explode, bake the pose for the photoreal renderer, and reload from disk.
+@MainActor private func poseSmoke(path: String) {
+    func emit(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+    let m = EditorModel()
+    let t0 = Date()
+    m.openDocument(URL(fileURLWithPath: path))
+    let scene = m.buildScene()
+    let mats = Set(scene.instances.map { $0.material.color.description }).count
+    emit(String(format: "[VCAD_POSE] instances %d · driven joints %d · distinct materials %d · studio %@ · %.1fs",
+                scene.instances.count, m.drivenJoints.count, mats, m.hasPoseStudio ? "yes" : "no",
+                Date().timeIntervalSince(t0)))
+    if let e = m.loadError { emit("[VCAD_POSE] loadError: \(e)") }
+    guard m.hasPoseStudio else { return }
+    let rest = m.instanceTransforms
+    func moved(_ a: [float4x4], _ b: [float4x4]) -> Int {
+        // Bodies are authored about their own pivots, so compare where each
+        // part's centre lands, not the transform origin.
+        a.indices.filter { i in
+            let c = SIMD4<Float>(m.assemblyLocalCenters[i], 1)
+            return i < b.count && simd_length(a[i] * c - b[i] * c) > 0.5
+        }.count
+    }
+    let name = ProcessInfo.processInfo.environment["VCAD_POSE_JOINT"] ?? "l_knee_pitch"
+    if let j = m.drivenJoints.first(where: { EditorModel.poseKey($0) == name }) {
+        m.setJoint(j, (j.limits?.upperBound ?? 60) * 0.8)
+        emit("[VCAD_POSE] \(name) → \(m.jointValue(j))° limits \(j.limits.map { "\($0)" } ?? "none"): \(moved(rest, m.instanceTransforms)) instances moved")
+    } else { emit("[VCAD_POSE] no joint named \(name)") }
+    let posed = m.instanceTransforms
+    m.setExplode(1)
+    emit("[VCAD_POSE] explode 1: \(moved(posed, m.instanceTransforms)) instances moved")
+    for k in ["cover-helmet_i", "cover-chest_i", "cover-shoe_ll_i"] {
+        if let i = m.assemblyInstanceIDs.firstIndex(of: k) {
+            let a = posed[i].columns.3, b = m.instanceTransforms[i].columns.3
+            emit(String(format: "[VCAD_POSE]   %@ (%.0f %.0f %.0f) → (%.0f %.0f %.0f)", k, a.x, a.y, a.z, b.x, b.y, b.z))
+        }
+    }
+    if let data = m.posedDocumentJSON() {
+        let out = URL(fileURLWithPath: NSTemporaryDirectory() + "vcad_posed.vcad")
+        try? data.write(to: out)
+        emit("[VCAD_POSE] posed doc \(data.count) bytes → \(out.path)")
+    }
+    m.reloadFromDisk()
+    _ = m.buildScene()
+    emit("[VCAD_POSE] reload: instances \(m.assemblyInstanceCount) · explode kept \(m.explode) · pose kept \(m.jointPose.count) joint(s) · moved vs rest \(moved(rest, m.instanceTransforms))")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

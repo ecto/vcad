@@ -12,7 +12,9 @@
  * document, and the session is only pointed at the copy once every op has
  * succeeded. A mid-list failure therefore leaves the live session byte-identical
  * to its pre-call state — the partially-mutated copy is simply discarded — and
- * the error names the failing op index plus the underlying error. `dry_run`
+ * the error names the failing op index plus the underlying error. Each op runs
+ * through the Rust document engine (`runMutation`), exactly like the matching
+ * single-op tool. `dry_run`
  * runs the same validation against the copy but never commits it, so it reports
  * the per-op plan while mutating nothing.
  *
@@ -62,9 +64,10 @@ export const applyEditsSchema = {
         "remaining fields are that tool's arguments (minus document_id): " +
         "create {op, type, params}, update {op, node_id|part_id, ...fields}, " +
         "delete {op, part_id}, set_material {op, part_id, material}. Later ops may " +
-        'reference nodes created by earlier ops in the same batch symbolically: "@N" ' +
-        "(in params.child/left/right/sketch or part_id/node_id) resolves to the node " +
-        `created by op index N — no need to predict node ids. Max ${MAX_BATCH_OPS} per call.`,
+        'reference parts from earlier ops in the same batch symbolically: "@N" ' +
+        "(in params.child/left/right/sketch or part_id/node_id) resolves to the part " +
+        "created by op index N (for an in-place edit such as translate, the part it " +
+        `edited) — no need to predict ids. Max ${MAX_BATCH_OPS} per call.`,
       items: { type: "object" as const },
     },
     dry_run: {
@@ -123,9 +126,9 @@ function normalizeOp(
 const SYMBOLIC_REF = /^@(\d+)$/;
 
 /**
- * Resolve "@N" symbolic references in one op's args against the node ids
- * created by earlier ops in the batch, so callers never hand-predict
- * sequential node ids. Substitutes in the positions that name nodes: the
+ * Resolve "@N" symbolic references in one op's args against the stable part
+ * ids produced by earlier ops in the batch (the engine's `createdFeatureId`),
+ * so callers never hand-predict ids. Substitutes in the positions that name nodes: the
  * top-level `part_id`/`node_id` and the child refs inside `params`
  * (child/left/right/sketch/sketches). Returns a copy; throws on a forward
  * reference or a reference to an op that created no node.
@@ -148,7 +151,7 @@ function resolveSymbolicRefs(
     const id = createdIds[refIdx];
     if (id === undefined) {
       throw new Error(
-        `"@${refIdx}" refers to op ${refIdx}, which did not create a node`,
+        `"@${refIdx}" refers to op ${refIdx}, which did not create a part`,
       );
     }
     return id;
@@ -182,8 +185,8 @@ function applyOps(
   documentId: string,
 ): Array<Record<string, unknown>> {
   const results: Array<Record<string, unknown>> = [];
-  // Node id created by each op so far (undefined for ops that create none),
-  // the targets "@N" refs resolve against.
+  // Stable part id produced by each op so far (undefined for ops that
+  // produce none), the targets "@N" refs resolve against.
   const createdIds: Array<string | undefined> = [];
   for (let i = 0; i < ops.length; i++) {
     const { name, args } = normalizeOp(ops[i], i);
@@ -209,9 +212,11 @@ function applyOps(
     }
     const { document_id: _docId, ...rest } = parsed;
     void _docId;
+    // runMutation reports the engine's createdFeatureId (or, for an
+    // in-place transform, the edited part) as `part_id`.
     createdIds.push(
-      name === "create" && typeof rest.node_id === "string"
-        ? rest.node_id
+      name === "create" && typeof rest.part_id === "string"
+        ? rest.part_id
         : undefined,
     );
     results.push({ index: i, op: name, ...rest });
@@ -331,7 +336,7 @@ export const toolDefs: ToolDef[] = [
       "failing restores the pre-call document byte-for-byte and reports the failing op " +
       "index. Pass `dry_run: true` to validate and get the per-op plan without mutating. " +
       "Each op is `{op, ...args}` (e.g. {op:'create', type:'cube', params:{size:{x,y,z}}}); " +
-      'later ops reference nodes created earlier in the batch as "@N" (op index N), ' +
+      'later ops reference parts created earlier in the batch as "@N" (op index N), ' +
       "so a boolean chain never predicts node ids.",
     inputSchema: applyEditsSchema,
     handler: (a, c) => applyEdits(a, c.engine),

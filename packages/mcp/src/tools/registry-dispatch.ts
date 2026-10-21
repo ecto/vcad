@@ -2,20 +2,24 @@
  * Generic dispatcher for the kernel-tier chat tools (the ones in
  * `commandRegistry.toAnthropicTools()`). The MCP server registers these
  * under their original names — the schema is identical to what the in-app
- * chat sends to Anthropic — and routes each call through the Rust planner
- * (`commandRegistry.planCrud`) and `applyToolOutcome`.
+ * chat sends to Anthropic — and routes each mutation through the Rust
+ * document engine (`WasmDocumentEngine.apply_tool`).
  *
  * Result: schema and behavior come from the kernel; the MCP wrapper is a
  * thin session-aware shell. No tool definitions duplicated in this package.
  */
 
 import type { AnthropicTool } from "@vcad/core";
-import {
-  commandRegistry,
-  applyToolOutcome,
-  listPartsFromDocument,
-} from "@vcad/core";
+import { commandRegistry, listPartsFromDocument } from "@vcad/core";
 import { getSession, recordLastChanged, recordTriangles } from "./session.js";
+import { storeEngine, takeCachedEngine } from "./session-core.js";
+import {
+  isStablePartId,
+  partIdDeprecation,
+  partIdForRoot,
+  rootForPartId,
+} from "./part-ids.js";
+import { getKernelWasmSync } from "@vcad/engine";
 import { applyJointState, jointStateSchemaProp } from "./pose.js";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
 import {
@@ -37,24 +41,13 @@ const BROWSER_ONLY_TOOLS = new Set<string>([
 ]);
 
 /**
- * Tools the registry exposes but whose execution path goes through
- * `executeCrudInner` (TS, app-only) rather than the Rust planner —
- * the docstore-shaped feature builder (`tube`, `polyline_tube`,
- * `linear_pattern`, `circular_pattern`, `mirror`) and anchor-based
- * `place`. Skipping for v1 — these can be ported to the IR-direct path
- * as a follow-up. (`inspect_part` / `describe_scene` were here too but are
- * now dispatched: they need an evaluated scene, not the planner, so they
- * are answered directly below like `read`.)
+ * Registry tools MCP serves through its own ToolDefs instead of this
+ * dispatcher. (The feature builders and `place` used to be deferred here;
+ * they are now lowered by the document engine.)
  */
 const DEFERRED_TOOLS = new Set<string>([
-  "tube",
-  "polyline_tube",
-  "linear_pattern",
-  "circular_pattern",
-  "mirror",
-  "place",
-  // search_parts / place_part are implemented separately in parts.ts —
-  // they take a Document directly and don't need the planner round-trip.
+  // search_parts / place_part are served by parts.ts (place_part still
+  // mutates through the engine, via runMutation).
   "search_parts",
   "place_part",
 ]);
@@ -131,11 +124,15 @@ export const CREATE_PARAM_HINTS: Record<string, string> = {
 const NODE_REF_PARAM_KEYS = ["child", "left", "right", "sketch"] as const;
 
 /** Coerce a single node reference: the Rust planner's serde parse wants
- *  JSON numbers for CsgOp child refs, but part ids travel as strings
- *  everywhere else on the MCP surface ("5" from a prior result's part_id).
- *  Accept both by converting digit-strings to numbers. */
-function coerceNodeRef(v: unknown): unknown {
+ *  JSON numbers for CsgOp child refs, but ids travel as strings everywhere
+ *  else on the MCP surface. Digit-strings become numbers; a stable part id
+ *  ("0:7", from a prior result's part_id) becomes that part's root NodeId. */
+function coerceNodeRef(v: unknown, doc?: import("@vcad/ir").Document): unknown {
   if (typeof v === "string" && /^\d+$/.test(v)) return Number(v);
+  if (typeof v === "string" && doc && isStablePartId(v)) {
+    const r = rootForPartId(doc, v);
+    if (r) return r.entry.root;
+  }
   return v;
 }
 
@@ -149,10 +146,16 @@ function coerceNodeRef(v: unknown): unknown {
 export function normalizeNodeRefs(
   toolName: string,
   args: Record<string, unknown>,
+  doc?: import("@vcad/ir").Document,
 ): Record<string, unknown> {
   const out = { ...args };
-  for (const key of ["node_id", "part_id"]) {
+  for (const key of ["node_id", "part_id", "parent_part_id"]) {
     if (typeof out[key] === "number") out[key] = String(out[key]);
+  }
+  // The planner addresses a create's parent part by root NodeId.
+  if (doc && typeof out.parent_part_id === "string") {
+    const r = rootForPartId(doc, out.parent_part_id);
+    if (r) out.parent_part_id = String(r.entry.root);
   }
   if (
     (toolName === "create" || toolName === "update") &&
@@ -162,10 +165,10 @@ export function normalizeNodeRefs(
   ) {
     const params = { ...(out.params as Record<string, unknown>) };
     for (const key of NODE_REF_PARAM_KEYS) {
-      if (key in params) params[key] = coerceNodeRef(params[key]);
+      if (key in params) params[key] = coerceNodeRef(params[key], doc);
     }
     if (Array.isArray(params.sketches)) {
-      params.sketches = params.sketches.map(coerceNodeRef);
+      params.sketches = params.sketches.map((v) => coerceNodeRef(v, doc));
     }
     out.params = params;
   }
@@ -290,10 +293,11 @@ export function snapshotParts(
 ): Map<string, { name?: string; fingerprint: string }> {
   const map = new Map<string, { name?: string; fingerprint: string }>();
   for (const root of doc.roots) {
-    const partId = String(root.root);
+    const nodeKey = String(root.root);
+    const partId = partIdForRoot(doc, root);
     const pieces: string[] = [
       `material:${String(root.material ?? "")}:${String(
-        (doc.part_materials as Record<string, unknown> | undefined)?.[partId] ?? "",
+        (doc.part_materials as Record<string, unknown> | undefined)?.[nodeKey] ?? "",
       )}`,
     ];
     const stack = [root.root];
@@ -309,7 +313,7 @@ export function snapshotParts(
     }
     pieces.sort();
     map.set(partId, {
-      name: doc.nodes[partId]?.name ?? undefined,
+      name: doc.nodes[nodeKey]?.name ?? undefined,
       fingerprint: pieces.join("|"),
     });
   }
@@ -441,108 +445,263 @@ export function dispatchRegistryTool(
   return result;
 }
 
-/** Execute a mutating registry tool against an open session document. */
+/**
+ * Tools `vcad_app::tools::lower` handles (crates/vcad-app/src/tools.rs) —
+ * core's ENGINE_TOOLS plus the geometry tools `lower` also accepts. Only the
+ * subset MCP dispatches (not in DEFERRED_TOOLS) can reach this path.
+ */
+const ENGINE_LOWERED_TOOLS = new Set<string>([
+  "create",
+  "update",
+  "delete",
+  "set_material",
+  "linear_pattern",
+  "circular_pattern",
+  "mirror",
+  "translate",
+  "rotate",
+  "scale",
+  "union",
+  "difference",
+  "intersection",
+  "fillet",
+  "chamfer",
+  "shell",
+  "tube",
+  "polyline_tube",
+  "place",
+  // Reached via parts.ts (place_part handler), not registry dispatch.
+  "place_part",
+]);
+
+interface EngineEnvelope {
+  ok: boolean;
+  result?: {
+    document: import("@vcad/ir").Document;
+    parts?: Array<{ id: string; name?: string | null; primitiveNodeId?: number }>;
+    consumedPartIds?: string[];
+    warnings?: string[];
+    createdFeatureId?: string;
+  };
+  error?: { kind: string; message?: string; id?: string; tool?: string };
+}
+
+interface ToolEngine {
+  import_ir(irJson: string): unknown;
+  apply_tool?(tool: string, argsJson: string): string;
+  free?(): void;
+}
+
+/** Part reference (stable id, legacy root NodeId, or name) → the engine's
+ *  stable id. Unresolvable values pass through so the engine reports them
+ *  as `unknown_id`. */
+function toStableId(doc: import("@vcad/ir").Document, v: unknown): unknown {
+  if (typeof v !== "string" && typeof v !== "number") return v;
+  return rootForPartId(doc, v)?.partId ?? String(v);
+}
+
+/** Index of the scene root whose subtree contains `nodeId` (an exact root
+ *  match wins). Roots don't share subtrees — a boolean consumes its operand
+ *  roots — so containment names the one owning part. */
+function owningRootIndex(doc: import("@vcad/ir").Document, nodeId: string): number {
+  const exact = doc.roots.findIndex((r) => String(r.root) === nodeId);
+  if (exact >= 0) return exact;
+  return doc.roots.findIndex((r) => {
+    const stack: unknown[] = [r.root];
+    const seen = new Set<string>();
+    while (stack.length) {
+      const id = String(stack.pop());
+      if (id === nodeId) return true;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const op = (doc.nodes[id] as { op?: Record<string, unknown> } | undefined)?.op;
+      if (!op) continue;
+      for (const k of ["child", "left", "right"]) if (op[k] !== undefined) stack.push(op[k]);
+      if (Array.isArray(op.children)) stack.push(...op.children);
+    }
+    return false;
+  });
+}
+
+/** NodeId operand (left/right/child/parent after normalizeNodeRefs, or an
+ *  `update` node_id) → the stable id of the part that owns that node. The
+ *  engine addresses features by stable id and renumbers nodes on every
+ *  materialize, so NodeIds are only meaningful against the session doc —
+ *  resolve them here, before the engine sees them. */
+function nodeRefToStableId(doc: import("@vcad/ir").Document, v: unknown): unknown {
+  if (typeof v === "number" || (typeof v === "string" && /^\d+$/.test(v))) {
+    const idx = owningRootIndex(doc, String(v));
+    if (idx >= 0) return partIdForRoot(doc, idx);
+  }
+  return toStableId(doc, v);
+}
+
+function engineArgs(
+  toolName: string,
+  args: Record<string, unknown>,
+  doc: import("@vcad/ir").Document,
+): Record<string, unknown> {
+  const out = toolName === "create" ? applyParamDefaults({ ...args }) : { ...args };
+  if ("part_id" in out) out.part_id = toStableId(doc, out.part_id);
+  if (Array.isArray(out.part_ids)) out.part_ids = out.part_ids.map((v) => toStableId(doc, v));
+  if (out.parent_part_id !== undefined) out.parent_part_id = nodeRefToStableId(doc, out.parent_part_id);
+  // `lower_update` accepts the owning part's stable id as `node_id` and sets
+  // the params on that feature; a session NodeId would be looked up against
+  // the engine's renumbered nodes instead.
+  if (toolName === "update" && out.node_id !== undefined) {
+    out.node_id = nodeRefToStableId(doc, out.node_id);
+  }
+  if (toolName === "place") {
+    for (const key of ["from", "to"]) {
+      const ref = out[key];
+      if (ref && typeof ref === "object" && "part" in ref) {
+        out[key] = { ...ref, part: toStableId(doc, (ref as { part: unknown }).part) };
+      }
+    }
+  }
+  if (toolName === "create" && out.params && typeof out.params === "object") {
+    const params = { ...(out.params as Record<string, unknown>) };
+    for (const key of ["left", "right", "child"]) {
+      if (key in params) params[key] = nodeRefToStableId(doc, params[key]);
+    }
+    out.params = params;
+  }
+  return out;
+}
+
+/** Engine `error.kind` → the error text style the legacy MCP path throws. */
+function engineErrorMessage(
+  toolName: string,
+  args: Record<string, unknown>,
+  err: NonNullable<EngineEnvelope["error"]>,
+): string {
+  switch (err.kind) {
+    case "unknown_id":
+      return `${toolName}: no part with id "${err.id ?? "?"}"`;
+    case "invalid":
+      // Same per-type param hints the legacy planner errors carry.
+      return enrichPlannerError(toolName, args, `${toolName}: ${err.message ?? "invalid arguments"}`);
+    default:
+      return `${toolName}: ${err.message ?? err.kind}`;
+  }
+}
+
+/**
+ * Run an engine-lowered mutation through the Rust document engine: import
+ * the session IR into a fresh `WasmDocumentEngine`, `apply_tool`, and replace
+ * the session document — in place, so the caller's reference and the
+ * `changed` diff keep working — with the engine's `result.document`, which
+ * carries `partIds`. Throws when the tool isn't engine-lowered, the kernel
+ * WASM lacks `WasmDocumentEngine.apply_tool`, or the engine refuses the call.
+ *
+ * One engine is cached per session (session-core `takeCachedEngine` /
+ * `storeEngine`): it is reused while the session still holds exactly the IR
+ * that engine produced, and rebuilt via `import_ir` otherwise.
+ */
+function runMutationViaEngine(
+  toolName: string,
+  toolArgs: Record<string, unknown>,
+  doc: import("@vcad/ir").Document,
+  documentId: string,
+): { content: Array<{ type: "text"; text: string }> } {
+  if (!ENGINE_LOWERED_TOOLS.has(toolName)) {
+    throw new Error(`Tool "${toolName}" is not lowered by the document engine.`);
+  }
+  const wasm = getKernelWasmSync() as unknown as {
+    WasmDocumentEngine?: { withReplica?(id: number): ToolEngine };
+  } | null;
+  const factory = wasm?.WasmDocumentEngine;
+  if (!factory || typeof factory.withReplica !== "function") {
+    throw new Error(
+      `${toolName}: kernel WASM has no WasmDocumentEngine — ensure the kernel is initialized and up to date.`,
+    );
+  }
+  const cachedEngine = takeCachedEngine<ToolEngine>(documentId, doc);
+  const engine = cachedEngine ?? factory.withReplica(0);
+  // Ownership: until handed back to the cache on success, `engine` is freed
+  // in `finally`, so an error or decline never leaves a stale engine cached.
+  let keep = false;
+  try {
+    if (typeof engine.apply_tool !== "function") {
+      throw new Error(
+        `${toolName}: kernel WASM predates WasmDocumentEngine.apply_tool — rebuild the kernel WASM.`,
+      );
+    }
+    const deprecation =
+      typeof toolArgs.part_id === "string"
+        ? partIdDeprecation(toolArgs.part_id, rootForPartId(doc, toolArgs.part_id))
+        : undefined;
+    const args = engineArgs(toolName, toolArgs, doc);
+    if (!cachedEngine) engine.import_ir(JSON.stringify(doc));
+    const envelope = JSON.parse(engine.apply_tool(toolName, JSON.stringify(args))) as EngineEnvelope;
+    if (!envelope.ok || !envelope.result) {
+      const err = envelope.error ?? { kind: "invalid", message: "engine returned no result" };
+      throw new Error(engineErrorMessage(toolName, args, err));
+    }
+    const next = envelope.result.document;
+    const parts = envelope.result.parts ?? [];
+    // The materializer names the primitive node and leaves the part's
+    // wrapper root (Translate) unnamed; part listings read the root's name,
+    // so carry the part name up to keep listings/`changed` stable.
+    for (const p of parts) {
+      if (!p.name) continue;
+      const rootIdx = next.roots.findIndex((_, i) => next.partIds?.[String(next.roots[i]!.root)] === p.id);
+      const rootNode = rootIdx >= 0 ? (next.nodes[String(next.roots[rootIdx]!.root)] as { name?: string | null }) : undefined;
+      if (rootNode && !rootNode.name) rootNode.name = p.name;
+    }
+    for (const k of Object.keys(doc)) delete (doc as unknown as Record<string, unknown>)[k];
+    Object.assign(doc, next);
+    // The session IR is now exactly the engine's own output: cache it.
+    storeEngine(documentId, doc, engine);
+    keep = true;
+
+    const warnings = [...(envelope.result.warnings ?? []), ...(deprecation ? [deprecation] : [])];
+    const payload: Record<string, unknown> = { document_id: documentId };
+    if (toolName === "delete") {
+      payload.removed = args.part_id;
+    } else if (toolName === "set_material") {
+      payload.part_id = args.part_id ?? args.part_ids;
+      payload.material = toolArgs.material;
+    } else {
+      // Prefer the engine's createdFeatureId as the new part_id.
+      // In-place edits (translate/rotate/scale) create no feature: report
+      // the part they edited.
+      const params = args.params as Record<string, unknown> | undefined;
+      const edited = args.part_id ?? args.child ?? params?.child;
+      const partId =
+        envelope.result.createdFeatureId ??
+        (typeof edited === "string" ? edited : undefined);
+      if (partId) {
+        payload.part_id = partId;
+        // Legacy returned the created op's node: the primitive (or the
+        // feature's own node) in the NEW materialized doc, else the root.
+        const part = parts.find((p) => p.id === partId);
+        const root = rootForPartId(doc, partId);
+        const nodeId = part?.primitiveNodeId ?? root?.entry.root;
+        if (nodeId !== undefined) payload.node_id = nodeId;
+      }
+    }
+    if (envelope.result.consumedPartIds?.length) {
+      payload.consumed_part_ids = envelope.result.consumedPartIds;
+    }
+    if (warnings.length) payload.warnings = warnings;
+    return { content: [{ type: "text", text: JSON.stringify(payload) }] };
+  } finally {
+    if (!keep) engine.free?.();
+  }
+}
+
+/** Execute a mutating registry tool against an open session document.
+ *  Every mutation runs through the Rust document engine; there is no
+ *  TS-side fallback, so an engine refusal is the tool's answer. */
 export function runMutation(
   toolName: string,
   rawArgs: Record<string, unknown>,
   doc: import("@vcad/ir").Document,
   documentId: string,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const toolArgs = normalizeNodeRefs(toolName, rawArgs);
-  // `delete` and `set_material` go directly to applyToolOutcome — the
-  // Rust planner expects CRDT stable_ids, but the IR-direct MCP path
-  // uses stringified NodeIds for part_id. The args are already
-  // outcome-shaped, so the planner adds nothing. (`update` still needs
-  // the planner for field-name validation; `create` needs it to lower
-  // chat-tool args to a CsgOp.)
-  if (toolName === "delete") {
-    const partId = String((toolArgs as { part_id?: unknown }).part_id ?? "");
-    if (!partId) throw new Error("delete: missing `part_id`");
-    const applied = applyToolOutcome(doc, {
-      kind: "remove_part",
-      part_id: partId,
-    });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            document_id: documentId,
-            removed: applied.partId,
-          }),
-        },
-      ],
-    };
-  }
-  if (toolName === "set_material") {
-    const partId = String((toolArgs as { part_id?: unknown }).part_id ?? "");
-    const material = String(
-      (toolArgs as { material?: unknown }).material ?? "",
-    );
-    if (!partId) throw new Error("set_material: missing `part_id` (bulk forms not yet supported via MCP)");
-    if (!material) throw new Error("set_material: missing `material`");
-    const applied = applyToolOutcome(doc, {
-      kind: "set_part_material",
-      part_id: partId,
-      material,
-    });
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            document_id: documentId,
-            part_id: applied.partId,
-            material,
-          }),
-        },
-      ],
-    };
-  }
-
-  const plannerArgs =
-    toolName === "create" ? applyParamDefaults(toolArgs) : toolArgs;
-  const planned = commandRegistry.planCrud(
-    toolName,
-    plannerArgs,
-    JSON.stringify(doc),
-  );
-  if (!planned) {
-    throw new Error(
-      `Tool "${toolName}" — Rust planner unavailable. Ensure commandRegistry.setWasm() has been called during MCP server boot.`,
-    );
-  }
-  if (planned.status === "error") {
-    throw new Error(enrichPlannerError(toolName, plannerArgs, planned.result));
-  }
-  if (!planned.outcome) {
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            document_id: documentId,
-            result: planned.result,
-          }),
-        },
-      ],
-    };
-  }
-
-  const applied = applyToolOutcome(doc, planned.outcome);
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({
-          document_id: documentId,
-          result: planned.result,
-          part_id: applied.partId,
-          node_id: applied.nodeId,
-        }),
-      },
-    ],
-  };
+  const toolArgs = normalizeNodeRefs(toolName, rawArgs, doc);
+  return runMutationViaEngine(toolName, toolArgs, doc, documentId);
 }
 
 /**
@@ -601,11 +760,12 @@ function handleRead(
       ],
     };
   }
-  const idx = doc.roots.findIndex((r) => String(r.root) === partId);
-  if (idx < 0) {
+  const resolved = rootForPartId(doc, String(partId));
+  if (!resolved) {
     throw new Error(`read: no part with id "${partId}"`);
   }
-  const root = doc.roots[idx];
+  const root = resolved.entry;
+  const deprecation = partIdDeprecation(String(partId), resolved);
   // Walk descendant nodes for the feature tree, keyed by node id.
   const tree: Record<string, unknown> = {};
   const stack = [root.root];
@@ -624,9 +784,11 @@ function handleRead(
       {
         type: "text",
         text: JSON.stringify({
-          part_id: partId,
+          part_id: resolved.partId,
+          node_id: String(root.root),
           material: root.material,
           nodes: tree,
+          ...(deprecation ? { warnings: [deprecation] } : {}),
         }),
       },
     ],

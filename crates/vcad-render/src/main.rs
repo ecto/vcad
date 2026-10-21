@@ -3,7 +3,7 @@
 //!
 //! The input is IR JSON: a `.vcad` document. `.loon` source is not evaluated
 //! here — the loon interpreter ships with the `vcad` CLI, so build the
-//! document there (`vcad build`) and render the result.
+//! document there (`vcad export x.loon x.vcad`) and render the result.
 //!
 //! Usage:
 //!   vcad-render <path.vcad> [--view iso|front|side|top|hero|orbit:AZ,EL] [--scale <px-per-mm>] [--transparent]
@@ -504,6 +504,36 @@ struct Cli {
     #[arg(long, value_name = "KEYFRAMES.json", num_args = 0..=1)]
     animate: Option<Option<PathBuf>>,
 
+    /// Pose a jointed assembly before rendering: `name=deg[,name=deg...]`.
+    ///
+    /// Joints are named by id or authored name; degrees for revolute and
+    /// ball joints, mm for sliders. Unlisted joints keep their stored state.
+    /// A state outside a joint's limits is clamped (with a warning) — a
+    /// render of an unreachable pose would show a machine that cannot exist.
+    /// An unknown joint is an error. Works with every still style; for
+    /// motion use `--animate`. Repeatable, and composes with `--pose-file`
+    /// (later values win).
+    #[arg(long, value_name = "NAME=DEG,...", conflicts_with = "animate")]
+    pose: Vec<String>,
+
+    /// Pose from a JSON file: either `{"joint": deg, ...}` or an `--animate`
+    /// keyframe file, whose first key per joint track is used.
+    #[arg(long, value_name = "POSE.json", conflicts_with = "animate")]
+    pose_file: Option<PathBuf>,
+
+    /// Evaluate the document and print a per-part JSON report to stdout —
+    /// name, ok/failed with reason, posed bbox, volume, triangle count,
+    /// eval time — without rendering anything. Exits non-zero when any part
+    /// failed. For `.loon` source, `vcad eval-json` does the same.
+    #[arg(long)]
+    eval_json: bool,
+
+    /// Print every boolean fallback (a Difference re-cut with the mesh
+    /// boolean) as it happens instead of one summary line at the end.
+    /// `VCAD_BOOLEAN_VERBOSE=1` does the same.
+    #[arg(long, short = 'v')]
+    verbose: bool,
+
     /// Render only the first N frames of the animation (`--animate`).
     #[arg(long, requires = "animate")]
     frames: Option<usize>,
@@ -757,7 +787,7 @@ fn run_animation(input: &Path, cli: &Cli) -> Result<(), String> {
         None => None,
     };
 
-    let raw = read_document(input)?;
+    let raw = read_document(input, cli)?;
     let opts = raster_opts(cli, true);
     let an = AnimateOptions {
         out_dir: out_dir.clone(),
@@ -979,10 +1009,40 @@ fn render_pcb_view(pcb: &vcad_ir::ecad::Pcb, cli: &Cli) -> String {
 
 /// Read an input as `.vcad` IR JSON. `.loon` source is refused: evaluating it
 /// needs the loon interpreter, which lives in the (unpublished) `vcad` CLI.
-fn read_document(input: &Path) -> Result<String, String> {
+fn read_document(input: &Path, cli: &Cli) -> Result<String, String> {
+    let raw = read_document_unposed(input)?;
+    let pose = cli_pose(cli)?;
+    if pose.is_empty() {
+        return Ok(raw);
+    }
+    let (posed, warnings) = vcad_render::pose::apply_pose(&raw, &pose)?;
+    for w in warnings {
+        eprintln!("warning: {w}");
+    }
+    Ok(posed)
+}
+
+/// `--pose-file` then `--pose`, in order — later entries win.
+fn cli_pose(cli: &Cli) -> Result<Vec<(String, f64)>, String> {
+    let mut pose = Vec::new();
+    if let Some(path) = &cli.pose_file {
+        let json =
+            std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        pose.extend(
+            vcad_render::pose::parse_pose_json(&json)
+                .map_err(|e| format!("{}: {e}", path.display()))?,
+        );
+    }
+    for spec in &cli.pose {
+        pose.extend(vcad_render::pose::parse_pose_spec(spec)?);
+    }
+    Ok(pose)
+}
+
+fn read_document_unposed(input: &Path) -> Result<String, String> {
     if is_loon(input) {
         return Err(format!(
-            "{}: `.loon` source needs the vcad CLI — run `vcad build` and \
+            "{}: `.loon` source needs the vcad CLI — run `vcad export <in>.loon <out>.vcad` and \
              render the exported `.vcad` document instead",
             input.display()
         ));
@@ -1113,7 +1173,7 @@ fn render_one_uncached(
                 .to_string(),
         );
     }
-    let raw = read_document(input)?;
+    let raw = read_document(input, cli)?;
     if cli.sheet {
         return render_sheet_one(input, dest, format, cli, &raw);
     }
@@ -1186,7 +1246,7 @@ fn batch_dest(input: &Path, out_dir: Option<&Path>, format: Format) -> Result<Pa
 /// `--export-web` / `--export-web-js`: hand the document to a web consumer
 /// rather than rendering it. Short-circuits the render dispatch entirely.
 fn run_web_export(input: &Path, cli: &Cli) -> Result<(), String> {
-    let raw = read_document(input)?;
+    let raw = read_document(input, cli)?;
 
     if let Some(dest) = &cli.export_web {
         let (bytes, summary) = match root_cache_for_web(cli) {
@@ -1323,6 +1383,9 @@ fn run(cli: &Cli) -> Result<(), String> {
     }
 
     let input = &inputs[0];
+    if cli.eval_json {
+        return run_eval_json(input, cli);
+    }
     if cli.animate.is_some() {
         #[cfg(feature = "raytrace")]
         {
@@ -1344,9 +1407,29 @@ fn run(cli: &Cli) -> Result<(), String> {
     }
 }
 
+/// `--eval-json`: evaluate, report per part on stdout, never render.
+fn run_eval_json(input: &Path, cli: &Cli) -> Result<(), String> {
+    let raw = read_document(input, cli)?; // honours --pose
+    let report = vcad_render::report::eval_report(&raw)?;
+    let json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+    println!("{json}");
+    if report.parts_failed > 0 {
+        return Err(format!(
+            "{} of {} part(s) failed to evaluate",
+            report.parts_failed, report.parts_total
+        ));
+    }
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    match run(&cli) {
+    vcad_kernel::vcad_kernel_booleans::recut_log::set_verbose(cli.verbose);
+    let result = run(&cli);
+    if let Some(line) = vcad_kernel::vcad_kernel_booleans::recut_log::take_summary() {
+        eprintln!("{line}");
+    }
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{}", e);

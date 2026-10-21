@@ -26,11 +26,6 @@ enabled = true
 # web home; additional_redirect_urls is the allow-list of every other
 # URL that the magic-link / OAuth flows are allowed to redirect to.
 #
-# - https://vcad.io/auth/desktop is the static bridge page that forwards
-#   a completed magic-link to the vcad:// custom scheme so the Tauri
-#   desktop app can complete sign-in. See
-#   packages/auth/src/auth-deep-link.ts and
-#   packages/app/public/auth/desktop.html.
 # - http://localhost:5173 lets `npm run dev -w @vcad/app` complete a
 #   sign-in against the production Supabase project during local
 #   development.
@@ -41,7 +36,6 @@ enabled = true
 site_url = "https://vcad.io"
 additional_redirect_urls = [
   "https://vcad.io/**",
-  "https://vcad.io/auth/desktop",
   "https://vcad.io/auth/popup.html",
   # MCP OAuth bridge: /oauth/start sends Supabase here as redirect_to so
   # the hosted MCP server (mcp.vcad.io) can complete sign-in and hand a

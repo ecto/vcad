@@ -2306,6 +2306,7 @@ fn get_children(op: &CsgOp) -> Vec<u64> {
         | CsgOp::Revolve { sketch, .. }
         | CsgOp::Sweep { sketch, .. } => vec![*sketch],
         CsgOp::Loft { sketches, .. } => sketches.clone(),
+        CsgOp::Hull { children, .. } => children.clone(),
         _ => vec![],
     }
 }
@@ -2707,6 +2708,10 @@ fn format_op(
             message: "Text2D not supported in VCode format".to_string(),
         }),
 
+        CsgOp::SweepRotate { .. } => Err(VCodeParseError {
+            line: 0,
+            message: "SweepRotate not supported in VCode format".to_string(),
+        }),
         CsgOp::Sweep { .. } => Err(VCodeParseError {
             line: 0,
             message: "Sweep not supported in VCode format".to_string(),
@@ -2715,6 +2720,11 @@ fn format_op(
         CsgOp::Loft { .. } => Err(VCodeParseError {
             line: 0,
             message: "Loft not supported in VCode format".to_string(),
+        }),
+
+        CsgOp::Hull { .. } => Err(VCodeParseError {
+            line: 0,
+            message: "Hull not supported in VCode format".to_string(),
         }),
 
         CsgOp::ImportedMesh { .. } => Err(VCodeParseError {

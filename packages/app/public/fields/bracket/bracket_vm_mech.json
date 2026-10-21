@@ -1,0 +1,34 @@
+{
+ "field": "von_mises",
+ "units": "MPa",
+ "source": "vcad-kernel-topopt voxel FEA bracket (60 N tip, fixed wall)",
+ "dims_zyx": [
+  48,
+  64,
+  128
+ ],
+ "origin_mm": [
+  0,
+  0,
+  0
+ ],
+ "voxel_mm": [
+  0.75,
+  0.75,
+  0.75
+ ],
+ "min": 0,
+ "max": 5.491686,
+ "max_von_mises_mpa": 5.491685849036571,
+ "max_displacement_mm": 0.03064947224530542,
+ "relative_residual": 9.449395709094625e-09,
+ "format": "tcg3s",
+ "bound": {
+  "kind": "max_abs",
+  "value": 0.0005491686,
+  "units": "MPa"
+ },
+ "native_fnv1a": "7e7509c29c235505",
+ "bytes": 32766,
+ "raw_bytes": 1572864
+}

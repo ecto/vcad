@@ -31,6 +31,7 @@ import {
   withRenderAssets,
 } from "./render-assets.js";
 import { asBool } from "./arg-coerce.js";
+import { rootForPartId } from "./part-ids.js";
 import { applyJointState, jointStateSchemaProp, type PoseInfo } from "./pose.js";
 
 export const renderViewSchema = {
@@ -382,6 +383,14 @@ export async function renderView(
     }
     highlight = last;
   }
+  // The renderer selects highlighted parts by root node id or name; part ids
+  // on the MCP surface are stable "replica:seq" ids, so translate them (legacy
+  // digit ids resolve too). Unresolvable entries pass through for the
+  // renderer to match by name.
+  const kernelHighlight = highlight.map((id) => {
+    const r = rootForPartId(doc, id);
+    return r && r.matchedBy !== "name" ? String(r.entry.root) : id;
+  });
 
   // Shading style: 'drafting' (default) or 'shaded'. Anything else is a loud
   // error — a style the server doesn't understand must never silently render
@@ -549,7 +558,7 @@ export async function renderView(
               labels: annotations.labels,
               dims: annotations.dims,
               ...(sectionRaw ? { section: sectionRaw } : {}),
-              ...(highlight.length > 0 ? { highlight } : {}),
+              ...(highlight.length > 0 ? { highlight: kernelHighlight } : {}),
               style,
             }),
           )
@@ -563,7 +572,7 @@ export async function renderView(
             annotations.labels,
             annotations.dims,
             sectionRaw || null,
-            highlight.length > 0 ? JSON.stringify(highlight) : null,
+            highlight.length > 0 ? JSON.stringify(kernelHighlight) : null,
           )
         : sectionRaw && typeof wasm.render_svg_view_section === "function"
           ? wasm.render_svg_view_section(JSON.stringify(doc), SVG_SCALE, view, sectionRaw)
@@ -573,7 +582,7 @@ export async function renderView(
                 JSON.stringify(doc),
                 SVG_SCALE,
                 view,
-                JSON.stringify(highlight),
+                JSON.stringify(kernelHighlight),
               )
             : wantAnnotations && typeof wasm.render_svg_annotated === "function"
               ? wasm.render_svg_annotated(

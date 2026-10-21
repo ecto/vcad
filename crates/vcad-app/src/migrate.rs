@@ -80,8 +80,31 @@ pub fn migrate_v1_mapped(doc: &Document) -> (CrdtDocument, MigrationMap) {
     let mut crdt = CrdtDocument::new(ReplicaId(0));
     let mut ctx = MigrationCtx::new();
 
+    // Root feature → the stable id the materializer stamped on it, if any.
+    let mut wanted: Vec<(FeatureId, FeatureId)> = Vec::new();
     for entry in &doc.roots {
-        let _ = migrate_node(&mut crdt, &mut ctx, doc, entry.root);
+        let fid = migrate_node(&mut crdt, &mut ctx, doc, entry.root);
+        // The scene entry's own material/visibility live on the part feature
+        // (the materializer reads them back from there). Dropping them reset
+        // every imported part to "default" on each IR round trip.
+        if let Some(fid) = fid {
+            if entry.material != "default" {
+                crdt.set_param(fid, "material", Value::String(entry.material.clone()));
+            }
+            if entry.visible == Some(false) {
+                crdt.set_param(fid, "visible", Value::Bool(false));
+            }
+        }
+        let claim = doc
+            .part_ids
+            .as_ref()
+            .and_then(|m| m.get(&entry.root.to_string()))
+            .and_then(|s| parse_fid(s));
+        if let (Some(fid), Some(claim)) = (fid, claim) {
+            if !wanted.iter().any(|(f, c)| *f == fid || *c == claim) {
+                wanted.push((fid, claim));
+            }
+        }
     }
 
     migrate_assembly(&mut crdt, &mut ctx, doc);
@@ -103,6 +126,18 @@ pub fn migrate_v1_mapped(doc: &Document) -> (CrdtDocument, MigrationMap) {
             let mut params = HashMap::new();
             params.insert("timeline".to_string(), Value::String(json));
             create(&mut crdt, &mut ctx, "timeline", params);
+        }
+    }
+
+    migrate_doc_extras(&mut crdt, &mut ctx, doc);
+
+    if wanted.iter().any(|(f, c)| f != c) {
+        let remap = assign_ids(&crdt, &wanted);
+        crdt = rekey(&crdt, &remap);
+        for m in &mut ctx.node_roles {
+            if let Some(to) = parse_fid(&m.feature_id).and_then(|f| remap.get(&f)) {
+                m.feature_id = fid_to_stable(*to);
+            }
         }
     }
 
@@ -591,15 +626,21 @@ fn migrate_node(
         // through so loaders that resolve meshes after migration still
         // know what to fetch; render as a 10 mm placeholder cube until
         // the data lands.
-        CsgOp::MeshImport { path, scale } => {
-            params.insert("path".to_string(), Value::String(path.clone()));
-            if let Some(s) = scale {
-                params.insert("scale".to_string(), Value::Vec3([s.x, s.y, s.z]));
-            }
-            Some(create(crdt, ctx, "mesh-import", params))
+        // Mesh imports (URDF / STL references) have no materializer kind;
+        // keep them verbatim like any other unmodelled op.
+        CsgOp::MeshImport { .. } => {
+            let fid = create_subgraph(crdt, ctx, doc, top_id);
+            ctx.node_to_feature.insert(top_id, fid);
+            return Some(fid);
         }
-        // Ops we don't represent in the CRDT feature model — drop silently.
-        _ => None,
+        // Ops the feature model has no kind for: keep the whole subgraph
+        // (transform chain included) verbatim so import is lossless; the
+        // materializer re-emits it with fresh node ids.
+        _ => {
+            let fid = create_subgraph(crdt, ctx, doc, top_id);
+            ctx.node_to_feature.insert(top_id, fid);
+            return Some(fid);
+        }
     };
     if let Some(id) = fid {
         ctx.node_to_feature.insert(top_id, id);
@@ -608,6 +649,83 @@ fn migrate_node(
         }
     }
     fid
+}
+
+/// Store the node subgraph reachable from `root` as one `ir-subgraph`
+/// feature (`{"root": id, "nodes": {id: Node}}`, original ids).
+fn create_subgraph(
+    crdt: &mut CrdtDocument,
+    ctx: &mut MigrationCtx,
+    doc: &Document,
+    root: NodeId,
+) -> FeatureId {
+    let mut nodes = std::collections::BTreeMap::new();
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        if nodes.contains_key(&id) {
+            continue;
+        }
+        if let Some(node) = doc.nodes.get(&id) {
+            stack.extend(node.op.child_ids());
+            nodes.insert(id, node.clone());
+        }
+    }
+    let mut params = HashMap::new();
+    let blob = serde_json::json!({ "root": root, "nodes": nodes });
+    params.insert("subgraph".to_string(), Value::String(blob.to_string()));
+    if let Some(name) = doc.nodes.get(&root).and_then(|n| n.name.clone()) {
+        params.insert("name".to_string(), Value::String(name));
+    }
+    create(crdt, ctx, "ir-subgraph", params)
+}
+
+/// Document-level fields with no dedicated CRDT feature: carried through
+/// import as one `doc-extras` JSON blob (see `materialize_doc_extras`).
+/// `bindings` are excluded — they name v1 node ids and are remapped
+/// separately (`remap_bindings`).
+pub const DOC_EXTRA_FIELDS: &[&str] = &[
+    "materials",
+    "part_materials",
+    "scene",
+    "mates",
+    "schematic",
+    "pcb",
+    "parameters",
+    "datums",
+    "clearance_specs",
+    "constraints",
+    "analysis_studies",
+    "drawing",
+    "hardware",
+    "source",
+];
+
+fn migrate_doc_extras(crdt: &mut CrdtDocument, ctx: &mut MigrationCtx, doc: &Document) {
+    let Ok(serde_json::Value::Object(all)) = serde_json::to_value(doc) else {
+        return;
+    };
+    let extras: serde_json::Map<String, serde_json::Value> = all
+        .into_iter()
+        .filter(|(k, v)| DOC_EXTRA_FIELDS.contains(&k.as_str()) && !is_empty_json(v))
+        .collect();
+    if extras.is_empty() {
+        return;
+    }
+    let mut params = HashMap::new();
+    params.insert(
+        "extras".to_string(),
+        Value::String(serde_json::Value::Object(extras).to_string()),
+    );
+    create(crdt, ctx, "doc-extras", params);
+}
+
+pub(crate) fn is_empty_json(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(m) => m.is_empty(),
+        serde_json::Value::Array(a) => a.is_empty(),
+        _ => false,
+    }
 }
 
 fn migrate_boolean(
@@ -641,6 +759,75 @@ fn create(
     fid
 }
 
+/// Parse a stable `"replica:seq"` id.
+fn parse_fid(s: &str) -> Option<FeatureId> {
+    let (r, q) = s.split_once(':')?;
+    Some(FeatureId(ReplicaId(r.parse().ok()?), q.parse().ok()?))
+}
+
+/// The full old → new id map for [`rekey`]: claimed roots get their claimed
+/// id; every other feature keeps its own unless a claim took it, in which
+/// case it moves to the next id no one holds.
+fn assign_ids(
+    crdt: &CrdtDocument,
+    wanted: &[(FeatureId, FeatureId)],
+) -> HashMap<FeatureId, FeatureId> {
+    let mut remap: HashMap<FeatureId, FeatureId> = wanted.iter().copied().collect();
+    let mut taken: std::collections::HashSet<FeatureId> = wanted.iter().map(|(_, c)| *c).collect();
+    let features = crdt.ordered_features();
+    let mut displaced = Vec::new();
+    for (fid, _) in &features {
+        if remap.contains_key(fid) {
+            continue;
+        }
+        if taken.insert(*fid) {
+            remap.insert(*fid, *fid);
+        } else {
+            displaced.push(*fid);
+        }
+    }
+    let mut seq = 0;
+    for fid in displaced {
+        while taken.contains(&FeatureId(ReplicaId(0), seq)) {
+            seq += 1;
+        }
+        let to = FeatureId(ReplicaId(0), seq);
+        taken.insert(to);
+        remap.insert(fid, to);
+    }
+    remap
+}
+
+/// Rebuild a freshly migrated document under new feature ids, rewriting
+/// every feature reference to match. Only valid on a migration result (no
+/// history worth keeping, every feature live).
+fn rekey(crdt: &CrdtDocument, remap: &HashMap<FeatureId, FeatureId>) -> CrdtDocument {
+    let map_ref = |s: &str| {
+        parse_fid(s)
+            .and_then(|f| remap.get(&f))
+            .map_or_else(|| s.to_string(), |f| fid_to_stable(*f))
+    };
+    let mut out = CrdtDocument::new(ReplicaId(0));
+    for (fid, state) in crdt.ordered_features() {
+        let params = state
+            .params
+            .iter()
+            .map(|(k, (v, _))| {
+                let v = match v {
+                    Value::FeatureRef(r) => Value::FeatureRef(map_ref(r)),
+                    Value::FeatureRefList(rs) => {
+                        Value::FeatureRefList(rs.iter().map(|r| map_ref(r)).collect())
+                    }
+                    other => other.clone(),
+                };
+                (k.clone(), v)
+            })
+            .collect();
+        out.create_feature_with_id(remap[&fid], &state.kind, state.position.clone(), params);
+    }
+    out
+}
+
 /// Format a `FeatureId` as the stable `"replica:seq"` string used throughout
 /// the higher-level API (see `document_api::StableIdMap`).
 fn fid_to_stable(fid: FeatureId) -> String {
@@ -657,7 +844,11 @@ fn migrate_assembly(crdt: &mut CrdtDocument, ctx: &mut MigrationCtx, doc: &Docum
 
     // partDef id (string in v1) -> stable feature id of the `part-def` feature.
     let mut part_def_stable: HashMap<String, String> = HashMap::new();
-    for (key, pd) in part_defs {
+    // Sorted so feature ids are a pure function of the IR: an engine rebuilt
+    // from the same document hands out the same stable part ids.
+    let mut sorted: Vec<_> = part_defs.iter().collect();
+    sorted.sort_by(|a, b| a.0.cmp(b.0));
+    for (key, pd) in sorted {
         let Some(source_fid) = migrate_node(crdt, ctx, doc, pd.root) else {
             continue;
         };
@@ -671,6 +862,21 @@ fn migrate_assembly(crdt: &mut CrdtDocument, ctx: &mut MigrationCtx, doc: &Docum
         }
         if let Some(m) = &pd.default_material {
             params.insert("default_material".to_string(), Value::String(m.clone()));
+        }
+        if let Some(inertial) = pd
+            .inertial
+            .as_ref()
+            .and_then(|i| serde_json::to_string(i).ok())
+        {
+            params.insert("inertial".to_string(), Value::String(inertial));
+        }
+        if let Some(colliders) = &pd.colliders {
+            let refs = colliders
+                .iter()
+                .filter_map(|&n| migrate_node(crdt, ctx, doc, n))
+                .map(fid_to_stable)
+                .collect();
+            params.insert("colliders".to_string(), Value::FeatureRefList(refs));
         }
         let pd_fid = create(crdt, ctx, "part-def", params);
         part_def_stable.insert(key.clone(), fid_to_stable(pd_fid));

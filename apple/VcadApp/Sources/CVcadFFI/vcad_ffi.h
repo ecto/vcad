@@ -20,6 +20,40 @@ extern "C" {
 char *vcad_cam_generate(const char *request_json);
 void vcad_cam_free(char *json);
 
+/* Document engine: the shared DocCommand vocabulary (see vcad_app::command).
+ * vcad_engine_apply takes a UTF-8 JSON command and returns an owned JSON
+ * envelope {"ok":true,"result":{...}} or {"ok":false,"error":{...}};
+ * null only for a null argument or panic (read vcad_last_error).
+ * Free results with vcad_engine_string_free, engines with vcad_engine_free. */
+typedef struct VcadEngine VcadEngine;
+VcadEngine *vcad_engine_new(uint64_t replica_id);
+char *vcad_engine_apply(VcadEngine *engine, const char *command_json);
+/* Lower an AI tool call (create, translate, linear_pattern, ...) in Rust and
+ * apply it; same envelope. Unhandled tools report error kind "unsupported". */
+char *vcad_engine_apply_tool(VcadEngine *engine, const char *tool, const char *args_json);
+/* Deterministic state fingerprint (16 hex digits); free with vcad_engine_string_free. */
+char *vcad_engine_state_hash(const VcadEngine *engine);
+/* Current state as an ok envelope; free with vcad_engine_string_free. */
+char *vcad_engine_state(const VcadEngine *engine);
+/* Replace the document with an IR Document JSON (a .vcad file), fresh undo
+ * history. Returns the state envelope; null (engine untouched) when the JSON
+ * is not an IR document. */
+char *vcad_engine_load_ir(VcadEngine *engine, const char *ir_json);
+/* Snapshot document + undo/redo history; free with vcad_engine_bytes_free. */
+uint8_t *vcad_engine_save(const VcadEngine *engine, size_t *out_len);
+void vcad_engine_bytes_free(uint8_t *bytes, size_t len);
+/* Restore a vcad_engine_save snapshot; state envelope, or null on bad bytes. */
+char *vcad_engine_restore(VcadEngine *engine, const uint8_t *bytes, size_t len);
+bool vcad_engine_can_undo(const VcadEngine *engine);
+bool vcad_engine_can_redo(const VcadEngine *engine);
+void vcad_engine_string_free(char *json);
+void vcad_engine_free(VcadEngine *engine);
+/* Built-in agent: tool manifest + system prompt JSON (free with
+ * vcad_engine_string_free), and read tools (describe_scene, inspect) answered
+ * as {"ok":true,"result":{"text":...}} without mutating the document. */
+char *vcad_agent_manifest(void);
+char *vcad_engine_agent_read(const VcadEngine *engine, const char *tool, const char *args_json);
+
 
 typedef struct VcadSolid VcadSolid;
 typedef struct VcadMesh VcadMesh;
@@ -78,6 +112,14 @@ VcadScene *vcad_scene_from_json_in(const uint8_t *json, size_t json_len,
                                    const uint8_t *base_dir, size_t base_dir_len);
 
 VcadScene *vcad_scene_from_loon(const uint8_t *loon, size_t loon_len);
+/* Compile a .loon FILE (path bytes) to .vcad document JSON: [use] modules and
+ * relative import-mesh paths resolve against the file's directory (mesh paths
+ * come back absolute), so the JSON evaluates like any .vcad document. Owned
+ * string, free with vcad_cam_free; NULL + vcad_last_error on failure. */
+char *vcad_loon_file_to_json(const uint8_t *path, size_t path_len);
+/* Any .vcad format (JSON, loon source, VCode) -> IR document JSON, mesh paths
+ * resolved against the file's directory. Free with vcad_cam_free; null on error. */
+char *vcad_document_file_to_json(const uint8_t *path, size_t path_len);
 size_t vcad_scene_part_count(const VcadScene *scene);
 VcadMeshView vcad_scene_part_mesh(const VcadScene *scene, size_t index);
 

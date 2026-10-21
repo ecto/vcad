@@ -4,7 +4,6 @@ import {
   parseUsageResponse,
   type PaidTierId,
 } from "@vcad/core";
-import { apiUrl } from "@/lib/api-origin";
 
 // ---------------------------------------------------------------------------
 // Client helpers for the billing endpoints. Kept separate from the rest of
@@ -37,7 +36,7 @@ export async function refreshUsage(): Promise<void> {
 
   store.setLoading(true);
   try {
-    const res = await fetch(apiUrl("/api/usage"), {
+    const res = await fetch("/api/usage", {
       method: "GET",
       headers: authHeaders(),
     });
@@ -66,7 +65,7 @@ export async function refreshUsage(): Promise<void> {
  * modal can surface the error inline.
  */
 export async function startCheckout(tier: PaidTierId): Promise<string> {
-  const res = await fetch(apiUrl("/api/billing/checkout"), {
+  const res = await fetch("/api/billing/checkout", {
     method: "POST",
     headers: authHeaders(),
     body: JSON.stringify({ tier }),
@@ -85,7 +84,7 @@ export async function startCheckout(tier: PaidTierId): Promise<string> {
  * payment methods, invoices, and cancellation.
  */
 export async function openCustomerPortal(): Promise<string> {
-  const res = await fetch(apiUrl("/api/billing/portal"), {
+  const res = await fetch("/api/billing/portal", {
     method: "POST",
     headers: authHeaders(),
   });

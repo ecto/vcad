@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-20-mcp-tube-tools-engine",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "feat",
+  "title": "MCP tube and polyline_tube tools on the engine",
+  "summary": "tube and polyline_tube are now available over MCP, lowered by the Rust document engine; place_part also inserts through the engine.",
+  "features": ["mcp", "engine"],
+  "mcpTools": ["tube", "polyline_tube", "place_part"]
+}

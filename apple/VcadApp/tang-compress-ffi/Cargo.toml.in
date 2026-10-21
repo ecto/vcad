@@ -1,0 +1,21 @@
+# Template: build-tc-ffi.sh fills @TC@ with the tang-compress checkout and
+# builds this outside the vcad workspace (vcad's ../tang symlink points at the
+# main tang checkout, which need not carry tang-compress).
+[package]
+name = "tang-compress-ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+path = "@SRC@/lib.rs"
+
+[dependencies]
+tang-compress = { path = "@TC@/crates/tang-compress" }
+
+[profile.release]
+debug = false
+panic = "abort"
+
+[workspace]

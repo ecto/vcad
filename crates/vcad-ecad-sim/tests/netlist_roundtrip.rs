@@ -61,6 +61,8 @@ fn divider_rc_sheet() -> SchematicSheet {
         vec!["V1.2".into(), "R2.2".into(), "C1.2".into()],
     );
     SchematicSheet {
+        power_flags: Vec::new(),
+        hierarchy: None,
         nets: Some(nets),
         title: Some("divider + RC".into()),
         components: vec![
@@ -174,6 +176,8 @@ fn diode_maps_via_anode_cathode_pins() {
     nets.insert("MID".into(), vec!["D1.K".into(), "R1.1".into()]);
     nets.insert("GND".into(), vec!["V1.2".into(), "R1.2".into()]);
     let sheet = SchematicSheet {
+        power_flags: Vec::new(),
+        hierarchy: None,
         nets: Some(nets),
         title: None,
         components: vec![

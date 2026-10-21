@@ -605,6 +605,15 @@ export class Solid {
      */
     horizontalSection(z: number, hatch_spacing?: number | null, hatch_angle?: number | null, segments?: number | null): any;
     /**
+     * Convex hull of a flat `[x, y, z, ...]` point cloud.
+     */
+    static hullPoints(points: Float64Array): Solid;
+    /**
+     * Convex hull of this solid together with `other`. Hull is associative,
+     * so an n-ary hull folds pairwise.
+     */
+    hullWith(other: Solid): Solid;
+    /**
      * Boolean intersection (self ∩ other).
      *
      * Returns a JS error (instead of trapping the WASM instance) when the
@@ -720,6 +729,13 @@ export class Solid {
      * Takes a sketch profile and path endpoints.
      */
     static sweepLine(profile_json: string, start: Float64Array, end: Float64Array, twist_angle?: number | null, scale_start?: number | null, scale_end?: number | null, orientation?: number | null): Solid;
+    /**
+     * Swept volume: union of this solid rotated about an axis over
+     * `[deg_lo, deg_hi]`. `step_deg <= 0` picks the step automatically;
+     * `clearance` (mm) dilates the solid first. Triangle-soup result,
+     * meant as a clearance-cut tool.
+     */
+    sweepRotate(axis_origin_x: number, axis_origin_y: number, axis_origin_z: number, axis_dir_x: number, axis_dir_y: number, axis_dir_z: number, deg_lo: number, deg_hi: number, step_deg: number, clearance: number): Solid;
     /**
      * Create a solid by extruding text as 2D profiles.
      *
@@ -936,6 +952,19 @@ export class WasmDocumentEngine {
      */
     add_feature(input_json: string): any;
     /**
+     * Apply a JSON `DocCommand` (see `vcad_app::command`). Returns the
+     * shared JSON envelope: `{"ok":true,"result":{…}}` or
+     * `{"ok":false,"error":{"kind":…,"message":…}}`. Unlike the per-method
+     * calls, unknown ids and malformed input are reported, not ignored.
+     */
+    apply(command_json: string): string;
+    /**
+     * Lower an AI tool call (`create`, `translate`, `linear_pattern`, …)
+     * to a `DocCommand` in Rust and apply it. Same envelope as `apply`;
+     * tools the engine can't lower yet report `{"kind":"unsupported"}`.
+     */
+    apply_tool(tool: string, args_json: string): string;
+    /**
      * Whether redo is available.
      */
     can_redo(): boolean;
@@ -1065,6 +1094,10 @@ export class WasmDocumentEngine {
      */
     set_visible(stable_id: string, visible: boolean): any;
     /**
+     * Deterministic state fingerprint; matches `vcad_engine_state_hash`.
+     */
+    stateHash(): string;
+    /**
      * Undo the last action.
      */
     undo(): any;
@@ -1072,6 +1105,11 @@ export class WasmDocumentEngine {
      * Update a feature with new params from a JSON-serialized `FeatureInput`.
      */
     update_feature(stable_id: string, input_json: string): any;
+    /**
+     * Create an empty engine with a fixed replica id (deterministic stable
+     * ids — used by the parity harness and by hosts that persist replicas).
+     */
+    static withReplica(replica_id: number): WasmDocumentEngine;
 }
 
 export class WasmKeybindings {
@@ -3880,6 +3918,8 @@ export interface InitOutput {
     readonly solid_fromRegisteredStep: (a: number, b: number, c: number) => [number, number, number];
     readonly solid_getMesh: (a: number, b: number) => any;
     readonly solid_horizontalSection: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
+    readonly solid_hullPoints: (a: number, b: number) => [number, number, number];
+    readonly solid_hullWith: (a: number, b: number) => [number, number, number];
     readonly solid_intersection: (a: number, b: number) => [number, number, number];
     readonly solid_isEmpty: (a: number) => number;
     readonly solid_linearPattern: (a: number, b: number, c: number, d: number, e: number, f: number) => number;
@@ -3898,6 +3938,7 @@ export interface InitOutput {
     readonly solid_surfaceArea: (a: number) => number;
     readonly solid_sweepHelix: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number) => [number, number, number];
     readonly solid_sweepLine: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
+    readonly solid_sweepRotate: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => number;
     readonly solid_textExtrude: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number) => [number, number, number];
     readonly solid_toStepBuffer: (a: number) => [number, number, number, number];
     readonly solid_torus: (a: number, b: number, c: number) => number;
@@ -3933,6 +3974,8 @@ export interface InitOutput {
     readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly wasmcamsettings_new: () => number;
     readonly wasmdocumentengine_add_feature: (a: number, b: number, c: number) => any;
+    readonly wasmdocumentengine_apply: (a: number, b: number, c: number) => [number, number];
+    readonly wasmdocumentengine_apply_tool: (a: number, b: number, c: number, d: number, e: number) => [number, number];
     readonly wasmdocumentengine_can_redo: (a: number) => number;
     readonly wasmdocumentengine_can_undo: (a: number) => number;
     readonly wasmdocumentengine_compute_position_between: (a: number, b: number, c: number, d: number, e: number) => [number, number];
@@ -3961,8 +4004,10 @@ export interface InitOutput {
     readonly wasmdocumentengine_set_scale: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
     readonly wasmdocumentengine_set_translation: (a: number, b: number, c: number, d: number, e: number, f: number) => any;
     readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
+    readonly wasmdocumentengine_stateHash: (a: number) => [number, number];
     readonly wasmdocumentengine_undo: (a: number) => any;
     readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly wasmdocumentengine_withReplica: (a: number) => number;
     readonly wasmkeybindings_chordFor: (a: number, b: number, c: number) => [number, number];
     readonly wasmkeybindings_commandsJson: (a: number) => [number, number];
     readonly wasmkeybindings_conflictsJson: (a: number, b: number, c: number) => [number, number];
@@ -3998,8 +4043,8 @@ export interface InitOutput {
     readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___js_sys_7c82484d4a1d6091___Function_fn_wasm_bindgen_d8ba3021eaa32f54___JsValue_____wasm_bindgen_d8ba3021eaa32f54___sys__Undefined___js_sys_7c82484d4a1d6091___Function_fn_wasm_bindgen_d8ba3021eaa32f54___JsValue_____wasm_bindgen_d8ba3021eaa32f54___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wasm_bindgen_d8ba3021eaa32f54___JsValue__core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_d8ba3021eaa32f54___JsError___true_: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wasm_bindgen_d8ba3021eaa32f54___sys__JsNullable_wgpu_f894171a91484cea___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_d8ba3021eaa32f54___JsError___true_: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wasm_bindgen_d8ba3021eaa32f54___sys__JsNullable_wgpu_f894171a91484cea___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_d8ba3021eaa32f54___JsError___true__440: (a: number, b: number, c: any) => [number, number];
-    readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wasm_bindgen_d8ba3021eaa32f54___sys__JsNullable_wgpu_f894171a91484cea___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_d8ba3021eaa32f54___JsError___true__441: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wasm_bindgen_d8ba3021eaa32f54___sys__JsNullable_wgpu_f894171a91484cea___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_d8ba3021eaa32f54___JsError___true__447: (a: number, b: number, c: any) => [number, number];
+    readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wasm_bindgen_d8ba3021eaa32f54___sys__JsNullable_wgpu_f894171a91484cea___backend__webgpu__webgpu_sys__gen_GpuError__GpuError___core_37ee0ce0c4cd57d5___result__Result_____wasm_bindgen_d8ba3021eaa32f54___JsError___true__448: (a: number, b: number, c: any) => [number, number];
     readonly wasm_bindgen_d8ba3021eaa32f54___convert__closures_____invoke___wgpu_f894171a91484cea___backend__webgpu__webgpu_sys__gen_GpuDeviceLostInfo__GpuDeviceLostInfo______true_: (a: number, b: number, c: any) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

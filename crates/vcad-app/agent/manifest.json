@@ -1,0 +1,705 @@
+{
+  "cache_key": "vcad-agent-v2",
+  "system": "You are the modeling agent inside vcad, a parametric CAD app. You edit the document the user has open by calling tools; every edit appears live in their viewport.\n\nConventions: units are millimetres. Z is up (X right, Y forward). A cube's corner sits at its origin and it extends to +size. Cylinders and cones stand along +Z from their base centre.\n\nWorkflow:\n- Call describe_scene first when the request refers to existing parts. Part ids look like \"1:4\"; always use ids exactly as returned, never invent them.\n- create returns the new part id in its result. Use place to position parts relative to each other (e.g. put one part's bottom on another's top) instead of computing offsets by hand.\n- translate/rotate/scale set a part's absolute transform (not a delta).\n- Booleans (union/difference/intersection) consume their operands into a new part.\n- If a tool returns an error, read it, fix the arguments and try again. Do not repeat a failing call unchanged.\n- Use inspect to check volume, area or mass when the user asks about them.\n- When the request is done, reply with one or two short sentences describing what changed. No markdown headings.",
+  "tools": [
+    {
+      "function": {
+        "description": "List every part in the open document: id, name, kind, material, world bounding box (mm).",
+        "name": "describe_scene",
+        "parameters": {
+          "properties": {},
+          "required": [],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Measure one part: volume (mm^3), surface area (mm^2), bounding box, and mass when its material density is known.",
+        "name": "inspect",
+        "parameters": {
+          "properties": {
+            "part_id": {
+              "description": "Part id from describe_scene.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "part_id"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Create a part. Primitives: cube {size:{x,y,z}}, cylinder {radius, height}, sphere {radius}, cone {radius_bottom, radius_top, height}, tube {start:{x,y,z}, end:{x,y,z}, radius}. Modifiers on an existing part (pass parent_part_id): fillet {radius}, chamfer {distance}, shell {thickness}.",
+        "name": "create",
+        "parameters": {
+          "properties": {
+            "name": {
+              "description": "Short readable name, 1-3 words.",
+              "type": "string"
+            },
+            "params": {
+              "description": "Parameters for the chosen type (see description).",
+              "type": "object"
+            },
+            "parent_part_id": {
+              "description": "Target part for fillet/chamfer/shell.",
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "cube",
+                "cylinder",
+                "sphere",
+                "cone",
+                "tube",
+                "fillet",
+                "chamfer",
+                "shell"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "params"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Move a part so its `from` anchor (default center) lands on `to`. Keeps rotation and scale.",
+        "name": "place",
+        "parameters": {
+          "properties": {
+            "from": {
+              "anyOf": [
+                {
+                  "description": "Named bbox anchor on the moved part.",
+                  "enum": [
+                    "center",
+                    "min",
+                    "max",
+                    "top",
+                    "bottom",
+                    "front",
+                    "back",
+                    "left",
+                    "right"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "description": "Named bbox anchor on another part.",
+                  "properties": {
+                    "anchor": {
+                      "enum": [
+                        "center",
+                        "min",
+                        "max",
+                        "top",
+                        "bottom",
+                        "front",
+                        "back",
+                        "left",
+                        "right"
+                      ],
+                      "type": "string"
+                    },
+                    "part": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "part",
+                    "anchor"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "description": "World point in mm.",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ],
+                  "type": "object"
+                }
+              ],
+              "description": "One of: a named anchor string, {part, anchor}, or a world point {x,y,z}."
+            },
+            "part_id": {
+              "description": "Part to move.",
+              "type": "string"
+            },
+            "to": {
+              "anyOf": [
+                {
+                  "description": "Named bbox anchor on the moved part.",
+                  "enum": [
+                    "center",
+                    "min",
+                    "max",
+                    "top",
+                    "bottom",
+                    "front",
+                    "back",
+                    "left",
+                    "right"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "description": "Named bbox anchor on another part.",
+                  "properties": {
+                    "anchor": {
+                      "enum": [
+                        "center",
+                        "min",
+                        "max",
+                        "top",
+                        "bottom",
+                        "front",
+                        "back",
+                        "left",
+                        "right"
+                      ],
+                      "type": "string"
+                    },
+                    "part": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "part",
+                    "anchor"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "description": "World point in mm.",
+                  "properties": {
+                    "x": {
+                      "type": "number"
+                    },
+                    "y": {
+                      "type": "number"
+                    },
+                    "z": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "z"
+                  ],
+                  "type": "object"
+                }
+              ],
+              "description": "One of: a named anchor string, {part, anchor}, or a world point {x,y,z}."
+            }
+          },
+          "required": [
+            "part_id",
+            "to"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Set a part's absolute offset in mm.",
+        "name": "translate",
+        "parameters": {
+          "properties": {
+            "child": {
+              "description": "Part id.",
+              "type": "string"
+            },
+            "offset": {
+              "description": "Offset in mm.",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "child",
+            "offset"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Set a part's absolute rotation (degrees about X, Y, Z), pivoting about its bbox centre unless pivot is given.",
+        "name": "rotate",
+        "parameters": {
+          "properties": {
+            "angles": {
+              "description": "Euler angles in degrees.",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "type": "object"
+            },
+            "child": {
+              "description": "Part id.",
+              "type": "string"
+            },
+            "pivot": {
+              "description": "Optional world pivot in mm.",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "child",
+            "angles"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Set a part's absolute scale factor per axis.",
+        "name": "scale",
+        "parameters": {
+          "properties": {
+            "child": {
+              "description": "Part id.",
+              "type": "string"
+            },
+            "factor": {
+              "description": "Scale factors (1 = unchanged).",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "child",
+            "factor"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Fuse two parts into one new part.",
+        "name": "union",
+        "parameters": {
+          "properties": {
+            "left": {
+              "description": "First part.",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "right": {
+              "description": "Second part.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "left",
+            "right"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Subtract `right` from `left`, producing a new part.",
+        "name": "difference",
+        "parameters": {
+          "properties": {
+            "left": {
+              "description": "Part to cut from.",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "right": {
+              "description": "Tool part removed.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "left",
+            "right"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Keep only the volume shared by two parts.",
+        "name": "intersection",
+        "parameters": {
+          "properties": {
+            "left": {
+              "description": "First part.",
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "right": {
+              "description": "Second part.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "left",
+            "right"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Repeat a part `count` times along a direction, `spacing` mm apart.",
+        "name": "linear_pattern",
+        "parameters": {
+          "properties": {
+            "child": {
+              "description": "Part id.",
+              "type": "string"
+            },
+            "count": {
+              "minimum": 1,
+              "type": "integer"
+            },
+            "direction": {
+              "description": "Direction vector.",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "type": "object"
+            },
+            "spacing": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "child",
+            "direction",
+            "count",
+            "spacing"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Repeat a part `count` times around an axis over `angle_deg` degrees.",
+        "name": "circular_pattern",
+        "parameters": {
+          "properties": {
+            "angle_deg": {
+              "type": "number"
+            },
+            "axis_dir": {
+              "description": "Axis direction.",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "type": "object"
+            },
+            "axis_origin": {
+              "description": "Point on the axis.",
+              "properties": {
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "z": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "x",
+                "y",
+                "z"
+              ],
+              "type": "object"
+            },
+            "child": {
+              "description": "Part id.",
+              "type": "string"
+            },
+            "count": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "child",
+            "axis_origin",
+            "axis_dir",
+            "count",
+            "angle_deg"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Mirror a part across a world plane.",
+        "name": "mirror",
+        "parameters": {
+          "properties": {
+            "child": {
+              "description": "Part id.",
+              "type": "string"
+            },
+            "plane": {
+              "enum": [
+                "XY",
+                "XZ",
+                "YZ"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "child",
+            "plane"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Change parameters of an existing part, e.g. {size:{x:40}} on a cube or {radius:8} on a cylinder.",
+        "name": "update",
+        "parameters": {
+          "properties": {
+            "node_id": {
+              "description": "Part id (or IR node id).",
+              "type": "string"
+            },
+            "params": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "node_id",
+            "params"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Assign a material preset (e.g. aluminum, steel, brass, copper, oak, abs-white, pla-black) to one or more parts.",
+        "name": "set_material",
+        "parameters": {
+          "properties": {
+            "material": {
+              "type": "string"
+            },
+            "part_id": {
+              "description": "Single part.",
+              "type": "string"
+            },
+            "part_ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "material"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    },
+    {
+      "function": {
+        "description": "Delete a part.",
+        "name": "delete",
+        "parameters": {
+          "properties": {
+            "part_id": {
+              "description": "Part id.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "part_id"
+          ],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ],
+  "version": 2,
+  "vision_tools": [
+    {
+      "function": {
+        "description": "Look at the model: returns a rendered image of the scene from a preset view, or from a camera angle given in degrees (azimuth about +Z from the front, elevation above the XY plane). The user's own camera is left where it was.",
+        "name": "render_view",
+        "parameters": {
+          "properties": {
+            "azimuth_deg": {
+              "type": "number"
+            },
+            "elevation_deg": {
+              "maximum": 85,
+              "minimum": -85,
+              "type": "number"
+            },
+            "view": {
+              "description": "Preset view; ignored when azimuth_deg/elevation_deg are given.",
+              "enum": [
+                "current",
+                "iso",
+                "top",
+                "front",
+                "right"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        }
+      },
+      "type": "function"
+    }
+  ]
+}

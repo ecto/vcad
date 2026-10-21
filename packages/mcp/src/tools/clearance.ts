@@ -29,6 +29,7 @@ import type { ClearanceResult, Engine, TriangleMesh } from "@vcad/engine";
 import { unverifiableClaim } from "../receipt-unified.js";
 import { applyJointState, jointStateSchemaProp, type PoseInfo } from "./pose.js";
 import { getSession } from "./session-core.js";
+import { findPartCandidate, migrateLegacyPartId } from "./part-ids.js";
 import { asBool } from "./arg-coerce.js";
 import {
   MAX_SWEEP_POSES,
@@ -178,6 +179,7 @@ function partCandidates(doc: Document, engine: Engine): ResolvedPart[] {
 
 /** Resolve group members by part id first, then by exact part name. */
 function resolveGroup(
+  doc: Document,
   candidates: ResolvedPart[],
   ids: string[],
 ): { parts: ResolvedPart[]; missing: string[] } {
@@ -185,8 +187,7 @@ function resolveGroup(
   const missing: string[] = [];
   for (const raw of ids) {
     const wanted = String(raw);
-    const found =
-      candidates.find((c) => c.id === wanted) ?? candidates.find((c) => c.name === wanted);
+    const found = findPartCandidate(doc, candidates, wanted);
     if (found) parts.set(found.id, found);
     else missing.push(wanted);
   }
@@ -244,7 +245,7 @@ export function computeGroupClearance(
     return { error: e instanceof Error ? e.message : String(e) };
   }
   if (!sweep || sweep.length === 0) {
-    return measureGroups(engine, placeParts(base), groupA, groupB);
+    return measureGroups(doc, engine, placeParts(base), groupA, groupB);
   }
 
   const { axes, warnings, error: sweepError } = resolveSweepAxes(doc, sweep);
@@ -262,6 +263,7 @@ export function computeGroupClearance(
   const keepSamples = poses.length <= MAX_SWEEP_SAMPLES;
   for (let i = 0; i < poses.length; i++) {
     const { result, error } = measureGroups(
+      doc,
       engine,
       placeParts(base, transforms[i]),
       groupA,
@@ -299,13 +301,14 @@ export function computeGroupClearance(
 
 /** Single-pose group-vs-group minimum over already-placed parts. */
 function measureGroups(
+  doc: Document,
   engine: Engine,
   candidates: ResolvedPart[],
   groupA: string[],
   groupB: string[],
 ): { result?: GroupClearance; error?: string } {
-  const a = resolveGroup(candidates, groupA);
-  const b = resolveGroup(candidates, groupB);
+  const a = resolveGroup(doc, candidates, groupA);
+  const b = resolveGroup(doc, candidates, groupB);
   const missing = [...a.missing, ...b.missing];
   if (missing.length > 0) {
     const available = candidates
@@ -486,7 +489,7 @@ export function computeInterferenceAudit(
   const unresolved: string[] = [];
   const resolveId = (raw: string): string | undefined => {
     const wanted = String(raw);
-    return (first.find((c) => c.id === wanted) ?? first.find((c) => c.name === wanted))?.id;
+    return findPartCandidate(doc, first, wanted)?.id;
   };
   for (const [rawA, rawB] of opts.ignorePairs) {
     const a = resolveId(rawA);
@@ -793,7 +796,20 @@ function auditClearance(
  * measured (missing part, empty mesh) yields an unverifiable claim —
  * fail-closed, never a silent skip.
  */
+/**
+ * Migrate persisted clearance specs written before stable part ids: legacy
+ * digit ids in `group_a`/`group_b` are rewritten to the parts' stable ids,
+ * in place, so the assertion keeps naming the same parts after later edits.
+ */
+export function migrateClearanceSpecs(doc: Document): void {
+  for (const spec of doc.clearance_specs ?? []) {
+    spec.group_a = spec.group_a.map((id) => migrateLegacyPartId(doc, String(id)));
+    spec.group_b = spec.group_b.map((id) => migrateLegacyPartId(doc, String(id)));
+  }
+}
+
 export function clearanceReceiptClaims(doc: Document, engine: Engine | undefined): ReceiptClaim[] {
+  migrateClearanceSpecs(doc);
   const specs = doc.clearance_specs ?? [];
   return specs.map((spec) => {
     const id = `${CLEARANCE_CLAIM_PREFIX}${spec.label}`;

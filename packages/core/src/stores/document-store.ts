@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import { getKernelWasmSync } from "../wasm-singleton.js";
+import { applyCommand, applyToolCall, type Envelope } from "./engine-command.js";
+import type { FeatureInput } from "./feature-input.js";
 import { mergeSketchConstraints } from "../sketch-constraint-persist.js";
 import type {
   Bindings,
@@ -60,8 +62,6 @@ import {
 } from "../types.js";
 import { useUiStore } from "./ui-store.js";
 import { useParametersStore } from "./parameters-store.js";
-import { syncSchematicToPcbData } from "./ecad-sync.js";
-import { assertSupportedCopperCount, copperLayerNames } from "../utils/pcb-layers.js";
 
 // ---------------------------------------------------------------------------
 // CRDT bridge types
@@ -84,7 +84,12 @@ interface ApiResult {
 
 /** Minimal interface for WasmDocumentEngine (matches WASM exports) */
 export interface WasmDocumentEngine {
-  // Typed API (new) — returns ApiResult with consumedPartIds
+  /** Apply a JSON `DocCommand`; returns the result envelope. Call through
+   *  `applyCommand` (engine-command.ts). */
+  apply(command_json: string): string;
+  /** Lower + apply an AI tool call; see `applyToolCall`. */
+  apply_tool(tool: string, args_json: string): string;
+  // Typed API — returns ApiResult with consumedPartIds
   add_feature(input_json: string): ApiResult;
   update_feature(stable_id: string, input_json: string): ApiResult;
   delete_feature_by_id(stable_id: string): ApiResult;
@@ -429,6 +434,9 @@ export interface DocumentState {
   setTransientEval: (active: boolean) => void;
   // Visibility toggle
   setPartVisible: (partId: string, visible: boolean) => void;
+  /** Run an AI tool call through the Rust lowering (`vcad_app::tools`).
+   *  `null` when the kernel predates it; see `applyToolCall`. */
+  applyTool: (tool: string, args: unknown) => Envelope | null;
   // Reorder parts in tree
   reorderPart: (partId: string, newIndex: number) => void;
   // Analyze mode (#592): persist solver studies on the document (CRDT
@@ -660,7 +668,13 @@ const MUTATION_METHODS = new Set<string>([
   "import_ir",
   "undo",
   "redo",
+  // DocCommand entry points: return a JSON envelope string, not an object.
+  "apply",
+  "apply_tool",
 ]);
+
+/** Mutation methods whose result is a `DocCommand` envelope string. */
+const ENVELOPE_METHODS = new Set<string>(["apply", "apply_tool"]);
 
 /**
  * Build a no-op result object shaped like ApiResult/CrdtMutationResult that
@@ -684,7 +698,8 @@ function makeNoOpResult(target: WasmDocumentEngine): ApiResult & CrdtMutationRes
  * sign-in-to-fork modal) and return a no-op result that keeps store state
  * unchanged.
  */
-function wrapEngineWithReadOnlyGuard(
+/** @internal Exported for tests. */
+export function wrapEngineWithReadOnlyGuard(
   engine: WasmDocumentEngine,
 ): WasmDocumentEngine {
   return new Proxy(engine, {
@@ -703,7 +718,10 @@ function wrapEngineWithReadOnlyGuard(
               new CustomEvent("vcad:fork-prompt", { detail: readOnly }),
             );
           }
-          return makeNoOpResult(target);
+          const noOp = makeNoOpResult(target);
+          return ENVELOPE_METHODS.has(name)
+            ? JSON.stringify({ ok: true, result: noOp })
+            : noOp;
         }
         return (value as (...a: unknown[]) => unknown).apply(target, args);
       };
@@ -781,7 +799,7 @@ function getOrCreateAnalysisStudiesFeature(state: DocumentState): string {
     return existing.id;
   }
 
-  const result = engine.create_feature("analysis-studies", "{}");
+  const result = applyCommand(engine, { type: "create_feature", kind: "analysis-studies" });
   if (result.createdFeatureId) {
     _analysisStudiesFeatureId = result.createdFeatureId;
     return result.createdFeatureId;
@@ -801,7 +819,7 @@ function getOrCreateSceneFeature(state: DocumentState): string {
     return existing.id;
   }
 
-  const result = engine.create_feature("scene-settings", "{}");
+  const result = applyCommand(engine, { type: "create_feature", kind: "scene-settings" });
   if (result.createdFeatureId) {
     _sceneSettingsFeatureId = result.createdFeatureId;
     return result.createdFeatureId;
@@ -823,7 +841,7 @@ function getOrCreateDrawingFeature(state: DocumentState): string {
     return existing.id;
   }
 
-  const result = engine.create_feature("drawing-settings", "{}");
+  const result = applyCommand(engine, { type: "create_feature", kind: "drawing-settings" });
   if (result.createdFeatureId) {
     _drawingSettingsFeatureId = result.createdFeatureId;
     return result.createdFeatureId;
@@ -831,44 +849,8 @@ function getOrCreateDrawingFeature(state: DocumentState): string {
   return "";
 }
 
-let _constraintsFeatureId: string | null = null;
 
 /** The singleton design-constraints CRDT feature (created on demand). */
-function getOrCreateConstraintsFeature(state: DocumentState): string {
-  const engine = state._crdtEngine!;
-  if (_constraintsFeatureId) return _constraintsFeatureId;
-
-  const featuresJson = engine.get_ordered_features_json();
-  const features: { id: string; kind: string }[] = JSON.parse(featuresJson);
-  const existing = features.find((f) => f.kind === "design-constraints");
-  if (existing) {
-    _constraintsFeatureId = existing.id;
-    return existing.id;
-  }
-
-  const result = engine.create_feature("design-constraints", "{}");
-  if (result.createdFeatureId) {
-    _constraintsFeatureId = result.createdFeatureId;
-    return result.createdFeatureId;
-  }
-  return "";
-}
-
-/** Write the design-constraint set back to its CRDT feature. */
-function setCrdtConstraints(
-  state: DocumentState,
-  constraints: DesignConstraint[],
-): Partial<DocumentState> {
-  const fid = getOrCreateConstraintsFeature(state);
-  if (!fid) return {};
-  const result = state._crdtEngine!.set_param(
-    fid,
-    "constraints",
-    JSON.stringify(crdtStr(JSON.stringify(constraints))),
-  );
-  return applyLegacyResult(result);
-}
-
 function getOrCreateSchematicFeature(state: DocumentState): string {
   const engine = state._crdtEngine!;
   if (_schematicFeatureId) return _schematicFeatureId;
@@ -881,7 +863,7 @@ function getOrCreateSchematicFeature(state: DocumentState): string {
     return existing.id;
   }
 
-  const result = engine.create_feature("schematic", "{}");
+  const result = applyCommand(engine, { type: "create_feature", kind: "schematic" });
   if (result.createdFeatureId) {
     _schematicFeatureId = result.createdFeatureId;
     return result.createdFeatureId;
@@ -897,41 +879,49 @@ function getPcbBoardFeatureId(state: DocumentState): string {
   return pcb?.id ?? "";
 }
 
-/** Write the entire schematic sheet back to the CRDT feature. */
-function setCrdtSchematic(state: DocumentState, schematic: NonNullable<Document["schematic"]>): void {
-  const schId = getOrCreateSchematicFeature(state);
-  state._crdtEngine!.set_param(schId, "sheet", JSON.stringify(crdtStr(JSON.stringify(schematic))));
-}
-
-/** Write the entire PCB board back to the CRDT pcb-board feature. */
-function setCrdtPcb(state: DocumentState, pcb: Pcb): Partial<DocumentState> {
-  const pcbFid = getPcbBoardFeatureId(state);
-  if (!pcbFid) return {};
-  const result = state._crdtEngine!.set_param(pcbFid, "board", JSON.stringify(crdtStr(JSON.stringify(pcb))));
-  return applyLegacyResult(result);
-}
-
-/** Shared logic for adding a Pcb board to the document. */
-function addPcbToDocument(
+/**
+ * Apply a blob-edit tool (PCB board, schematic sheet, design constraints)
+ * through the engine's Rust lowering. A refused edit (no board, index out of
+ * range, unknown id) leaves the document untouched; returns whether it applied.
+ */
+function applyEdit(
   get: () => DocumentState,
-  set: (s: Partial<DocumentState>) => void,
-  pcbBoard: Pcb,
-  boardName: string,
+  set: (patch: Partial<DocumentState>) => void,
+  tool: string,
+  args: unknown,
+): boolean {
+  const engine = get()._crdtEngine;
+  if (!engine) return false;
+  const envelope = applyToolCall(engine, tool, args);
+  if (!envelope.ok) {
+    console.warn(`[document-store] ${tool}: ${envelope.error.message}`);
+    return false;
+  }
+  set(applyApiResult(envelope.result));
+  return true;
+}
+
+/** Create a PCB board feature via an engine tool; returns its board node id.
+ *  Throws when the engine refuses (e.g. an unsupported layer count). */
+function addBoard(
+  get: () => DocumentState,
+  set: (patch: Partial<DocumentState>) => void,
+  tool: string,
+  args: unknown,
 ): NodeId {
   const engine = get()._crdtEngine;
   if (!engine) {
     console.error("[PCB] Cannot create board: CRDT engine not initialized");
     return 0;
   }
-  const params: Record<string, CrdtValue> = {
-    name: crdtStr(boardName),
-    board: crdtStr(JSON.stringify(pcbBoard)),
-    material: crdtStr("__pcb_fr4__"),
-  };
-  const result = engine.create_feature("pcb-board", JSON.stringify(params));
-  set({ ...applyLegacyResult(result), isDirty: true });
-  const pcbPart = result.parts.find((p) => p.kind === "pcb-board");
-  return pcbPart ? (pcbPart as PcbBoardPartInfo).boardNodeId : 0;
+  const envelope = applyToolCall(engine, tool, args);
+  if (!envelope.ok) throw new Error(envelope.error.message);
+  set(applyApiResult(envelope.result));
+  const created = envelope.result.parts.find((p) => p.id === envelope.result.createdFeatureId);
+  const board = (created ?? envelope.result.parts.find((p) => p.kind === "pcb-board")) as
+    | PcbBoardPartInfo
+    | undefined;
+  return board?.boardNodeId ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1052,7 +1042,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       sphere: { type: "Sphere", radius: 10, segments: 32 },
     };
     try {
-      const result = engine.add_feature(JSON.stringify(defaults[kind]));
+      const result = applyCommand(engine, { type: "add_feature", feature: defaults[kind] as FeatureInput });
       set(applyApiResult(result));
       return result.createdFeatureId ?? "";
     } catch (e) {
@@ -1069,14 +1059,12 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       return "";
     }
     try {
-      const result = engine.add_feature(
-        JSON.stringify({
+      const result = applyCommand(engine, { type: "add_feature", feature: {
           type: "PartInstance",
           path,
           version,
           params_json: JSON.stringify(params),
-        }),
-      );
+        } });
       set(applyApiResult(result));
       return result.createdFeatureId ?? "";
     } catch (e) {
@@ -1087,25 +1075,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   removePart: (partId) => {
     const engine = get()._crdtEngine!;
-    const result = engine.delete_feature_by_id(partId);
+    const result = applyCommand(engine, { type: "delete_feature", id: partId });
     set(applyApiResult(result));
   },
 
   setTranslation: (partId, offset) => {
     const engine = get()._crdtEngine!;
-    const result = engine.set_translation(partId, offset.x, offset.y, offset.z);
+    const result = applyCommand(engine, { type: "set_translation", id: partId, offset: [offset.x, offset.y, offset.z] });
     set(applyApiResult(result));
   },
 
   setRotation: (partId, angles) => {
     const engine = get()._crdtEngine!;
-    const result = engine.set_rotation(partId, angles.x, angles.y, angles.z);
+    const result = applyCommand(engine, { type: "set_rotation", id: partId, angles: [angles.x, angles.y, angles.z] });
     set(applyApiResult(result));
   },
 
   setScale: (partId, factor) => {
     const engine = get()._crdtEngine!;
-    const result = engine.set_scale(partId, factor.x, factor.y, factor.z);
+    const result = applyCommand(engine, { type: "set_scale", id: partId, factor: [factor.x, factor.y, factor.z] });
     set(applyApiResult(result));
   },
 
@@ -1120,25 +1108,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     let lastResult: CrdtMutationResult | undefined;
     if (o.type === "Cube" && "size" in o) {
       const size = o.size as Vec3;
-      engine.set_param(partId, "size_x", JSON.stringify(crdtF64(size.x)));
-      engine.set_param(partId, "size_y", JSON.stringify(crdtF64(size.y)));
-      lastResult = engine.set_param(partId, "size_z", JSON.stringify(crdtF64(size.z)));
+      applyCommand(engine, { type: "set_param", id: partId, key: "size_x", value: crdtF64(size.x) });
+      applyCommand(engine, { type: "set_param", id: partId, key: "size_y", value: crdtF64(size.y) });
+      lastResult = applyCommand(engine, { type: "set_param", id: partId, key: "size_z", value: crdtF64(size.z) });
     } else if (o.type === "Cylinder" && "radius" in o) {
-      engine.set_param(partId, "radius", JSON.stringify(crdtF64(o.radius as number)));
-      engine.set_param(partId, "height", JSON.stringify(crdtF64(o.height as number)));
-      lastResult = engine.set_param(partId, "segments", JSON.stringify(crdtF64(o.segments as number)));
+      applyCommand(engine, { type: "set_param", id: partId, key: "radius", value: crdtF64(o.radius as number) });
+      applyCommand(engine, { type: "set_param", id: partId, key: "height", value: crdtF64(o.height as number) });
+      lastResult = applyCommand(engine, { type: "set_param", id: partId, key: "segments", value: crdtF64(o.segments as number) });
     } else if (o.type === "Sphere" && "radius" in o) {
-      engine.set_param(partId, "radius", JSON.stringify(crdtF64(o.radius as number)));
-      lastResult = engine.set_param(partId, "segments", JSON.stringify(crdtF64(o.segments as number)));
+      applyCommand(engine, { type: "set_param", id: partId, key: "radius", value: crdtF64(o.radius as number) });
+      lastResult = applyCommand(engine, { type: "set_param", id: partId, key: "segments", value: crdtF64(o.segments as number) });
     } else if (o.type === "Cone" && "radius_bottom" in o) {
-      engine.set_param(partId, "radius_bottom", JSON.stringify(crdtF64(o.radius_bottom as number)));
-      engine.set_param(partId, "radius_top", JSON.stringify(crdtF64(o.radius_top as number)));
-      engine.set_param(partId, "height", JSON.stringify(crdtF64(o.height as number)));
-      lastResult = engine.set_param(partId, "segments", JSON.stringify(crdtF64(o.segments as number)));
+      applyCommand(engine, { type: "set_param", id: partId, key: "radius_bottom", value: crdtF64(o.radius_bottom as number) });
+      applyCommand(engine, { type: "set_param", id: partId, key: "radius_top", value: crdtF64(o.radius_top as number) });
+      applyCommand(engine, { type: "set_param", id: partId, key: "height", value: crdtF64(o.height as number) });
+      lastResult = applyCommand(engine, { type: "set_param", id: partId, key: "segments", value: crdtF64(o.segments as number) });
     } else if (o.type === "Torus" && "major_radius" in o) {
-      engine.set_param(partId, "major_radius", JSON.stringify(crdtF64(o.major_radius as number)));
-      engine.set_param(partId, "minor_radius", JSON.stringify(crdtF64(o.minor_radius as number)));
-      lastResult = engine.set_param(partId, "segments", JSON.stringify(crdtF64(o.segments as number)));
+      applyCommand(engine, { type: "set_param", id: partId, key: "major_radius", value: crdtF64(o.major_radius as number) });
+      applyCommand(engine, { type: "set_param", id: partId, key: "minor_radius", value: crdtF64(o.minor_radius as number) });
+      lastResult = applyCommand(engine, { type: "set_param", id: partId, key: "segments", value: crdtF64(o.segments as number) });
     }
     if (lastResult) {
       set(applyLegacyResult(lastResult));
@@ -1149,25 +1137,25 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const engine = get()._crdtEngine!;
     let lastResult: CrdtMutationResult | undefined;
     if (updates.twist_angle !== undefined) {
-      lastResult = engine.set_param(partId, "twist_angle", JSON.stringify(crdtF64(updates.twist_angle)));
+      lastResult = applyCommand(engine, { type: "set_param", id: partId, key: "twist_angle", value: crdtF64(updates.twist_angle) });
     }
     if (updates.scale_start !== undefined) {
-      lastResult = engine.set_param(partId, "scale_start", JSON.stringify(crdtF64(updates.scale_start)));
+      lastResult = applyCommand(engine, { type: "set_param", id: partId, key: "scale_start", value: crdtF64(updates.scale_start) });
     }
     if (updates.scale_end !== undefined) {
-      lastResult = engine.set_param(partId, "scale_end", JSON.stringify(crdtF64(updates.scale_end)));
+      lastResult = applyCommand(engine, { type: "set_param", id: partId, key: "scale_end", value: crdtF64(updates.scale_end) });
     }
     if (updates.path !== undefined) {
-      lastResult = engine.set_param(partId, "path", JSON.stringify(crdtStr(JSON.stringify(updates.path))));
+      lastResult = applyCommand(engine, { type: "set_param", id: partId, key: "path", value: crdtStr(JSON.stringify(updates.path)) });
     }
     if (updates.orientation !== undefined) {
-      lastResult = engine.set_param(partId, "orientation", JSON.stringify(crdtF64(updates.orientation)));
+      lastResult = applyCommand(engine, { type: "set_param", id: partId, key: "orientation", value: crdtF64(updates.orientation) });
     }
     if (updates.path_segments !== undefined) {
-      lastResult = engine.set_param(partId, "path_segments", JSON.stringify(crdtF64(updates.path_segments)));
+      lastResult = applyCommand(engine, { type: "set_param", id: partId, key: "path_segments", value: crdtF64(updates.path_segments) });
     }
     if (updates.arc_segments !== undefined) {
-      lastResult = engine.set_param(partId, "arc_segments", JSON.stringify(crdtF64(updates.arc_segments)));
+      lastResult = applyCommand(engine, { type: "set_param", id: partId, key: "arc_segments", value: crdtF64(updates.arc_segments) });
     }
     if (lastResult) {
       set(applyLegacyResult(lastResult));
@@ -1176,24 +1164,24 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   setFeatureParam: (partId, key, value) => {
     const engine = get()._crdtEngine!;
-    const result = engine.set_param(partId, key, JSON.stringify(value));
+    const result = applyCommand(engine, { type: "set_param", id: partId, key: key, value: value });
     set(applyLegacyResult(result));
   },
 
   updateBooleanType: (partId, newType) => {
     const engine = get()._crdtEngine!;
-    const result = engine.set_param(partId, "boolean_type", JSON.stringify(crdtStr(newType)));
+    const result = applyCommand(engine, { type: "set_param", id: partId, key: "boolean_type", value: crdtStr(newType) });
     set(applyLegacyResult(result));
   },
 
   applyBoolean: (type, partIdA, partIdB) => {
     const engine = get()._crdtEngine!;
-    const result = engine.add_feature(JSON.stringify({
+    const result = applyCommand(engine, { type: "add_feature", feature: {
       type: "Boolean",
       boolean_type: type,
       input_a: partIdA,
       input_b: partIdB,
-    }));
+    } });
     set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
@@ -1224,7 +1212,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         params.name = { String: existingName.String + " copy" };
       }
 
-      lastResult = engine.create_feature(feature.kind, JSON.stringify(params));
+      lastResult = applyCommand(engine, { type: "create_feature", kind: feature.kind, params: params });
       if (lastResult.createdFeatureId) newIds.push(lastResult.createdFeatureId);
     }
 
@@ -1346,7 +1334,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       }
     }
     const irJson = JSON.stringify(generatedDoc);
-    const result = engine.import_ir(irJson);
+    const result = applyCommand(engine, { type: "import_ir", document: JSON.parse(irJson) as Document });
     set({ ...applyLegacyResult(result), isDirty: true });
     // Merge any parameters / bindings from the generated doc into the
     // parameters store (AI-emitted parametric models flow through here).
@@ -1392,7 +1380,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (options?.twist_angle != null) input.twist_angle = options.twist_angle;
     if (options?.scale_end != null) input.scale_end = options.scale_end;
     try {
-      const result = engine.add_feature(JSON.stringify(input));
+      const result = applyCommand(engine, { type: "add_feature", feature: input as FeatureInput });
       set(applyApiResult(result));
       return result.createdFeatureId ?? null;
     } catch (e) {
@@ -1405,13 +1393,13 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (segments.length === 0) return null;
     const engine = get()._crdtEngine!;
 
-    const result = engine.add_feature(JSON.stringify({
+    const result = applyCommand(engine, { type: "add_feature", feature: {
       type: "Revolve",
       sketch: sketchJson(segments, plane, origin),
       axis_origin: [axisOrigin.x, axisOrigin.y, axisOrigin.z],
       axis_dir: [axisDir.x, axisDir.y, axisDir.z],
       angle_deg: angleDeg,
-    }));
+    } });
     set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
@@ -1428,7 +1416,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (options.twist_angle != null) input.twist_angle = options.twist_angle;
     if (options.scale_start != null) input.scale_start = options.scale_start;
     if (options.scale_end != null) input.scale_end = options.scale_end;
-    const result = engine.add_feature(JSON.stringify(input));
+    const result = applyCommand(engine, { type: "add_feature", feature: input as FeatureInput });
     set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
@@ -1443,7 +1431,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       profiles: profileStrs,
     };
     if (options.closed != null) input.closed = options.closed;
-    const result = engine.add_feature(JSON.stringify(input));
+    const result = applyCommand(engine, { type: "add_feature", feature: input as FeatureInput });
     set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
@@ -1458,7 +1446,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     };
     if (normals) input.normals_json = JSON.stringify(Array.from(normals));
     if (source) input.source = source;
-    const result = engine.add_feature(JSON.stringify(input));
+    const result = applyCommand(engine, { type: "add_feature", feature: input as FeatureInput });
     set(applyApiResult(result));
     return result.createdFeatureId ?? "";
   },
@@ -1472,7 +1460,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       name: crdtStr(filename),
     };
     if (source) params.source = crdtStr(source);
-    const result = engine.create_feature("embroidery-pattern", JSON.stringify(params));
+    const result = applyCommand(engine, { type: "create_feature", kind: "embroidery-pattern", params: params });
     set(applyLegacyResult(result));
     return result.createdFeatureId ?? "";
   },
@@ -1524,7 +1512,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!design) return;
     const d = structuredClone(design);
     if (d.threads[threadIdx]) d.threads[threadIdx]!.color = color;
-    const result = engine.set_param(part.id, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
+    const result = applyCommand(engine, { type: "set_param", id: part.id, key: "design", value: crdtStr(JSON.stringify(d)) });
     set(applyLegacyResult(result));
   },
 
@@ -1537,7 +1525,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (!design) return;
     const d = structuredClone(design);
     if (d.threads[threadIdx]) d.threads[threadIdx]!.name = name;
-    const result = engine.set_param(part.id, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
+    const result = applyCommand(engine, { type: "set_param", id: part.id, key: "design", value: crdtStr(JSON.stringify(d)) });
     set(applyLegacyResult(result));
   },
 
@@ -1553,7 +1541,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const group = d.stitch_groups[groupIdx]!;
       group.fill_params = { ...(group.fill_params ?? DEFAULT_FILL_PARAMS), ...params };
     }
-    const result = engine.set_param(part.id, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
+    const result = applyCommand(engine, { type: "set_param", id: part.id, key: "design", value: crdtStr(JSON.stringify(d)) });
     set(applyLegacyResult(result));
   },
 
@@ -1592,39 +1580,39 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       if (bestIdx >= 0) { ordered.push(groups[bestIdx]!); used.add(bestIdx); }
     }
     d.stitch_groups = ordered;
-    const result = engine.set_param(part.id, "design", JSON.stringify(crdtStr(JSON.stringify(d))));
+    const result = applyCommand(engine, { type: "set_param", id: part.id, key: "design", value: crdtStr(JSON.stringify(d)) });
     set(applyLegacyResult(result));
   },
 
   addFillet: (partId, radius) => {
     const engine = get()._crdtEngine!;
-    const result = engine.add_feature(JSON.stringify({
+    const result = applyCommand(engine, { type: "add_feature", feature: {
       type: "Fillet",
       input: partId,
       radius,
-    }));
+    } });
     set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
 
   addChamfer: (partId, distance) => {
     const engine = get()._crdtEngine!;
-    const result = engine.add_feature(JSON.stringify({
+    const result = applyCommand(engine, { type: "add_feature", feature: {
       type: "Chamfer",
       input: partId,
       distance,
-    }));
+    } });
     set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
 
   addShell: (partId, thickness) => {
     const engine = get()._crdtEngine!;
-    const result = engine.add_feature(JSON.stringify({
+    const result = applyCommand(engine, { type: "add_feature", feature: {
       type: "Shell",
       input: partId,
       thickness,
-    }));
+    } });
     set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
@@ -1722,38 +1710,38 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   addLinearPattern: (partId, direction, count, spacing) => {
     const engine = get()._crdtEngine!;
-    const result = engine.add_feature(JSON.stringify({
+    const result = applyCommand(engine, { type: "add_feature", feature: {
       type: "LinearPattern",
       input: partId,
       direction: [direction.x, direction.y, direction.z],
       count,
       spacing,
-    }));
+    } });
     set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
 
   addCircularPattern: (partId, axisOrigin, axisDir, count, angleDeg) => {
     const engine = get()._crdtEngine!;
-    const result = engine.add_feature(JSON.stringify({
+    const result = applyCommand(engine, { type: "add_feature", feature: {
       type: "CircularPattern",
       input: partId,
       axis_origin: [axisOrigin.x, axisOrigin.y, axisOrigin.z],
       axis_dir: [axisDir.x, axisDir.y, axisDir.z],
       count,
       angle_deg: angleDeg,
-    }));
+    } });
     set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
 
   addMirror: (partId, plane) => {
     const engine = get()._crdtEngine!;
-    const result = engine.add_feature(JSON.stringify({
+    const result = applyCommand(engine, { type: "add_feature", feature: {
       type: "Mirror",
       input: partId,
       plane,
-    }));
+    } });
     set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
@@ -1772,27 +1760,27 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     if (alignment) input.alignment = alignment;
     if (letterSpacing !== undefined) input.letter_spacing = letterSpacing;
     if (lineSpacing !== undefined) input.line_spacing = lineSpacing;
-    const result = engine.add_feature(JSON.stringify(input));
+    const result = applyCommand(engine, { type: "add_feature", feature: input as FeatureInput });
     set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
 
   setPartMaterial: (partId, materialKey) => {
     const engine = get()._crdtEngine!;
-    const result = engine.set_material(partId, materialKey);
+    const result = applyCommand(engine, { type: "set_material", id: partId, material: materialKey });
     set(applyApiResult(result));
   },
 
   renamePart: (partId, name) => {
     const engine = get()._crdtEngine!;
-    const result = engine.rename_feature(partId, name);
+    const result = applyCommand(engine, { type: "rename", id: partId, name: name });
     set(applyApiResult(result));
   },
 
   undo: () => {
     const engine = get()._crdtEngine!;
     if (engine.can_undo()) {
-      const result = engine.undo();
+      const result = applyCommand(engine, { type: "undo" });
       set(applyLegacyResult(result));
     }
   },
@@ -1800,7 +1788,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   redo: () => {
     const engine = get()._crdtEngine!;
     if (engine.can_redo()) {
-      const result = engine.redo();
+      const result = applyCommand(engine, { type: "redo" });
       set(applyLegacyResult(result));
     }
   },
@@ -1822,19 +1810,19 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   // Assembly operations
   setInstanceTransform: (instanceId, transform) => {
     const engine = get()._crdtEngine!;
-    const result = engine.set_param(instanceId, "transform", JSON.stringify(crdtStr(JSON.stringify(transform))));
+    const result = applyCommand(engine, { type: "set_param", id: instanceId, key: "transform", value: crdtStr(JSON.stringify(transform)) });
     set(applyLegacyResult(result));
   },
 
   setInstanceMaterial: (instanceId, materialKey) => {
     const engine = get()._crdtEngine!;
-    const result = engine.set_param(instanceId, "material", JSON.stringify(crdtStr(materialKey)));
+    const result = applyCommand(engine, { type: "set_param", id: instanceId, key: "material", value: crdtStr(materialKey) });
     set(applyLegacyResult(result));
   },
 
   setJointState: (jointId, jointState) => {
     const engine = get()._crdtEngine!;
-    const result = engine.set_joint_state(jointId, jointState);
+    const result = applyCommand(engine, { type: "set_joint_state", id: jointId, state: jointState });
     set(applyApiResult(result));
   },
 
@@ -1845,7 +1833,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       source_feature: partId,
     };
     if (name) input.name = name;
-    const result = engine.add_feature(JSON.stringify(input));
+    const result = applyCommand(engine, { type: "add_feature", feature: input as FeatureInput });
     set(applyApiResult(result));
     return result.createdFeatureId ?? null;
   },
@@ -1858,7 +1846,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     };
     if (name) input.name = name;
     if (transform) input.transform = JSON.stringify(transform);
-    const result = engine.add_feature(JSON.stringify(input));
+    const result = applyCommand(engine, { type: "add_feature", feature: input as FeatureInput });
     set(applyApiResult(result));
     return result.createdFeatureId ?? "";
   },
@@ -1879,7 +1867,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const axis = jk.axis as Vec3;
       input.axis = [axis.x, axis.y, axis.z];
     }
-    const result = engine.add_feature(JSON.stringify(input));
+    const result = applyCommand(engine, { type: "add_feature", feature: input as FeatureInput });
     set(applyApiResult(result));
     return result.createdFeatureId ?? "";
   },
@@ -1894,17 +1882,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         const pi = f.params.parent_instance as { FeatureRef: string } | undefined;
         const ci = f.params.child_instance as { FeatureRef: string } | undefined;
         if ((pi && pi.FeatureRef === instanceId) || (ci && ci.FeatureRef === instanceId)) {
-          engine.delete_feature_by_id(f.id);
+          applyCommand(engine, { type: "delete_feature", id: f.id });
         }
       }
     }
-    const result = engine.delete_feature_by_id(instanceId);
+    const result = applyCommand(engine, { type: "delete_feature", id: instanceId });
     set(applyApiResult(result));
   },
 
   deleteJoint: (jointId) => {
     const engine = get()._crdtEngine!;
-    const result = engine.delete_feature_by_id(jointId);
+    const result = applyCommand(engine, { type: "delete_feature", id: jointId });
     set(applyApiResult(result));
   },
 
@@ -1917,16 +1905,16 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       const features: { id: string; kind: string }[] = JSON.parse(featuresJson);
       const oldGround = features.find((f) => f.kind === "instance" && f.id !== instanceId);
       if (oldGround) {
-        engine.set_param(oldGround.id, "is_ground", JSON.stringify(crdtBool(false)));
+        applyCommand(engine, { type: "set_param", id: oldGround.id, key: "is_ground", value: crdtBool(false) });
       }
     }
-    const result = engine.set_param(instanceId, "is_ground", JSON.stringify(crdtBool(true)));
+    const result = applyCommand(engine, { type: "set_param", id: instanceId, key: "is_ground", value: crdtBool(true) });
     set(applyLegacyResult(result));
   },
 
   renameInstance: (instanceId, name) => {
     const engine = get()._crdtEngine!;
-    const result = engine.set_param(instanceId, "name", JSON.stringify(crdtStr(name)));
+    const result = applyCommand(engine, { type: "set_param", id: instanceId, key: "name", value: crdtStr(name) });
     set(applyLegacyResult(result));
   },
 
@@ -1940,44 +1928,37 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
 
   newDocument: (id, name) => {
     const state = get();
-    // Create a fresh CRDT engine if constructor is available
+    // A fresh engine is the source of truth; the store's document is its view.
+    let engine = state._crdtEngine;
+    let view: Partial<DocumentState> = {
+      document: createDocument(),
+      parts: [],
+      partIndex: new Map(),
+      consumedParts: {},
+      nextNodeId: 1,
+    };
     if (state._crdtEngineClass) {
       _sceneSettingsFeatureId = null;
       _schematicFeatureId = null;
       _analysisStudiesFeatureId = null;
       _drawingSettingsFeatureId = null;
-      const engine = new state._crdtEngineClass();
-      set({
-        document: createDocument(),
-        parts: [],
-        partIndex: new Map(),
-        consumedParts: {},
-        nextNodeId: 1,
-        isDirty: false,
-        documentId: id,
-        documentName: name,
-        lastSavedAt: null,
-        isParameterDragging: false,
-        isTransientEval: false,
-        loonSource: null,
-        _crdtEngine: engine,
-      });
-    } else {
-      set({
-        document: createDocument(),
-        parts: [],
-        partIndex: new Map(),
-        consumedParts: {},
-        nextNodeId: 1,
-        isDirty: false,
-        documentId: id,
-        documentName: name,
-        lastSavedAt: null,
-        isParameterDragging: false,
-        isTransientEval: false,
-        loonSource: null,
+      engine = new state._crdtEngineClass();
+      view = applyLegacyResult({
+        document: JSON.parse(engine.get_document_json()),
+        parts: JSON.parse(engine.get_parts_json()),
       });
     }
+    set({
+      ...view,
+      isDirty: false,
+      documentId: id,
+      documentName: name,
+      lastSavedAt: null,
+      isParameterDragging: false,
+      isTransientEval: false,
+      loonSource: null,
+      _crdtEngine: engine,
+    });
   },
 
   clearDirtyNodes: () => {
@@ -1993,9 +1974,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set({ isTransientEval: active });
   },
 
+  applyTool: (tool, args) => {
+    const engine = get()._crdtEngine;
+    if (!engine) return null;
+    const envelope = applyToolCall(engine, tool, args);
+    if (envelope?.ok) set(applyApiResult(envelope.result));
+    return envelope;
+  },
+
   setPartVisible: (partId, visible) => {
     const engine = get()._crdtEngine!;
-    const result = engine.set_visible(partId, visible);
+    const result = applyCommand(engine, { type: "set_visible", id: partId, visible: visible });
     set(applyApiResult(result));
   },
 
@@ -2008,15 +1997,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const oldIndex = state.parts.findIndex((p) => p.id === partId);
     if (oldIndex === -1 || oldIndex === newIndex) return;
 
-    const featuresJson = engine.get_ordered_features_json();
-    const features: { id: string }[] = JSON.parse(featuresJson);
-    const others = features.filter((f) => f.id !== partId);
-
-    const beforeId = newIndex > 0 ? others[newIndex - 1]?.id ?? "" : "";
-    const afterId = newIndex < others.length ? others[newIndex]?.id ?? "" : "";
-
-    const positionJson = engine.compute_position_between(beforeId, afterId);
-    const result = engine.move_feature(partId, positionJson);
+    const result = applyCommand(engine, { type: "reorder", id: partId, index: newIndex });
     set(applyLegacyResult(result));
   },
 
@@ -2027,7 +2008,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const state = get();
     const engine = state._crdtEngine!;
     const fid = getOrCreateAnalysisStudiesFeature(state);
-    engine.set_param(fid, "studies", JSON.stringify(crdtStr(JSON.stringify(studies))));
+    applyCommand(engine, { type: "set_param", id: fid, key: "studies", value: crdtStr(JSON.stringify(studies)) });
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },
@@ -2037,11 +2018,11 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const state = get();
     const engine = state._crdtEngine!;
     const fid = getOrCreateSceneFeature(state);
-    if (settings.environment) engine.set_param(fid, "environment", JSON.stringify(crdtStr(JSON.stringify(settings.environment))));
-    if (settings.lights) engine.set_param(fid, "lights", JSON.stringify(crdtStr(JSON.stringify(settings.lights))));
-    if (settings.background) engine.set_param(fid, "background", JSON.stringify(crdtStr(JSON.stringify(settings.background))));
-    if (settings.postProcessing) engine.set_param(fid, "post_processing", JSON.stringify(crdtStr(JSON.stringify(settings.postProcessing))));
-    if (settings.cameraPresets) engine.set_param(fid, "camera_presets", JSON.stringify(crdtStr(JSON.stringify(settings.cameraPresets))));
+    if (settings.environment) applyCommand(engine, { type: "set_param", id: fid, key: "environment", value: crdtStr(JSON.stringify(settings.environment)) });
+    if (settings.lights) applyCommand(engine, { type: "set_param", id: fid, key: "lights", value: crdtStr(JSON.stringify(settings.lights)) });
+    if (settings.background) applyCommand(engine, { type: "set_param", id: fid, key: "background", value: crdtStr(JSON.stringify(settings.background)) });
+    if (settings.postProcessing) applyCommand(engine, { type: "set_param", id: fid, key: "post_processing", value: crdtStr(JSON.stringify(settings.postProcessing)) });
+    if (settings.cameraPresets) applyCommand(engine, { type: "set_param", id: fid, key: "camera_presets", value: crdtStr(JSON.stringify(settings.cameraPresets)) });
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },
@@ -2050,9 +2031,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const state = get();
     const engine = state._crdtEngine!;
     const fid = getOrCreateDrawingFeature(state);
-    if (settings.titleBlock) engine.set_param(fid, "title_block", JSON.stringify(crdtStr(JSON.stringify(settings.titleBlock))));
-    if (settings.sections) engine.set_param(fid, "sections", JSON.stringify(crdtStr(JSON.stringify(settings.sections))));
-    if (settings.showBom !== undefined) engine.set_param(fid, "show_bom", JSON.stringify(crdtStr(JSON.stringify(settings.showBom))));
+    if (settings.titleBlock) applyCommand(engine, { type: "set_param", id: fid, key: "title_block", value: crdtStr(JSON.stringify(settings.titleBlock)) });
+    if (settings.sections) applyCommand(engine, { type: "set_param", id: fid, key: "sections", value: crdtStr(JSON.stringify(settings.sections)) });
+    if (settings.showBom !== undefined) applyCommand(engine, { type: "set_param", id: fid, key: "show_bom", value: crdtStr(JSON.stringify(settings.showBom)) });
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },
@@ -2061,7 +2042,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const state = get();
     const engine = state._crdtEngine!;
     const fid = getOrCreateSceneFeature(state);
-    engine.set_param(fid, "environment", JSON.stringify(crdtStr(JSON.stringify(environment))));
+    applyCommand(engine, { type: "set_param", id: fid, key: "environment", value: crdtStr(JSON.stringify(environment)) });
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },
@@ -2070,7 +2051,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const state = get();
     const engine = state._crdtEngine!;
     const fid = getOrCreateSceneFeature(state);
-    engine.set_param(fid, "lights", JSON.stringify(crdtStr(JSON.stringify(lights))));
+    applyCommand(engine, { type: "set_param", id: fid, key: "lights", value: crdtStr(JSON.stringify(lights)) });
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },
@@ -2080,7 +2061,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const engine = state._crdtEngine!;
     const lights = [...(state.document.scene?.lights ?? []), light];
     const fid = getOrCreateSceneFeature(state);
-    engine.set_param(fid, "lights", JSON.stringify(crdtStr(JSON.stringify(lights))));
+    applyCommand(engine, { type: "set_param", id: fid, key: "lights", value: crdtStr(JSON.stringify(lights)) });
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },
@@ -2090,7 +2071,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const engine = state._crdtEngine!;
     const lights = (state.document.scene?.lights ?? []).filter((l) => l.id !== lightId);
     const fid = getOrCreateSceneFeature(state);
-    engine.set_param(fid, "lights", JSON.stringify(crdtStr(JSON.stringify(lights))));
+    applyCommand(engine, { type: "set_param", id: fid, key: "lights", value: crdtStr(JSON.stringify(lights)) });
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },
@@ -2102,7 +2083,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       l.id === lightId ? { ...l, ...updates } : l,
     );
     const fid = getOrCreateSceneFeature(state);
-    engine.set_param(fid, "lights", JSON.stringify(crdtStr(JSON.stringify(lights))));
+    applyCommand(engine, { type: "set_param", id: fid, key: "lights", value: crdtStr(JSON.stringify(lights)) });
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },
@@ -2111,7 +2092,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const state = get();
     const engine = state._crdtEngine!;
     const fid = getOrCreateSceneFeature(state);
-    engine.set_param(fid, "background", JSON.stringify(crdtStr(JSON.stringify(background))));
+    applyCommand(engine, { type: "set_param", id: fid, key: "background", value: crdtStr(JSON.stringify(background)) });
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },
@@ -2120,7 +2101,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const state = get();
     const engine = state._crdtEngine!;
     const fid = getOrCreateSceneFeature(state);
-    engine.set_param(fid, "post_processing", JSON.stringify(crdtStr(JSON.stringify(postProcessing))));
+    applyCommand(engine, { type: "set_param", id: fid, key: "post_processing", value: crdtStr(JSON.stringify(postProcessing)) });
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },
@@ -2130,7 +2111,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const engine = state._crdtEngine!;
     const presets = [...(state.document.scene?.cameraPresets ?? []), preset];
     const fid = getOrCreateSceneFeature(state);
-    engine.set_param(fid, "camera_presets", JSON.stringify(crdtStr(JSON.stringify(presets))));
+    applyCommand(engine, { type: "set_param", id: fid, key: "camera_presets", value: crdtStr(JSON.stringify(presets)) });
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },
@@ -2140,7 +2121,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const engine = state._crdtEngine!;
     const presets = (state.document.scene?.cameraPresets ?? []).filter((p) => p.id !== presetId);
     const fid = getOrCreateSceneFeature(state);
-    engine.set_param(fid, "camera_presets", JSON.stringify(crdtStr(JSON.stringify(presets))));
+    applyCommand(engine, { type: "set_param", id: fid, key: "camera_presets", value: crdtStr(JSON.stringify(presets)) });
     const doc: Document = JSON.parse(engine.get_document_json());
     set({ document: doc, isDirty: true });
   },
@@ -2153,374 +2134,140 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const state = get();
     const schId = getOrCreateSchematicFeature(state);
     const sheet = { title: title ?? "Sheet 1", components: [], wires: [], junctions: [], labels: [] };
-    const result = state._crdtEngine!.set_param(schId, "sheet", JSON.stringify(crdtStr(JSON.stringify(sheet))));
+    const result = applyCommand(state._crdtEngine!, { type: "set_param", id: schId, key: "sheet", value: crdtStr(JSON.stringify(sheet)) });
     set(applyLegacyResult(result));
   },
 
   initPcb: (options) => {
-    const w = options?.width ?? 50;
-    const h = options?.height ?? 30;
-    const layerCount = options?.layers ?? 2;
-    const thickness = options?.thickness ?? 1.6;
-    const traceWidth = options?.traceWidth ?? 0.15;
-    const clearance = options?.clearance ?? 0.15;
-    const boardName = options?.name ?? "PCB Board";
-
-    assertSupportedCopperCount(layerCount);
-    const copperNames = copperLayerNames(layerCount);
-    const dielectricPerLayer = layerCount > 1 ? thickness / (layerCount - 1) : thickness;
-    const stackupLayers: Pcb["stackup"]["layers"] = copperNames.map((layer, i) =>
-      i === 0
-        ? { layer, copperThickness: 0.035 }
-        : {
-            layer,
-            copperThickness: 0.035,
-            dielectricThickness: dielectricPerLayer,
-            dielectricEr: 4.5,
-            material: "FR4",
-          },
-    );
-
-    const pcbBoard: Pcb = {
-      outline: {
-        vertices: [
-          { x: 0, y: 0 },
-          { x: w, y: 0 },
-          { x: w, y: h },
-          { x: 0, y: h },
-        ],
-        thickness,
-      },
-      stackup: { layers: stackupLayers },
-      nets: [],
-      rules: {
-        defaultRules: {
-          name: "Default",
-          traceWidth,
-          clearance,
-          viaDiameter: 0.6,
-          viaDrill: 0.3,
-        },
-        edgeClearance: 0.25,
-        holeToHole: 0.25,
-        minAnnularRing: 0.13,
-        minDrill: 0.2,
-        // KiCad's microvia defaults (uvia_min_drill / uvia_min_size).
-        minMicroviaDrill: 0.1,
-        minMicroviaDiameter: 0.2,
-        inferredFloors: [],
-      },
-      footprints: [],
-      traces: [],
-      vias: [],
-      zones: [],
-    };
-
-    return addPcbToDocument(get, set, pcbBoard, boardName);
+    // The engine builds the board (stackup, default rules) and refuses an
+    // unsupported layer count.
+    return addBoard(get, set, "pcb_init", {
+      width: options?.width,
+      height: options?.height,
+      layers: options?.layers,
+      thickness: options?.thickness,
+      trace_width: options?.traceWidth,
+      clearance: options?.clearance,
+      name: options?.name,
+    });
   },
 
   importPcb: (pcb, name) => {
-    return addPcbToDocument(get, set, pcb, name ?? "Imported PCB");
+    return addBoard(get, set, "pcb_import", { board: pcb, name: name ?? "Imported PCB" });
   },
 
-  syncSchematicToPcb: (boardNodeId, netlist, opts) => {
-    const state = get();
-    const pcb = state.document.pcb;
-    const schematic = state.document.schematic;
+  syncSchematicToPcb: (_boardNodeId, netlist, opts) => {
+    const { pcb, schematic } = get().document;
     if (!pcb || !schematic) return;
-    const { pcb: nextPcb, changed } = syncSchematicToPcbData(pcb, schematic, netlist, opts);
-    if (!changed) return;
-    const patch = setCrdtPcb(state, nextPcb);
-    set({ ...patch, isDirty: true });
+    // Reconciliation (placement + net mapping) runs in the engine; an
+    // in-sync board is an empty edit.
+    applyEdit(get, set, "pcb_sync_schematic", { netlist, place_unplaced: opts?.placeUnplaced });
   },
 
   moveSchematicComponent: (idx, position) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    if (sch.components[idx]) {
-      sch.components[idx]!.position = { x: position.x, y: position.y };
-    }
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_move_component", { index: idx, position: { x: position.x, y: position.y } });
   },
 
   moveSchematicComponentWithWires: (idx, position, wireUpdates) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    if (sch.components[idx]) {
-      sch.components[idx]!.position = { x: position.x, y: position.y };
-    }
-    for (const wu of wireUpdates) {
-      const wire = sch.wires[wu.wireIdx];
-      if (wire) {
-        wire[wu.endpoint] = { x: wu.pos.x, y: wu.pos.y };
-      }
-    }
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_move_component", {
+      index: idx,
+      position: { x: position.x, y: position.y },
+      wire_updates: wireUpdates.map((wu) => ({
+        wire_index: wu.wireIdx,
+        endpoint: wu.endpoint,
+        position: { x: wu.pos.x, y: wu.pos.y },
+      })),
+    });
   },
 
   moveFootprint: (_nodeId, idx, position) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    const fp = pcb.footprints[idx];
-    if (!fp) return;
-    const dx = position.x - fp.position.x;
-    const dy = position.y - fp.position.y;
-    // Direct manipulation: drag connected trace endpoints along with the
-    // footprint so routed copper stays attached to its pads. Pad world
-    // positions are computed with the (unchanged) footprint rotation; any
-    // trace endpoint coincident with a pad shifts by the same delta.
-    if (dx !== 0 || dy !== 0) {
-      const TOL = 0.08; // mm
-      const ang = ((fp.rotation ?? 0) * Math.PI) / 180;
-      const cos = Math.cos(ang);
-      const sin = Math.sin(ang);
-      const padWorld = fp.pads.map((p) => ({
-        x: fp.position.x + (p.position.x * cos - p.position.y * sin),
-        y: fp.position.y + (p.position.x * sin + p.position.y * cos),
-      }));
-      for (const tr of pcb.traces) {
-        for (const end of [tr.start, tr.end]) {
-          if (
-            padWorld.some(
-              (pw) => Math.abs(end.x - pw.x) < TOL && Math.abs(end.y - pw.y) < TOL,
-            )
-          ) {
-            end.x += dx;
-            end.y += dy;
-          }
-        }
-      }
-    }
-    fp.position = { x: position.x, y: position.y };
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    // The engine drags trace endpoints on the footprint's pads along with it.
+    applyEdit(get, set, "pcb_move_footprint", { index: idx, position: { x: position.x, y: position.y } });
   },
 
   rotateFootprint: (_nodeId, idx, angleDeg) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    if (pcb.footprints[idx]) {
-      const fp = pcb.footprints[idx]!;
-      fp.rotation = ((fp.rotation ?? 0) + angleDeg) % 360;
-    }
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_rotate_footprint", { index: idx, angle: angleDeg });
   },
 
   flipFootprint: (_nodeId, idx) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    if (pcb.footprints[idx]) {
-      const fp = pcb.footprints[idx]!;
-      fp.front = !(fp.front ?? true);
-    }
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_flip_footprint", { index: idx });
   },
 
   addTrace: (_nodeId, trace) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.traces.push({
-      start: { x: trace.start.x, y: trace.start.y },
-      end: { x: trace.end.x, y: trace.end.y },
-      width: trace.width, layer: trace.layer as Pcb["traces"][number]["layer"], net: trace.net,
+    applyEdit(get, set, "pcb_add_trace", {
+      trace: {
+        start: { x: trace.start.x, y: trace.start.y },
+        end: { x: trace.end.x, y: trace.end.y },
+        width: trace.width, layer: trace.layer, net: trace.net,
+      },
     });
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 
   removeTrace: (_nodeId, idx) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.traces.splice(idx, 1);
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_remove_trace", { index: idx });
   },
 
   addVia: (_nodeId, via) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.vias.push({
-      position: { x: via.position.x, y: via.position.y },
-      diameter: via.diameter, drill: via.drill,
-      startLayer: via.startLayer as Pcb["vias"][number]["startLayer"],
-      endLayer: via.endLayer as Pcb["vias"][number]["endLayer"],
-      net: via.net,
+    applyEdit(get, set, "pcb_add_via", {
+      via: {
+        position: { x: via.position.x, y: via.position.y },
+        diameter: via.diameter, drill: via.drill,
+        startLayer: via.startLayer, endLayer: via.endLayer, net: via.net,
+      },
     });
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
   },
 
   removeVia: (_nodeId, idx) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.vias.splice(idx, 1);
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_remove_via", { index: idx });
   },
 
   addSchematicComponent: (comp, _boardNodeId) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    sch.components.push(structuredClone(comp));
-    setCrdtSchematic(state, sch);
-    // Auto-add footprint to PCB
-    if (state.document.pcb && comp.footprintId && comp.properties?.footprintTemplate) {
-      const pcb = structuredClone(state.document.pcb);
-      try {
-        const template = JSON.parse(comp.properties.footprintTemplate);
-        const fpCount = pcb.footprints.length;
-        pcb.footprints.push({
-          ref: comp.ref, value: comp.value, footprintName: comp.footprintId,
-          position: { x: 10 + (fpCount % 5) * 10, y: 10 + Math.floor(fpCount / 5) * 10 },
-          pads: template.pads ?? [], graphics: template.graphics ?? [],
-        });
-      } catch { /* skip */ }
-      set({ ...setCrdtPcb(state, pcb), isDirty: true });
-      return;
-    }
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    // The engine also places the component's footprint template on the board.
+    applyEdit(get, set, "sch_add_component", { component: comp });
   },
 
   removeSchematicComponent: (idx, _boardNodeId) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    const removed = sch.components.splice(idx, 1);
-    setCrdtSchematic(state, sch);
-    if (state.document.pcb && removed[0]) {
-      const pcb = structuredClone(state.document.pcb);
-      pcb.footprints = pcb.footprints.filter((fp) => fp.ref !== removed[0]!.ref);
-      set({ ...setCrdtPcb(state, pcb), isDirty: true });
-      return;
-    }
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_remove_component", { index: idx });
   },
 
   updateSchematicComponent: (idx, updates, _boardNodeId) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    if (sch.components[idx]) {
-      Object.assign(sch.components[idx]!, updates);
-    }
-    setCrdtSchematic(state, sch);
-    if (updates.value !== undefined && state.document.pcb) {
-      const pcb = structuredClone(state.document.pcb);
-      const ref = sch.components[idx]?.ref;
-      if (ref) {
-        const fp = pcb.footprints.find((f) => f.ref === ref);
-        if (fp) fp.value = updates.value;
-      }
-      set({ ...setCrdtPcb(state, pcb), isDirty: true });
-      return;
-    }
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_update_component", { index: idx, updates });
   },
 
   addSchematicWire: (wire) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    sch.wires.push({ start: { ...wire.start }, end: { ...wire.end } });
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_add_wire", { wire: { start: { ...wire.start }, end: { ...wire.end } } });
   },
 
   removeSchematicWire: (idx) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    sch.wires.splice(idx, 1);
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_remove_wire", { index: idx });
   },
 
   addSchematicLabel: (label) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    sch.labels.push(structuredClone(label));
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_add_label", { label });
   },
 
   removeSchematicLabel: (idx) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    sch.labels.splice(idx, 1);
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_remove_label", { index: idx });
   },
 
   addSchematicJunction: (junction) => {
-    const state = get();
-    if (!state.document.schematic) return;
-    const sch = structuredClone(state.document.schematic);
-    sch.junctions.push({ position: { ...junction.position } });
-    setCrdtSchematic(state, sch);
-    const doc: Document = JSON.parse(state._crdtEngine!.get_document_json());
-    set({ document: doc, isDirty: true });
+    applyEdit(get, set, "sch_add_junction", { junction: { position: { ...junction.position } } });
   },
 
   addFootprint: (_nodeId, fp) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.footprints.push(structuredClone(fp));
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_add_footprint", { footprint: fp });
   },
 
   removeFootprint: (_nodeId, idx) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.footprints.splice(idx, 1);
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_remove_footprint", { index: idx });
   },
 
   setBoardOutline: (outline) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const pcb = structuredClone(state.document.pcb);
-    pcb.outline = structuredClone(outline);
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_set_outline", { outline });
   },
 
   resizeBoard: (width, height) => {
-    const state = get();
-    if (!state.document.pcb) return;
-    const w = Math.max(1, width);
-    const h = Math.max(1, height);
-    const pcb = structuredClone(state.document.pcb);
-    // Rectangular resize: origin corner at [0,0] (matches initPcb), keep
-    // thickness + cutouts. Custom (non-rect) outlines are rectangularized.
-    pcb.outline = {
-      ...pcb.outline,
-      vertices: [
-        { x: 0, y: 0 },
-        { x: w, y: 0 },
-        { x: w, y: h },
-        { x: 0, y: h },
-      ],
-    };
-    set({ ...setCrdtPcb(state, pcb), isDirty: true });
+    applyEdit(get, set, "pcb_resize", { width, height });
   },
 
   persistSketchConstraints: (partId, session) => {
@@ -2534,45 +2281,22 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       session,
     );
     if (next.length === 0 && (state.document.constraints ?? []).length === 0) return;
-    set({ ...setCrdtConstraints(state, next), isDirty: true });
+    applyEdit(get, set, "set_design_constraints", { constraints: next });
   },
 
   addDesignConstraint: (constraint) => {
-    const state = get();
-    const existing = state.document.constraints ?? [];
-    let max = 0;
-    for (const c of existing) {
-      const m = /^c(\d+)$/.exec(c.id);
-      if (m) max = Math.max(max, Number(m[1]));
-    }
-    const next = [...existing, { ...constraint, id: `c${max + 1}` } as DesignConstraint];
-    set({ ...setCrdtConstraints(state, next), isDirty: true });
+    // The engine assigns the next free `cN` id.
+    if (!applyEdit(get, set, "add_design_constraint", { constraint })) return null;
     return get().solveDesignConstraints();
   },
 
   removeDesignConstraint: (id) => {
-    const state = get();
-    const existing = state.document.constraints ?? [];
-    const next = existing.filter((c) => c.id !== id);
-    if (next.length === existing.length) return;
     // Deleting only frees degrees of freedom — no re-solve needed.
-    set({ ...setCrdtConstraints(state, next), isDirty: true });
+    applyEdit(get, set, "remove_design_constraint", { id });
   },
 
   updateDesignConstraint: (id, patch) => {
-    const state = get();
-    const existing = state.document.constraints ?? [];
-    const next = existing.map((c) => {
-      if (c.id !== id) return c;
-      const kind = { ...c.kind } as Record<string, unknown>;
-      if (patch.value !== undefined && "value" in kind) kind.value = patch.value;
-      return {
-        ...c,
-        kind: kind as DesignConstraint["kind"],
-        ...(patch.driven !== undefined ? { driven: patch.driven } : {}),
-      };
-    });
-    set({ ...setCrdtConstraints(state, next), isDirty: true });
+    if (!applyEdit(get, set, "update_design_constraint", { id, value: patch.value, driven: patch.driven })) return null;
     return get().solveDesignConstraints();
   },
 
@@ -2595,28 +2319,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
         report: DesignConstraintSolveReport;
       };
       const { report } = result;
-      // Apply the solved board back through the CRDT (single-board app
-      // model, like setCrdtPcb's other callers). Sketch groups re-solve on
-      // the MCP/kernel path; the app UI scope is the PCB editor.
-      let patch: Partial<DocumentState> = {};
-      const movedBoard = report.groups.find(
-        (g) => g.converged && getNodePcb(result.document, g.node),
-      );
-      if (
-        movedBoard &&
-        (report.movedFootprints.length > 0 || report.movedVertices.length > 0)
-      ) {
-        const pcb = getNodePcb(result.document, movedBoard.node);
-        if (pcb) patch = setCrdtPcb(get(), structuredClone(pcb));
-      }
-      // Back-annotated driven dimensions ride the constraints feature.
-      if (report.drivenValues.length > 0) {
-        patch = {
-          ...patch,
-          ...setCrdtConstraints(get(), result.document.constraints ?? []),
-        };
-      }
-      set({ ...patch, isDirty: true });
+      // The engine commits the solve: a converged PCB group's moved board
+      // and back-annotated driven values.
+      applyEdit(get, set, "apply_design_solve", { document: result.document, report });
       return report;
     } catch (e) {
       console.warn("[document-store] solveDesignConstraints failed:", e);

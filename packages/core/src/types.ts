@@ -292,7 +292,18 @@ export interface StitchPartInfo {
   translateNodeId: NodeId;
 }
 
-export type PartInfo = PrimitivePartInfo | BooleanPartInfo | ExtrudePartInfo | RevolvePartInfo | SweepPartInfo | LoftPartInfo | ImportedMeshPartInfo | FilletPartInfo | ChamferPartInfo | ShellPartInfo | LinearPatternPartInfo | CircularPatternPartInfo | MirrorPartInfo | TextPartInfo | PcbBoardPartInfo | EmbroideryPatternPartInfo | StitchPartInfo;
+/** An imported IR subgraph the engine keeps verbatim (no feature kind). */
+export interface IrSubgraphPartInfo {
+  id: string;
+  name: string;
+  kind: "ir-subgraph";
+  subgraphNodeId: NodeId;
+  scaleNodeId: NodeId;
+  rotateNodeId: NodeId;
+  translateNodeId: NodeId;
+}
+
+export type PartInfo = PrimitivePartInfo | BooleanPartInfo | ExtrudePartInfo | RevolvePartInfo | SweepPartInfo | LoftPartInfo | ImportedMeshPartInfo | FilletPartInfo | ChamferPartInfo | ShellPartInfo | LinearPatternPartInfo | CircularPatternPartInfo | MirrorPartInfo | TextPartInfo | PcbBoardPartInfo | EmbroideryPatternPartInfo | StitchPartInfo | IrSubgraphPartInfo;
 
 export function isPrimitivePart(part: PartInfo): part is PrimitivePartInfo {
   return part.kind === "cube" || part.kind === "cylinder" || part.kind === "sphere";

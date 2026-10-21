@@ -102,6 +102,8 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   bom_add_line: { title: "Add BOM Line", annotations: RW },
   bom_export: { title: "Export BOM", annotations: RW },
   search_mechanical_parts: { title: "Search Mechanical Parts", annotations: RO_NET },
+  check_part_stock: { title: "Check Part Stock", annotations: RO_NET },
+  bom_check_stock: { title: "Check BOM Stock", annotations: RO_NET },
 
   // ── Live review window ─────────────────────────────────────────────────
   share_session: { title: "Share Session", annotations: RW },
@@ -117,6 +119,9 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   update: { title: "Update Node", annotations: RW },
   delete: { title: "Delete Node", annotations: DESTRUCTIVE },
   set_material: { title: "Set Material", annotations: RW },
+  place: { title: "Place Part by Anchor", annotations: RW },
+  tube: { title: "Create Tube", annotations: RW },
+  polyline_tube: { title: "Create Polyline Tube", annotations: RW },
   inspect_part: { title: "Inspect Part", annotations: RO },
   describe_scene: { title: "Describe Scene", annotations: RO },
 
@@ -154,6 +159,14 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     annotations: RO,
     outputSchema: objectOut({
       measure: { type: "object" },
+      document_id: { type: "string" },
+    }),
+  },
+  check_joint_range: {
+    title: "Check Joint Range",
+    annotations: RO,
+    outputSchema: objectOut({
+      joint_range: { type: "object" },
       document_id: { type: "string" },
     }),
   },
@@ -241,6 +254,8 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
 
   // ── ECAD (PCB) ─────────────────────────────────────────────────────────
   create_schematic: { title: "Create Schematic", annotations: RW },
+  update_schematic: { title: "Update Schematic", annotations: RW },
+  inspect_schematic: { title: "Inspect Schematic", annotations: RO },
   place_components: { title: "Place Components", annotations: RW },
   route_nets: { title: "Route Nets", annotations: RW },
   add_coil: { title: "Add Coil", annotations: RW },

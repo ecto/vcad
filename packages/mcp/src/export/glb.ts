@@ -15,6 +15,7 @@ import { getKernelWasmSync } from "@vcad/engine";
 import type { EvaluatedScene } from "@vcad/engine";
 import type { Document, Vec3 } from "@vcad/ir";
 import { sceneExportUnits } from "./scene-units.js";
+import { partIdMap } from "../tools/part-ids.js";
 
 interface ExportWasm {
   buildGlbBytes(
@@ -49,11 +50,13 @@ export function exportKernel(): ExportWasm {
  * into part identity for click-to-select.
  */
 export function buildPartLabels(doc: Document): string[] {
+  // Pure read: a content-hashed preview must not mint ids into the doc.
+  const ids = partIdMap(doc);
   return doc.roots
     .filter((entry) => entry.visible !== false)
     .map((entry) => {
       const name = doc.nodes[String(entry.root)]?.name;
-      return `${entry.root}:${name ?? ""}`;
+      return `${ids[String(entry.root)]}:${name ?? ""}`;
     });
 }
 

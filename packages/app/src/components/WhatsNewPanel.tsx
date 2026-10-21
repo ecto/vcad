@@ -79,7 +79,6 @@ export function WhatsNewPanel() {
         >
           {/* Header */}
           <div
-            data-tauri-drag-region=""
             className="flex items-center justify-between px-4 py-3 border-b border-border/40"
           >
             <Dialog.Title className="text-sm font-bold text-text flex items-center gap-2">

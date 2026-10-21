@@ -1,0 +1,304 @@
+{
+  "replica": 3,
+  "steps": [
+    {
+      "tool": "create",
+      "args": {
+        "params": {
+          "size": {
+            "x": 10,
+            "y": 4,
+            "z": 2
+          }
+        },
+        "type": "cube"
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "params": {
+          "child": "3:0",
+          "offset": {
+            "x": 30,
+            "y": 0,
+            "z": 0
+          }
+        },
+        "type": "translate"
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "params": {
+          "angles": {
+            "x": 0,
+            "y": 0,
+            "z": 90
+          },
+          "child": "3:0"
+        },
+        "type": "rotate"
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "params": {
+          "angles": {
+            "x": 15,
+            "y": 0,
+            "z": 0
+          },
+          "child": "3:0",
+          "pivot": "origin"
+        },
+        "type": "rotate"
+      }
+    },
+    {
+      "tool": "tube",
+      "args": {
+        "end": {
+          "x": 0,
+          "y": 30,
+          "z": 40
+        },
+        "radius": 2.5,
+        "start": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    {
+      "tool": "polyline_tube",
+      "args": {
+        "name": "Frame",
+        "points": [
+          {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 40,
+            "y": 0,
+            "z": 0
+          },
+          {
+            "x": 40,
+            "y": 40,
+            "z": 10
+          }
+        ]
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "params": {
+          "direction": {
+            "x": 0,
+            "y": 0,
+            "z": 5
+          },
+          "sketch": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "segments": [
+              {
+                "end": {
+                  "x": 12,
+                  "y": 0
+                },
+                "start": {
+                  "x": 0,
+                  "y": 0
+                },
+                "type": "Line"
+              },
+              {
+                "end": {
+                  "x": 0,
+                  "y": 9
+                },
+                "start": {
+                  "x": 12,
+                  "y": 0
+                },
+                "type": "Line"
+              },
+              {
+                "end": {
+                  "x": 0,
+                  "y": 0
+                },
+                "start": {
+                  "x": 0,
+                  "y": 9
+                },
+                "type": "Line"
+              }
+            ],
+            "x_dir": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_dir": {
+              "x": 0,
+              "y": 1,
+              "z": 0
+            }
+          }
+        },
+        "type": "extrude"
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "params": {
+          "angle_deg": 360,
+          "axis_dir": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "axis_origin": {
+            "x": 0,
+            "y": 0,
+            "z": 0
+          },
+          "sketch": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "segments": [
+              {
+                "end": {
+                  "x": 8,
+                  "y": 0
+                },
+                "start": {
+                  "x": 5,
+                  "y": 0
+                },
+                "type": "Line"
+              },
+              {
+                "end": {
+                  "x": 8,
+                  "y": 6
+                },
+                "start": {
+                  "x": 8,
+                  "y": 0
+                },
+                "type": "Line"
+              },
+              {
+                "end": {
+                  "x": 5,
+                  "y": 0
+                },
+                "start": {
+                  "x": 8,
+                  "y": 6
+                },
+                "type": "Line"
+              }
+            ],
+            "x_dir": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_dir": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            }
+          }
+        },
+        "type": "revolve"
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "params": {
+          "direction": {
+            "x": 0,
+            "y": 0,
+            "z": 1
+          },
+          "sketch": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "segments": [
+              {
+                "end": {
+                  "x": 5,
+                  "y": 0
+                },
+                "start": {
+                  "x": 0,
+                  "y": 0
+                },
+                "type": "Line"
+              },
+              {
+                "end": {
+                  "x": 9,
+                  "y": 9
+                },
+                "start": {
+                  "x": 5,
+                  "y": 0
+                },
+                "type": "Line"
+              }
+            ],
+            "x_dir": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_dir": {
+              "x": 0,
+              "y": 1,
+              "z": 0
+            }
+          }
+        },
+        "type": "extrude"
+      }
+    }
+  ],
+  "expect": {
+    "outcomes": [
+      "ok:3:0",
+      "ok:-",
+      "ok:-",
+      "ok:-",
+      "ok:3:1",
+      "ok:3:3",
+      "ok:3:4",
+      "ok:3:5",
+      "err:invalid"
+    ],
+    "hash": "0697e6f8b3c7e67f"
+  }
+}

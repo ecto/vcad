@@ -1,0 +1,21 @@
+{
+  "id": "2026-10-20-mcp-stable-part-ids",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "breaking",
+  "title": "MCP part_id is now a stable engine id",
+  "summary": "MCP part_id is now a stable \"replica:seq\" id (e.g. \"0:7\") that does not shift when other parts are deleted. Legacy digit ids and part names are still accepted.",
+  "features": [
+    "mcp",
+    "part-ids"
+  ],
+  "mcpTools": [
+    "read",
+    "delete",
+    "set_material",
+    "measure",
+    "check_clearance",
+    "render_view",
+    "apply_edits"
+  ]
+}

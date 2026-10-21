@@ -1,0 +1,91 @@
+{
+  "replica": 11,
+  "steps": [
+    {
+      "command": {
+        "kind": "scene-settings",
+        "type": "create_feature"
+      }
+    },
+    {
+      "command": {
+        "id": "11:0",
+        "key": "background",
+        "type": "set_param",
+        "value": {
+          "String": "{\"type\":\"solid\",\"color\":\"#101418\"}"
+        }
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "type": "cube"
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "type": "sphere"
+      }
+    },
+    {
+      "tool": "create",
+      "args": {
+        "type": "cylinder"
+      }
+    },
+    {
+      "command": {
+        "id": "11:2",
+        "key": "radius",
+        "type": "set_param",
+        "value": {
+          "F64": 4.5
+        }
+      }
+    },
+    {
+      "command": {
+        "id": "11:1",
+        "index": 3,
+        "type": "reorder"
+      }
+    },
+    {
+      "command": {
+        "id": "11:77",
+        "key": "radius",
+        "type": "set_param",
+        "value": {
+          "F64": 1
+        }
+      }
+    },
+    {
+      "command": {
+        "kind": "drawing-settings",
+        "params": {
+          "title_block": {
+            "String": "{}"
+          }
+        },
+        "type": "create_feature"
+      }
+    }
+  ],
+  "expect": {
+    "outcomes": [
+      "ok:11:0",
+      "ok:-",
+      "ok:11:1",
+      "ok:11:2",
+      "ok:11:3",
+      "ok:-",
+      "ok:-",
+      "err:unknown_id",
+      "ok:11:4"
+    ],
+    "hash": "9c517eebc10acee8"
+  }
+}

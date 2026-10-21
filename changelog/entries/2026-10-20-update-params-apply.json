@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-20-update-params-apply",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "fix",
+  "title": "AI updates to part dimensions actually apply",
+  "summary": "An update like resizing a cube via size {x,y,z} reported success but changed nothing; nested params now map onto the part's real fields, and unknown params are refused.",
+  "features": ["engine", "ai"],
+  "mcpTools": ["update"]
+}

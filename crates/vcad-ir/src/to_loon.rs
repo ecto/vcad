@@ -388,6 +388,43 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             node_ref(*child, doc)
         )),
 
+        CsgOp::SweepRotate {
+            child,
+            axis_origin,
+            axis_dir,
+            angle_lo_deg,
+            angle_hi_deg,
+            step_deg,
+            clearance,
+        } => {
+            let clearance = clearance.filter(|c| *c != 0.0);
+            let head = match (step_deg, clearance) {
+                (_, Some(_)) => "sweep-rotate-clear",
+                (Some(_), None) => "sweep-rotate-n",
+                (None, None) => "sweep-rotate",
+            };
+            let mut out = format!(
+                "[{} {} {} {} {} {} {} {} {}",
+                head,
+                fmt_f64(axis_origin.x),
+                fmt_f64(axis_origin.y),
+                fmt_f64(axis_origin.z),
+                fmt_f64(axis_dir.x),
+                fmt_f64(axis_dir.y),
+                fmt_f64(axis_dir.z),
+                fmt_f64(*angle_lo_deg),
+                fmt_f64(*angle_hi_deg),
+            );
+            if step_deg.is_some() || clearance.is_some() {
+                out.push_str(&format!(" {}", fmt_f64(step_deg.unwrap_or(0.0))));
+            }
+            if let Some(c) = clearance {
+                out.push_str(&format!(" {}", fmt_f64(c)));
+            }
+            out.push_str(&format!(" {}]", node_ref(*child, doc)));
+            OpResult::Ok(out)
+        }
+
         CsgOp::Sketch2D {
             origin,
             x_dir,
@@ -546,6 +583,19 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             }
         }
 
+        CsgOp::Hull { children, points } => {
+            let mut parts: Vec<String> = children.iter().map(|id| node_ref(*id, doc)).collect();
+            if !points.is_empty() {
+                let flat: Vec<String> = points.iter().map(|v| fmt_f64(*v)).collect();
+                let pts = format!("[hull-points #[{}]]", flat.join(" "));
+                if parts.is_empty() {
+                    return OpResult::Ok(pts);
+                }
+                parts.push(pts);
+            }
+            OpResult::Ok(format!("[hull {}]", parts.join(" ")))
+        }
+
         CsgOp::Text2D { text, height, .. } => OpResult::Unsupported(
             "Text2D".to_string(),
             format!(
@@ -582,6 +632,10 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
         }),
 
         CsgOp::MeshImport { path, scale } => OpResult::Ok(match scale {
+            // The loader assumes metres; a uniform 0.001 is a mm STL.
+            Some(s) if s.x == 0.001 && s.y == 0.001 && s.z == 0.001 => {
+                format!("[import-mesh {:?} :units \"mm\"]", path)
+            }
             Some(s) => format!(
                 "[import-mesh-scaled {} {} {} {:?}]",
                 fmt_f64(s.x),
@@ -838,7 +892,8 @@ fn get_child_ids(op: &CsgOp) -> Vec<NodeId> {
         | CsgOp::Chamfer { child, .. }
         | CsgOp::Shell { child, .. }
         | CsgOp::LinearPattern { child, .. }
-        | CsgOp::CircularPattern { child, .. } => vec![*child],
+        | CsgOp::CircularPattern { child, .. }
+        | CsgOp::SweepRotate { child, .. } => vec![*child],
 
         CsgOp::Union { left, right }
         | CsgOp::Difference { left, right }
@@ -849,6 +904,7 @@ fn get_child_ids(op: &CsgOp) -> Vec<NodeId> {
         | CsgOp::Sweep { sketch, .. } => vec![*sketch],
 
         CsgOp::Loft { sketches, .. } => sketches.clone(),
+        CsgOp::Hull { children, .. } => children.clone(),
 
         // A sheet-metal chain is a parent chain like any other: the base
         // flange has to be emitted before the flange that folds off it.

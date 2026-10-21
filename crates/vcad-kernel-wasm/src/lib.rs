@@ -1407,6 +1407,23 @@ impl Solid {
             .map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Convex hull of a flat `[x, y, z, ...]` point cloud.
+    #[wasm_bindgen(js_name = hullPoints)]
+    pub fn hull_points(points: Vec<f64>) -> Result<Solid, JsError> {
+        vcad_kernel::Solid::hull(&[], &points)
+            .map(|inner| Solid { inner })
+            .ok_or_else(|| JsError::new("hull: points do not span a volume"))
+    }
+
+    /// Convex hull of this solid together with `other`. Hull is associative,
+    /// so an n-ary hull folds pairwise.
+    #[wasm_bindgen(js_name = hullWith)]
+    pub fn hull_with(&self, other: &Solid) -> Result<Solid, JsError> {
+        vcad_kernel::Solid::hull(&[&self.inner, &other.inner], &[])
+            .map(|inner| Solid { inner })
+            .ok_or_else(|| JsError::new("hull: inputs do not span a volume"))
+    }
+
     // =========================================================================
     // Boolean operations
     // =========================================================================
@@ -1765,6 +1782,38 @@ impl Solid {
                 Vec3::new(axis_dir_x, axis_dir_y, axis_dir_z),
                 count,
                 angle_deg,
+            ),
+        }
+    }
+
+    /// Swept volume: union of this solid rotated about an axis over
+    /// `[deg_lo, deg_hi]`. `step_deg <= 0` picks the step automatically;
+    /// `clearance` (mm) dilates the solid first. Triangle-soup result,
+    /// meant as a clearance-cut tool.
+    #[wasm_bindgen(js_name = sweepRotate)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn sweep_rotate(
+        &self,
+        axis_origin_x: f64,
+        axis_origin_y: f64,
+        axis_origin_z: f64,
+        axis_dir_x: f64,
+        axis_dir_y: f64,
+        axis_dir_z: f64,
+        deg_lo: f64,
+        deg_hi: f64,
+        step_deg: f64,
+        clearance: f64,
+    ) -> Solid {
+        use vcad_kernel::vcad_kernel_math::{Point3, Vec3};
+        Solid {
+            inner: self.inner.sweep_rotate(
+                Point3::new(axis_origin_x, axis_origin_y, axis_origin_z),
+                Vec3::new(axis_dir_x, axis_dir_y, axis_dir_z),
+                deg_lo,
+                deg_hi,
+                (step_deg > 0.0).then_some(step_deg),
+                clearance.max(0.0),
             ),
         }
     }
@@ -4969,6 +5018,30 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             ))
         }
 
+        vcad_ir::CsgOp::SweepRotate {
+            child,
+            axis_origin,
+            axis_dir,
+            angle_lo_deg,
+            angle_hi_deg,
+            step_deg,
+            clearance,
+        } => {
+            let c = evaluate_node(doc, *child)?;
+            Ok(c.sweep_rotate(
+                axis_origin.x,
+                axis_origin.y,
+                axis_origin.z,
+                axis_dir.x,
+                axis_dir.y,
+                axis_dir.z,
+                *angle_lo_deg,
+                *angle_hi_deg,
+                step_deg.unwrap_or(0.0),
+                clearance.unwrap_or(0.0),
+            ))
+        }
+
         vcad_ir::CsgOp::Shell { child, thickness } => {
             let c = evaluate_node(doc, *child)?;
             c.shell(*thickness)
@@ -5173,6 +5246,17 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         vcad_ir::CsgOp::Loft { .. } => Err(JsError::new(
             "Loft not supported in VCode evaluation - use evaluateDocument",
         )),
+
+        vcad_ir::CsgOp::Hull { children, points } => {
+            let solids = children
+                .iter()
+                .map(|id| evaluate_node(doc, *id))
+                .collect::<Result<Vec<_>, _>>()?;
+            let refs: Vec<&vcad_kernel::Solid> = solids.iter().map(|s| &s.inner).collect();
+            vcad_kernel::Solid::hull(&refs, points)
+                .map(|inner| Solid { inner })
+                .ok_or_else(|| JsError::new("hull: inputs do not span a volume"))
+        }
 
         vcad_ir::CsgOp::ImportedMesh { .. } => Err(JsError::new(
             "ImportedMesh not supported in VCode evaluation - use evaluateDocument",

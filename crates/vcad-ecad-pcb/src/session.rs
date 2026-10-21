@@ -235,8 +235,7 @@ pub struct RouteSession {
     drills_dead: usize,
     /// net → via drill diameter from its net class (mirrors how a routed via
     /// is sized when it is written back to the board).
-    net_via_drill: HashMap<String, f64>,
-    default_via_drill: f64,
+    via_sizing: crate::via_sizing::ViaSizing,
     /// Per-span bboxes (parallel to `live`), so a remove can stamp the dirty
     /// grid without consulting the tree.
     bounds: Vec<[f64; 4]>,
@@ -248,8 +247,6 @@ pub struct RouteSession {
     /// pogo-pin field of a Tag-Connect footprint. The via oracle refuses any
     /// site inside one, matching DRC's `check_keepout`.
     no_via_zones: Vec<Vec<Vec2>>,
-    /// Via annulus radius, for testing a via against no-via keepouts.
-    via_keepout_r: f64,
 }
 
 fn pcb_no_via_zones(pcb: &Pcb) -> Vec<Vec<Vec2>> {
@@ -379,25 +376,20 @@ impl RouteSession {
             .copied()
             .fold(default_clearance, f64::max);
         // net → via drill from its class, mirroring how the router's vias are
-        // sized on write-back (see `router::legalize::via_geom_for`), so a
+        // sized on write-back (see `crate::via_sizing`), so a
         // caller can probe a candidate via without plumbing drill sizes.
-        let default_via_drill = pcb.rules.default_rules.via_drill;
-        let mut net_via_drill: HashMap<String, f64> = HashMap::new();
-        for (class, nets) in &pcb.rules.net_class_assignments {
-            let Some(c) = pcb.rules.class_rules.iter().find(|c| c.name == *class) else {
-                continue;
-            };
-            for n in nets {
-                net_via_drill.insert(n.clone(), c.via_drill);
-            }
-        }
+        // Per-span via sizes (microvia / drilled), the same table the router
+        // writes vias back with (see `crate::via_sizing`), so a caller probes
+        // and commits a via at the size it lands on the board.
+        let via_sizing = crate::via_sizing::ViaSizing::from_pcb(pcb);
+        let mut net_names: Vec<&str> = pcb.nets.iter().map(|n| n.name.as_str()).collect();
+        net_names.push("");
         let drills = drill_elements(pcb);
         // Broadphase reach: the biggest drill radius already on the board or
         // that any net class can still mint.
-        let max_drill_radius = net_via_drill
-            .values()
-            .chain(std::iter::once(&default_via_drill))
-            .map(|d| d / 2.0)
+        let max_drill_radius = net_names
+            .iter()
+            .map(|n| via_sizing.max_spec(n).drill / 2.0)
             .chain(drills.iter().map(|d| d.radius))
             .fold(0.0_f64, f64::max);
         let pair_nets: std::collections::HashSet<String> = crate::drc::diff_pairs(pcb)
@@ -440,13 +432,11 @@ impl RouteSession {
             hole_to_hole: pcb.rules.hole_to_hole,
             is_drill,
             drills_dead: 0,
-            net_via_drill,
-            default_via_drill,
+            via_sizing,
             bounds,
             dirty,
             change_epoch: 0,
             no_via_zones: pcb_no_via_zones(pcb),
-            via_keepout_r: pcb.rules.default_rules.via_diameter / 2.0,
         }
     }
 
@@ -691,24 +681,47 @@ impl RouteSession {
         self.drills_dead = 0;
     }
 
-    /// The drill diameter (mm) a via on `net` gets from its net class — the
-    /// same size the router writes back to the board (mirrors
-    /// `router::legalize::via_geom_for`), so a caller can probe a candidate via
-    /// without plumbing drill sizes through every call site.
-    pub fn via_drill_for(&self, net: &str) -> f64 {
-        self.net_via_drill
-            .get(net)
-            .copied()
-            .unwrap_or(self.default_via_drill)
+    /// The board's per-span via size table.
+    pub fn via_sizing(&self) -> &crate::via_sizing::ViaSizing {
+        &self.via_sizing
     }
 
-    /// [`RouteSession::probe_drill`] for a via on `net`, sized from its net
-    /// class — the shape every via-placement site in the router uses.
+    /// Replace the via size table (e.g. with a microvia override).
+    pub fn set_via_sizing(&mut self, sizing: crate::via_sizing::ViaSizing) {
+        self.via_sizing = sizing;
+    }
+
+    /// The via `net` gets spanning copper layers `a`..`b` — THE size every
+    /// router via site probes, commits and writes back.
+    pub fn via_spec(&self, net: &str, a: PcbLayer, b: PcbLayer) -> crate::via_sizing::ViaSpec {
+        self.via_sizing.spec(net, a, b)
+    }
+
+    /// The largest drill a via on `net` can get (its through size) — for a
+    /// site that has not chosen a span.
+    pub fn via_drill_for(&self, net: &str) -> f64 {
+        self.via_sizing.max_spec(net).drill
+    }
+
+    /// [`RouteSession::probe_drill`] for a via on `net` at its LARGEST size
+    /// (conservative; prefer [`Self::probe_via_span`] when the span is known).
     pub fn probe_via_drill(&self, center: Vec2, net: &str) -> DrillProbe {
+        let s = self.via_sizing.max_spec(net);
+        self.probe_via_sized(center, s.r(), s.drill)
+    }
+
+    /// Hole-to-hole + no-via-zone probe for a via on `net` spanning `a`..`b`,
+    /// at that span's size.
+    pub fn probe_via_span(&self, center: Vec2, net: &str, a: PcbLayer, b: PcbLayer) -> DrillProbe {
+        let s = self.via_spec(net, a, b);
+        self.probe_via_sized(center, s.r(), s.drill)
+    }
+
+    fn probe_via_sized(&self, center: Vec2, r: f64, drill: f64) -> DrillProbe {
         if self
             .no_via_zones
             .iter()
-            .any(|z| disc_touches_polygon(center, self.via_keepout_r, z))
+            .any(|z| disc_touches_polygon(center, r, z))
         {
             return DrillProbe {
                 legal: false,
@@ -716,7 +729,7 @@ impl RouteSession {
                 nearest: Some(center),
             };
         }
-        self.probe_drill(center, self.via_drill_for(net))
+        self.probe_drill(center, drill)
     }
 
     /// Axis-aligned bounding boxes (`(min, max)` corners) of every live copper
@@ -995,7 +1008,9 @@ mod tests {
 
     fn rules() -> DesignRules {
         DesignRules {
+            allow_stacked_microvias: false,
             inferred_floors: Vec::new(),
+            rule_areas: Vec::new(),
             min_microvia_drill: 0.1,
             min_microvia_diameter: 0.2,
             default_rules: NetClassRules {

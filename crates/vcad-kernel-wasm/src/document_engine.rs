@@ -12,7 +12,7 @@ use serde::Serialize;
 use vcad_app::document_api::{ApiResult, DocumentApi};
 use vcad_app::feature::FeatureInput;
 use vcad_app::materializer::materialize;
-use vcad_app::migrate::{detect_format, migrate_v1, FileFormat};
+use vcad_app::migrate::{detect_format, FileFormat};
 use vcad_crdt::{CrdtDocument, FeatureId, FractionalIndex, ReplicaId, Value};
 use wasm_bindgen::prelude::*;
 
@@ -56,6 +56,37 @@ impl WasmDocumentEngine {
         };
         let result = self.api.add_feature(input);
         self.serialize_api_result(&result)
+    }
+
+    /// Apply a JSON `DocCommand` (see `vcad_app::command`). Returns the
+    /// shared JSON envelope: `{"ok":true,"result":{…}}` or
+    /// `{"ok":false,"error":{"kind":…,"message":…}}`. Unlike the per-method
+    /// calls, unknown ids and malformed input are reported, not ignored.
+    pub fn apply(&mut self, command_json: &str) -> String {
+        self.api.apply_json_envelope(command_json)
+    }
+
+    /// Create an empty engine with a fixed replica id (deterministic stable
+    /// ids — used by the parity harness and by hosts that persist replicas).
+    #[wasm_bindgen(js_name = withReplica)]
+    pub fn with_replica(replica_id: f64) -> Self {
+        Self {
+            api: DocumentApi::new(ReplicaId(replica_id as u64)),
+            migration: None,
+        }
+    }
+
+    /// Deterministic state fingerprint; matches `vcad_engine_state_hash`.
+    #[wasm_bindgen(js_name = stateHash)]
+    pub fn state_hash(&self) -> String {
+        self.api.state_hash()
+    }
+
+    /// Lower an AI tool call (`create`, `translate`, `linear_pattern`, …)
+    /// to a `DocCommand` in Rust and apply it. Same envelope as `apply`;
+    /// tools the engine can't lower yet report `{"kind":"unsupported"}`.
+    pub fn apply_tool(&mut self, tool: &str, args_json: &str) -> String {
+        self.api.apply_tool_envelope(tool, args_json)
     }
 
     /// Update a feature with new params from a JSON-serialized `FeatureInput`.
@@ -274,13 +305,10 @@ impl WasmDocumentEngine {
 
     /// Import IR JSON into the current document (e.g. AI-generated geometry).
     pub fn import_ir(&mut self, ir_json: &str) -> JsValue {
-        let doc: vcad_ir::Document = match serde_json::from_str(ir_json) {
-            Ok(d) => d,
-            Err(_) => return self.build_result(None),
-        };
-        let migrated = migrate_v1(&doc);
-        let ops = migrated.ops_since(&std::collections::BTreeMap::new());
-        self.api.crdt_mut().merge(ops);
+        // Delegate: `DocumentApi::import_ir` also rebuilds the stable-id
+        // map. A local copy of the merge skipped that, so every imported
+        // feature was unresolvable by id (`apply_tool` → `unknown_id`).
+        self.api.import_ir(ir_json);
         self.build_result(None)
     }
 
@@ -314,6 +342,8 @@ impl WasmDocumentEngine {
     pub fn merge_remote(&mut self, ops_json: &str) -> JsValue {
         if let Ok(ops) = serde_json::from_str(ops_json) {
             self.api.crdt_mut().merge(ops);
+            // Remote creates must be addressable by stable id here too.
+            self.api.rebuild_stable_ids();
         }
         self.build_result(None)
     }

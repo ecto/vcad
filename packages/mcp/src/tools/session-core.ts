@@ -9,6 +9,7 @@
  */
 
 import { type Document } from "@vcad/ir";
+import { ensurePartIds } from "./part-ids.js";
 
 // ─── Session cache (per-connection isolated, or process-wide fallback) ────────
 //
@@ -54,14 +55,160 @@ function activeDocuments(): Map<string, Document> {
 export const documents = {
   has: (id: string): boolean => activeDocuments().has(id),
   get: (id: string): Document | undefined => activeDocuments().get(id),
-  set: (id: string, doc: Document): Map<string, Document> =>
-    activeDocuments().set(id, doc),
-  delete: (id: string): boolean => activeDocuments().delete(id),
-  clear: (): void => activeDocuments().clear(),
+  set: (id: string, doc: Document): Map<string, Document> => {
+    const map = activeDocuments();
+    bumpVersion(map, id);
+    return map.set(id, doc);
+  },
+  delete: (id: string): boolean => {
+    const map = activeDocuments();
+    dropEngineIn(map, id);
+    return map.delete(id);
+  },
+  clear: (): void => {
+    const map = activeDocuments();
+    freeScopeEngines(map);
+    map.clear();
+  },
   get size(): number {
     return activeDocuments().size;
   },
 };
+
+// ─── Per-session document-engine cache ────────────────────────────────────────
+//
+// Engine-lowered mutations (create/update/delete/set_material) run through a
+// Rust `WasmDocumentEngine`. Importing the whole session IR on every call is
+// O(doc), so one engine is cached per session document. The cache hangs off
+// the ACTIVE documents Map (WeakMap-keyed), so it inherits the exact same
+// per-connection isolation as the documents facade: a tenant's scope can
+// never see — or reuse — another scope's engine.
+//
+// Validity: a cached engine mirrors the IR it last produced. It is reused only
+// while (a) the session still holds that very Document object AND (b) the
+// session's write version is unchanged since the engine produced it. The
+// version is bumped by every `documents.set` (replacement, undo, hydrate,
+// register) and by `markDocumentWritten` — which the dispatch layer calls
+// (via `recordHistorySnapshot`) before every doc-writing tool that is NOT
+// engine-managed, because most tools mutate the session doc in place, where
+// identity alone can't see the change. No deep comparison is done. On a
+// mismatch the engine is freed and the caller re-imports.
+
+/** Minimal engine surface the cache needs (free WASM memory). */
+export interface CachedEngineHandle {
+  free?(): void;
+}
+
+interface EngineEntry {
+  engine: CachedEngineHandle;
+  doc: Document;
+  version: number;
+}
+
+const engineCaches = new WeakMap<Map<string, Document>, Map<string, EngineEntry>>();
+const writeVersions = new WeakMap<Map<string, Document>, Map<string, number>>();
+
+/** Tools whose writes go through `runMutation`, which keeps the engine cache
+ *  coherent itself (re-stamps on engine success, invalidates on the legacy
+ *  path). Every other doc-writing tool invalidates on its snapshot. */
+const ENGINE_MANAGED_TOOLS = new Set(["create", "update", "delete", "set_material"]);
+
+function versionsFor(map: Map<string, Document>): Map<string, number> {
+  let v = writeVersions.get(map);
+  if (!v) writeVersions.set(map, (v = new Map()));
+  return v;
+}
+
+function bumpVersion(map: Map<string, Document>, id: string): void {
+  const v = versionsFor(map);
+  v.set(id, (v.get(id) ?? 0) + 1);
+}
+
+function safeFree(engine: CachedEngineHandle): void {
+  try {
+    engine.free?.();
+  } catch {
+    // A double free / torn-down WASM instance must not fail the caller.
+  }
+}
+
+function dropEngineIn(map: Map<string, Document>, id: string): void {
+  const cache = engineCaches.get(map);
+  const entry = cache?.get(id);
+  if (!entry) return;
+  cache!.delete(id);
+  safeFree(entry.engine);
+}
+
+/** Current write version of a session in the active scope. */
+export function documentWriteVersion(documentId: string): number {
+  return versionsFor(activeDocuments()).get(documentId) ?? 0;
+}
+
+/** Note that a session's IR was (or is about to be) written outside the
+ *  engine — invalidates its cached engine on the next engine call. */
+export function markDocumentWritten(documentId: string): void {
+  bumpVersion(activeDocuments(), documentId);
+}
+
+/** The cached engine for `documentId` if it still mirrors `doc` exactly,
+ *  else null (a stale entry is freed). The entry is REMOVED from the cache:
+ *  the caller owns the engine until it hands it back with `storeEngine`, so
+ *  a failed apply can never leave a half-applied engine cached. */
+export function takeCachedEngine<E extends CachedEngineHandle>(
+  documentId: string,
+  doc: Document,
+): E | null {
+  const map = activeDocuments();
+  const cache = engineCaches.get(map);
+  const entry = cache?.get(documentId);
+  if (!entry) return null;
+  cache!.delete(documentId);
+  if (
+    entry.doc === doc &&
+    map.get(documentId) === doc &&
+    entry.version === (versionsFor(map).get(documentId) ?? 0)
+  ) {
+    return entry.engine as E;
+  }
+  safeFree(entry.engine);
+  return null;
+}
+
+/** Cache `engine` as the mirror of session `documentId`, whose IR is now
+ *  exactly `doc` (the engine's own output). Frees any engine it displaces.
+ *  No-op (engine freed) when `doc` isn't the resident session document. */
+export function storeEngine(documentId: string, doc: Document, engine: CachedEngineHandle): void {
+  const map = activeDocuments();
+  if (map.get(documentId) !== doc) {
+    safeFree(engine);
+    return;
+  }
+  let cache = engineCaches.get(map);
+  if (!cache) engineCaches.set(map, (cache = new Map()));
+  const prev = cache.get(documentId);
+  if (prev && prev.engine !== engine) safeFree(prev.engine);
+  cache.set(documentId, { engine, doc, version: versionsFor(map).get(documentId) ?? 0 });
+}
+
+/** Free and forget a session's cached engine (active scope). */
+export function dropEngine(documentId: string): void {
+  dropEngineIn(activeDocuments(), documentId);
+}
+
+/** Whether the active scope holds a cached engine for `documentId`. */
+export function hasCachedEngine(documentId: string): boolean {
+  return engineCaches.get(activeDocuments())?.has(documentId) ?? false;
+}
+
+/** Free every cached engine of one scope's documents Map — called when a
+ *  per-connection scope ends, so its WASM memory doesn't outlive it. */
+export function freeScopeEngines(map: Map<string, Document>): void {
+  const cache = engineCaches.get(map);
+  if (!cache) return;
+  for (const entry of cache.values()) safeFree(entry.engine);
+  cache.clear();
+}
 
 let nextId = 1;
 
@@ -152,7 +299,14 @@ export function registerSession(doc: Document): string {
  * rehydrated after a restart. Re-establishing that binding here means every
  * entry path is covered at once, rather than each loader remembering to do it.
  */
-const documentEnterHooks: Array<(doc: Document) => void> = [];
+const documentEnterHooks: Array<(doc: Document) => void> = [
+  // Stable part ids are migrated on load: a document entering the cache
+  // without them (hand-written IR, a pre-stable-id session) gets ids assigned
+  // here, once, so every later read and write sees the same ones.
+  (doc) => {
+    ensurePartIds(doc);
+  },
+];
 
 /** Register a hook to run on every document entering the session cache. */
 export function addDocumentEnterHook(hook: (doc: Document) => void): void {
@@ -293,9 +447,12 @@ function cloneDoc(doc: Document): Document {
  * isn't resident (nothing to snapshot). Caps the stack at MAX_HISTORY by
  * dropping the oldest entry.
  */
-export function recordHistorySnapshot(documentId: string): void {
+export function recordHistorySnapshot(documentId: string, toolName?: string): void {
   const doc = documents.get(documentId);
   if (!doc) return;
+  // The tool about to run may write the doc in place, bypassing the engine:
+  // invalidate the cached engine unless the tool keeps it coherent itself.
+  if (!toolName || !ENGINE_MANAGED_TOOLS.has(toolName)) markDocumentWritten(documentId);
   const stack = sessionHistory.get(documentId) ?? [];
   stack.push(cloneDoc(doc));
   if (stack.length > MAX_HISTORY) stack.shift();
@@ -325,6 +482,7 @@ export function undoLastSnapshot(documentId: string): Document | null {
 /** Drop a session's undo history (on close/drop) so it can't outlive the doc. */
 export function clearHistory(documentId: string): void {
   sessionHistory.delete(documentId);
+  dropEngine(documentId);
   lastChangedParts.delete(documentId);
   lastTriangleCount.delete(documentId);
 }

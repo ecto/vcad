@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-20-import-keeps-materials",
+  "version": "0.10.0",
+  "date": "2026-10-20",
+  "category": "fix",
+  "title": "Imported parts keep their material and visibility",
+  "summary": "Opening a document through the engine reset every part's material to default and showed hidden parts; both now survive import and every later edit.",
+  "features": ["engine", "import", "materials"]
+}

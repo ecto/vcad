@@ -13,15 +13,9 @@ import {
   useUiStore,
   useEngineStore,
   SELECTION_FILTER_OPTIONS,
-  type SelectionFilter,
 } from "@vcad/core";
 import type { ReactNode } from "react";
 import { useCallback } from "react";
-import {
-  nativeMenuAvailable,
-  popupNativeContextMenu,
-  type NativeMenuItem,
-} from "@/lib/native-context-menu";
 
 function MenuItem({
   icon: Icon,
@@ -53,8 +47,7 @@ function MenuItem({
 
 /**
  * Compute the dimensions of the design-PCB-to-fit feature for the
- * selected part — pulled into a helper so both the native and Radix
- * paths share the bounding-box logic.
+ * selected part.
  */
 function dispatchDesignPcbForSelection() {
   const selectedIds = useUiStore.getState().selectedPartIds;
@@ -125,85 +118,6 @@ export function ContextMenu({ children }: { children: ReactNode }) {
     },
     [applyBoolean, select],
   );
-
-  // Native popup path — composed at click time so disabled/checked state
-  // reflects the latest store snapshot, and the radio submenu reads off
-  // SELECTION_FILTER_OPTIONS without re-encoding it. Action ids match the
-  // dispatch table at the bottom; rename `vcad:` events for clarity.
-  const buildNativeMenu = (): NativeMenuItem[] => {
-    const filter = useUiStore.getState().selectionFilter;
-    const sel = useUiStore.getState().selectedPartIds;
-    const has = sel.size > 0;
-    const oneSel = sel.size === 1;
-    const twoSel = sel.size === 2;
-    return [
-      { kind: "item", id: "duplicate", label: "Duplicate", accelerator: "CmdOrCtrl+D", disabled: !has },
-      { kind: "item", id: "rename", label: "Rename", disabled: !oneSel },
-      { kind: "item", id: "delete", label: "Delete", accelerator: "Delete", disabled: !has },
-      { kind: "separator" },
-      {
-        kind: "submenu",
-        label: "Selection priority",
-        items: SELECTION_FILTER_OPTIONS.map((o) => ({
-          kind: "item" as const,
-          id: `selfilter:${o.value}`,
-          label: o.hotkey ? `${o.label}  (${o.hotkey})` : o.label,
-          checked: filter === o.value,
-        })),
-      },
-      { kind: "separator" },
-      { kind: "item", id: "boolean:union", label: "Union", accelerator: "CmdOrCtrl+Shift+U", disabled: !twoSel },
-      { kind: "item", id: "boolean:difference", label: "Difference", accelerator: "CmdOrCtrl+Shift+D", disabled: !twoSel },
-      { kind: "item", id: "boolean:intersection", label: "Intersection", accelerator: "CmdOrCtrl+Shift+I", disabled: !twoSel },
-      { kind: "separator" },
-      { kind: "item", id: "pcb:add", label: "Add PCB Board" },
-      { kind: "item", id: "pcb:fit", label: "Design PCB to fit", disabled: !oneSel },
-    ];
-  };
-
-  const dispatchById = (id: string) => {
-    if (id === "duplicate") return handleDuplicate();
-    if (id === "rename")
-      return window.dispatchEvent(new CustomEvent("vcad:rename-part"));
-    if (id === "delete") return handleDelete();
-    if (id.startsWith("selfilter:")) {
-      const v = id.slice("selfilter:".length) as SelectionFilter;
-      return setSelectionFilter(v);
-    }
-    if (id.startsWith("boolean:")) {
-      const op = id.slice("boolean:".length) as
-        | "union"
-        | "difference"
-        | "intersection";
-      return handleBoolean(op);
-    }
-    if (id === "pcb:add")
-      return window.dispatchEvent(new CustomEvent("vcad:open-pcb-dialog"));
-    if (id === "pcb:fit") return dispatchDesignPcbForSelection();
-  };
-
-  // Native path — a single right-click handler swaps the Radix root for
-  // a real OS menu. We still render Radix's <Trigger> so `children` keeps
-  // its tabindex/aria, but we intercept contextmenu before Radix sees it.
-  const onNativeContext = async (e: React.MouseEvent) => {
-    if (!nativeMenuAvailable()) return;
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-      const id = await popupNativeContextMenu(buildNativeMenu());
-      if (id) dispatchById(id);
-    } catch {
-      // Native popup failed — Radix handles the fallback on the next click.
-    }
-  };
-
-  if (nativeMenuAvailable()) {
-    return (
-      <div onContextMenu={onNativeContext} className="contents">
-        {children}
-      </div>
-    );
-  }
 
   return (
     <RadixContextMenu.Root>

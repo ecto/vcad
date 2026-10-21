@@ -50,6 +50,7 @@ fn validate_op(doc: &Document, node_id: NodeId, op: &CsgOp) -> Result<(), EvalEr
         | CsgOp::Mirror { child, .. }
         | CsgOp::LinearPattern { child, .. }
         | CsgOp::CircularPattern { child, .. }
+        | CsgOp::SweepRotate { child, .. }
         | CsgOp::Shell { child, .. }
         | CsgOp::Fillet { child, .. }
         | CsgOp::Chamfer { child, .. }
@@ -64,6 +65,11 @@ fn validate_op(doc: &Document, node_id: NodeId, op: &CsgOp) -> Result<(), EvalEr
         CsgOp::Loft { sketches, .. } => {
             for (i, s) in sketches.iter().enumerate() {
                 check_ref(doc, *s, || format!("nodes[{node_id}].Loft.sketches[{i}]"))?;
+            }
+        }
+        CsgOp::Hull { children, .. } => {
+            for (i, c) in children.iter().enumerate() {
+                check_ref(doc, *c, || format!("nodes[{node_id}].Hull.children[{i}]"))?;
             }
         }
         // Leaf ops without NodeId references.
@@ -128,6 +134,7 @@ fn csg_op_name(op: &CsgOp) -> &'static str {
         CsgOp::Scale { .. } => "Scale",
         CsgOp::LinearPattern { .. } => "LinearPattern",
         CsgOp::CircularPattern { .. } => "CircularPattern",
+        CsgOp::SweepRotate { .. } => "SweepRotate",
         CsgOp::Shell { .. } => "Shell",
         CsgOp::Fillet { .. } => "Fillet",
         CsgOp::Chamfer { .. } => "Chamfer",
@@ -138,6 +145,7 @@ fn csg_op_name(op: &CsgOp) -> &'static str {
         CsgOp::Revolve { .. } => "Revolve",
         CsgOp::Sweep { .. } => "Sweep",
         CsgOp::Loft { .. } => "Loft",
+        CsgOp::Hull { .. } => "Hull",
         CsgOp::ImportedMesh { .. } => "ImportedMesh",
         CsgOp::StepImport { .. } => "StepImport",
         CsgOp::MeshImport { .. } => "MeshImport",

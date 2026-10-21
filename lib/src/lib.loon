@@ -85,9 +85,13 @@
   [Sweep Sketch Path]
   [Loft (Vec Sketch)]
   [LoftClosed (Vec Sketch)]
+  ; [Hull solids points] — convex hull of the solids' vertices plus a flat
+  ; #[x y z ...] point list (either may be empty)
+  [Hull (Vec Solid) (Vec f64)]
   ; Patterns
   [LinearPattern Solid f64 f64 f64 Int f64]
   [CircularPattern Solid f64 f64 f64 f64 f64 f64 Int f64]
+  [SweepRotate Solid f64 f64 f64 f64 f64 f64 f64 f64 f64 f64]
   ; Fasteners — catalog-backed hardware, oriented by its own axis.
   ; [Fastener spec style fx fy fz tx ty tz stack]
   [Fastener Str Str f64 f64 f64 f64 f64 f64 (Vec Str)]
@@ -106,8 +110,8 @@
   [ConeN f64 f64 f64 Int]
   [TorusN f64 f64 Int]
   ; Imported geometry — a vendor part placed as-is, not re-modelled.
-  ; [MeshImport path sx sy sz]  (STL; scale 1 1 1 for none)
-  [MeshImport Str f64 f64 f64]
+  ; [MeshImport path sx sy sz opts]  (STL; scale 1 1 1 for none; opts = [:units "mm"] or [])
+  [MeshImport Str f64 f64 f64 (Vec a)]
   ; [StepImport path solid-index]
   [StepImport Str Int]
   ; Sheet metal — a bend graph, NOT a CSG solid. A chain starts at a base
@@ -150,7 +154,11 @@
 
 [type SketchSeg
   [SLine f64 f64 f64 f64]
-  [SArc f64 f64 f64 f64 f64 f64 Bool]]
+  [SArc f64 f64 f64 f64 f64 f64 Bool]
+  ; A closed polygon: flat #[x0 y0 x1 y1 ...] outer loop plus a list of
+  ; hole loops (flat points, or #[cx cy r] for a circle). Expands to the
+  ; sketch's outer profile + interior holes.
+  [SPoly (Vec f64) (Vec (Vec f64))]]
 
 [type Sketch
   [Sketch f64 f64 f64 f64 f64 f64 f64 f64 f64 (Vec SketchSeg)]
@@ -294,17 +302,33 @@
 [let import-step [fn [path] [StepImport path 0]]]
 ; Pick a specific body out of a multi-body STEP (0-based).
 [let import-step-body [fn [path index] [StepImport path index]]]
-[let import-mesh [fn [path] [MeshImport path 1.0 1.0 1.0]]]
-; Scaled import — for an STL authored in metres or inches.
-[let import-mesh-scaled [fn [sx sy sz path] [MeshImport path sx sy sz]]]
+;
+; UNITS: STL carries no unit. `import-mesh` reads coordinates as METRES
+; (the URDF convention — Unitree/ROS meshes) and converts to mm, so a
+; millimetre STL comes in 1000x too big unless it says so:
+;   [import-mesh "vendor/bracket.stl" :units "mm"]   ; also "cm", "m", "in"
+; The loader warns when an import lands over 10 m or under 1 mm.
+[let import-mesh [fn [path & opts] [MeshImport path 1.0 1.0 1.0 opts]]]
+; Scaled import — extra non-uniform scale on top of :units (default "m").
+[let import-mesh-scaled [fn [sx sy sz path & opts] [MeshImport path sx sy sz opts]]]
 
 ; Booleans (subject-last: [pipe body [difference tool]] → subtract tool from body)
 [let union [fn [other s] [Union s other]]]
 [let difference [fn [tool s] [Difference s tool]]]
 [let intersection [fn [other s] [Intersection s other]]]
 
+; Convex hull — the smallest convex solid enclosing its inputs.
+;   [hull a b c]                       hull of the solids together
+;   [hull-points #[x0 y0 z0 x1 ...]]   hull of a point cloud (>= 4 points)
+; Curved inputs are tessellated first, so the result is faceted (mesh-backed;
+; downstream booleans accept it).
+[let hull [fn [& solids] [Hull solids #[]]]]
+[let hull-points [fn [pts] [Hull #[] pts]]]
+
 ; Transforms (subject-last)
 [let translate [fn [x y z s] [Translate s x y z]]]
+; rotate: degrees about the origin, R = Rx·Ry·Rz — the solid turns about world
+; Z FIRST, then world Y, then world X. Nest single-axis rotates when unsure.
 [let rotate [fn [rx ry rz s] [Rotate s rx ry rz]]]
 [let scale [fn [sx sy sz s] [Scale s sx sy sz]]]
 ; mirror across a plane through (ox,oy,oz) with normal (nx,ny,nz)
@@ -338,6 +362,18 @@
   [Sketch ox oy oz xx xy xz yx yy yz segs]]]
 [let line [fn [x1 y1 x2 y2] [SLine x1 y1 x2 y2]]]
 [let arc [fn [x1 y1 x2 y2 cx cy ccw] [SArc x1 y1 x2 y2 cx cy ccw]]]
+; [polygon #[x0 y0 x1 y1 ...]] — a closed polyline as ONE sketch segment.
+; [polygon #[outer...] #[#[hole1...] #[hole2...]]] — plus interior holes,
+; which extrude cuts as walls directly (no boolean Difference). Winding is
+; free; holes must lie strictly inside the outer loop and not touch each
+; other. A hole given as exactly three numbers #[cx cy r] is a true circle
+; (two arcs, not a faceted n-gon) — the bolt-hole case. A sketch holding a
+; polygon must hold nothing else. Revolve/loft/sweep refuse holes; a
+; hole-free polygon works everywhere a sketch does.
+;   [extrude 0 0 3.2 [sketch 0 0 0 1 0 0 0 1 0
+;     #[[polygon #[0 0 80 0 80 40 0 40] #[#[10 20 1.6] #[70 20 1.6]]]]]]
+[let polygon [fn [pts & holes]
+  [SPoly pts [if [empty? holes] #[] [first holes]]]]]
 
 ; Extrude/Revolve (subject-last: sketch is the subject)
 [let extrude [fn [dx dy dz sk] [Extrude sk dx dy dz]]]
@@ -409,6 +445,20 @@
   [LinearPattern s dx dy dz count spacing]]]
 [let circular-pattern [fn [ox oy oz ax ay az count angle s]
   [CircularPattern s ox oy oz ax ay az count angle]]]
+
+; Swept rotation — the union of s rotated about the axis through (ox oy oz)
+; along (ax ay az) over [lo, hi] degrees (inclusive). A clearance-cut tool:
+;   [pipe shell [difference [sweep-rotate 0 0 0  1 0 0  0 120 calf]]]
+; carves the path the calf swings through over a 0..120° knee fold.
+; Auto step keeps chord sag <= 0.25 mm and copy spacing <= 15 mm at the
+; furthest point; -n fixes the step; -clear also dilates s outward by c mm
+; first (step 0 = auto). The result is triangle soup — a tool, not a part.
+[let sweep-rotate [fn [ox oy oz ax ay az lo hi s]
+  [SweepRotate s ox oy oz ax ay az lo hi 0 0]]]
+[let sweep-rotate-n [fn [ox oy oz ax ay az lo hi step s]
+  [SweepRotate s ox oy oz ax ay az lo hi step 0]]]
+[let sweep-rotate-clear [fn [ox oy oz ax ay az lo hi step c s]
+  [SweepRotate s ox oy oz ax ay az lo hi step c]]]
 
 ; ---------------------------------------------------------------------------
 ; Fasteners — one form per fastener, oriented by its axis.
@@ -675,7 +725,12 @@
 [let mate-pattern-phase [fn [id a b n-fold ax ay az phase-a phase-b tol-deg]
   [PatternPhaseMate id a b n-fold ax ay az phase-a phase-b tol-deg]]]
 
-; Joint constructors
+; Joint constructors. `parent`/`child` name INSTANCES (not parts). The axis is
+; in the parent's frame; (px py pz) is the pivot in the parent part's local
+; frame and (cx cy cz) the same pivot in the child part's local frame:
+;   child_world = parent_world · T(p) · R(axis, state) · T(−c)
+; so a jointed child's own [instance ... x y z] position is IGNORED — the joint
+; places it. lo/hi are degrees (revolute) or mm (prismatic).
 [let revolute-joint [fn [name ax ay az lo hi parent px py pz child cx cy cz]
   [RevoluteJoint name ax ay az lo hi parent px py pz child cx cy cz]]]
 [let prismatic-joint [fn [name ax ay az lo hi parent px py pz child cx cy cz]

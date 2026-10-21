@@ -240,8 +240,17 @@ export {
   commandRegistry,
   executeCrud,
   HIGH_LEVEL_TOOLS_SYSTEM_PROMPT_APPENDIX,
-  applyToolOutcome,
   listPartsFromDocument,
+  partIdForRoot,
+  partIdForNode,
+  ensurePartIds,
+  partIdMap,
+  movePartId,
+  forgetPartId,
+  rootForPartId,
+  rootIndexForPartId,
+  isStablePartId,
+  partIdDeprecation,
 } from "./commands/index.js";
 export type {
   ToolSchemaEntry,
@@ -251,7 +260,8 @@ export type {
   AnthropicTool,
   ToolOutcome,
   PlannedResponse,
-  ApplyOutcomeResult,
+  ResolvedPart,
+  PartIdMatch,
 } from "./commands/index.js";
 
 // Part labels

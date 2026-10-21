@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-21-gpu-photoreal-limits",
+  "version": "0.10.0",
+  "date": "2026-10-21",
+  "category": "fix",
+  "title": "GPU photoreal handles big meshes and driver failures",
+  "summary": "The GPU path tracer no longer refuses meshes over 1M triangles (the device's buffer limit applies instead), and a driver that loses the device now gives a clear error, with vcad render falling back to the CPU.",
+  "features": ["photoreal", "gpu", "render"]
+}

@@ -10,6 +10,8 @@ import type { Document } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
 import { hydrateMacros, macroPrelude, type InlineLoon } from "./loon-macros.js";
 import { documents, getSession, recordTriangles } from "./session-core.js";
+import { assetNote, resolveLoonAssets } from "./loon-assets.js";
+import { isRemoteDeployment } from "./remote.js";
 import { attachLoonSource } from "./source-provenance.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
@@ -68,10 +70,24 @@ export const createCadLoonSchema = {
     base_dir: {
       type: "string" as const,
       description:
-        "Server-side directory that `[use <name>]` resolves against — the " +
-        "server reads <base_dir>/<name>.loon (dots are path separators) and " +
-        "hands the sources to the kernel, following nested imports. Reads " +
-        "are confined to this directory. Explicit `modules` entries win.",
+        "LOCAL servers only (stdio / running on your machine): the project " +
+        "directory. `[use <name>]` reads <base_dir>/<name>.loon (dots are " +
+        "path separators, nested imports followed) and relative " +
+        "`[import-mesh …]` / `[import-step …]` paths read from it too; reads " +
+        "are confined to it. Explicit `modules` / `files` entries win. A " +
+        "hosted server cannot see your disk — there, pass `modules` and " +
+        "`files` by value instead.",
+    },
+    files: {
+      type: "object" as const,
+      description:
+        "Binary assets by value, for `[import-mesh \"<path>\"]` (STL) and " +
+        "`[import-step \"<path>\"]`: a { \"<path exactly as the program " +
+        "names it>\": \"<base64 file contents>\" } map. Works on every " +
+        "deployment, hosted included — the way to load a multi-file project " +
+        "with meshes when the server can't read your filesystem. STL is " +
+        "read in metres → mm, like the CLI.",
+      additionalProperties: { type: "string" as const },
     },
     format: {
       type: "string" as const,
@@ -89,6 +105,7 @@ interface CreateLoonInput {
   loons?: InlineLoon[];
   modules?: Record<string, string>;
   base_dir?: string;
+  files?: Record<string, string>;
   format?: "vcode" | "json";
 }
 
@@ -157,7 +174,12 @@ export function composeLoonModules(input: unknown): Record<string, string> {
   for (const m of loons ?? []) map[m.name] = m.source;
   Object.assign(map, modules ?? {});
 
-  const dirs = [...(base_dir ? [base_dir] : []), ...loonLibDirs()];
+  // A hosted server's disk is not the caller's: base_dir there would read
+  // the wrong machine, so only the local lib path applies.
+  const dirs = [
+    ...(base_dir && !isRemoteDeployment() ? [base_dir] : []),
+    ...loonLibDirs(),
+  ];
   if (dirs.length) {
     const pending = [
       ...importedNames(source),
@@ -181,16 +203,59 @@ export function composeLoonModules(input: unknown): Record<string, string> {
   return map;
 }
 
+/**
+ * Imported module names the server could not supply. The kernel would fall
+ * through to its own filesystem lookup for these — which in WASM fails with
+ * an opaque "operation not supported on this platform".
+ */
+function missingModules(source: string, modules: Record<string, string>): string[] {
+  const all = [source, ...Object.values(modules)].flatMap(importedNames);
+  return [...new Set(all)].filter((n) => !(n in modules));
+}
+
+/** Rewrite a kernel module-read failure into what the caller should do. */
+function explainEvalError(e: unknown, input: CreateLoonInput, missing: string[]): Error {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (!missing.length || !/cannot read module|not supported on this platform/.test(msg)) {
+    return e instanceof Error ? e : new Error(msg);
+  }
+  const why = isRemoteDeployment()
+    ? "this hosted server cannot read your filesystem"
+    : input.base_dir
+      ? `not found under base_dir ${input.base_dir}`
+      : "no `base_dir` was given";
+  return new Error(
+    `${msg}\nModule(s) not supplied: ${missing.join(", ")} (${why}). Pass their ` +
+      `sources by value in \`modules\` ({ "<name>": "<loon source>" })` +
+      (isRemoteDeployment() ? "." : ", or set `base_dir` to the project directory."),
+  );
+}
+
 /** Evaluate loon source and return a CAD document. */
 export function createCadLoon(
   input: unknown,
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const { format = "vcode", base_dir } = input as CreateLoonInput;
+  return evalCadLoon(input, engine).result;
+}
+
+/** {@link createCadLoon}, also returning the evaluated (asset-resolved)
+ *  document so the handler need not evaluate — and parse meshes — twice. */
+export function evalCadLoon(
+  input: unknown,
+  engine: Engine,
+): { result: { content: Array<{ type: "text"; text: string }> }; doc: Document | null } {
+  const parsed = input as CreateLoonInput;
+  const { format = "vcode", base_dir, files } = parsed;
   const source = composeLoonProgram(input);
 
   const modules = composeLoonModules(input);
-  const doc = engine.evalVcadSourceWithModules(source, modules);
+  let doc: Document | null;
+  try {
+    doc = engine.evalVcadSourceWithModules(source, modules);
+  } catch (e) {
+    throw explainEvalError(e, parsed, missingModules(source, modules));
+  }
   // Record what made this document. The COMPOSED program is stored rather
   // than the bare `source` argument: it inlines the macro prelude, so the
   // stored text re-evaluates to the same geometry with no dependency on a
@@ -203,8 +268,9 @@ export function createCadLoon(
       ? "Error: this kernel build cannot resolve loon modules ([use ...]) — " +
         "update the kernel, or inline the modules into `source`"
       : "Error: Loon evaluation not supported by this engine build";
-    return { content: [{ type: "text", text }] };
+    return { result: { content: [{ type: "text", text }] }, doc: null };
   }
+  const assets = resolveLoonAssets(doc, { files, base_dir }, engine);
 
   const { text, fellBack } = serializeDocument(doc, format);
   const content: Array<{ type: "text"; text: string }> = [{ type: "text", text }];
@@ -220,8 +286,10 @@ export function createCadLoon(
 
   const note = parametricNote(source, modules, engine, doc);
   if (note) content.push({ type: "text", text: note });
+  const imports = assetNote(assets);
+  if (imports) content.push({ type: "text", text: imports });
 
-  return { content };
+  return { result: { content }, doc };
 }
 
 /**
@@ -316,14 +384,16 @@ export const toolDefs: ToolDef[] = [
     description:
       "The preferred authoring tool for whole parts and multi-feature models — one call, full vocabulary. Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD — the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists. For incremental single-node edits to an open session, use create/update/delete instead.\n\n" +
       "Primitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h], [torus major-r minor-r], [wedge x y z], [prism sides radius height]. Segment count is the kernel default (32); pin it with [cylinder-n r h n] / [sphere-n r n] / [cone-n rb rt h n] / [torus-n R r n] where the facets are load-bearing (a bore that must accept a real shaft)\n" +
-      "Imports — place a purchased part instead of approximating it, so fit checks test the real envelope and not one you invented: [import-step \"vendor/x6-60.step\"], [import-step-body path index] for a multi-body file, [import-mesh \"part.stl\"], [import-mesh-scaled sx sy sz path]. Relative paths resolve against base_dir / the module source\n" +
+      "Imports — place a purchased part instead of approximating it, so fit checks test the real envelope and not one you invented: [import-step \"vendor/x6-60.step\"], [import-step-body path index] for a multi-body file, [import-mesh \"part.stl\" :units \"mm\"], [import-mesh-scaled sx sy sz path]. STL coords default to METRES (URDF convention, x1000) — pass :units \"mm\" (or \"cm\"/\"in\") for a millimetre STL or it lands 1000x too big; the loader warns past 10 m / under 1 mm. Relative paths resolve against base_dir / the module source\n" +
       "Sheet metal (subject-last, so it threads through pipe) — author a cut-and-bent part as a bend chain and it KEEPS its bends, so sheet_metal_unfold is exact instead of inferred back out of a solid by flat_pattern_from_solid: [sheet-base-flange-rect width depth thickness \"al-soft\"] (or [sheet-base-flange #[x0 y0 …] #[holes] t material] for an arbitrary outline) then [sheet-edge-flange edge length angle-deg s], [sheet-jog edge offset length s], [sheet-hem edge length s], [sheet-bend-relief s]. `edge` is an outline index, or \"south\"/\"east\"/\"north\"/\"west\" on a rectangular base flange (edge 0 is the -Y edge, CCW from there). Each has an -at form taking panel id, radius, direction (\"up\"/\"down\") and K-factor, where 0.0 means the default; -shop variants resolve every bend through a shop table. Sheet nodes are a bend graph, NOT solids — never union, transform or fillet them\n" +
       "Booleans (subject-last): [difference tool subject], [union other subject], [intersection other subject]\n" +
       "Transforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s], [mirror ox oy oz nx ny nz s] (plane through the origin point with that normal) — plus the axis sugar [mirror-x s] / [mirror-y s] / [mirror-z s], which mirror through the origin, negating that one coordinate. NEVER hand-mirror by negating coordinates; use these.\n" +
       "Features: [fillet r s], [chamfer d s], [shell t s]\n" +
+      "Convex hull: [hull s1 s2 …] (smallest convex solid enclosing all the solids — shells over section rings, capsules between two bosses) and [hull-points #[x0 y0 z0 x1 y1 z1 …]] (hull of a point cloud, >= 4 non-coplanar points). Curved inputs are tessellated first, so the hull is faceted; it is a planar-faced B-rep and works in booleans\n" +
       "Patterns (subject-last): [linear-pattern dx dy dz count spacing s], [circular-pattern ox oy oz ax ay az count angle s] — e.g. a bolt circle is [circular-pattern 0 0 0 0 0 1 6 360 bolt-hole]\n" +
+      "Joint-swing clearance cuts (subject-last): [sweep-rotate ox oy oz ax ay az lo-deg hi-deg s] = union of s rotated about the axis through (ox oy oz) along (ax ay az) over [lo, hi]; [sweep-rotate-n … lo hi step s] fixes the step; [sweep-rotate-clear … lo hi step c s] dilates s by c mm first (step 0 = auto). Carve a knee/elbow/hip relief as [pipe shell [difference [sweep-rotate-clear 0 0 0 1 0 0 0 120 0 1 calf]]]. The result is triangle soup — a cutting tool, not a part; do NOT union rotated copies by hand\n" +
       "Symmetric patterns (subject-last): [mirror-pattern nx ny nz s] and its sugar [mirror-pattern-x s] / -y / -z union a solid with its mirror image (a left/right pair in one expression, so the halves can't drift apart); [quad-pattern s] is the 4-fold X-and-Y version — a quadruped's legs, a 4-post frame, a vehicle chassis\n" +
-      "Sketches: [sketch ox oy oz xx xy xz yx yy yz #[segments]] with [line x1 y1 x2 y2] and [arc x1 y1 x2 y2 cx cy ccw]\n" +
+      "Sketches: [sketch ox oy oz xx xy xz yx yy yz #[segments]] with [line x1 y1 x2 y2] and [arc x1 y1 x2 y2 cx cy ccw]. For a plate/outline use ONE [polygon #[x0 y0 x1 y1 …] #[hole …]] as the sketch's only segment instead of one [line] per edge: each hole is a flat point loop or #[cx cy r] for a true circle, and extrude cuts the holes directly — a router-cut plate with bolt holes is [extrude 0 0 3.2 [sketch 0 0 0 1 0 0 0 1 0 #[[polygon #[0 0 120 0 120 60 0 60] #[#[6 6 1.6] #[114 6 1.6]]]]]], NOT a [difference] of extruded cutters. Holes must sit strictly inside the outline; revolve/loft/sweep refuse holes (hole-free [polygon #[…]] works everywhere)\n" +
       "Sketch ops (sketch-last): [extrude dx dy dz sk], [revolve aox aoy aoz adx ady adz angle sk], [sweep-line sx sy sz ex ey ez sk], [sweep-helix radius pitch height turns sk], [loft #[sk1 sk2 …]], [loft-closed #[sk1 sk2 …]]\n" +
       "Cam tracks, bayonet/J-slots, lead-in ramps and threads (profile-last): [sweep path profile], where the path is [helix r rate-mm-per-deg start-deg arc-deg] or, for a track whose height is not a constant rate, [cam-path r #[deg0 z0 deg1 z1 …]] — a rise-plateau-drop detent or a flat pocket is just more knots. The profile is [profile-rect radial axial] or [profile-polyline #[x0 y0 x1 y1 …]], with x = RADIAL offset from the path radius (outward +) and y = AXIAL offset (up +); the section is held in that radial/axial plane, so floor(theta) = path z(theta) + min(profile y) exactly. Facet step defaults to 0.5 deg — pin it with [helix-res seg-deg …] / [cam-path-res seg-deg …]. The swept solid is capped at both ends, so it is watertight standing alone and can be subtracted through a wall. Do NOT approximate a cam track with stacked z-bands or a circular-pattern of boxes\n" +
       "Assemblies: [assembly #[parts] #[instances] #[joints] ground-id] with [part name solid \"material\"], [instance name part-name x y z], [revolute-joint …], [prismatic-joint …], [fixed-joint …], [ball-joint …]\n" +
@@ -334,7 +404,8 @@ export const toolDefs: ToolDef[] = [
       "Datums — named reference geometry, so two parts cannot each hold their own copy of a shared plane: [datum-plane \"femur_inner\" y 131.0], [datum-axis \"pitch\" x 0 0 310], [datum-point \"hip\" 0 0 310], read back with [datum \"femur_inner\"], [datum+ \"femur_inner\" 3.0] (3 mm outboard), [datum-x/-y/-z \"pitch\"]\n" +
       "Stacks — declarative packing, where each running clearance is a named value instead of an arbitrary number: [stack y \"leg\" 131.0 [lane \"femur_inner\" 5.0] [gap \"idler_run\" 1.0] [lane \"idler_boss\" 3.0]] declares datum planes leg_femur_inner_lo/_hi, leg_idler_boss_lo/_hi and leg_end; widening leg_idler_run slides everything outboard of it\n" +
       "Scene: [root solid \"material-name\"], with [material name r g b metallic roughness] to define one\n" +
-      "Modules: [use bracket] then [bracket.plate] — multi-file projects work here, with sources passed in `modules` (or read from `base_dir`); [use bracket :as b] aliases, [use bracket [plate]] imports selectively, and `pub` in a module picks what it exports",
+      "Modules: [use bracket] then [bracket.plate] — multi-file projects work here, with sources passed in `modules` (or read from `base_dir` on a LOCAL server; a hosted one can't see your disk)\n" +
+      "Vendor geometry: [import-mesh \"meshes/arm.stl\"] / [import-step \"vendor/x.step\"] — pass the bytes as base64 in `files` keyed by that exact path (works hosted), or read them from `base_dir` locally; [use bracket :as b] aliases, [use bracket [plate]] imports selectively, and `pub` in a module picks what it exports",
     inputSchema: createCadLoonSchema,
     handler: async (args, ctx) => {
       // Hydrate any by-name macros from the durable per-user store before
@@ -345,7 +416,8 @@ export const toolDefs: ToolDef[] = [
       if (useLoons?.length) {
         await hydrateMacros(ctx.user, useLoons).catch(() => {});
       }
-      const result = createCadLoon(args, ctx.engine) as ToolResult;
+      const { result: raw, doc } = evalCadLoon(args, ctx.engine);
+      const result = raw as ToolResult;
       // Session-targeted authoring: write the evaluated document into the
       // caller's open session instead of minting a fresh one, so
       // open_document → create_cad_loon stays on one document_id. Validated
@@ -357,16 +429,7 @@ export const toolDefs: ToolDef[] = [
       // authoring a whole document. The loon evaluation is cheap relative to
       // the mesh evaluation computeIntegrity runs anyway.
       try {
-        const composed = composeLoonProgram(args);
-        const modules = composeLoonModules(args);
-        const doc = ctx.engine.evalVcadSourceWithModules(composed, modules);
         if (doc) {
-          attachLoonSource(doc, {
-            text: composed,
-            modules,
-            base_dir:
-              typeof args.base_dir === "string" ? args.base_dir : undefined,
-          });
           if (targetId) documents.set(targetId, doc);
           const integrity = computeIntegrity(doc, ctx.engine);
           if (integrity) {

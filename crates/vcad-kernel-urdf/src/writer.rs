@@ -389,6 +389,7 @@ impl<'a> UrdfWriter<'a> {
             }
             CsgOp::LinearPattern { child, .. }
             | CsgOp::CircularPattern { child, .. }
+            | CsgOp::SweepRotate { child, .. }
             | CsgOp::Shell { child, .. }
             | CsgOp::Fillet { child, .. }
             | CsgOp::Chamfer { child, .. }
@@ -402,6 +403,7 @@ impl<'a> UrdfWriter<'a> {
             | CsgOp::Revolve { .. }
             | CsgOp::Sweep { .. }
             | CsgOp::Loft { .. }
+            | CsgOp::Hull { .. }
             | CsgOp::ImportedMesh { .. }
             | CsgOp::PcbBoard { .. }
             | CsgOp::EmbroideryPattern { .. }
