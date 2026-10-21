@@ -126,6 +126,11 @@ char *vcad_loon_file_to_json(const uint8_t *path, size_t path_len);
  * {"message","file","line","column"} (line/column 1-based, null when the
  * error can't be attributed to the file). Free both with vcad_cam_free. */
 char *vcad_loon_file_to_json_diag(const uint8_t *path, size_t path_len, char **out_diag);
+/* Parameter sensitivities of an IR document: per named parameter and solid
+ * part, d(volume, mass, centroid)/dθ from the differentiable seam. Masses in
+ * grams at density_kg_m3. Owned JSON (free with vcad_cam_free); null when the
+ * input isn't a document. */
+char *vcad_document_sensitivity(const uint8_t *json, size_t json_len, double density_kg_m3);
 /* Any .vcad format (JSON, loon source, VCode) -> IR document JSON, mesh paths
  * resolved against the file's directory. Free with vcad_cam_free; null on error. */
 char *vcad_document_file_to_json(const uint8_t *path, size_t path_len);

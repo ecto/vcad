@@ -1598,6 +1598,7 @@ struct ObjectInspectorWindow: View {
                         Divider()
                         Eyebrow("Document Parameters")
                         docParameterRows
+                        SensitivitySection(model: model)
                     }
                     Divider()
                     DisclosureGroup("Measurements", isExpanded: $model.measurementsShown) {
