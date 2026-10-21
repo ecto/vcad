@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime entitlements for the Developer ID build (bundle.sh).
+  The app is not sandboxed. irys (libirys_ffi.dylib) is dlopen()ed from
+  Contents/Frameworks and is signed with the same identity, so library
+  validation stays on. Add exceptions here only with a stated reason.
+-->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>
