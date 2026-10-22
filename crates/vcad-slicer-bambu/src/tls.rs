@@ -80,19 +80,27 @@ accept_all_verifier!(AcceptPrinterCertMqtt, rustls022);
 /// rustls 0.23 client config for FTPS and the camera stream.
 pub(crate) fn printer_client_config() -> Arc<rustls::ClientConfig> {
     Arc::new(
-        rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AcceptPrinterCert))
-            .with_no_client_auth(),
+        rustls::ClientConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("ring provider supports the default TLS protocol versions")
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AcceptPrinterCert))
+        .with_no_client_auth(),
     )
 }
 
 /// rustls 0.22 client config for MQTT (rumqttc's TLS stack).
 pub(crate) fn mqtt_client_config() -> Arc<rustls022::ClientConfig> {
     Arc::new(
-        rustls022::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(AcceptPrinterCertMqtt))
-            .with_no_client_auth(),
+        rustls022::ClientConfig::builder_with_provider(Arc::new(
+            rustls022::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .expect("ring provider supports the default TLS protocol versions")
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(AcceptPrinterCertMqtt))
+        .with_no_client_auth(),
     )
 }
