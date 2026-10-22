@@ -15,6 +15,8 @@ mod keybinding_adapter;
 mod kit;
 mod log_capture;
 mod photoreal;
+#[cfg(feature = "printer")]
+mod print_job;
 #[cfg(feature = "print-server")]
 mod print_server;
 #[cfg(feature = "printer")]
@@ -600,6 +602,30 @@ enum Commands {
     /// Talk to a Bambu printer on the LAN (LAN Only + Developer Mode):
     /// discover, status, camera-snapshot, upload-test. `print` refuses
     /// without --confirm-print and a passing printcheck + file/printer match.
+    /// Part → P1S: centre on the plate, slice with vcad-slicer, safe
+    /// start/end, lint, printcheck, write .gcode.3mf, then DRY-RUN the
+    /// print gates against the printer. Sends only with --confirm-print.
+    #[cfg(feature = "printer")]
+    Print {
+        /// Part: .stl, .vcad or .loon
+        input: PathBuf,
+        /// Printer name from printers.toml (optional with one printer)
+        #[arg(long)]
+        printer: Option<String>,
+        /// Filament preset: pla or petg
+        #[arg(long, default_value = "pla")]
+        profile: String,
+        /// Output .gcode.3mf (default: next to the input)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Don't contact the printer; file checks only
+        #[arg(long)]
+        offline: bool,
+        /// Actually upload and START the print. Without it this is a dry run.
+        #[arg(long)]
+        confirm_print: bool,
+    },
+
     #[cfg(feature = "printer")]
     Printer {
         #[command(subcommand)]
@@ -1123,6 +1149,24 @@ fn run_command(cli: Cli) -> Result<()> {
                 section_step,
                 &allow_bridge,
                 json,
+            )?;
+        }
+        #[cfg(feature = "printer")]
+        Some(Commands::Print {
+            input,
+            printer,
+            profile,
+            output,
+            offline,
+            confirm_print,
+        }) => {
+            run_print_command(
+                &input,
+                printer.as_deref(),
+                &profile,
+                output,
+                offline,
+                confirm_print,
             )?;
         }
         #[cfg(feature = "printer")]
@@ -3450,6 +3494,81 @@ fn run_check(
     }
     if !report.ok {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "printer")]
+fn run_print_command(
+    input: &PathBuf,
+    printer: Option<&str>,
+    profile: &str,
+    output: Option<PathBuf>,
+    offline: bool,
+    confirm: bool,
+) -> Result<()> {
+    let ext = input
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let (vertices, indices) = if ext == "stl" {
+        printer_cmd::load_stl(input)?
+    } else {
+        let doc = load_vcad_document(input)?;
+        let meshes = crate::app::evaluate_document(&doc)?;
+        let mut v = Vec::new();
+        let mut i = Vec::new();
+        for m in &meshes {
+            let base = (v.len() / 3) as u32;
+            v.extend_from_slice(&m.vertices);
+            i.extend(m.indices.iter().map(|x| x + base));
+        }
+        (v, i)
+    };
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("part")
+        .to_string();
+    let job = print_job::prepare(&stem, vertices, indices, print_job::filament(profile)?)?;
+    let out = output.unwrap_or_else(|| input.with_file_name(format!("{stem}.gcode.3mf")));
+    std::fs::write(&out, &job.archive)?;
+    println!(
+        "{}: {} layers, ~{} min moving, {} {}°C/{}°C, lint clean, printcheck {}",
+        out.display(),
+        job.layers,
+        (job.lint.total_s / 60.0).ceil(),
+        job.filament.kind,
+        job.filament.nozzle,
+        job.filament.bed,
+        if job.printcheck.ok { "ok" } else { "FAILED" }
+    );
+    let name = out
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("part.gcode.3mf")
+        .to_string();
+    let outcome = if offline {
+        printer_cmd::run_print_job::<vcad_slicer_bambu::link::FakePrinter>(
+            None, &job, &name, confirm, None,
+        )?
+    } else {
+        let entry = printer_cmd::load_entry(printer)?;
+        let model_id = entry.model_id();
+        let mut lan = vcad_slicer_bambu::link::LanPrinter::new(entry)?;
+        printer_cmd::run_print_job(Some(&mut lan), &job, &name, confirm, model_id)?
+    };
+    match outcome {
+        printer_cmd::PrintOutcome::DryRunOffline => {
+            println!("dry run (offline): file checks pass; printer not contacted")
+        }
+        printer_cmd::PrintOutcome::DryRunGatesPass => println!(
+            "dry run: every print gate passes; nothing uploaded. Re-run with --confirm-print to print."
+        ),
+        printer_cmd::PrintOutcome::Sent => {
+            println!("print started. Stop is on the printer touchscreen.")
+        }
     }
     Ok(())
 }
