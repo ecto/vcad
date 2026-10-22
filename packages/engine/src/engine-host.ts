@@ -17,7 +17,7 @@
  * Nothing adopts it yet (the store keeps its synchronous engine); the next
  * steps move store mutations onto the client.
  */
-import type { DocCommand } from "@vcad/ir";
+import type { Bindings, DocCommand, Parameter } from "@vcad/ir";
 import {
   applyEngineDelta,
   parseDeltaEnvelope,
@@ -25,6 +25,13 @@ import {
   type DeltaChanges,
   type EngineState,
 } from "./delta.js";
+import type { EvaluatedScene } from "./mesh.js";
+import { postProcessScene, wasmResultToScene, type SceneKernel, type WasmEvaluatedScene } from "./scene-convert.js";
+
+/** Kernel `IncrementalEvaluator`: carries solids between evaluations. */
+export interface HostedEvaluator {
+  free?(): void;
+}
 
 /** The slice of `WasmDocumentEngine` the host drives. */
 export interface HostedEngine {
@@ -36,6 +43,18 @@ export interface HostedEngine {
   can_undo(): boolean;
   can_redo(): boolean;
   free(): void;
+  /** Evaluate the engine's own document (never serialized) incrementally. */
+  evaluateIncremental?(
+    evaluator: HostedEvaluator,
+    overlayJson: string,
+    skipClashDetection: boolean,
+  ): WasmEvaluatedScene;
+}
+
+/** Host-held parameter state merged over the document for evaluation. */
+export interface EvaluateOverlay {
+  parameters?: Record<string, Parameter>;
+  bindings?: Bindings;
 }
 
 /** Constructors the host can make engines with. */
@@ -52,7 +71,8 @@ export type EngineRequest =
   | { op: "apply"; command: DocCommand; expectHash?: string }
   | { op: "applyTool"; tool: string; args: unknown; expectHash?: string }
   | { op: "state" }
-  | { op: "save" };
+  | { op: "save" }
+  | { op: "evaluate"; overlay?: EvaluateOverlay; skipClashDetection?: boolean };
 
 /** The host's answer: raw engine JSON, so the wire stays the engine's own. */
 export type EngineResponse =
@@ -65,6 +85,8 @@ export type EngineResponse =
       canRedo: boolean;
       /** The engine was not at `expectHash`, so nothing was applied. */
       stale?: boolean;
+      /** `evaluate`: the scene, before the TS post-passes (see client). */
+      scene?: EvaluatedScene;
     }
   | { ok: false; message: string };
 
@@ -72,6 +94,15 @@ export type EngineResponse =
 export interface EngineHostState {
   Engine: HostedEngineClass;
   engine: HostedEngine | null;
+  /** Kernel `IncrementalEvaluator` class, when the host can evaluate. */
+  Evaluator?: new () => HostedEvaluator;
+  /** One evaluator per hosted document; reset when the document is replaced. */
+  evaluator?: HostedEvaluator | null;
+}
+
+function resetEvaluator(host: EngineHostState): void {
+  host.evaluator?.free?.();
+  host.evaluator = null;
 }
 
 /** Run one request against the host's engine. Never throws. */
@@ -79,8 +110,10 @@ export function handleEngineRequest(host: EngineHostState, req: EngineRequest): 
   try {
     let envelope: string | undefined;
     let bytes: Uint8Array | undefined;
+    let scene: EvaluatedScene | undefined;
     switch (req.op) {
       case "init":
+        resetEvaluator(host);
         host.engine?.free();
         host.engine =
           req.replica !== undefined && host.Engine.withReplica
@@ -89,6 +122,7 @@ export function handleEngineRequest(host: EngineHostState, req: EngineRequest): 
         envelope = host.engine.stateEnvelope();
         break;
       case "load":
+        resetEvaluator(host);
         host.engine?.free();
         host.engine = host.Engine.load(req.bytes);
         envelope = host.engine.stateEnvelope();
@@ -115,7 +149,23 @@ export function handleEngineRequest(host: EngineHostState, req: EngineRequest): 
         if (req.op === "apply") envelope = engine.applyDelta(JSON.stringify(req.command));
         else if (req.op === "applyTool") envelope = engine.applyToolDelta(req.tool, JSON.stringify(req.args));
         else if (req.op === "state") envelope = engine.stateEnvelope();
-        else bytes = engine.save();
+        else if (req.op === "evaluate") {
+          if (!engine.evaluateIncremental || !host.Evaluator) {
+            return { ok: false, message: "engine host cannot evaluate (kernel too old)" };
+          }
+          host.evaluator ??= new host.Evaluator();
+          const overlay = req.overlay ?? {};
+          const hasOverlay =
+            Object.keys(overlay.parameters ?? {}).length > 0 ||
+            Object.keys(overlay.bindings ?? {}).length > 0;
+          scene = wasmResultToScene(
+            engine.evaluateIncremental(
+              host.evaluator,
+              hasOverlay ? JSON.stringify(overlay) : "",
+              req.skipClashDetection ?? false,
+            ),
+          );
+        } else bytes = engine.save();
       }
     }
     const engine = host.engine!;
@@ -123,6 +173,7 @@ export function handleEngineRequest(host: EngineHostState, req: EngineRequest): 
       ok: true,
       envelope,
       bytes,
+      scene,
       hash: engine.stateHash(),
       canUndo: engine.can_undo(),
       canRedo: engine.can_redo(),
@@ -139,11 +190,15 @@ export interface EngineTransport {
 }
 
 /** Run the host in this thread (tests, SSR, no-Worker fallback). */
-export function inProcessTransport(Engine: HostedEngineClass): EngineTransport {
-  const host: EngineHostState = { Engine, engine: null };
+export function inProcessTransport(
+  Engine: HostedEngineClass,
+  Evaluator?: new () => HostedEvaluator,
+): EngineTransport {
+  const host: EngineHostState = { Engine, engine: null, Evaluator };
   return {
     request: async (req) => handleEngineRequest(host, req),
     dispose: () => {
+      resetEvaluator(host);
       host.engine?.free();
       host.engine = null;
     },
@@ -156,17 +211,23 @@ export function inProcessTransport(Engine: HostedEngineClass): EngineTransport {
  * and `load` only read the current state; `dispose` never frees the engine.
  * The client's hash check resyncs its view after direct mutations.
  */
-export function sharedEngineTransport(getEngine: () => HostedEngine | null): EngineTransport {
+export function sharedEngineTransport(
+  getEngine: () => HostedEngine | null,
+  Evaluator?: new () => HostedEvaluator,
+): EngineTransport {
   const ownerOnly = function () {
     throw new Error("shared engine: the owner constructs engines");
   } as unknown as HostedEngineClass;
+  // Persistent so the evaluator outlives requests; an engine swap needs no
+  // reset (subtree fingerprints drop whatever no longer matches).
+  const host: EngineHostState = { Engine: ownerOnly, engine: null, Evaluator };
   return {
     request: async (req) => {
-      const host: EngineHostState = { Engine: ownerOnly, engine: getEngine() };
+      host.engine = getEngine();
       const r = req.op === "init" || req.op === "load" ? ({ op: "state" } as const) : req;
       return handleEngineRequest(host, r);
     },
-    dispose: () => undefined,
+    dispose: () => resetEvaluator(host),
   };
 }
 
@@ -254,6 +315,30 @@ export class DocumentEngineClient {
   /** Lower and apply an AI tool call. */
   applyTool(tool: string, args: unknown): Promise<CommandOutcome> {
     return this.delta({ op: "applyTool", tool, args });
+  }
+
+  /**
+   * Evaluate the hosted document where it lives (the worker, when the
+   * engine is in one) through the host's incremental evaluator: the
+   * document is never serialized and only what changed since the last
+   * evaluation is redone. Ordered after every command already sent, so the
+   * scene is of the state those commands produced. Pass `kernel` to run the
+   * TS post-passes (embroidery, sheet metal) against this client's view.
+   */
+  evaluate(
+    opts: { overlay?: EvaluateOverlay; skipClashDetection?: boolean; kernel?: SceneKernel } = {},
+  ): Promise<EvaluatedScene> {
+    return this.enqueue(async () => {
+      const r = this.check(
+        await this.transport.request({
+          op: "evaluate",
+          overlay: opts.overlay,
+          skipClashDetection: opts.skipClashDetection,
+        }),
+      );
+      const scene = r.scene!;
+      return opts.kernel && this.view ? postProcessScene(scene, this.view.document, opts.kernel) : scene;
+    });
   }
 
   /** Snapshot the engine (document + history). */

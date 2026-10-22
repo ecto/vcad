@@ -238,6 +238,41 @@ impl WasmDocumentEngine {
         serde_json::to_string(&result.document).unwrap_or_else(|_| "{}".to_string())
     }
 
+    /// Evaluate this engine's document through `evaluator` without a JSON
+    /// round trip: the materialized document never leaves Rust. `overlay_json`
+    /// is `{"parameters"?, "bindings"?}` (host-held parameter state, merged
+    /// over the document like `mergeParametersIntoDocument`); pass `""` for
+    /// none. Returns the same scene shape as `evaluateDocument`.
+    #[wasm_bindgen(js_name = evaluateIncremental)]
+    pub fn evaluate_incremental(
+        &self,
+        evaluator: &mut crate::IncrementalEvaluator,
+        overlay_json: &str,
+        skip_clash_detection: bool,
+    ) -> Result<JsValue, JsError> {
+        #[derive(serde::Deserialize, Default)]
+        struct Overlay {
+            #[serde(default)]
+            parameters: Option<HashMap<String, vcad_ir::Parameter>>,
+            #[serde(default)]
+            bindings: Option<vcad_ir::Bindings>,
+        }
+        let overlay: Overlay = if overlay_json.trim().is_empty() {
+            Overlay::default()
+        } else {
+            serde_json::from_str(overlay_json)
+                .map_err(|e| JsError::new(&format!("evaluateIncremental overlay: {e}")))?
+        };
+        let mut doc = materialize(self.api.crdt()).document;
+        if let Some(p) = overlay.parameters.filter(|p| !p.is_empty()) {
+            doc.parameters = p;
+        }
+        if let Some(b) = overlay.bindings.filter(|b| !b.is_empty()) {
+            doc.bindings = b;
+        }
+        crate::evaluate_parsed(&doc, None, skip_clash_detection, Some(&mut evaluator.cache))
+    }
+
     /// Get the parts list as JSON.
     pub fn get_parts_json(&self) -> String {
         let result = materialize(self.api.crdt());

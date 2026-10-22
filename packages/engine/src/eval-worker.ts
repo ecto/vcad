@@ -13,42 +13,17 @@
  *   ← {type: 'error', id, message}                       — evaluation error
  */
 
-import {
-  evaluateDocument as evaluateDocumentTS,
-  embroideryPatternToMeshWithKernel,
-  findEmbroideryPattern,
-  transformMeshWithKernel,
-  resolveSheetMetalPart,
-} from "./evaluate.js";
-import type { EvaluatedScene, EvalTimingData, TriangleMesh } from "./mesh.js";
+import { evaluateDocument as evaluateDocumentTS } from "./evaluate.js";
+import type { EvaluatedScene } from "./mesh.js";
 import type { Document } from "@vcad/ir";
-
-/** WASM evaluator result shape (typed arrays from Rust, or plain arrays from legacy) */
-interface WasmMesh {
-  positions: Float32Array | number[];
-  indices: Uint32Array | number[];
-  normals?: Float32Array | number[];
-  faceKinds?: Uint8Array | number[];
-}
-
-interface WasmEvaluatedScene {
-  parts: Array<{ mesh: WasmMesh; material: string }>;
-  partDefs?: Array<{ id: string; mesh: WasmMesh }>;
-  instances?: Array<{
-    instance_id: string;
-    part_def_id: string;
-    name?: string;
-    mesh: WasmMesh;
-    material: string;
-    transform?: unknown;
-  }>;
-  clashes: Array<WasmMesh>;
-  failures?: Array<{ scope: string; node_id: number; error: string }>;
-  timing?: EvalTimingData;
-}
+import {
+  collectTransferables,
+  postProcessScene,
+  wasmResultToScene,
+  type WasmEvaluatedScene,
+} from "./scene-convert.js";
 
 type WasmEvaluateDocumentFn = (docJson: string, skipClashDetection: boolean) => WasmEvaluatedScene;
-
 /** The kernel module for the TS evaluator fallback */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let kernelModule: any = null;
@@ -68,111 +43,6 @@ let incremental: { evaluate(docJson: string, skip: boolean): WasmEvaluatedScene 
 /** Whether we're using the fast WASM path or the TS fallback */
 let evaluatorMode: "wasm" | "ts" = "ts";
 
-/** Collect ArrayBuffers from an EvaluatedScene for zero-copy transfer. */
-function collectTransferables(scene: EvaluatedScene): ArrayBuffer[] {
-  const buffers: ArrayBuffer[] = [];
-
-  const collectMesh = (m: TriangleMesh) => {
-    buffers.push(m.positions.buffer as ArrayBuffer);
-    buffers.push(m.indices.buffer as ArrayBuffer);
-    if (m.normals) buffers.push(m.normals.buffer as ArrayBuffer);
-    if (m.colors) buffers.push(m.colors.buffer as ArrayBuffer);
-    if (m.faceKinds) buffers.push(m.faceKinds.buffer as ArrayBuffer);
-  };
-
-  for (const p of scene.parts) collectMesh(p.mesh);
-  if (scene.partDefs) for (const pd of scene.partDefs) collectMesh(pd.mesh);
-  if (scene.instances) for (const inst of scene.instances) collectMesh(inst.mesh);
-  for (const c of scene.clashes) collectMesh(c);
-
-  return buffers;
-}
-
-/** Convert WASM result to EvaluatedScene. Handles both typed arrays (fast path) and plain arrays. */
-function wasmResultToScene(result: WasmEvaluatedScene): EvaluatedScene {
-  const toMesh = (m: WasmMesh): TriangleMesh => ({
-    positions: m.positions instanceof Float32Array ? m.positions : new Float32Array(m.positions),
-    indices: m.indices instanceof Uint32Array ? m.indices : new Uint32Array(m.indices),
-    normals: m.normals
-      ? m.normals instanceof Float32Array ? m.normals : new Float32Array(m.normals)
-      : undefined,
-    faceKinds: m.faceKinds
-      ? m.faceKinds instanceof Uint8Array ? m.faceKinds : new Uint8Array(m.faceKinds)
-      : undefined,
-  });
-
-  return {
-    parts: result.parts.map((p) => ({ mesh: toMesh(p.mesh), material: p.material })),
-    partDefs: result.partDefs?.map((pd) => ({ id: pd.id, mesh: toMesh(pd.mesh) })),
-    instances: result.instances?.map((inst) => ({
-      instanceId: inst.instance_id,
-      partDefId: inst.part_def_id,
-      name: inst.name,
-      mesh: toMesh(inst.mesh),
-      material: inst.material,
-      transform: inst.transform as EvaluatedScene["instances"] extends Array<infer T> ? T extends { transform?: infer X } ? X : never : never,
-    })),
-    clashes: result.clashes.map(toMesh),
-    failures: result.failures,
-    timing: result.timing,
-  };
-}
-
-/** Post-process WASM result: generate TS-side meshes for types the Rust
- *  evaluator doesn't tessellate (e.g. EmbroideryPattern). */
-function postProcessEmbroidery(scene: EvaluatedScene, doc: Document): EvaluatedScene {
-  const visibleRoots = doc.roots.filter((e) => e.visible !== false);
-  let changed = false;
-  const parts = scene.parts.map((p, i) => {
-    if (p.mesh.positions.length === 0 && i < visibleRoots.length) {
-      const emb = findEmbroideryPattern(visibleRoots[i].root, doc.nodes);
-      if (emb) {
-        changed = true;
-        const baseMesh = embroideryPatternToMeshWithKernel(emb.pattern, kernelModule);
-        const mesh = transformMeshWithKernel(baseMesh, emb.transform, kernelModule);
-        return { mesh, material: p.material };
-      }
-    }
-    return p;
-  });
-  return changed ? { ...scene, parts } : scene;
-}
-
-/** Post-process WASM result: route sheet-metal roots (which the Rust
- *  document evaluator leaves empty) through the dedicated kernel binding,
- *  mirroring {@link postProcessEmbroidery}. Without this the worker path —
- *  which the app uses by default — never attaches `part.sheetMetal`, so
- *  the sheet-metal panel/DFM inspector never appears. */
-function postProcessSheetMetal(
-  scene: EvaluatedScene,
-  doc: Document,
-): EvaluatedScene {
-  const visibleRoots = doc.roots.filter((e) => e.visible !== false);
-  let changed = false;
-  const parts = scene.parts.map((p, i) => {
-    if (p.mesh.positions.length === 0 && i < visibleRoots.length) {
-      // Resolve any Translate/Rotate/Scale wrapper to the chain tip and place
-      // the folded body, so a positioned bracket (e.g.
-      // `Translate(child: EdgeFlange)`) is recognized — not just a bare root.
-      try {
-        const smPart = resolveSheetMetalPart(
-          visibleRoots[i]!.root,
-          doc.nodes,
-          kernelModule,
-        );
-        if (smPart) {
-          changed = true;
-          return { ...smPart, material: p.material };
-        }
-      } catch (e) {
-        console.warn(`[worker] sheet-metal eval failed at root[${i}]:`, e);
-      }
-    }
-    return p;
-  });
-  return changed ? { ...scene, parts } : scene;
-}
-
 /** Run evaluation using whichever path is available. */
 function evaluate(docJson: string, skipClashDetection: boolean): EvaluatedScene {
   // Fast path: native WASM evaluator (with fallback to TS on failure)
@@ -183,7 +53,7 @@ function evaluate(docJson: string, skipClashDetection: boolean): EvaluatedScene 
         : wasmEvaluateDocument(docJson, skipClashDetection);
       const scene = wasmResultToScene(result);
       const doc: Document = JSON.parse(docJson);
-      return postProcessSheetMetal(postProcessEmbroidery(scene, doc), doc);
+      return postProcessScene(scene, doc, kernelModule);
     } catch {
       // WASM evaluator failed — fall through to TS evaluator
     }
