@@ -225,6 +225,7 @@ fn printer_debug_enabled() -> bool {
 mod tests {
     use super::{debug_flag_is_enabled, run_event_loop};
     use rumqttc::{Event, MqttOptions, Packet};
+    use std::time::Duration;
     use tokio::sync::mpsc;
 
     #[test]
