@@ -11,8 +11,15 @@
 
 import type { AnthropicTool } from "@vcad/core";
 import { commandRegistry, listPartsFromDocument } from "@vcad/core";
-import { getSession, recordLastChanged, recordTriangles } from "./session.js";
-import { storeEngine, takeCachedEngine } from "./session-core.js";
+// session-core, not session.ts: this module is bundled into the browser app
+// (via topopt), and session.ts pulls in node:path / node:fs.
+import {
+  getSession,
+  recordLastChanged,
+  recordTriangles,
+  storeEngine,
+  takeCachedEngine,
+} from "./session-core.js";
 import {
   isStablePartId,
   partIdDeprecation,
@@ -472,6 +479,8 @@ const ENGINE_LOWERED_TOOLS = new Set<string>([
   "place",
   // Reached via parts.ts (place_part handler), not registry dispatch.
   "place_part",
+  // Reached via topopt.ts (topology_optimize result), not registry dispatch.
+  "add_mesh_part",
 ]);
 
 interface EngineEnvelope {
@@ -551,6 +560,7 @@ function engineArgs(
   if (toolName === "update" && out.node_id !== undefined) {
     out.node_id = nodeRefToStableId(doc, out.node_id);
   }
+  if (out.hide_part_id !== undefined) out.hide_part_id = toStableId(doc, out.hide_part_id);
   if (toolName === "place") {
     for (const key of ["from", "to"]) {
       const ref = out[key];
