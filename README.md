@@ -116,7 +116,7 @@ apple/VcadApp/build-ffi.sh && apple/VcadApp/bundle.sh
 
 The hosted services (vcad.io and mcp.vcad.io) are not available in
 jurisdictions subject to U.S. sanctions and export controls — currently
-Russia, Belarus, Iran, Cuba, North Korea, Syria, and the Crimea, Sevastopol,
+Russia, Belarus, Iran, Cuba, North Korea, and the Crimea, Sevastopol,
 Donetsk, and Luhansk regions of Ukraine. Users must comply with all
 applicable export laws. The open-source code in this repository is not
 affected and remains available to everyone. Details in

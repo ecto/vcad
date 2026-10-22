@@ -18,7 +18,7 @@ import {
 
 describe("isGeoBlocked", () => {
   it("blocks every listed country", () => {
-    for (const cc of ["RU", "BY", "IR", "CU", "KP", "SY"]) {
+    for (const cc of ["RU", "BY", "IR", "CU", "KP"]) {
       expect(isGeoBlocked(cc), cc).toBe(true);
     }
   });
@@ -129,7 +129,6 @@ describe("block list", () => {
       "IR",
       "KP",
       "RU",
-      "SY",
     ]);
   });
 });
