@@ -12,7 +12,7 @@ crate-type = ["staticlib"]
 path = "@SRC@/lib.rs"
 
 [dependencies]
-cram-codec = { path = "@TC@/crates/cram-codec" }
+cram-codec = { path = "@TC@/crates/cram-codec", default-features = false }
 
 [profile.release]
 debug = false

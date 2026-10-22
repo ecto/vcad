@@ -73,7 +73,7 @@ fn printers_path() -> Result<PathBuf> {
     config::default_path().context("no $HOME; set VCAD_PRINTERS to the printers.toml path")
 }
 
-fn load_entry(name: Option<&str>) -> Result<PrinterEntry> {
+pub fn load_entry(name: Option<&str>) -> Result<PrinterEntry> {
     let path = printers_path()?;
     if !path.exists() {
         bail!(
@@ -229,6 +229,70 @@ pub fn run_print<L: PrinterLink>(
     Ok(())
 }
 
+/// What `vcad print` did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PrintOutcome {
+    /// No printer contacted (`--offline`): file checks only.
+    DryRunOffline,
+    /// Printer status read; every gate passes; nothing uploaded.
+    DryRunGatesPass,
+    /// Uploaded and started (only with `--confirm-print`).
+    Sent,
+}
+
+/// Dry-run (default) or send a prepared job. Without `confirm` nothing is
+/// ever uploaded; the gate is evaluated as if confirmed so a dry run says
+/// exactly whether a real send would pass.
+pub fn run_print_job<L: PrinterLink>(
+    link: Option<&mut L>,
+    job: &crate::print_job::Job,
+    name: &str,
+    confirm: bool,
+    printer_model_id: Option<&str>,
+) -> Result<PrintOutcome> {
+    if !job.printcheck.ok {
+        bail!(
+            "printcheck failed:\n{}",
+            vcad_printcheck::render_text(&job.printcheck)
+        );
+    }
+    let Some(link) = link else {
+        if confirm {
+            bail!("--confirm-print needs a printer; drop --offline");
+        }
+        vcad_slicer_bambu::gate::inspect_sliced(&job.archive, 0)?;
+        return Ok(PrintOutcome::DryRunOffline);
+    };
+    let status = link.status()?;
+    let inputs = GateInputs {
+        confirmed: true,
+        printcheck_ok: Some(job.printcheck.ok),
+        printer_model_id,
+        loaded_filament: status.loaded_filament.as_deref(),
+        status: &status,
+    };
+    if !confirm {
+        vcad_slicer_bambu::gate::check(&job.archive, 0, &inputs)?;
+        return Ok(PrintOutcome::DryRunGatesPass);
+    }
+    link::print_gated(link, name, &job.archive, 0, &inputs)?;
+    Ok(PrintOutcome::Sent)
+}
+
+/// Load a part as a flat triangle list: `.stl`, or anything
+/// `vcad_document` evaluates (`.vcad`, `.loon`).
+pub fn load_stl(path: &Path) -> Result<(Vec<f32>, Vec<u32>)> {
+    let mut f = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let m = stl_io::read_stl(&mut f).with_context(|| format!("reading {}", path.display()))?;
+    let v = m.vertices.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
+    let i = m
+        .faces
+        .iter()
+        .flat_map(|t| t.vertices.map(|x| x as u32))
+        .collect();
+    Ok((v, i))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +358,44 @@ mod tests {
         let f = dir.join("cube.gcode.3mf");
         std::fs::write(&f, m.to_bytes().unwrap()).unwrap();
         (stl_path, f)
+    }
+
+    #[test]
+    fn print_job_dry_run_by_default_and_sends_only_when_confirmed() {
+        let (v, i) = crate::print_job::tests::cube([0.0; 3], 20.0);
+        let job =
+            crate::print_job::prepare("cube", v, i, crate::print_job::filament("pla").unwrap())
+                .unwrap();
+
+        // Offline dry run: no printer at all.
+        assert_eq!(
+            run_print_job::<FakePrinter>(None, &job, "cube.gcode.3mf", false, Some("C12")).unwrap(),
+            PrintOutcome::DryRunOffline
+        );
+        assert!(
+            run_print_job::<FakePrinter>(None, &job, "cube.gcode.3mf", true, Some("C12")).is_err()
+        );
+
+        // Dry run against the printer: reads status, uploads nothing.
+        let mut p = idle_pla();
+        assert_eq!(
+            run_print_job(Some(&mut p), &job, "cube.gcode.3mf", false, Some("C12")).unwrap(),
+            PrintOutcome::DryRunGatesPass
+        );
+        assert_eq!(p.calls, vec![FakeCall::Status]);
+
+        // Wrong filament: the dry run already says no.
+        let mut p = idle_pla();
+        p.status.loaded_filament = Some("PETG".into());
+        assert!(run_print_job(Some(&mut p), &job, "cube.gcode.3mf", false, Some("C12")).is_err());
+
+        // Confirmed: uploads, verifies, starts.
+        let mut p = idle_pla();
+        assert_eq!(
+            run_print_job(Some(&mut p), &job, "cube.gcode.3mf", true, Some("C12")).unwrap(),
+            PrintOutcome::Sent
+        );
+        assert!(p.printed());
     }
 
     #[test]
