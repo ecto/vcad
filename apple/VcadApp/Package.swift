@@ -42,6 +42,7 @@ let package = Package(
                 // Sparkle.framework lives in vcad.app/Contents/Frameworks.
                 .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
                 .linkedLibrary("c++"),
+                .linkedLibrary("lzma"),
             ]
         ),
         // Cross-language parity for the simulation ABI. Reads the SAME golden
@@ -54,6 +55,7 @@ let package = Package(
             linkerSettings: [
                 .unsafeFlags(["-L", ffiLibDir]),
                 .linkedLibrary("c++"),
+                .linkedLibrary("lzma"),
             ]
         ),
     ]
