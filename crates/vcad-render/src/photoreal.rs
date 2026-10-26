@@ -284,6 +284,22 @@ pub(crate) fn build_objects(
 ) -> Result<Vec<Object>, String> {
     use rayon::prelude::*;
 
+    // kosm-render's integrator emits a constant per material; it has no
+    // per-hit emission hook yet, so a planar-mapped emissive image cannot be
+    // drawn. Refuse rather than render the screen as a flat glow.
+    if let Some(m) = solids
+        .iter()
+        .filter_map(|s| s.material.as_ref())
+        .find(|m| m.emissive_map.is_some())
+    {
+        return Err(format!(
+            "photoreal: material '{}' sets emissive_map, which the path tracer \
+             cannot draw yet (kosm-render has no per-hit emission); use a \
+             constant emissive colour",
+            m.name
+        ));
+    }
+
     let bvhs: Vec<Bvh> = solids
         .par_iter()
         .map(|s| match (mesh_segments, s.solid.as_brep()) {
@@ -1098,6 +1114,35 @@ mod tests {
     /// merely that the render succeeded.
     /// `--focus` frames the focused part's bounds, while the studio floor
     /// still sits under the whole scene (here, a slab under a small cube).
+    /// A constant emissive material reaches the path tracer; an image map
+    /// fails closed instead of rendering as a flat glow.
+    #[test]
+    fn emissive_constant_traces_and_map_is_refused() {
+        let doc = |extra: &str| {
+            format!(
+                r#"{{ "version": "0.1", "nodes": {{
+                "1": {{ "id": 1, "name": "screen", "op": {{ "type": "Cube", "size": {{ "x": 10, "y": 10, "z": 1 }} }} }} }},
+              "materials": {{ "screen": {{ "name": "screen", "color": [0.02, 0.02, 0.02],
+                "metallic": 0.0, "roughness": 0.2, "emissive": [1.0, 0.5, 0.25], "emissiveStrength": 2.0{extra} }} }},
+              "part_materials": {{}},
+              "roots": [{{ "root": 1, "material": "screen" }}] }}"#
+            )
+        };
+        let solids = crate::evaluate_vcad(&doc("")).unwrap();
+        let objects = build_objects(&solids, None).unwrap();
+        assert_eq!(objects[0].material.emissive, [2.0, 1.0, 0.5]);
+
+        let mapped = doc(
+            r#", "emissiveMap": "ui.png", "emissiveMapOrigin": [0, 0, 1],
+            "emissiveMapU": [10, 0, 0], "emissiveMapV": [0, -10, 0]"#,
+        );
+        let solids = crate::evaluate_vcad(&mapped).unwrap();
+        let err = build_objects(&solids, None)
+            .err()
+            .expect("a map must be refused");
+        assert!(err.contains("emissive_map"), "{err}");
+    }
+
     #[test]
     fn focus_frames_part_but_floor_spans_scene() {
         let vcad = r#"{ "version": "0.1", "nodes": {

@@ -1724,6 +1724,88 @@ pub struct MaterialDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub anisotropy: Option<f64>,
+    /// Constant emissive colour as `[r, g, b]` in linear 0.0..1.0. Emitted
+    /// radiance is `emissive * emissive_strength`, modulated per hit by
+    /// [`emissive_map`](Self::emissive_map) when one is set. Honoured by
+    /// the photoreal path tracer; the drafting views ignore it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub emissive: Option<[f64; 3]>,
+    /// Multiplier on the emissive colour (default 1.0). Values above 1 make
+    /// a screen read as *lit* rather than merely pale.
+    #[serde(
+        rename = "emissiveStrength",
+        alias = "emissive_strength",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "emissiveStrength", optional))]
+    pub emissive_strength: Option<f64>,
+    /// Path to an emissive image (PNG) — a UI screenshot lighting a display,
+    /// rendered as part of the product shot. Resolved relative to the source
+    /// `.loon` file's directory like `import-mesh` paths.
+    ///
+    /// Sampled by a world-space planar projection (see
+    /// [`emissive_map_origin`](Self::emissive_map_origin)), so emission does
+    /// not depend on UVs of tessellated meshes.
+    #[serde(
+        rename = "emissiveMap",
+        alias = "emissive_map",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "emissiveMap", optional))]
+    pub emissive_map: Option<String>,
+    /// World-space position of image pixel (0,0) — the **top-left** corner.
+    #[serde(
+        rename = "emissiveMapOrigin",
+        alias = "emissive_map_origin",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "emissiveMapOrigin", optional))]
+    pub emissive_map_origin: Option<[f64; 3]>,
+    /// World-space vector spanning the image's full **width**: the top edge
+    /// runs from the origin to `origin + u`.
+    #[serde(
+        rename = "emissiveMapU",
+        alias = "emissive_map_u",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "emissiveMapU", optional))]
+    pub emissive_map_u: Option<[f64; 3]>,
+    /// World-space vector spanning the image's full **height**: the left
+    /// edge runs from the origin to `origin + v`. Image y runs *down* from
+    /// pixel (0,0), so on a face in the XY plane shown upright to a camera
+    /// looking along +Y, `u` runs along +X and `v` along −Y.
+    #[serde(
+        rename = "emissiveMapV",
+        alias = "emissive_map_v",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "emissiveMapV", optional))]
+    pub emissive_map_v: Option<[f64; 3]>,
+}
+
+impl MaterialDef {
+    /// Emitted radiance `[r, g, b]`: `emissive * emissive_strength`, with
+    /// white and 1.0 filling in whichever is absent. A material that only
+    /// names an [`emissive_map`](Self::emissive_map) emits the map at full
+    /// strength, so this is the multiplier on its texels. `None` when the
+    /// material sets none of the three — it does not emit.
+    pub fn emissive_radiance(&self) -> Option<[f64; 3]> {
+        if self.emissive.is_none()
+            && self.emissive_strength.is_none()
+            && self.emissive_map.is_none()
+        {
+            return None;
+        }
+        let c = self.emissive.unwrap_or([1.0, 1.0, 1.0]);
+        let s = self.emissive_strength.unwrap_or(1.0);
+        Some([c[0] * s, c[1] * s, c[2] * s])
+    }
 }
 
 /// An entry in the scene — a root node with an assigned material.
@@ -2612,6 +2694,44 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Emissive fields go out camelCase like their siblings, and the
+    /// snake_case spelling still loads.
+    #[test]
+    fn emissive_material_wire_format() {
+        let m = MaterialDef {
+            name: "screen".into(),
+            emissive: Some([1.0, 0.5, 0.25]),
+            emissive_strength: Some(2.0),
+            emissive_map: Some("ui.png".into()),
+            emissive_map_origin: Some([0.0, 0.0, 1.0]),
+            emissive_map_u: Some([10.0, 0.0, 0.0]),
+            emissive_map_v: Some([0.0, -10.0, 0.0]),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&m).unwrap();
+        for key in [
+            "emissive",
+            "emissiveStrength",
+            "emissiveMap",
+            "emissiveMapOrigin",
+            "emissiveMapU",
+            "emissiveMapV",
+        ] {
+            assert!(json.get(key).is_some(), "missing {key}: {json}");
+        }
+        assert_eq!(serde_json::from_value::<MaterialDef>(json).unwrap(), m);
+        let snake: MaterialDef = serde_json::from_str(
+            r#"{"name":"g","color":[0,0,0],"metallic":0,"roughness":1,"emissive_strength":3.0,"emissive_map":"a.png"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            (snake.emissive_strength, snake.emissive_map.as_deref()),
+            (Some(3.0), Some("a.png"))
+        );
+        assert_eq!(snake.emissive_radiance(), Some([3.0; 3]));
+        assert_eq!(MaterialDef::default().emissive_radiance(), None);
+    }
 
     #[test]
     fn roundtrip_document() {

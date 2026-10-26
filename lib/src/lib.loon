@@ -192,6 +192,13 @@
 [type Material
   [Material Str f64 f64 f64 f64 f64]]
 
+; An emissive material: name, base colour, metallic, roughness, then emissive colour (linear) and strength, then an
+; optional emissive image ("" for none) planar-mapped in world space: image pixel (0,0), the TOP-LEFT, at (ox oy oz);
+; the image's full width runs along (ux uy uz), its full height (image y, downward) along (vx vy vz). Only the
+; photoreal path tracer emits; drafting views shade the base colour.
+[type MaterialE
+  [MaterialE Str f64 f64 f64 f64 f64 f64 f64 f64 f64 Str f64 f64 f64 f64 f64 f64 f64 f64 f64]]
+
 ; ---------------------------------------------------------------------------
 ; Scene output
 ; ---------------------------------------------------------------------------
@@ -639,6 +646,8 @@
 ; Material (no subject)
 [let material [fn [name r g b metallic roughness]
   [Material name r g b metallic roughness]]]
+[let material-emissive [fn [name r g b metallic roughness er eg eb strength map ox oy oz ux uy uz vx vy vz]
+  [MaterialE name r g b metallic roughness er eg eb strength map ox oy oz ux uy uz vx vy vz]]]
 
 ; Scene (no subject)
 [let root [fn [solid material-name]
