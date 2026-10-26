@@ -2038,7 +2038,7 @@ dependencies = [
 [[package]]
 name = "loon-lang"
 version = "0.7.0"
-source = "git+https://github.com/ecto/loon?rev=c12ef566613995f913012c79773bab825950566f#c12ef566613995f913012c79773bab825950566f"
+source = "git+https://github.com/ecto/loon?rev=211ff48207b4d521caebb450bacc3e7a94c4ae60#211ff48207b4d521caebb450bacc3e7a94c4ae60"
 dependencies = [
  "codespan-reporting 0.11.1",
  "dirs-next",
@@ -2579,7 +2579,7 @@ dependencies = [
  "phyz-model",
  "phyz-rigid",
  "tang",
- "tang-expr",
+ "tang-expr 0.1.1",
  "tang-la",
 ]
 
@@ -3735,6 +3735,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tang-expr"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df8225e37bd9287d3d4a32423bbce42cc2de20ff6e12a199072f8b105c717e71"
+dependencies = [
+ "tang",
+]
+
+[[package]]
 name = "tang-la"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4389,7 +4398,7 @@ name = "vcad-ecad-diff"
 version = "0.10.0"
 dependencies = [
  "tang",
- "tang-expr",
+ "tang-expr 0.2.0",
  "tang-la",
  "vcad-ecad-sim",
  "vcad-kernel-constraints",
@@ -4456,7 +4465,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spade",
- "tang-expr",
+ "tang-expr 0.2.0",
  "thiserror 2.0.18",
  "toml",
  "tracing",
@@ -4487,7 +4496,7 @@ version = "0.10.0"
 dependencies = [
  "serde",
  "tang",
- "tang-expr",
+ "tang-expr 0.2.0",
  "thiserror 2.0.18",
  "vcad-ecad-schematic",
  "vcad-ir",
@@ -4772,7 +4781,7 @@ dependencies = [
  "pollster",
  "slotmap",
  "tang",
- "tang-expr",
+ "tang-expr 0.2.0",
  "tang-la",
  "thiserror 2.0.18",
  "vcad-kernel-math",
@@ -4923,7 +4932,7 @@ dependencies = [
  "bytemuck",
  "kosm-render",
  "pollster",
- "tang-expr",
+ "tang-expr 0.2.0",
  "thiserror 2.0.18",
  "wasm-bindgen",
  "wasm-bindgen-futures",

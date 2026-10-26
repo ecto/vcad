@@ -220,7 +220,7 @@ thiserror = "2"
 kosm-render = "0.2"
 tang = { version = "0.2" }
 tang-la = { version = "0.1" }
-tang-expr = { version = "0.1" }
+tang-expr = { version = "0.2" }
 # phyz is PINNED to a published revision rather than a sibling checkout.
 #
 # As a path dep, every vcad build took whatever happened to be in
