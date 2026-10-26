@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-26-emissive-materials",
+  "version": "0.10.0",
+  "date": "2026-10-26",
+  "category": "feat",
+  "title": "Emissive materials in loon and photoreal renders",
+  "summary": "Materials can emit light: `emissive` + `emissive_strength` in the IR and `[material-emissive ...]` in loon; the photoreal path tracer draws them. Image-mapped emission is recorded but refused until the renderer supports it.",
+  "features": ["materials", "loon", "photoreal"]
+}

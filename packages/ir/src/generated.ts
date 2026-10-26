@@ -4155,7 +4155,45 @@ clearcoatRoughness?: number,
  * one; it is honoured by the photoreal path tracer, which shades the
  * analytic BRep and therefore has the exact parameterisation to hand.
  */
-anisotropy?: number, };
+anisotropy?: number, 
+/**
+ * Constant emissive colour as `[r, g, b]` in linear 0.0..1.0. Emitted
+ * radiance is `emissive * emissive_strength`, modulated per hit by
+ * [`emissive_map`](Self::emissive_map) when one is set. Honoured by
+ * the photoreal path tracer; the drafting views ignore it.
+ */
+emissive?: [number, number, number], 
+/**
+ * Multiplier on the emissive colour (default 1.0). Values above 1 make
+ * a screen read as *lit* rather than merely pale.
+ */
+emissiveStrength?: number, 
+/**
+ * Path to an emissive image (PNG) — a UI screenshot lighting a display,
+ * rendered as part of the product shot. Resolved relative to the source
+ * `.loon` file's directory like `import-mesh` paths.
+ *
+ * Sampled by a world-space planar projection (see
+ * [`emissive_map_origin`](Self::emissive_map_origin)), so emission does
+ * not depend on UVs of tessellated meshes.
+ */
+emissiveMap?: string, 
+/**
+ * World-space position of image pixel (0,0) — the **top-left** corner.
+ */
+emissiveMapOrigin?: [number, number, number], 
+/**
+ * World-space vector spanning the image's full **width**: the top edge
+ * runs from the origin to `origin + u`.
+ */
+emissiveMapU?: [number, number, number], 
+/**
+ * World-space vector spanning the image's full **height**: the left
+ * edge runs from the origin to `origin + v`. Image y runs *down* from
+ * pixel (0,0), so on a face in the XY plane shown upright to a camera
+ * looking along +Y, `u` runs along +X and `v` along −Y.
+ */
+emissiveMapV?: [number, number, number], };
 
 /**
  * A molecular / atomic system: the optional `molecule` domain on a `Document`.

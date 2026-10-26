@@ -134,7 +134,13 @@ pub fn from_material_def(mat: Option<&vcad_ir::MaterialDef>, tint: Option<[f64; 
         attenuation_color,
         attenuation_distance,
         thin_walled,
-        emissive: [0.0; 3],
+        // A constant: kosm-render emits per material, not per hit, so an
+        // `emissive_map` contributes only its multiplier here (and the
+        // photoreal renderer refuses documents that set one).
+        emissive: mat
+            .and_then(|m| m.emissive_radiance())
+            .map(|e| [e[0] as f32, e[1] as f32, e[2] as f32])
+            .unwrap_or([0.0; 3]),
         ..Pbr::default()
     }
 }
@@ -177,6 +183,28 @@ mod tests {
             "the glossy-dielectric coat still applies"
         );
         assert_eq!(from_material_def(None, None).transmission, 0.0);
+        assert_eq!(p.emissive, [0.0; 3], "no emissive field, no emission");
+    }
+
+    /// `emissive * emissive_strength`, white and 1.0 filling in the absent one.
+    #[test]
+    fn emissive_reaches_the_material() {
+        let m = vcad_ir::MaterialDef {
+            name: "screen".into(),
+            emissive: Some([1.0, 0.5, 0.25]),
+            emissive_strength: Some(4.0),
+            ..Default::default()
+        };
+        assert_eq!(from_material_def(Some(&m), None).emissive, [4.0, 2.0, 1.0]);
+        let only_strength = vcad_ir::MaterialDef {
+            emissive: None,
+            emissive_strength: Some(2.0),
+            ..m
+        };
+        assert_eq!(
+            from_material_def(Some(&only_strength), None).emissive,
+            [2.0; 3]
+        );
     }
 
     /// The `glass` preset the browser ships: full transmission, IOR 1.5, a

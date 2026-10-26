@@ -47,6 +47,11 @@ pub fn value_to_document_in(
         Value::Adt(tag, fields) if tag == "NamedSceneEntry" && fields.len() == 3 => {
             push_named_entry(&mut ctx, fields)?;
         }
+        // Emissive material definition (standalone)
+        Value::Adt(tag, fields) if tag == "MaterialE" && fields.len() == 20 => {
+            let mat = ctx.emissive_material(fields)?;
+            ctx.doc.materials.insert(mat.name.clone(), mat);
+        }
         // Material definition (standalone)
         Value::Adt(tag, fields) if tag == "Material" && fields.len() == 6 => {
             let name = ctx.str_val(&fields[0])?;
@@ -209,6 +214,10 @@ fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), Strin
         }
         Value::Adt(tag, fields) if tag == "NamedSceneEntry" && fields.len() == 3 => {
             push_named_entry(ctx, fields)?;
+        }
+        Value::Adt(tag, fields) if tag == "MaterialE" && fields.len() == 20 => {
+            let mat = ctx.emissive_material(fields)?;
+            ctx.doc.materials.insert(mat.name.clone(), mat);
         }
         Value::Adt(tag, fields) if tag == "Material" && fields.len() == 6 => {
             let name = ctx.str_val(&fields[0])?;
@@ -1273,6 +1282,33 @@ impl ConvertCtx {
             i += 2;
         }
         Ok(units)
+    }
+
+    /// `[material-emissive ...]` (the `MaterialE` ADT, 20 fields) → a
+    /// [`MaterialDef`] with emission and an optional planar-mapped emissive
+    /// image. Field layout is documented on `MaterialE` in lib.loon.
+    fn emissive_material(&self, f: &[Value]) -> Result<MaterialDef, String> {
+        let n = |i: usize| self.f64_val(&f[i]);
+        let v3 = |i: usize| -> Result<[f64; 3], String> { Ok([n(i)?, n(i + 1)?, n(i + 2)?]) };
+        let map = if self.str_val(&f[10])?.trim().is_empty() {
+            None
+        } else {
+            Some(self.import_path("material-emissive", &f[10])?)
+        };
+        let mapped = |i: usize| map.as_ref().map(|_| v3(i)).transpose();
+        Ok(MaterialDef {
+            name: self.str_val(&f[0])?,
+            color: v3(1)?,
+            metallic: n(4)?,
+            roughness: n(5)?,
+            emissive: Some(v3(6)?),
+            emissive_strength: Some(n(9)?),
+            emissive_map_origin: mapped(11)?,
+            emissive_map_u: mapped(14)?,
+            emissive_map_v: mapped(17)?,
+            emissive_map: map,
+            ..Default::default()
+        })
     }
 
     /// Resolve an import path against the source file's directory, so a model
@@ -2951,6 +2987,68 @@ mod tests {
         assert_eq!(doc.materials.len(), 2); // steel + default
         assert!(doc.materials.contains_key("steel"));
         assert_eq!(doc.roots.len(), 1);
+    }
+
+    #[test]
+    fn emissive_material_with_map() {
+        let mut fields = vec![
+            s("screen"),
+            f(0.01),
+            f(0.02),
+            f(0.03),
+            f(0.0),
+            f(0.2),
+            f(1.0),
+            f(0.9),
+            f(0.8),
+            f(3.0),
+            s("ui.png"),
+        ];
+        fields.extend([10.0, -50.0, 60.0, 0.0, 100.0, 0.0, 0.0, 0.0, -60.0].map(f));
+        let mat = adt("MaterialE", fields);
+        let doc = value_to_document(&Value::Vec(vec![mat].into())).unwrap();
+        let m = &doc.materials["screen"];
+        assert_eq!(m.color, [0.01, 0.02, 0.03]);
+        assert_eq!(m.emissive, Some([1.0, 0.9, 0.8]));
+        assert_eq!(m.emissive_strength, Some(3.0));
+        assert_eq!(m.emissive_map.as_deref(), Some("ui.png"));
+        assert_eq!(m.emissive_map_origin, Some([10.0, -50.0, 60.0]));
+        assert_eq!(m.emissive_map_u, Some([0.0, 100.0, 0.0]));
+        assert_eq!(m.emissive_map_v, Some([0.0, 0.0, -60.0]));
+    }
+
+    #[test]
+    fn emissive_material_without_map_and_plain_material_unchanged() {
+        let mut fields = vec![
+            s("glow"),
+            f(0.0),
+            f(0.0),
+            f(0.0),
+            f(0.0),
+            f(0.5),
+            f(1.0),
+            f(0.5),
+            f(0.1),
+            f(2.0),
+            s(""),
+        ];
+        fields.extend([0.0; 9].map(f));
+        let plain = adt(
+            "Material",
+            vec![s("steel"), f(0.7), f(0.7), f(0.7), f(1.0), f(0.3)],
+        );
+        let doc =
+            value_to_document(&Value::Vec(vec![adt("MaterialE", fields), plain].into())).unwrap();
+        let g = &doc.materials["glow"];
+        assert_eq!(
+            (g.emissive, g.emissive_map.clone(), g.emissive_map_origin),
+            (Some([1.0, 0.5, 0.1]), None, None)
+        );
+        // Doubling is exact in f64, so the product compares exactly.
+        assert_eq!(g.emissive_radiance(), Some([2.0, 1.0, 0.2]));
+        let st = &doc.materials["steel"];
+        assert_eq!(st.emissive_radiance(), None);
+        assert_eq!(st.emissive_map, None);
     }
 
     #[test]
