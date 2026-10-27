@@ -1,11 +1,11 @@
-name: Publish vcad-cli to crates.io
+name: Publish vcad to crates.io
 
-# Publishes vcad-cli and every workspace crate it depends on, so
-# `cargo install vcad-cli` installs the `vcad` command. Triggered by a
+# Publishes the vcad crate (kernel library + `vcad` CLI) and every workspace crate it depends on, so
+# `cargo install vcad` installs the `vcad` command. Triggered by a
 # `crates-v<version>` tag whose version must equal workspace.package.version
 # (bump with a changelog entry + `npm run version:sync`, merge, then tag).
 #
-# The crate set is vcad-cli's normal/build closure (scripts/crates-closure.py),
+# The crate set is vcad's normal/build closure (scripts/crates-closure.py),
 # not the whole workspace: some members depend on git-only crates and can't go
 # to crates.io. `cargo publish` orders the set, verifies each crate against the
 # registry, and waits for the index between uploads. External deps must already
@@ -51,7 +51,7 @@ jobs:
         id: version
         run: |
           VERSION=$(cargo metadata --format-version 1 --no-deps \
-            | jq -r '.packages[] | select(.name == "vcad-cli") | .version')
+            | jq -r '.packages[] | select(.name == "vcad") | .version')
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           if [[ "${GITHUB_REF}" == refs/tags/crates-v* && "${GITHUB_REF_NAME#crates-v}" != "${VERSION}" ]]; then
             echo "::error::tag ${GITHUB_REF_NAME} does not match workspace version ${VERSION}"
@@ -84,8 +84,8 @@ jobs:
     steps:
       - name: System deps
         run: apt-get update && apt-get install -y pkg-config
-      - name: cargo install vcad-cli
-        run: cargo install vcad-cli --version "${{ needs.publish.outputs.version }}"
+      - name: cargo install vcad
+        run: cargo install vcad --version "${{ needs.publish.outputs.version }}"
       - name: vcad --version
         run: vcad --version | grep -F "${{ needs.publish.outputs.version }}"
       - name: vcad info on a .loon

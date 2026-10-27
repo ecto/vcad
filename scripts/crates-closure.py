@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Print the workspace crates `cargo install vcad-cli` needs, one per line.
+"""Print the workspace crates `cargo install vcad` needs, one per line.
 
-Reads `cargo metadata` on stdin and walks vcad-cli's normal + build
+Reads `cargo metadata` on stdin and walks vcad's normal + build
 dependencies, keeping workspace members only. crates-publish.yml feeds the
 result to `cargo publish -p ...`, which orders and uploads them; publishing
 the whole workspace instead would also try crates whose deps are git-only
@@ -13,7 +13,7 @@ the whole workspace instead would also try crates whose deps are git-only
 import json
 import sys
 
-ROOT = "vcad-cli"
+ROOT = "vcad"
 
 meta = json.load(sys.stdin)
 packages = {p["id"]: p for p in meta["packages"]}

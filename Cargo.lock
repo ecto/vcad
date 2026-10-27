@@ -250,12 +250,6 @@ dependencies = [
 
 [[package]]
 name = "base64"
-version = "0.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
-
-[[package]]
-name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -1282,45 +1276,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gltf"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e3ce1918195723ce6ac74e80542c5a96a40c2b26162c1957a5cd70799b8cacf7"
-dependencies = [
- "base64 0.13.1",
- "byteorder",
- "gltf-json",
- "image",
- "lazy_static",
- "serde_json",
- "urlencoding",
-]
-
-[[package]]
-name = "gltf-derive"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14070e711538afba5d6c807edb74bcb84e5dbb9211a3bf5dea0dfab5b24f4c51"
-dependencies = [
- "inflections",
- "proc-macro2",
- "quote",
- "syn 2.0.114",
-]
-
-[[package]]
-name = "gltf-json"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6176f9d60a7eab0a877e8e96548605dedbde9190a7ae1e80bbcc1c9af03ab14"
-dependencies = [
- "gltf-derive",
- "serde",
- "serde_derive",
- "serde_json",
-]
-
-[[package]]
 name = "glutin_wgl_sys"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1572,7 +1527,7 @@ version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "96547c2556ec9d12fb1578c4eaf448b04993e7fb79cbaad930a656880a6bdfa0"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "bytes",
  "futures-channel",
  "futures-util",
@@ -1761,12 +1716,6 @@ dependencies = [
  "equivalent",
  "hashbrown 0.16.1",
 ]
-
-[[package]]
-name = "inflections"
-version = "1.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a257582fdcde896fd96463bf2d40eefea0580021c0712a0e2b028b60b47a837a"
 
 [[package]]
 name = "ipnet"
@@ -3117,7 +3066,7 @@ version = "0.12.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eddd3ca559203180a307f12d114c268abf583f59b03cb906fd0b3ff8646c1147"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "bytes",
  "futures-channel",
  "futures-core",
@@ -4031,7 +3980,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e581ba15a835f4d9ea06c55ab1bd4dce26fc53752c69a04aac00703bfb49ba9"
 dependencies = [
  "async-trait",
- "base64 0.22.1",
+ "base64",
  "bytes",
  "http",
  "http-body",
@@ -4245,12 +4194,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "urlencoding"
-version = "2.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
-
-[[package]]
 name = "utf8_iter"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4281,59 +4224,6 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vcad"
-version = "0.11.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "gltf",
- "serde",
- "tang",
- "thiserror 2.0.18",
- "toml",
- "vcad-ir",
- "vcad-kernel",
- "vcad-kernel-drafting",
- "vcad-kernel-export",
-]
-
-[[package]]
-name = "vcad-app"
-version = "0.11.0"
-dependencies = [
- "anyhow",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.18",
- "ts-rs",
- "vcad-crdt",
- "vcad-eval",
- "vcad-i18n",
- "vcad-ir",
- "vcad-kernel",
- "vcad-kernel-math",
-]
-
-[[package]]
-name = "vcad-chat"
-version = "0.11.0"
-dependencies = [
- "anyhow",
- "bytes",
- "directories",
- "futures-util",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "vcad-ir",
- "vcad-kernel",
-]
-
-[[package]]
-name = "vcad-cli"
 version = "0.11.0"
 dependencies = [
  "anyhow",
@@ -4388,6 +4278,42 @@ dependencies = [
  "vcad-slicer-gcode",
  "vcad-termview",
  "zip",
+]
+
+[[package]]
+name = "vcad-app"
+version = "0.11.0"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "ts-rs",
+ "vcad-crdt",
+ "vcad-eval",
+ "vcad-i18n",
+ "vcad-ir",
+ "vcad-kernel",
+ "vcad-kernel-math",
+]
+
+[[package]]
+name = "vcad-chat"
+version = "0.11.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "directories",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "vcad-ir",
+ "vcad-kernel",
 ]
 
 [[package]]
@@ -5268,7 +5194,7 @@ dependencies = [
 name = "vcad-kernel-wasm"
 version = "0.11.0"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "console_error_panic_hook",
  "getrandom 0.2.17",
  "js-sys",
@@ -5436,7 +5362,7 @@ dependencies = [
 name = "vcad-slicer-bambu"
 version = "0.11.0"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "md5",
  "quick-xml 0.36.2",
  "rumqttc",
@@ -5473,7 +5399,7 @@ dependencies = [
 name = "vcad-termview"
 version = "0.11.0"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "image",
 ]
 

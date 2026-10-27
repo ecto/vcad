@@ -1,10 +1,13 @@
 [package]
-name = "vcad-cli"
+name = "vcad"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Full-featured parametric CAD in the terminal"
+description = "Parametric CAD: the vcad BRep kernel as a library, and the `vcad` command-line app"
+
+[lib]
+path = "src/lib.rs"
 
 [[bin]]
 name = "vcad"

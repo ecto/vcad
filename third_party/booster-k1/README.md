@@ -25,7 +25,7 @@ height and tilt termination — see `docs/native-sim-m0.md`.
 ## Regenerating
 
 ```bash
-cargo run -p vcad-cli -- import-urdf \
+cargo run -p vcad -- import-urdf \
   third_party/booster-k1/K1_22dof_floating.urdf \
   examples/k1-floating.vcad \
   --floating-base --spawn-height-mm 550 --relative-meshes
