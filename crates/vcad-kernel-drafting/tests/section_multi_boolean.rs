@@ -19,7 +19,10 @@ fn hatch() -> HatchPattern {
     // exactly what the page sent: {"spacing":1.6,"angle":45}. angle is in
     // radians, so this is 45 rad, not 45° — kept because it is the input
     // that failed.
-    HatchPattern { spacing: 1.6, angle: 45.0 }
+    HatchPattern {
+        spacing: 1.6,
+        angle: 45.0,
+    }
 }
 
 fn plate_minus_bore() -> Solid {
@@ -47,8 +50,16 @@ fn describe(view: &SectionView) -> String {
     view.curves
         .iter()
         .map(|c| {
-            let (lo, hi) = c.points.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p.x), hi.max(p.x)));
-            format!("[{} pts, closed={}, x {:.2}..{:.2}]", c.points.len(), c.is_closed, lo, hi)
+            let (lo, hi) = c.points.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| {
+                (lo.min(p.x), hi.max(p.x))
+            });
+            format!(
+                "[{} pts, closed={}, x {:.2}..{:.2}]",
+                c.points.len(),
+                c.is_closed,
+                lo,
+                hi
+            )
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -58,8 +69,16 @@ fn describe(view: &SectionView) -> String {
 fn control_two_booleans_hatches_both_regions() {
     let view = section_mesh(&plate_minus_bore().to_mesh(32), &plane(), Some(&hatch()));
     eprintln!("control: {}", describe(&view));
-    assert!(hatch_on_side(&view.hatch_lines, true) > 0, "left region unhatched: {}", describe(&view));
-    assert!(hatch_on_side(&view.hatch_lines, false) > 0, "right region unhatched: {}", describe(&view));
+    assert!(
+        hatch_on_side(&view.hatch_lines, true) > 0,
+        "left region unhatched: {}",
+        describe(&view)
+    );
+    assert!(
+        hatch_on_side(&view.hatch_lines, false) > 0,
+        "right region unhatched: {}",
+        describe(&view)
+    );
 }
 
 #[test]
@@ -67,21 +86,41 @@ fn four_booleans_hatches_both_regions() {
     let view = section_mesh(&bracket().to_mesh(32), &plane(), Some(&hatch()));
     eprintln!("bracket: {}", describe(&view));
     let closed = view.curves.iter().filter(|c| c.is_closed).count();
-    assert_eq!(closed, 2, "expected two closed outlines: {}", describe(&view));
+    assert_eq!(
+        closed,
+        2,
+        "expected two closed outlines: {}",
+        describe(&view)
+    );
     assert!(
         view.curves.iter().all(|c| c.is_closed),
         "no open fragments expected in a cut through a closed solid: {}",
         describe(&view)
     );
-    assert!(hatch_on_side(&view.hatch_lines, true) > 0, "left region unhatched: {}", describe(&view));
-    assert!(hatch_on_side(&view.hatch_lines, false) > 0, "right region unhatched: {}", describe(&view));
+    assert!(
+        hatch_on_side(&view.hatch_lines, true) > 0,
+        "left region unhatched: {}",
+        describe(&view)
+    );
+    assert!(
+        hatch_on_side(&view.hatch_lines, false) > 0,
+        "right region unhatched: {}",
+        describe(&view)
+    );
 }
 
 #[test]
 fn bracket_section_matches_plate_minus_bore() {
     // The bolt holes never meet y = 25, so the two sections are the same
     // geometry and should hatch the same amount, give or take a line.
-    let a = section_mesh(&plate_minus_bore().to_mesh(32), &plane(), Some(&hatch())).hatch_lines.len() as i64;
-    let b = section_mesh(&bracket().to_mesh(32), &plane(), Some(&hatch())).hatch_lines.len() as i64;
-    assert!((a - b).abs() <= 2, "plate−bore hatches {a} lines, bracket {b}");
+    let a = section_mesh(&plate_minus_bore().to_mesh(32), &plane(), Some(&hatch()))
+        .hatch_lines
+        .len() as i64;
+    let b = section_mesh(&bracket().to_mesh(32), &plane(), Some(&hatch()))
+        .hatch_lines
+        .len() as i64;
+    assert!(
+        (a - b).abs() <= 2,
+        "plate−bore hatches {a} lines, bracket {b}"
+    );
 }
