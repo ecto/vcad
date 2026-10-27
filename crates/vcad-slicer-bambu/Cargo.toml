@@ -5,16 +5,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-# vendor-specific slicer backend for the app; nothing downstream pins it
-publish = false
 
 [features]
 default = ["network"]
 network = ["dep:tokio", "dep:rumqttc", "dep:rustls", "dep:rustls022", "dep:webpki-roots", "dep:suppaftp"]
 
 [dependencies]
-vcad-slicer = { path = "../vcad-slicer", version = "0.10.0" }
-vcad-slicer-gcode = { path = "../vcad-slicer-gcode", version = "0.10.0" }
+vcad-slicer = { path = "../vcad-slicer", version = "0.11.0" }
+vcad-slicer-gcode = { path = "../vcad-slicer-gcode", version = "0.11.0" }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

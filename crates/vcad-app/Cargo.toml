@@ -5,17 +5,15 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Shared application core for vcad — evaluation, undo/redo, camera, commands"
-# the desktop/TUI application core, not a library API anyone pins
-publish = false
 
 [dependencies]
 ts-rs = { version = "10", optional = true }
-vcad-ir = { path = "../vcad-ir", version = "0.10.0" }
-vcad-crdt = { path = "../vcad-crdt", version = "0.10.0" }
-vcad-kernel = { path = "../vcad-kernel", version = "0.10.0" }
+vcad-ir = { path = "../vcad-ir", version = "0.11.0" }
+vcad-crdt = { path = "../vcad-crdt", version = "0.11.0" }
+vcad-kernel = { path = "../vcad-kernel", version = "0.11.0" }
 vcad-eval = { workspace = true }
-vcad-kernel-math = { path = "../vcad-kernel-math", version = "0.10.0" }
-vcad-i18n = { path = "../vcad-i18n" }
+vcad-kernel-math = { path = "../vcad-kernel-math", version = "0.11.0" }
+vcad-i18n = { workspace = true }
 
 serde.workspace = true
 serde_json.workspace = true

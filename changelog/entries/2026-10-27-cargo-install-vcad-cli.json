@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-27-cargo-install-vcad-cli",
+  "version": "0.11.0",
+  "date": "2026-10-27",
+  "category": "feat",
+  "title": "Install the CLI with cargo install vcad-cli",
+  "summary": "vcad-cli and its whole crate tree are publishable to crates.io, so `cargo install vcad-cli` installs the `vcad` command.",
+  "features": ["cli", "distribution"]
+}

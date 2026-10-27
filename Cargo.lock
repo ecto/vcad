@@ -307,6 +307,9 @@ name = "bitflags"
 version = "2.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
+dependencies = [
+ "serde_core",
+]
 
 [[package]]
 name = "bitmaps"
@@ -538,6 +541,17 @@ version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3538270d33cc669650c4b093848450d380def10c331d38c768e34cac80576e6e"
 dependencies = [
+ "termcolor",
+ "unicode-width",
+]
+
+[[package]]
+name = "codespan-reporting"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe6d2e5af09e8c8ad56c969f2157a3d4238cebc7c55f0a517728c38f7b200f81"
+dependencies = [
+ "serde",
  "termcolor",
  "unicode-width",
 ]
@@ -1245,9 +1259,9 @@ dependencies = [
 
 [[package]]
 name = "glow"
-version = "0.14.2"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d51fa363f025f5c111e03f13eda21162faeacb6911fe8caa0c0349f9cf0c4483"
+checksum = "c5e5ea60d70410161c8bf5da3fdfeaa1c72ed2c15f8bbb9d19fe3a4fad085f08"
 dependencies = [
  "js-sys",
  "slotmap",
@@ -2105,9 +2119,9 @@ checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
 name = "metal"
-version = "0.29.0"
+version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ecfd3296f8c56b7c1f6fbac3c71cefa9d78ce009850c45000015f206dc7fa21"
+checksum = "f569fb946490b5743ad69813cb19629130ce9374034abe31614a36402d18f99e"
 dependencies = [
  "bitflags 2.10.0",
  "block",
@@ -2164,23 +2178,27 @@ dependencies = [
 
 [[package]]
 name = "naga"
-version = "23.1.0"
+version = "25.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "364f94bc34f61332abebe8cad6f6cd82a5b65cff22c828d05d0968911462ca4f"
+checksum = "2b977c445f26e49757f9aca3631c3b8b836942cb278d69a92e7b80d3b24da632"
 dependencies = [
  "arrayvec",
  "bit-set 0.8.0",
  "bitflags 2.10.0",
- "cfg_aliases 0.1.1",
- "codespan-reporting 0.11.1",
+ "cfg_aliases 0.2.2",
+ "codespan-reporting 0.12.0",
+ "half",
+ "hashbrown 0.15.5",
  "hexf-parse",
  "indexmap",
  "log",
+ "num-traits",
+ "once_cell",
  "rustc-hash 1.1.0",
  "spirv 0.3.0+sdk-1.3.268.0",
- "termcolor",
- "thiserror 1.0.69",
- "unicode-xid",
+ "strum",
+ "thiserror 2.0.18",
+ "unicode-ident",
 ]
 
 [[package]]
@@ -2487,6 +2505,15 @@ checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
 name = "ordered-float"
+version = "4.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7bb71e1b3fa6ca1c61f383464aaf2bb0e2f8e772a1f01d486832464de363b951"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "ordered-float"
 version = "5.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c7c9e0d9b23589f26070720bac724174bfec1083e82f7854cdd0267518343c0"
@@ -2537,8 +2564,8 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "phyz"
-version = "0.3.1"
-source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
+version = "0.4.0"
+source = "git+https://github.com/ecto/phyz.git?tag=v0.4.0#fbba8abe2d02799f5fee6a7b28b6e619083f0caf"
 dependencies = [
  "phyz-collision",
  "phyz-contact",
@@ -2550,8 +2577,8 @@ dependencies = [
 
 [[package]]
 name = "phyz-collision"
-version = "0.3.1"
-source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
+version = "0.4.0"
+source = "git+https://github.com/ecto/phyz.git?tag=v0.4.0#fbba8abe2d02799f5fee6a7b28b6e619083f0caf"
 dependencies = [
  "phyz-math",
  "phyz-model",
@@ -2559,8 +2586,8 @@ dependencies = [
 
 [[package]]
 name = "phyz-contact"
-version = "0.3.1"
-source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
+version = "0.4.0"
+source = "git+https://github.com/ecto/phyz.git?tag=v0.4.0#fbba8abe2d02799f5fee6a7b28b6e619083f0caf"
 dependencies = [
  "phyz-collision",
  "phyz-math",
@@ -2570,8 +2597,8 @@ dependencies = [
 
 [[package]]
 name = "phyz-diff"
-version = "0.3.1"
-source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
+version = "0.4.0"
+source = "git+https://github.com/ecto/phyz.git?tag=v0.4.0#fbba8abe2d02799f5fee6a7b28b6e619083f0caf"
 dependencies = [
  "phyz-collision",
  "phyz-contact",
@@ -2585,8 +2612,8 @@ dependencies = [
 
 [[package]]
 name = "phyz-gpu"
-version = "0.3.1"
-source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
+version = "0.4.0"
+source = "git+https://github.com/ecto/phyz.git?tag=v0.4.0#fbba8abe2d02799f5fee6a7b28b6e619083f0caf"
 dependencies = [
  "bytemuck",
  "futures-intrusive",
@@ -2594,22 +2621,23 @@ dependencies = [
  "phyz-model",
  "phyz-rigid",
  "pollster",
- "wgpu 23.0.1",
+ "wgpu 25.0.2",
 ]
 
 [[package]]
 name = "phyz-math"
-version = "0.3.1"
-source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
+version = "0.4.0"
+source = "git+https://github.com/ecto/phyz.git?tag=v0.4.0#fbba8abe2d02799f5fee6a7b28b6e619083f0caf"
 dependencies = [
+ "libm",
  "tang",
  "tang-la",
 ]
 
 [[package]]
 name = "phyz-md"
-version = "0.3.1"
-source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
+version = "0.4.0"
+source = "git+https://github.com/ecto/phyz.git?tag=v0.4.0#fbba8abe2d02799f5fee6a7b28b6e619083f0caf"
 dependencies = [
  "phyz-math",
  "rand 0.8.5",
@@ -2620,16 +2648,16 @@ dependencies = [
 
 [[package]]
 name = "phyz-model"
-version = "0.3.1"
-source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
+version = "0.4.0"
+source = "git+https://github.com/ecto/phyz.git?tag=v0.4.0#fbba8abe2d02799f5fee6a7b28b6e619083f0caf"
 dependencies = [
  "phyz-math",
 ]
 
 [[package]]
 name = "phyz-rigid"
-version = "0.3.1"
-source = "git+https://github.com/ecto/phyz.git?rev=7c8ac59c7659ed64f7218e0504b0487f90ec68ef#7c8ac59c7659ed64f7218e0504b0487f90ec68ef"
+version = "0.4.0"
+source = "git+https://github.com/ecto/phyz.git?tag=v0.4.0#fbba8abe2d02799f5fee6a7b28b6e619083f0caf"
 dependencies = [
  "phyz-math",
  "phyz-model",
@@ -3654,6 +3682,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
+name = "strum"
+version = "0.26.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
+dependencies = [
+ "strum_macros",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 2.0.114",
+]
+
+[[package]]
 name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3763,14 +3813,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
-]
-
-[[package]]
-name = "termview"
-version = "0.10.0"
-dependencies = [
- "base64 0.22.1",
- "image",
 ]
 
 [[package]]
@@ -4185,12 +4227,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
 
 [[package]]
-name = "unicode-xid"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebc1c04c71510c7f702b52b7c350734c9ff1295c464a03335b00bb84fc54f853"
-
-[[package]]
 name = "untrusted"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4245,7 +4281,7 @@ checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
 
 [[package]]
 name = "vcad"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4262,7 +4298,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-app"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "reqwest",
@@ -4281,7 +4317,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-chat"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4298,7 +4334,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-cli"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -4317,7 +4353,6 @@ dependencies = [
  "serde_json",
  "stl_io",
  "tempfile",
- "termview",
  "thiserror 2.0.18",
  "tokio",
  "tower-http",
@@ -4351,12 +4386,13 @@ dependencies = [
  "vcad-slicer",
  "vcad-slicer-bambu",
  "vcad-slicer-gcode",
+ "vcad-termview",
  "zip",
 ]
 
 [[package]]
 name = "vcad-crdt"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "js-sys",
  "serde",
@@ -4366,7 +4402,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-design-constraints"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4386,7 +4422,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-diff"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "tang",
  "tang-expr",
@@ -4397,7 +4433,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-diff-wasm"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4407,7 +4443,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-export"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "thiserror 2.0.18",
  "vcad-ecad-pcb",
@@ -4416,7 +4452,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-fabprep"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "log",
  "serde",
@@ -4430,14 +4466,14 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-package"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "vcad-ir",
 ]
 
 [[package]]
 name = "vcad-ecad-parts"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4447,7 +4483,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-pcb"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "env_logger",
  "log",
@@ -4473,7 +4509,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-schematic"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4483,7 +4519,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-sim"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "tang",
@@ -4498,7 +4534,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-source"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "vcad-ir",
@@ -4506,7 +4542,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-symbols"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "cfb",
  "nom",
@@ -4521,7 +4557,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ecad-verify"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "vcad-ecad-package",
@@ -4532,7 +4568,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-embroidery"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -4540,7 +4576,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-embroidery-dst"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -4549,7 +4585,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-embroidery-pes"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "thiserror 2.0.18",
@@ -4558,7 +4594,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-eval"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4584,7 +4620,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ffi"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "pollster",
  "serde",
@@ -4609,7 +4645,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-gdsii"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "geo",
  "thiserror 2.0.18",
@@ -4618,7 +4654,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-i18n"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4626,7 +4662,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-ir"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4636,7 +4672,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4677,7 +4713,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-acoustics"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4686,7 +4722,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-adjoint"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4695,7 +4731,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-antenna"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4704,7 +4740,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-assembly"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4716,7 +4752,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-atoms"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "phyz-md",
  "serde",
@@ -4728,7 +4764,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-booleans"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "criterion",
  "rayon",
@@ -4743,7 +4779,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-calibration"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "ryu",
  "serde",
@@ -4752,7 +4788,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-cam"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "geo",
  "geo-clipper",
@@ -4764,7 +4800,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-constraints"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "approx",
  "bytemuck",
@@ -4782,7 +4818,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-cost"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4790,7 +4826,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-dfm"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4808,7 +4844,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-diff"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "tang",
  "vcad-kernel",
@@ -4824,7 +4860,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-drafting"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "vcad-kernel-math",
@@ -4833,7 +4869,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-em"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4843,7 +4879,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-enclosure"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4851,7 +4887,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-export"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4859,7 +4895,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-fea"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4869,7 +4905,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-features"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4883,7 +4919,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-fillet"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -4895,7 +4931,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-flow"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bytemuck",
  "pollster",
@@ -4910,7 +4946,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-geom"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "tang",
  "vcad-kernel-math",
@@ -4918,7 +4954,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-gpu"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bytemuck",
  "kosm-render",
@@ -4933,7 +4969,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-magnetostatic"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4942,14 +4978,14 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-math"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "tang",
 ]
 
 [[package]]
 name = "vcad-kernel-naming"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -4959,7 +4995,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-neutronics"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4968,7 +5004,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-nurbs"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "tang",
  "vcad-kernel-geom",
@@ -4977,7 +5013,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-optics"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4986,7 +5022,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-orbit"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4995,7 +5031,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-particle"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5008,7 +5044,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-photonics"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5018,7 +5054,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-physics"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "phyz",
  "rand 0.8.5",
@@ -5040,7 +5076,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-primitives"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -5049,7 +5085,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-qcd"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5057,7 +5093,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-raytrace"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "bytemuck",
  "js-sys",
@@ -5084,7 +5120,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-sheet"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5094,7 +5130,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-shell"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -5105,7 +5141,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-sketch"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "thiserror 2.0.18",
  "vcad-kernel-booleans",
@@ -5118,7 +5154,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-step"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "stepperoni",
  "thiserror 2.0.18",
@@ -5133,7 +5169,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-stocksim"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5144,7 +5180,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-sweep"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "rustc-hash 1.1.0",
  "thiserror 2.0.18",
@@ -5158,7 +5194,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-tessellate"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "earcutr",
  "serde",
@@ -5173,7 +5209,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-text"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "thiserror 2.0.18",
  "ttf-parser",
@@ -5183,7 +5219,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-thermal"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5192,7 +5228,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-tolerance"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5202,7 +5238,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-topo"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "slotmap",
  "vcad-kernel-math",
@@ -5210,7 +5246,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-topopt"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5219,7 +5255,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-urdf"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "quick-xml 0.37.5",
  "serde",
@@ -5230,7 +5266,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-kernel-wasm"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "base64 0.22.1",
  "console_error_panic_hook",
@@ -5289,7 +5325,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-loon"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "loon-lang",
  "serde",
@@ -5301,7 +5337,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-parts"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5310,7 +5346,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-printcheck"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5320,7 +5356,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-process"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "geo",
  "serde",
@@ -5332,7 +5368,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-receipt"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5341,7 +5377,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-render"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "clap",
  "image",
@@ -5362,7 +5398,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-sim"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "phyz",
  "phyz-gpu",
@@ -5380,7 +5416,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-slicer"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "approx",
  "rayon",
@@ -5398,7 +5434,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-slicer-bambu"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "base64 0.22.1",
  "md5",
@@ -5423,7 +5459,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-slicer-gcode"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "approx",
  "serde",
@@ -5434,8 +5470,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-termview"
+version = "0.11.0"
+dependencies = [
+ "base64 0.22.1",
+ "image",
+]
+
+[[package]]
 name = "vcad-tool-derive"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5444,7 +5488,7 @@ dependencies = [
 
 [[package]]
 name = "vcad-torture"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5605,7 +5649,7 @@ dependencies = [
 
 [[package]]
 name = "wasmosis"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "wasm-bindgen",
  "wasmosis-macro",
@@ -5613,7 +5657,7 @@ dependencies = [
 
 [[package]]
 name = "wasmosis-macro"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5683,17 +5727,20 @@ dependencies = [
 
 [[package]]
 name = "wgpu"
-version = "23.0.1"
+version = "25.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80f70000db37c469ea9d67defdc13024ddf9a5f1b89cb2941b812ad7cde1735a"
+checksum = "ec8fb398f119472be4d80bc3647339f56eb63b2a331f6a3d16e25d8144197dd9"
 dependencies = [
  "arrayvec",
- "cfg_aliases 0.1.1",
+ "bitflags 2.10.0",
+ "cfg_aliases 0.2.2",
  "document-features",
+ "hashbrown 0.15.5",
  "js-sys",
  "log",
- "naga 23.1.0",
+ "naga 25.0.1",
  "parking_lot",
+ "portable-atomic",
  "profiling",
  "raw-window-handle",
  "smallvec",
@@ -5701,9 +5748,9 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "wgpu-core 23.0.1",
- "wgpu-hal 23.0.1",
- "wgpu-types 23.0.0",
+ "wgpu-core 25.0.2",
+ "wgpu-hal 25.0.2",
+ "wgpu-types 25.0.0",
 ]
 
 [[package]]
@@ -5738,27 +5785,33 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core"
-version = "23.0.1"
+version = "25.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d63c3c478de8e7e01786479919c8769f62a22eec16788d8c2ac77ce2c132778a"
+checksum = "f7b882196f8368511d613c6aeec80655160db6646aebddf8328879a88d54e500"
 dependencies = [
  "arrayvec",
+ "bit-set 0.8.0",
  "bit-vec 0.8.0",
  "bitflags 2.10.0",
- "cfg_aliases 0.1.1",
+ "cfg_aliases 0.2.2",
  "document-features",
+ "hashbrown 0.15.5",
  "indexmap",
  "log",
- "naga 23.1.0",
+ "naga 25.0.1",
  "once_cell",
  "parking_lot",
+ "portable-atomic",
  "profiling",
  "raw-window-handle",
  "rustc-hash 1.1.0",
  "smallvec",
- "thiserror 1.0.69",
- "wgpu-hal 23.0.1",
- "wgpu-types 23.0.0",
+ "thiserror 2.0.18",
+ "wgpu-core-deps-apple 25.0.0",
+ "wgpu-core-deps-emscripten 25.0.0",
+ "wgpu-core-deps-windows-linux-android 25.0.0",
+ "wgpu-hal 25.0.2",
+ "wgpu-types 25.0.0",
 ]
 
 [[package]]
@@ -5787,13 +5840,22 @@ dependencies = [
  "rustc-hash 1.1.0",
  "smallvec",
  "thiserror 2.0.18",
- "wgpu-core-deps-apple",
- "wgpu-core-deps-emscripten",
+ "wgpu-core-deps-apple 30.0.1",
+ "wgpu-core-deps-emscripten 30.0.1",
  "wgpu-core-deps-wasm",
- "wgpu-core-deps-windows-linux-android",
+ "wgpu-core-deps-windows-linux-android 30.0.1",
  "wgpu-hal 30.0.1",
  "wgpu-naga-bridge",
  "wgpu-types 30.0.1",
+]
+
+[[package]]
+name = "wgpu-core-deps-apple"
+version = "25.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfd488b3239b6b7b185c3b045c39ca6bf8af34467a4c5de4e0b1a564135d093d"
+dependencies = [
+ "wgpu-hal 25.0.2",
 ]
 
 [[package]]
@@ -5803,6 +5865,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "061f3d319a40d39d00b1ecc2c33b89fe21d4e6fe01859df3500a3a8ecccd6b68"
 dependencies = [
  "wgpu-hal 30.0.1",
+]
+
+[[package]]
+name = "wgpu-core-deps-emscripten"
+version = "25.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f09ad7aceb3818e52539acc679f049d3475775586f3f4e311c30165cf2c00445"
+dependencies = [
+ "wgpu-hal 25.0.2",
 ]
 
 [[package]]
@@ -5825,6 +5896,15 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
+version = "25.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cba5fb5f7f9c98baa7c889d444f63ace25574833df56f5b817985f641af58e46"
+dependencies = [
+ "wgpu-hal 25.0.2",
+]
+
+[[package]]
+name = "wgpu-core-deps-windows-linux-android"
 version = "30.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7586165fd5f6d881cb9ce4bb71f40d6caab2c0f1837e3fc1d9788a197fb6004f"
@@ -5834,9 +5914,9 @@ dependencies = [
 
 [[package]]
 name = "wgpu-hal"
-version = "23.0.1"
+version = "25.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89364b8a0b211adc7b16aeaf1bd5ad4a919c1154b44c9ce27838213ba05fd821"
+checksum = "f968767fe4d3d33747bbd1473ccd55bf0f6451f55d733b5597e67b5deab4ad17"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -5845,34 +5925,36 @@ dependencies = [
  "bitflags 2.10.0",
  "block",
  "bytemuck",
- "cfg_aliases 0.1.1",
+ "cfg-if",
+ "cfg_aliases 0.2.2",
  "core-graphics-types",
- "glow 0.14.2",
+ "glow 0.16.0",
  "glutin_wgl_sys",
  "gpu-alloc",
  "gpu-allocator 0.27.0",
  "gpu-descriptor",
+ "hashbrown 0.15.5",
  "js-sys",
  "khronos-egl",
  "libc",
  "libloading",
  "log",
  "metal",
- "naga 23.1.0",
+ "naga 25.0.1",
  "ndk-sys 0.5.0+25.2.9519653",
  "objc",
- "once_cell",
+ "ordered-float 4.6.0",
  "parking_lot",
+ "portable-atomic",
  "profiling",
  "range-alloc",
  "raw-window-handle",
  "renderdoc-sys",
- "rustc-hash 1.1.0",
  "smallvec",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "wasm-bindgen",
  "web-sys",
- "wgpu-types 23.0.0",
+ "wgpu-types 25.0.0",
  "windows 0.58.0",
  "windows-core 0.58.0",
 ]
@@ -5911,7 +5993,7 @@ dependencies = [
  "objc2-metal",
  "objc2-quartz-core",
  "once_cell",
- "ordered-float",
+ "ordered-float 5.5.0",
  "parking_lot",
  "portable-atomic",
  "portable-atomic-util",
@@ -5945,12 +6027,15 @@ dependencies = [
 
 [[package]]
 name = "wgpu-types"
-version = "23.0.0"
+version = "25.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "610f6ff27778148c31093f3b03abc4840f9636d58d597ca2f5977433acfe0068"
+checksum = "2aa49460c2a8ee8edba3fca54325540d904dd85b2e086ada762767e17d06e8bc"
 dependencies = [
  "bitflags 2.10.0",
+ "bytemuck",
  "js-sys",
+ "log",
+ "thiserror 2.0.18",
  "web-sys",
 ]
 

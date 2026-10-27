@@ -35,7 +35,7 @@ use vcad_ir::{HardwareLine, Vec3};
 use vcad_parts::fasteners as dims;
 
 /// The mechanical catalog, embedded so the converter needs no filesystem.
-const MECHANICAL_JSON: &str = include_str!("../../../lib/parts/mechanical.json");
+const MECHANICAL_JSON: &str = include_str!("../bundled/mechanical.json");
 
 /// Head style of a fastener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
