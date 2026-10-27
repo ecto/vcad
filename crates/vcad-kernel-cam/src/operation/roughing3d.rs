@@ -358,7 +358,11 @@ mod tests {
         assert!(json.contains("null"));
         let back: HeightField = serde_json::from_str(&json).unwrap();
 
-        let tool = Tool::FlatEndMill { diameter: 6.0, flute_length: 20.0, flutes: 2 };
+        let tool = Tool::FlatEndMill {
+            diameter: 6.0,
+            flute_length: 20.0,
+            flutes: 2,
+        };
         let settings = CamSettings {
             stepover: 5.0,
             stepdown: 2.0,

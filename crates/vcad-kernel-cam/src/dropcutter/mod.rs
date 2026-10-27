@@ -215,8 +215,14 @@ mod tests {
     fn slab() -> (Vec<[f64; 3]>, Vec<u32>) {
         let (x, y, z) = (80.0, 50.0, 8.0);
         let v = vec![
-            [0.0, 0.0, 0.0], [x, 0.0, 0.0], [x, y, 0.0], [0.0, y, 0.0],
-            [0.0, 0.0, z], [x, 0.0, z], [x, y, z], [0.0, y, z],
+            [0.0, 0.0, 0.0],
+            [x, 0.0, 0.0],
+            [x, y, 0.0],
+            [0.0, y, 0.0],
+            [0.0, 0.0, z],
+            [x, 0.0, z],
+            [x, y, z],
+            [0.0, y, z],
         ];
         let i = vec![
             0, 2, 1, 0, 3, 2, // bottom
@@ -234,15 +240,31 @@ mod tests {
         // Bounds wider than the slab: the margin samples hit nothing.
         let (v, i) = slab();
         let accel = MeshAccel::new(&v, &i, 5.0);
-        let tool = Tool::BallEndMill { diameter: 6.0, flute_length: 20.0, flutes: 2 };
+        let tool = Tool::BallEndMill {
+            diameter: 6.0,
+            flute_length: 20.0,
+            flutes: 2,
+        };
         let hf = generate_height_field(&accel, &tool, [-10.0, -10.0, 90.0, 60.0], 2.0);
-        let empty = hf.heights.iter().filter(|h| **h == f64::NEG_INFINITY).count();
-        assert!(empty > 0, "the margin should produce samples that hit nothing");
+        let empty = hf
+            .heights
+            .iter()
+            .filter(|h| **h == f64::NEG_INFINITY)
+            .count();
+        assert!(
+            empty > 0,
+            "the margin should produce samples that hit nothing"
+        );
 
         let json = serde_json::to_string(&hf).unwrap();
-        assert_eq!(json.matches("null").count(), empty, "empty samples serialize as null");
+        assert_eq!(
+            json.matches("null").count(),
+            empty,
+            "empty samples serialize as null"
+        );
 
-        let back: HeightField = serde_json::from_str(&json).expect("a height field must read its own JSON");
+        let back: HeightField =
+            serde_json::from_str(&json).expect("a height field must read its own JSON");
         assert_eq!((back.nx, back.ny, back.bounds), (hf.nx, hf.ny, hf.bounds));
         for (a, b) in hf.heights.iter().zip(&back.heights) {
             assert!(a == b, "{a} != {b}");
@@ -252,7 +274,10 @@ mod tests {
     #[test]
     fn finite_heights_serialize_as_plain_numbers() {
         let hf = HeightField::new(2, 1, [0.0, 0.0, 1.0, 0.0], 3.5);
-        assert_eq!(serde_json::to_value(&hf).unwrap()["heights"], serde_json::json!([3.5, 3.5]));
+        assert_eq!(
+            serde_json::to_value(&hf).unwrap()["heights"],
+            serde_json::json!([3.5, 3.5])
+        );
     }
 
     #[test]
