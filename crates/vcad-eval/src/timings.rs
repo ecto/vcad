@@ -77,9 +77,17 @@ pub fn stage<T>(name: &str, f: impl FnOnce() -> T) -> T {
 }
 
 /// Record a stage that was timed elsewhere.
+///
+/// A stage recorded more than once (per instance, say) is summed into its
+/// first appearance.
 pub fn record(name: &str, ms: f64) {
-    if enabled() {
-        log().stages.push((name.to_string(), ms));
+    if !enabled() {
+        return;
+    }
+    let mut log = log();
+    match log.stages.iter_mut().find(|(n, _)| n == name) {
+        Some((_, total)) => *total += ms,
+        None => log.stages.push((name.to_string(), ms)),
     }
 }
 

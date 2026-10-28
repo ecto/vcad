@@ -505,6 +505,52 @@ mod tests {
     use super::*;
     use vcad_kernel_primitives::make_cube;
 
+    /// The grid-bucketed merge must make exactly the decisions of the
+    /// all-pairs scan it replaced, including chains (a–b and b–c within
+    /// tolerance, a–c not) where first-come order decides the survivor.
+    #[test]
+    fn grid_merge_matches_all_pairs_scan() {
+        let tol = 1e-3;
+        let mut topo = Topology::new();
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut rand = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for _ in 0..400 {
+            // Clustered on a coarse lattice so plenty of pairs, chains and
+            // cell-boundary straddles fall within tolerance.
+            let p = |r: f64| (r * 6.0).floor() * 1e-2 + (r * 1e4).fract() * 1.6e-3;
+            topo.add_vertex(Point3::new(p(rand()), p(rand()), p(rand())));
+        }
+        let verts: Vec<_> = topo.vertices.iter().map(|(id, v)| (id, v.point)).collect();
+        let mut expected = HashMap::new();
+        for i in 0..verts.len() {
+            if expected.contains_key(&verts[i].0) {
+                continue;
+            }
+            for j in (i + 1)..verts.len() {
+                if !expected.contains_key(&verts[j].0)
+                    && (verts[i].1 - verts[j].1).norm_squared() < tol * tol
+                {
+                    expected.insert(verts[j].0, verts[i].0);
+                }
+            }
+        }
+        assert!(expected.len() > 20, "test geometry too sparse: {}", expected.len());
+        merge_nearby_vertices(&mut topo, tol);
+        let survivors: std::collections::HashSet<_> = topo.vertices.keys().collect();
+        for (id, _) in &verts {
+            assert_eq!(
+                survivors.contains(id),
+                !expected.contains_key(id),
+                "vertex {id:?} merged differently"
+            );
+        }
+    }
+
     #[test]
     fn test_sew_non_overlapping() {
         // Two separate cubes — union should have all 12 faces

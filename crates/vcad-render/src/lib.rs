@@ -1037,63 +1037,90 @@ pub(crate) fn timed_stage<T>(name: &str, f: impl FnOnce() -> T) -> T {
 ///
 /// A stand-in part (see [`ArticulatedPart::stand_in`]) whose placed mesh is
 /// not cached has its BRep evaluated here, as an uncached render would.
-fn place_part_cached(
-    part: ArticulatedPart,
+/// Misses are tessellated in parallel, as the tracer's own BVH build would
+/// have.
+fn place_parts_cached(
+    parts: Vec<(ArticulatedPart, Option<vcad_ir::Transform3D>)>,
     world: &HashMap<String, vcad_ir::Transform3D>,
-    fallback: Option<vcad_ir::Transform3D>,
     doc: &vcad_ir::Document,
-    node_cache: &mut HashMap<vcad_ir::NodeId, Option<Solid>>,
     cache: &dyn vcad_eval::cache::RootMeshCache,
     segments: u32,
-) -> SceneSolid {
-    let transform = world.get(&part.instance_id).cloned().or(fallback);
-    let key = vcad_eval::cache::root_fingerprint(
-        part.def_root,
-        &doc.nodes,
-        &vcad_eval::cache::FingerprintSettings {
-            segments,
-            fold_sheet_metal: true,
-        },
-    )
-    .map(|k| {
-        let salt = serde_json::to_vec(&transform).unwrap_or_default();
-        k.derive(&salt)
-    });
-    let to_scene = |part: ArticulatedPart, solid: Solid| SceneSolid {
-        solid,
-        tint: part.tint,
-        material: part.material,
-        name: part.name,
-        labels: part.labels,
-        id: part.instance_id,
+) -> Vec<SceneSolid> {
+    let settings = vcad_eval::cache::FingerprintSettings {
+        segments,
+        fold_sheet_metal: true,
     };
-    if let Some(mesh) = key.as_ref().and_then(|k| cache.get(k)) {
-        return to_scene(part, Solid::from_mesh(evaluated_to_triangle_mesh(mesh)));
-    }
-    let local = if part.stand_in {
-        let brep = catch_unwind(AssertUnwindSafe(|| {
-            vcad_eval::evaluate_node(part.def_root, &doc.nodes, node_cache)
-        }));
-        match brep {
-            Ok(Ok(Some(s))) => s,
-            // No BRep after all (an imported mesh): the mesh is the geometry.
-            _ => part.solid.clone(),
-        }
-    } else {
-        part.solid.clone()
+    let mut node_cache = HashMap::new();
+    // Serial: keys, cache lookups, and the BRep each miss must tessellate.
+    let resolved: Vec<(ArticulatedPart, Result<Solid, (Solid, vcad_eval::cache::RootKey)>)> =
+        parts
+            .into_iter()
+            .map(|(part, fallback)| {
+                let transform = world.get(&part.instance_id).cloned().or(fallback);
+                let key = vcad_eval::cache::root_fingerprint(part.def_root, &doc.nodes, &settings)
+                    .map(|k| k.derive(&serde_json::to_vec(&transform).unwrap_or_default()));
+                if let Some(mesh) = key.as_ref().and_then(|k| cache.get(k)) {
+                    let solid = Solid::from_mesh(evaluated_to_triangle_mesh(mesh));
+                    return (part, Ok(solid));
+                }
+                let local = match part.stand_in {
+                    true => catch_unwind(AssertUnwindSafe(|| {
+                        vcad_eval::evaluate_node(part.def_root, &doc.nodes, &mut node_cache)
+                    }))
+                    .ok()
+                    .and_then(Result::ok)
+                    .flatten()
+                    // No BRep after all (an imported mesh): the mesh is the
+                    // geometry.
+                    .unwrap_or_else(|| part.solid.clone()),
+                    false => part.solid.clone(),
+                };
+                let placed = match &transform {
+                    Some(t) => local.apply_transform(&transform3d_to_kernel(t)),
+                    None => local,
+                };
+                let outcome = match key.filter(|_| placed.as_brep().is_some()) {
+                    Some(key) => Err((placed, key)),
+                    None => Ok(placed),
+                };
+                (part, outcome)
+            })
+            .collect();
+    // Parallel: tessellate the misses.
+    let tessellate = |r: &Result<Solid, (Solid, vcad_eval::cache::RootKey)>| {
+        r.as_ref().err().map(|(placed, _)| placed.to_mesh(segments))
     };
-    let placed = match &transform {
-        Some(t) => local.apply_transform(&transform3d_to_kernel(t)),
-        None => local,
+    #[cfg(feature = "raytrace")]
+    let meshes: Vec<_> = {
+        use rayon::prelude::*;
+        resolved.par_iter().map(|(_, r)| tessellate(r)).collect()
     };
-    let Some(key) = key.filter(|_| placed.as_brep().is_some()) else {
-        return to_scene(part, placed);
-    };
-    let mesh = placed.to_mesh(segments);
-    if !mesh.indices.is_empty() {
-        cache.put(&key, &triangle_to_evaluated_mesh(&mesh));
-    }
-    to_scene(part, Solid::from_mesh(mesh))
+    #[cfg(not(feature = "raytrace"))]
+    let meshes: Vec<_> = resolved.iter().map(|(_, r)| tessellate(r)).collect();
+    // Serial: store the misses, and hand back scene solids in order.
+    resolved
+        .into_iter()
+        .zip(meshes)
+        .map(|((part, outcome), mesh)| {
+            let solid = match (outcome, mesh) {
+                (Err((_, key)), Some(mesh)) => {
+                    if !mesh.indices.is_empty() {
+                        cache.put(&key, &triangle_to_evaluated_mesh(&mesh));
+                    }
+                    Solid::from_mesh(mesh)
+                }
+                (Ok(solid), _) | (Err((solid, _)), None) => solid,
+            };
+            SceneSolid {
+                solid,
+                tint: part.tint,
+                material: part.material,
+                name: part.name,
+                labels: part.labels,
+                id: part.instance_id,
+            }
+        })
+        .collect()
 }
 
 fn evaluated_to_triangle_mesh(
@@ -1124,7 +1151,6 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
     let ev = evaluate_vcad_document_inner(raw_vcad, false, true)?;
     report::warn_dropped(&ev.log);
     let scope = ROOT_CACHE.with(|c| c.borrow().clone());
-    let mut node_cache = HashMap::new();
     let mut solids = ev.statics;
     if !ev.parts.is_empty() {
         let world = assembly_world_transforms(&ev.doc)?;
@@ -1136,26 +1162,26 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
             .iter()
             .map(|i| (i.id.as_str(), i.transform))
             .collect();
-        for part in ev.parts {
-            let fallback = fallbacks
-                .get(part.instance_id.as_str())
-                .copied()
-                .unwrap_or(None);
-            let placed = match &scope {
-                Some((cache, segments)) => timed_stage("place instances", || {
-                    place_part_cached(
-                        part,
-                        &world,
-                        fallback,
-                        &ev.doc,
-                        &mut node_cache,
-                        cache.as_ref(),
-                        *segments,
-                    )
-                }),
-                None => place_part(part, &world, fallback),
-            };
-            solids.push(placed);
+        let placed: Vec<(ArticulatedPart, Option<vcad_ir::Transform3D>)> = ev
+            .parts
+            .into_iter()
+            .map(|part| {
+                let fallback = fallbacks
+                    .get(part.instance_id.as_str())
+                    .copied()
+                    .unwrap_or(None);
+                (part, fallback)
+            })
+            .collect();
+        match &scope {
+            Some((cache, segments)) => solids.extend(timed_stage("place instances", || {
+                place_parts_cached(placed, &world, &ev.doc, cache.as_ref(), *segments)
+            })),
+            None => solids.extend(
+                placed
+                    .into_iter()
+                    .map(|(part, fallback)| place_part(part, &world, fallback)),
+            ),
         }
     }
     Ok(solids)
