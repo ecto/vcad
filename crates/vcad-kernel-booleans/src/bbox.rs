@@ -61,31 +61,54 @@ impl Aabb3 {
     }
 }
 
-/// [`face_aabb`], tightened for rendering: a cylinder face is boxed by the
-/// full turn between its loops' extreme heights.
+/// [`face_aabb`], tightened for rendering.
 ///
-/// `face_aabb` pads a partial cylinder face by `0.3·r` on every side, which on
-/// a large radius balloons the box far past the face (a ray tracer framing
-/// its camera on the BVH root zooms out), yet still under-covers an arc much
-/// past 120°. The band is never wrong. The boolean pipeline's candidate
-/// selection is tuned against the padded box, so that stays as is.
+/// Cylinder and cone faces are boxed by the full turn between their loops'
+/// extreme heights, about the surface's real axis. `face_aabb` keeps
+/// shapes the boolean pipeline's candidate selection is tuned against (a
+/// `0.3·r` pad on partial cylinder faces, a Z-axis assumption on full ones,
+/// a cone's apex always included); for a renderer those balloon or
+/// misplace the box — a far-off chamfer apex inflates the BVH root and the
+/// camera zooms out — or under-cover an arc much past 120°.
 pub fn face_render_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
     let surface = &brep.geometry.surfaces[brep.topology.faces[face_id].surface_index];
-    let Some(cyl) = surface
+    if let Some(cyl) = surface
         .as_any()
         .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
-    else {
-        return face_aabb(brep, face_id);
-    };
-    let axis = cyl.axis.into_inner();
-    let (v_min, v_max) = face_axial_range(brep, face_id, |p| (p - cyl.center).dot(axis));
-    revolution_band_aabb(
-        cyl.center + v_min * axis,
-        cyl.radius,
-        cyl.center + v_max * axis,
-        cyl.radius,
-        &axis,
-    )
+    {
+        let axis = cyl.axis.into_inner();
+        let (v_min, v_max) = face_axial_range(brep, face_id, |p| (p - cyl.center).dot(axis));
+        return revolution_band_aabb(
+            cyl.center + v_min * axis,
+            cyl.radius,
+            cyl.center + v_max * axis,
+            cyl.radius,
+            &axis,
+        );
+    }
+    if let Some(cone) = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+    {
+        // The apex belongs to the face only when the loops reach a single
+        // ring (a drill tip: its apex VERTEX_LOOP is dropped on import).
+        let axis = cone.axis.into_inner();
+        let (ca, sa) = (cone.half_angle.cos(), cone.half_angle.sin());
+        let (mut v_min, mut v_max) =
+            face_axial_range(brep, face_id, |p| (p - cone.apex).dot(axis) / ca);
+        if v_max - v_min <= 1e-9 * v_min.abs().max(v_max.abs()).max(1.0) {
+            v_min = v_min.min(0.0);
+            v_max = v_max.max(0.0);
+        }
+        return revolution_band_aabb(
+            cone.apex + (v_min * ca) * axis,
+            v_min.abs() * sa,
+            cone.apex + (v_max * ca) * axis,
+            v_max.abs() * sa,
+            &axis,
+        );
+    }
+    face_aabb(brep, face_id)
 }
 
 /// Range of `measure` over every vertex of every loop of a face.
@@ -194,20 +217,16 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
             // For cylinders, check if it's a FULL wrap or PARTIAL face by examining
             // the unique vertex positions. A full cylinder has only 2 unique positions
             // (bottom seam and top seam), while a partial face has 4 distinct positions.
-            //
-            // The full/partial verdict reads the outer loop alone (a full
-            // wall's holes add vertices but don't make it partial); the
-            // height range below spans *every* loop, since a seamless wall
-            // (STEP writers emit these) is two one-vertex circles in two
-            // loops and the outer one alone would flatten the box to the
-            // bottom ring.
             if let Some(cyl) = surface
                 .as_any()
                 .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
             {
+                // Collect unique vertex positions
                 let mut unique_positions: Vec<Point3> = Vec::new();
                 for he_id in topo.loop_half_edges(face.outer_loop) {
-                    let point = topo.vertices[topo.half_edges[he_id].origin].point;
+                    let v_id = topo.half_edges[he_id].origin;
+                    let point = topo.vertices[v_id].point;
+                    // Check if this position is already in the list
                     let is_duplicate = unique_positions.iter().any(|p| {
                         (p.x - point.x).abs() < 1e-6
                             && (p.y - point.y).abs() < 1e-6
@@ -218,18 +237,36 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
                     }
                 }
 
-                let axis = cyl.axis.into_inner();
-                let (v_min, v_max) =
-                    face_axial_range(brep, face_id, |p| (p - cyl.center).dot(axis));
-                if unique_positions.len() <= 2 {
+                // A full cylinder has 2 unique positions (seam vertices at top/bottom).
+                // A partial cylinder has 4 unique positions (two at each height).
+                let is_full_cylinder = unique_positions.len() <= 2;
+
+                if is_full_cylinder {
                     // Full wrap face - expand to full cylinder extent
-                    aabb = revolution_band_aabb(
-                        cyl.center + v_min * axis,
-                        cyl.radius,
-                        cyl.center + v_max * axis,
-                        cyl.radius,
-                        &axis,
-                    );
+                    // Heights from *every* loop: a seamless wall (STEP
+                    // writers emit these) is two one-vertex circles in two
+                    // loops, and the outer one alone would flatten the box
+                    // to the bottom ring.
+                    let (v_min, v_max) = face_axial_range(brep, face_id, |p| {
+                        (p - cyl.center).dot(cyl.axis.as_ref())
+                    });
+
+                    let axis = cyl.axis.as_ref();
+                    let center = cyl.center;
+                    let r = cyl.radius;
+
+                    let bottom_center = center + v_min * axis;
+                    let top_center = center + v_max * axis;
+
+                    aabb = Aabb3::empty();
+                    aabb.include_point(&(bottom_center + vcad_kernel_math::Vec3::new(r, r, 0.0)));
+                    aabb.include_point(&(bottom_center + vcad_kernel_math::Vec3::new(r, -r, 0.0)));
+                    aabb.include_point(&(bottom_center + vcad_kernel_math::Vec3::new(-r, r, 0.0)));
+                    aabb.include_point(&(bottom_center + vcad_kernel_math::Vec3::new(-r, -r, 0.0)));
+                    aabb.include_point(&(top_center + vcad_kernel_math::Vec3::new(r, r, 0.0)));
+                    aabb.include_point(&(top_center + vcad_kernel_math::Vec3::new(r, -r, 0.0)));
+                    aabb.include_point(&(top_center + vcad_kernel_math::Vec3::new(-r, r, 0.0)));
+                    aabb.include_point(&(top_center + vcad_kernel_math::Vec3::new(-r, -r, 0.0)));
                 } else {
                     // Partial face - vertices define the arc endpoints.
                     // The arc may bulge slightly beyond the chord, so expand by a
@@ -259,30 +296,54 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
             }
         }
         vcad_kernel_geom::SurfaceKind::Cone => {
-            // Same band as the cylinder, between the rings the loops reach.
-            // The apex is only part of the face when the loops reach a single
-            // ring (a drill tip: its apex VERTEX_LOOP is dropped on import) —
-            // including it unconditionally drags a shallow chamfer's far-off
-            // apex into the box.
+            // For cones, compute tight bounds from apex and base circle.
             if let Some(cone) = surface
                 .as_any()
                 .downcast_ref::<vcad_kernel_geom::ConeSurface>()
             {
-                let axis = cone.axis.into_inner();
-                let (ca, sa) = (cone.half_angle.cos(), cone.half_angle.sin());
-                let (mut v_min, mut v_max) =
-                    face_axial_range(brep, face_id, |p| (p - cone.apex).dot(axis) / ca);
-                if v_max - v_min <= 1e-9 * v_min.abs().max(v_max.abs()).max(1.0) {
-                    v_min = v_min.min(0.0);
-                    v_max = v_max.max(0.0);
+                // Compute V range from boundary vertices to find the height range
+                let ca = cone.half_angle.cos();
+                let mut v_min = f64::INFINITY;
+                let mut v_max = f64::NEG_INFINITY;
+                for he_id in topo.loop_half_edges(face.outer_loop) {
+                    let v_id = topo.half_edges[he_id].origin;
+                    let p = topo.vertices[v_id].point;
+                    let d = p - cone.apex;
+                    let v = d.dot(cone.axis.as_ref()) / ca;
+                    v_min = v_min.min(v);
+                    v_max = v_max.max(v);
                 }
-                aabb = revolution_band_aabb(
-                    cone.apex + (v_min * ca) * axis,
-                    v_min.abs() * sa,
-                    cone.apex + (v_max * ca) * axis,
-                    v_max.abs() * sa,
-                    &axis,
-                );
+                for &inner_loop in &face.inner_loops {
+                    for he_id in topo.loop_half_edges(inner_loop) {
+                        let v_id = topo.half_edges[he_id].origin;
+                        let p = topo.vertices[v_id].point;
+                        let d = p - cone.apex;
+                        let v = d.dot(cone.axis.as_ref()) / ca;
+                        v_min = v_min.min(v);
+                        v_max = v_max.max(v);
+                    }
+                }
+
+                // The maximum radius occurs at the V value farthest from apex
+                let sa = cone.half_angle.sin();
+                let max_radius = v_max.abs().max(v_min.abs()) * sa;
+
+                // Rebuild AABB from apex and the circle at maximum extent
+                let center_min = cone.apex + (v_min * ca) * cone.axis.into_inner();
+                let center_max = cone.apex + (v_max * ca) * cone.axis.into_inner();
+
+                aabb = Aabb3::empty();
+                aabb.include_point(&cone.apex);
+                aabb.include_point(&center_min);
+                aabb.include_point(&center_max);
+                aabb.expand(max_radius);
+            } else {
+                // Fallback: conservative expansion
+                let diag = ((aabb.max.x - aabb.min.x).powi(2)
+                    + (aabb.max.y - aabb.min.y).powi(2)
+                    + (aabb.max.z - aabb.min.z).powi(2))
+                .sqrt();
+                aabb.expand(diag * 0.5);
             }
         }
         vcad_kernel_geom::SurfaceKind::Bilinear => {
