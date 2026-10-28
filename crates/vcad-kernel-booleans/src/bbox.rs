@@ -61,6 +61,33 @@ impl Aabb3 {
     }
 }
 
+/// [`face_aabb`], tightened for rendering: a cylinder face is boxed by the
+/// full turn between its loops' extreme heights.
+///
+/// `face_aabb` pads a partial cylinder face by `0.3·r` on every side, which on
+/// a large radius balloons the box far past the face (a ray tracer framing
+/// its camera on the BVH root zooms out), yet still under-covers an arc much
+/// past 120°. The band is never wrong. The boolean pipeline's candidate
+/// selection is tuned against the padded box, so that stays as is.
+pub fn face_render_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
+    let surface = &brep.geometry.surfaces[brep.topology.faces[face_id].surface_index];
+    let Some(cyl) = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+    else {
+        return face_aabb(brep, face_id);
+    };
+    let axis = cyl.axis.into_inner();
+    let (v_min, v_max) = face_axial_range(brep, face_id, |p| (p - cyl.center).dot(axis));
+    revolution_band_aabb(
+        cyl.center + v_min * axis,
+        cyl.radius,
+        cyl.center + v_max * axis,
+        cyl.radius,
+        &axis,
+    )
+}
+
 /// Range of `measure` over every vertex of every loop of a face.
 fn face_axial_range(
     brep: &BRepSolid,
@@ -164,24 +191,52 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
             }
         }
         vcad_kernel_geom::SurfaceKind::Cylinder => {
-            // Bound the full turn between the lowest and highest loop vertex,
-            // over *every* loop: a seamless wall (STEP writers emit these) is
-            // two circles in two loops, one vertex each, so the outer loop
-            // alone spans zero height and the box would miss the wall.
+            // For cylinders, check if it's a FULL wrap or PARTIAL face by examining
+            // the unique vertex positions. A full cylinder has only 2 unique positions
+            // (bottom seam and top seam), while a partial face has 4 distinct positions.
+            //
+            // Positions come from *every* loop: a seamless wall (STEP writers
+            // emit these) is two one-vertex circles in two loops, and the
+            // outer loop alone would flatten its box to the bottom ring.
             if let Some(cyl) = surface
                 .as_any()
                 .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
             {
+                let mut unique_positions: Vec<Point3> = Vec::new();
+                for &loop_id in std::iter::once(&face.outer_loop).chain(&face.inner_loops) {
+                    for he_id in topo.loop_half_edges(loop_id) {
+                        let point = topo.vertices[topo.half_edges[he_id].origin].point;
+                        let is_duplicate = unique_positions.iter().any(|p| {
+                            (p.x - point.x).abs() < 1e-6
+                                && (p.y - point.y).abs() < 1e-6
+                                && (p.z - point.z).abs() < 1e-6
+                        });
+                        if !is_duplicate {
+                            unique_positions.push(point);
+                        }
+                    }
+                }
+
                 let axis = cyl.axis.into_inner();
                 let (v_min, v_max) =
                     face_axial_range(brep, face_id, |p| (p - cyl.center).dot(axis));
-                aabb = revolution_band_aabb(
-                    cyl.center + v_min * axis,
-                    cyl.radius,
-                    cyl.center + v_max * axis,
-                    cyl.radius,
-                    &axis,
-                );
+                if unique_positions.len() <= 2 {
+                    // Full wrap face - expand to full cylinder extent
+                    aabb = revolution_band_aabb(
+                        cyl.center + v_min * axis,
+                        cyl.radius,
+                        cyl.center + v_max * axis,
+                        cyl.radius,
+                        &axis,
+                    );
+                } else {
+                    // Partial face - vertices define the arc endpoints.
+                    // The arc may bulge slightly beyond the chord, so expand by a
+                    // small fraction of the radius to be conservative.
+                    // For a quarter arc, max bulge is r*(1 - cos(θ/2)) ≈ 0.29r for 90°
+                    let bulge_factor = 0.3 * cyl.radius;
+                    aabb.expand(bulge_factor);
+                }
             }
         }
         vcad_kernel_geom::SurfaceKind::Sphere => {

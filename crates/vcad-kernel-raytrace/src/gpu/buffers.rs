@@ -2,7 +2,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use kosm_render::gpu::{GpuAreaLight, GpuMaterial};
-use vcad_kernel_booleans::bbox::face_aabb;
+use vcad_kernel_booleans::bbox::face_render_aabb;
 use vcad_kernel_geom::{Surface, SurfaceKind};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::TriangleMesh;
@@ -698,7 +698,7 @@ impl GpuScene {
             let face = &brep.topology.faces[face_id];
 
             // Compute face AABB
-            let aabb = face_aabb(brep, face_id);
+            let aabb = face_render_aabb(brep, face_id);
 
             // Get outer trim loop vertices in UV space
             let trim_start = trim_verts.len() as u32;
