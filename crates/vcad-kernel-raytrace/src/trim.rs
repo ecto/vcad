@@ -30,6 +30,9 @@ pub struct FaceTrim {
     v_range: Option<(f64, f64)>,
     /// Hole boundaries in UV.
     inners: Vec<Vec<Point2>>,
+    /// Set when the loops were unwrapped across a periodic surface's seam
+    /// (see [`PeriodicTrim`]); it then decides containment on its own.
+    periodic: Option<PeriodicTrim>,
 }
 
 impl FaceTrim {
@@ -38,6 +41,16 @@ impl FaceTrim {
         let topo = &brep.topology;
         let face = &topo.faces[face_id];
         let surface = &brep.geometry.surfaces[face.surface_index];
+
+        if let Some(periodic) = PeriodicTrim::build(brep, face_id) {
+            return Self {
+                untrimmed: false,
+                outer: Vec::new(),
+                v_range: None,
+                inners: Vec::new(),
+                periodic: Some(periodic),
+            };
+        }
 
         // Get UV coordinates of the outer loop vertices
         let raw_uvs = loop_uv_coords(brep, face.outer_loop, surface.as_ref());
@@ -76,7 +89,7 @@ impl FaceTrim {
         // the loop's extent — otherwise the wall traces as an infinite
         // cylinder. u legitimately wraps the full turn.
         let v_range = if untrimmed {
-            unbounded_v_range(surface.as_ref(), &outer)
+            wall_v_range(brep, face_id, &outer)
         } else {
             None
         };
@@ -92,11 +105,15 @@ impl FaceTrim {
             outer,
             v_range,
             inners,
+            periodic: None,
         }
     }
 
     /// Is `uv` inside the outer boundary and outside every hole?
     pub fn contains(&self, uv: Point2) -> bool {
+        if let Some(periodic) = &self.periodic {
+            return periodic.contains(uv);
+        }
         if self.untrimmed {
             if let Some((v_min, v_max)) = self.v_range {
                 if uv.y < v_min || uv.y > v_max {
@@ -110,6 +127,281 @@ impl FaceTrim {
         // Inside a hole is outside the face.
         !self.inners.iter().any(|inner| point_in_polygon(&uv, inner))
     }
+}
+
+/// Trim polygons for a face on a surface that is periodic in `u` (cylinder,
+/// cone, sphere) or in both `u` and `v` (torus), built on the unwrapped
+/// covering of parameter space.
+///
+/// Projection reports `u` in `[0, 2π)`, so a loop that crosses the surface's
+/// own `u = 0` line jumps a whole turn mid-polygon and folds across the
+/// domain — and a STEP writer is free to put its circles' start points (and
+/// its seam, if it has one) anywhere. Onshape does exactly that, and its
+/// circles arrive subdivided into many vertices, so nearly every curved face
+/// of an Onshape part rejected every hit. Unwrapping each loop onto one
+/// continuous branch fixes contractible loops.
+///
+/// A seamless wall's loops are not contractible: each circle winds a whole
+/// turn and never closes in UV. Two such rings bound a strip, closed here
+/// into a polygon by joining the rings at matching `u`; a lone ring is closed
+/// against the cone's apex (the apex `VERTEX_LOOP` carries no edges and is
+/// dropped on import) or the sphere's pole.
+#[derive(Debug, Clone)]
+struct PeriodicTrim {
+    /// Regions of the face, each a closed polygon on the unwrapped branch.
+    regions: Vec<Vec<Point2>>,
+    /// Holes, likewise.
+    holes: Vec<Vec<Point2>>,
+    /// The face covers the whole surface outside its holes: a sphere or
+    /// torus whose every loop winds the hole way round.
+    whole: bool,
+    /// Whether `v` is periodic too (a torus).
+    v_periodic: bool,
+}
+
+/// Whole-turn shifts tried when testing a query against an unwrapped
+/// polygon. Unwrapping starts from the projected (`[0, 2π)`) first vertex
+/// and a loop spans at most a turn, so ±2 always reaches it.
+const BRANCH_SHIFTS: std::ops::RangeInclusive<i32> = -2..=2;
+
+impl PeriodicTrim {
+    fn build(brep: &BRepSolid, face_id: FaceId) -> Option<Self> {
+        use vcad_kernel_geom::SurfaceKind;
+        let topo = &brep.topology;
+        let face = &topo.faces[face_id];
+        let surface = brep.geometry.surfaces[face.surface_index].as_ref();
+        let kind = surface.surface_type();
+        let v_periodic = match kind {
+            SurfaceKind::Cylinder | SurfaceKind::Cone | SurfaceKind::Sphere => false,
+            SurfaceKind::Torus => true,
+            _ => return None,
+        };
+
+        let mut contractible = Vec::new();
+        let mut rings = Vec::new();
+        for (i, &loop_id) in std::iter::once(&face.outer_loop)
+            .chain(&face.inner_loops)
+            .enumerate()
+        {
+            let raw = loop_uv_coords(brep, loop_id, surface);
+            // Single-vertex circles and pole-touching sphere loops have no
+            // usable longitude; the non-periodic path already handles them.
+            if raw.len() < 2 {
+                return None;
+            }
+            if kind == SurfaceKind::Sphere
+                && raw
+                    .iter()
+                    .any(|p| (p.y.abs() - std::f64::consts::FRAC_PI_2).abs() < POLE_V_EPS)
+            {
+                return None;
+            }
+            let (pts, turns) = unwrap_loop(&raw, v_periodic);
+            match turns {
+                0 => contractible.push((i == 0, pts)),
+                t if t.abs() == 1 => rings.push(if t < 0 { reverse_loop(pts) } else { pts }),
+                _ => return None,
+            }
+        }
+
+        // A sphere or torus is closed, so a contractible loop may bound
+        // either side of itself — Onshape writes a ball with two flats as one
+        // face whose two loops are both holes. Which side is the face is set
+        // by the loop's winding against the face's orientation (interior to
+        // the left), not by which loop STEP happened to list first.
+        let closed = matches!(kind, SurfaceKind::Sphere | SurfaceKind::Torus);
+
+        // Nothing wrapped: the plain polygon path is already right.
+        let any_wrap = !rings.is_empty()
+            || contractible.iter().any(|(_, pts)| {
+                pts.iter()
+                    .any(|p| !(0.0..std::f64::consts::TAU).contains(&p.x))
+            });
+        if !closed && !any_wrap {
+            return None;
+        }
+
+        let sense = match face.orientation {
+            Orientation::Forward => 1.0,
+            Orientation::Reversed => -1.0,
+        };
+        let mut regions = Vec::new();
+        let mut holes = Vec::new();
+        for (is_outer, pts) in contractible {
+            let area = polygon_area(&pts);
+            if closed && area.abs() < 1e-9 {
+                // A seam-only loop bounds nothing.
+                continue;
+            }
+            let is_region = if closed { area * sense > 0.0 } else { is_outer };
+            if is_region {
+                regions.push(pts);
+            } else {
+                holes.push(pts);
+            }
+        }
+        let whole = closed && regions.is_empty() && rings.is_empty();
+
+        if !rings.is_empty() {
+            if !regions.is_empty() {
+                // A contractible outer loop *and* whole-turn rings: not a
+                // shape a valid face takes.
+                return None;
+            }
+            let mean_v = |r: &Vec<Point2>| r.iter().map(|p| p.y).sum::<f64>() / r.len() as f64;
+            rings.sort_by(|a, b| mean_v(a).total_cmp(&mean_v(b)));
+            if rings.len() % 2 == 1 {
+                let cap = match kind {
+                    SurfaceKind::Cone => 0.0,
+                    SurfaceKind::Sphere => {
+                        // Close toward whichever pole the lone ring is nearer.
+                        let v = mean_v(&rings[0]);
+                        std::f64::consts::FRAC_PI_2.copysign(v)
+                    }
+                    _ => return None,
+                };
+                let ring = if kind == SurfaceKind::Cone && mean_v(&rings[0]) < 0.0 {
+                    rings.remove(0)
+                } else {
+                    rings.pop()?
+                };
+                regions.push(cap_polygon(&ring, cap));
+            }
+            for pair in rings.chunks(2) {
+                regions.push(strip_polygon(&pair[0], &pair[1]));
+            }
+        }
+
+        Some(Self {
+            regions,
+            holes,
+            whole,
+            v_periodic,
+        })
+    }
+
+    fn contains(&self, uv: Point2) -> bool {
+        let hit = |poly: &Vec<Point2>| self.on_any_branch(uv, poly);
+        (self.whole || self.regions.iter().any(hit)) && !self.holes.iter().any(hit)
+    }
+
+    fn on_any_branch(&self, uv: Point2, poly: &[Point2]) -> bool {
+        let tau = std::f64::consts::TAU;
+        let v_shifts = if self.v_periodic {
+            BRANCH_SHIFTS
+        } else {
+            0..=0
+        };
+        BRANCH_SHIFTS.into_iter().any(|ku| {
+            v_shifts.clone().any(|kv| {
+                let q = Point2::new(uv.x + ku as f64 * tau, uv.y + kv as f64 * tau);
+                point_in_polygon(&q, poly)
+            })
+        })
+    }
+}
+
+/// A periodic face's trim in the GPU tracer's shape: at most one region
+/// polygon plus holes, all on the unwrapped branch.
+///
+/// The shader tests whole-turn shifts of the query against these (see
+/// `point_in_face` in `brep.wgsl`), mirroring [`FaceTrim::contains`].
+#[derive(Debug, Clone)]
+pub struct PeriodicGpuTrim {
+    /// The region, or `None` when the face is the whole surface outside its
+    /// holes.
+    pub outer: Option<Vec<Point2>>,
+    /// Hole polygons.
+    pub holes: Vec<Vec<Point2>>,
+    /// Whether `v` wraps too (a torus).
+    pub v_periodic: bool,
+}
+
+/// The [`PeriodicGpuTrim`] for a face, or `None` when the face takes the
+/// ordinary (non-periodic) trim path or needs more than one region polygon.
+pub fn periodic_gpu_trim(brep: &BRepSolid, face_id: FaceId) -> Option<PeriodicGpuTrim> {
+    let mut t = PeriodicTrim::build(brep, face_id)?;
+    let outer = match (t.whole, t.regions.len()) {
+        (true, 0) => None,
+        (false, 1) => t.regions.pop(),
+        _ => return None,
+    };
+    Some(PeriodicGpuTrim {
+        outer,
+        holes: t.holes,
+        v_periodic: t.v_periodic,
+    })
+}
+
+/// Unwrap a loop's `u` (and, on a torus, `v`) onto one continuous branch,
+/// each step taking the shortest turn. Returns the unwrapped points and how
+/// many whole turns the closed loop winds in `u` — `0` for an ordinary
+/// boundary, `±1` for a full circle around the axis.
+fn unwrap_loop(raw: &[Point2], v_periodic: bool) -> (Vec<Point2>, i32) {
+    let tau = std::f64::consts::TAU;
+    let nearest = |x: f64, last: f64| x - ((x - last) / tau).round() * tau;
+    let mut out = Vec::with_capacity(raw.len());
+    let mut last = raw[0];
+    out.push(last);
+    for p in &raw[1..] {
+        let u = nearest(p.x, last.x);
+        let v = if v_periodic {
+            nearest(p.y, last.y)
+        } else {
+            p.y
+        };
+        last = Point2::new(u, v);
+        out.push(last);
+    }
+    // The closing edge back to the first vertex settles the winding.
+    let closing_u = nearest(raw[0].x, last.x);
+    let turns = ((closing_u - out[0].x) / tau).round() as i32;
+    (out, turns)
+}
+
+/// A loop traversed backwards, so a ring winds `+u`.
+fn reverse_loop(mut pts: Vec<Point2>) -> Vec<Point2> {
+    pts.reverse();
+    pts
+}
+
+/// Close two `+u`-winding rings into the strip polygon between them: ring
+/// `a` out one full turn, across to ring `b` at the same `u`, and `b` back.
+fn strip_polygon(a: &[Point2], b: &[Point2]) -> Vec<Point2> {
+    let tau = std::f64::consts::TAU;
+    let a0 = a[0].x;
+    // Start `b` at the vertex nearest `a`'s start, shifted onto its branch.
+    let offset = |x: f64| {
+        let d = (x - a0).rem_euclid(tau);
+        d.min(tau - d)
+    };
+    let start = (0..b.len())
+        .min_by(|&i, &j| offset(b[i].x).total_cmp(&offset(b[j].x)))
+        .unwrap_or(0);
+    let raw: Vec<Point2> = (0..b.len()).map(|k| b[(start + k) % b.len()]).collect();
+    let (mut b_un, _) = unwrap_loop(&raw, false);
+    let shift = ((a0 - b_un[0].x) / tau).round() * tau;
+    for p in &mut b_un {
+        p.x += shift;
+    }
+
+    let mut poly = a.to_vec();
+    poly.push(Point2::new(a0 + tau, a[0].y));
+    poly.push(Point2::new(b_un[0].x + tau, b_un[0].y));
+    poly.extend(b_un.iter().rev());
+    poly
+}
+
+/// Close a `+u`-winding ring against the line `v = cap` (a cone's apex or a
+/// sphere's pole).
+fn cap_polygon(ring: &[Point2], cap: f64) -> Vec<Point2> {
+    let tau = std::f64::consts::TAU;
+    let a0 = ring[0].x;
+    let mut poly = ring.to_vec();
+    poly.push(Point2::new(a0 + tau, ring[0].y));
+    poly.push(Point2::new(a0 + tau, cap));
+    poly.push(Point2::new(a0, cap));
+    poly
 }
 
 /// Test if a UV point is inside a face's trim boundaries.
@@ -269,6 +561,37 @@ pub(crate) fn unbounded_v_range(surface: &dyn Surface, outer_uvs: &[Point2]) -> 
         }
         _ => None,
     }
+}
+
+/// [`unbounded_v_range`] for an untrimmed cylinder/cone wall, taken over
+/// *every* loop of the face rather than the outer one alone.
+///
+/// A seamless wall (as Onshape and other STEP writers emit it) has no seam
+/// edge: it is bounded by two circular loops, outer plus one inner, each at a
+/// single `v`. The outer loop alone spans zero `v`, which would reject every
+/// hit — so the far ring's `v` comes from the inner loop. A drill-tip cone
+/// has only its base ring (the apex `VERTEX_LOOP` carries no edges and is
+/// dropped on import), so a cone whose rings span zero `v` extends to the
+/// apex at `v = 0`.
+pub(crate) fn wall_v_range(
+    brep: &BRepSolid,
+    face_id: FaceId,
+    outer_uvs: &[Point2],
+) -> Option<(f64, f64)> {
+    use vcad_kernel_geom::SurfaceKind;
+    let face = &brep.topology.faces[face_id];
+    let surface = brep.geometry.surfaces[face.surface_index].as_ref();
+    let mut uvs = outer_uvs.to_vec();
+    for &inner in &face.inner_loops {
+        uvs.extend(loop_uv_coords(brep, inner, surface));
+    }
+    let (v_min, v_max) = unbounded_v_range(surface, &uvs)?;
+    if surface.surface_type() == SurfaceKind::Cone
+        && v_max - v_min <= 1e-9 * v_min.abs().max(v_max.abs()).max(1.0)
+    {
+        return Some((v_min.min(0.0), v_max.max(0.0)));
+    }
+    Some((v_min, v_max))
 }
 
 /// Number of segments used when a degenerate cap loop is rebuilt as a
@@ -771,5 +1094,119 @@ mod tests {
         let uv2 = project_to_cylinder(&cyl, &vcad_kernel_math::Point3::new(0.0, 5.0, 7.0));
         assert!((uv2.x - PI / 2.0).abs() < 1e-10);
         assert!((uv2.y - 7.0).abs() < 1e-10);
+    }
+
+    /// A seamless cylinder wall as STEP writers emit it: no seam edge, one
+    /// circle per loop (outer at z=0, inner at z=h). Before the fix the
+    /// v-range came from the outer loop alone — zero width — and every hit on
+    /// the wall was rejected, so `--exact` renders lost all curved walls.
+    #[test]
+    fn test_two_ring_cylinder_wall_accepts_hits() {
+        use vcad_kernel_geom::{CylinderSurface, GeometryStore};
+        use vcad_kernel_math::Point3;
+        use vcad_kernel_topo::{ShellType, Topology};
+
+        let (r, h) = (5.0, 8.0);
+        let mut topo = Topology::new();
+        let mut geom = GeometryStore::new();
+        let cyl = geom.add_surface(Box::new(CylinderSurface::new(r)));
+        let v_bot = topo.add_vertex(Point3::new(r, 0.0, 0.0));
+        let v_top = topo.add_vertex(Point3::new(r, 0.0, h));
+        let he_bot = topo.add_half_edge(v_bot);
+        let he_top = topo.add_half_edge(v_top);
+        let outer = topo.add_loop(&[he_bot]);
+        let inner = topo.add_loop(&[he_top]);
+        let face = topo.add_face(outer, cyl, Orientation::Forward);
+        topo.add_inner_loop(face, inner);
+        let shell = topo.add_shell(vec![face], ShellType::Outer);
+        let solid_id = topo.add_solid(shell);
+        let brep = BRepSolid {
+            topology: topo,
+            geometry: geom,
+            solid_id,
+        };
+
+        let trim = FaceTrim::build(&brep, face);
+        assert!(trim.contains(Point2::new(1.0, h / 2.0)));
+        assert!(trim.contains(Point2::new(5.0, 0.5)));
+        assert!(!trim.contains(Point2::new(1.0, -0.5)));
+        assert!(!trim.contains(Point2::new(1.0, h + 0.5)));
+    }
+
+    /// A drill-tip cone: base ring only, the apex VERTEX_LOOP dropped on
+    /// import. The wall must still span from the apex (v = 0) to the ring.
+    #[test]
+    fn test_single_ring_cone_spans_to_apex() {
+        use vcad_kernel_geom::{ConeSurface, GeometryStore};
+        use vcad_kernel_math::Point3;
+        use vcad_kernel_topo::{ShellType, Topology};
+
+        let half_angle = std::f64::consts::FRAC_PI_4;
+        let mut topo = Topology::new();
+        let mut geom = GeometryStore::new();
+        let cone = ConeSurface::new(half_angle);
+        let ring = Point3::new(3.0, 0.0, 3.0);
+        let ring_v = project_to_cone(&cone, &ring).y;
+        let cone_idx = geom.add_surface(Box::new(cone));
+        let v = topo.add_vertex(ring);
+        let he = topo.add_half_edge(v);
+        let outer = topo.add_loop(&[he]);
+        let face = topo.add_face(outer, cone_idx, Orientation::Forward);
+        let shell = topo.add_shell(vec![face], ShellType::Outer);
+        let solid_id = topo.add_solid(shell);
+        let brep = BRepSolid {
+            topology: topo,
+            geometry: geom,
+            solid_id,
+        };
+
+        let trim = FaceTrim::build(&brep, face);
+        assert!(trim.contains(Point2::new(1.0, ring_v / 2.0)));
+        assert!(!trim.contains(Point2::new(1.0, ring_v * 1.5)));
+    }
+
+    /// Onshape's form of the same wall: each circle subdivided into many
+    /// vertices, starting away from the surface's `u = 0`, so every ring
+    /// crosses the projection's wrap mid-loop and winds a full turn without
+    /// closing in UV. Both rings must be stitched into one strip.
+    #[test]
+    fn test_subdivided_seam_crossing_rings_bound_a_strip() {
+        use vcad_kernel_geom::{CylinderSurface, GeometryStore};
+        use vcad_kernel_math::Point3;
+        use vcad_kernel_topo::{ShellType, Topology};
+
+        let (r, h, n) = (5.0, 8.0, 24);
+        let mut topo = Topology::new();
+        let mut geom = GeometryStore::new();
+        let cyl = geom.add_surface(Box::new(CylinderSurface::new(r)));
+        let mut ring = |z: f64, start: f64, dir: f64| {
+            let hes: Vec<_> = (0..n)
+                .map(|i| {
+                    let t = start + dir * std::f64::consts::TAU * i as f64 / n as f64;
+                    let v = topo.add_vertex(Point3::new(r * t.cos(), r * t.sin(), z));
+                    topo.add_half_edge(v)
+                })
+                .collect();
+            topo.add_loop(&hes)
+        };
+        let outer = ring(0.0, 1.0, 1.0);
+        let inner = ring(h, 2.5, -1.0);
+        let face = topo.add_face(outer, cyl, Orientation::Forward);
+        topo.add_inner_loop(face, inner);
+        let shell = topo.add_shell(vec![face], ShellType::Outer);
+        let solid_id = topo.add_solid(shell);
+        let brep = BRepSolid {
+            topology: topo,
+            geometry: geom,
+            solid_id,
+        };
+
+        let trim = FaceTrim::build(&brep, face);
+        for k in 0..16 {
+            let u = std::f64::consts::TAU * k as f64 / 16.0;
+            assert!(trim.contains(Point2::new(u, h / 2.0)), "u={u}");
+            assert!(!trim.contains(Point2::new(u, -0.5)), "u={u}");
+            assert!(!trim.contains(Point2::new(u, h + 0.5)), "u={u}");
+        }
     }
 }

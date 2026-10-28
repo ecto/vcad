@@ -2,7 +2,7 @@
 
 use bytemuck::{Pod, Zeroable};
 use kosm_render::gpu::{GpuAreaLight, GpuMaterial};
-use vcad_kernel_booleans::bbox::face_aabb;
+use vcad_kernel_booleans::bbox::face_render_aabb;
 use vcad_kernel_geom::{Surface, SurfaceKind};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::TriangleMesh;
@@ -320,9 +320,20 @@ pub struct GpuFace {
     pub inner_desc_start: u32,
     /// Index into material array.
     pub material_idx: u32,
+    /// Trim flags: [`TRIM_PERIODIC_U`], [`TRIM_PERIODIC_V`],
+    /// [`TRIM_WHOLE`].
+    pub trim_flags: u32,
     /// Padding for 16-byte alignment.
-    pub _pad2: [u32; 3],
+    pub _pad2: [u32; 2],
 }
+
+/// The trim polygons live on the unwrapped `u` branch: the shader tests
+/// whole-turn shifts of the hit's `u`.
+pub const TRIM_PERIODIC_U: u32 = 1;
+/// Likewise for `v` (a torus).
+pub const TRIM_PERIODIC_V: u32 = 2;
+/// No outer polygon: the face is the whole surface outside its holes.
+pub const TRIM_WHOLE: u32 = 4;
 
 /// GPU-compatible BVH node.
 #[repr(C)]
@@ -698,7 +709,7 @@ impl GpuScene {
             let face = &brep.topology.faces[face_id];
 
             // Compute face AABB
-            let aabb = face_aabb(brep, face_id);
+            let aabb = face_render_aabb(brep, face_id);
 
             // Get outer trim loop vertices in UV space
             let trim_start = trim_verts.len() as u32;
@@ -714,17 +725,34 @@ impl GpuScene {
             // trace as an infinite tube. Collapse such loops to the
             // 2-vertex (v_min, v_max) form the shader's trim_count==2 path
             // already clamps against.
-            let mut uvs = trim::extract_face_uv_loop(brep, face_id);
-            let surface = &brep.geometry.surfaces[face.surface_index];
+            // A periodic face (Onshape's subdivided, seam-crossing circles)
+            // ships its unwrapped polygons instead; see `trim::PeriodicTrim`.
+            let periodic = trim::periodic_gpu_trim(brep, face_id);
+            let mut trim_flags = 0u32;
+            let mut uvs = match &periodic {
+                Some(p) => {
+                    trim_flags |= TRIM_PERIODIC_U;
+                    if p.v_periodic {
+                        trim_flags |= TRIM_PERIODIC_V;
+                    }
+                    match &p.outer {
+                        Some(outer) => outer.clone(),
+                        None => {
+                            trim_flags |= TRIM_WHOLE;
+                            Vec::new()
+                        }
+                    }
+                }
+                None => trim::extract_face_uv_loop(brep, face_id),
+            };
             // A planar cap bounded by a single closed circle edge is
             // degenerate too (the circle collapses to one UV point) — the
             // shader would reject every hit. Rebuild the circle polygon
             // from the adjacent surface's axis.
-            if trim::polygon_area(&uvs).abs() < 1e-9 {
+            if periodic.is_none() && trim::polygon_area(&uvs).abs() < 1e-9 {
                 if let Some(poly) = trim::synthesize_planar_cap_polygon(brep, face_id) {
                     uvs = poly;
-                } else if let Some((v_min, v_max)) = trim::unbounded_v_range(surface.as_ref(), &uvs)
-                {
+                } else if let Some((v_min, v_max)) = trim::wall_v_range(brep, face_id, &uvs) {
                     uvs = vec![
                         vcad_kernel_math::Point2::new(0.0, v_min),
                         vcad_kernel_math::Point2::new(0.0, v_max),
@@ -761,7 +789,10 @@ impl GpuScene {
             let inner_start = trim_verts.len() as u32;
             let inner_desc_start = inner_loop_descs.len() as u32;
             let mut inner_count = 0u32;
-            let inner_loops = trim::extract_face_inner_loops(brep, face_id);
+            let inner_loops = match periodic {
+                Some(p) => p.holes,
+                None => trim::extract_face_inner_loops(brep, face_id),
+            };
             let inner_loop_count = inner_loops.len() as u32;
 
             for (loop_idx, inner_uvs) in inner_loops.iter().enumerate() {
@@ -806,7 +837,8 @@ impl GpuScene {
                 inner_loop_count,
                 inner_desc_start,
                 material_idx: 0, // Default material
-                _pad2: [0; 3],
+                trim_flags,
+                _pad2: [0; 2],
             });
         }
 
@@ -961,7 +993,8 @@ impl GpuScene {
                 inner_loop_count: 0,
                 inner_desc_start: 0,
                 material_idx: 0,
-                _pad2: [0; 3],
+                trim_flags: 0,
+                _pad2: [0; 2],
             });
         }
 

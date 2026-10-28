@@ -345,6 +345,44 @@ mod tests {
         hf
     }
 
+    /// The WASM path: drop-cutter's JSON, with samples that hit nothing,
+    /// goes straight into roughing and gives the same toolpath as the
+    /// in-memory field.
+    #[test]
+    fn roughing_accepts_serialized_height_field_with_empty_samples() {
+        let mut hf = make_test_height_field();
+        for ix in 0..11 {
+            hf.set(ix, 0, f64::NEG_INFINITY); // a row off the part
+        }
+        let json = serde_json::to_string(&hf).unwrap();
+        assert!(json.contains("null"));
+        let back: HeightField = serde_json::from_str(&json).unwrap();
+
+        let tool = Tool::FlatEndMill {
+            diameter: 6.0,
+            flute_length: 20.0,
+            flutes: 2,
+        };
+        let settings = CamSettings {
+            stepover: 5.0,
+            stepdown: 2.0,
+            feed_rate: 1000.0,
+            plunge_rate: 300.0,
+            spindle_rpm: 12000.0,
+            safe_z: 15.0,
+            retract_z: 20.0,
+        };
+        let op = Roughing3D::new(0.0, 12.0).with_margin(0.5);
+        let direct = op.generate(&hf, &tool, &settings).unwrap();
+        let via_json = op.generate(&back, &tool, &settings).unwrap();
+        assert!(!via_json.is_empty());
+        assert_eq!(
+            serde_json::to_string(&direct).unwrap(),
+            serde_json::to_string(&via_json).unwrap(),
+            "round-tripping the height field must not change the toolpath"
+        );
+    }
+
     #[test]
     fn test_roughing3d_basic() {
         let hf = make_test_height_field();

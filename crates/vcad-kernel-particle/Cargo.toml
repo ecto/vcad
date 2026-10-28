@@ -16,7 +16,7 @@ vcad-receipt = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
-vcad-kernel-em = { workspace = true }
+vcad-kernel-em = { path = "../vcad-kernel-em" }   # path-only: dev-dep cycle with em; cargo strips it on publish
 vcad-kernel-thermal = { workspace = true }
 vcad-kernel-neutronics = { workspace = true }
-vcad-kernel-tolerance = { path = "../vcad-kernel-tolerance", version = "0.10.0" }
+vcad-kernel-tolerance = { path = "../vcad-kernel-tolerance" }

@@ -40,7 +40,7 @@ photoreal-gpu = [
 [dependencies]
 vcad-eval = { workspace = true }
 vcad-ir = { workspace = true }
-vcad-kernel = { path = "../vcad-kernel", version = "0.10.0", default-features = false }
+vcad-kernel = { path = "../vcad-kernel", version = "0.11.0", default-features = false }
 vcad-kernel-export = { workspace = true }
 vcad-ecad-pcb = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

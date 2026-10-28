@@ -25,7 +25,7 @@ document — they are vendored anyway to keep the URDF's references complete.
 ## Importing
 
 ```bash
-cargo run -p vcad-cli -- import-urdf \
+cargo run -p vcad -- import-urdf \
   third_party/xlerobot/xlerobot.urdf \
   examples/xlerobot.vcad \
   --relative-meshes

@@ -60,5 +60,5 @@ Run before opening the PR:
 ## Notes
 
 - Keep the spec shorter than 60 lines. If it's longer, the task is too big — suggest splitting it into separate issues.
-- Acceptance criteria must be testable. "Works correctly" is not acceptance; "`cargo test -p vcad-cli` passes with a new test for `--version`" is.
+- Acceptance criteria must be testable. "Works correctly" is not acceptance; "`cargo test -p vcad` passes with a new test for `--version`" is.
 - The `Verification` section should reuse commands already in `CLAUDE.md` or `ci.yml` where possible — the agent builds on the same CI toolchain.

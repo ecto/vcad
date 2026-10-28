@@ -100,7 +100,7 @@ function updateCargoToml(version) {
 // tang/tang-la/tang-expr — which have their own release cadence — are not
 // touched). Crates that pin their own version (e.g. stepperoni) are also
 // skipped via a name-based exclusion list.
-const SKIP_WORKSPACE_DEP = new Set(['stepperoni']);
+const SKIP_WORKSPACE_DEP = new Set(['stepperoni', 'vcad-diff']);
 
 function updateWorkspaceDeps(version) {
   const cargoPath = join(root, 'Cargo.toml');
