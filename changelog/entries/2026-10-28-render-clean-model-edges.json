@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-28-render-clean-model-edges",
+  "version": "0.10.0",
+  "date": "2026-10-28",
+  "category": "feat",
+  "title": "Renders: clean model edges, no seam scribbles",
+  "summary": "vcad-render draws every B-rep face boundary (incl. tangent seams) as one continuous line and no longer strokes mesh cracks; imported cylinder/cone walls mesh gap-free with notches and pockets open.",
+  "features": ["render", "tessellation", "step-import"]
+}

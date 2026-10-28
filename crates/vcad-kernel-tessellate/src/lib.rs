@@ -4139,6 +4139,184 @@ fn end_ring_anchor_points(
     out
 }
 
+/// Points of a loop, in loop order.
+fn loop_points(topo: &Topology, loop_id: vcad_kernel_topo::LoopId) -> Vec<Point3> {
+    topo.loop_half_edges(loop_id)
+        .map(|he| topo.vertices[topo.half_edges[he].origin].point)
+        .collect()
+}
+
+/// A loop that runs once all the way around an axis, as `(angle, point)`
+/// pairs in increasing angle starting from the smallest — angles measured
+/// about `axis` from `ref_dir`, unwrapped so the sequence is monotonic
+/// (vertical jogs, where the angle holds still, are allowed).
+/// `None` when the loop is not a full ring (it leaves a wide angular gap,
+/// winds more or less than once, or doubles back).
+fn full_ring_about_axis(
+    pts: &[Point3],
+    origin: Point3,
+    axis: Vec3,
+    ref_dir: Vec3,
+) -> Option<Vec<(f64, Point3)>> {
+    let n = pts.len();
+    if n < 3 {
+        return None;
+    }
+    let y_dir = axis.cross(ref_dir);
+    // A point on the axis (a native cone's apex in its seam loop) has no
+    // angle; such a loop is not a ring.
+    if pts.iter().any(|p| {
+        let d = *p - origin;
+        (d - d.dot(axis) * axis).norm() < 1e-9
+    }) {
+        return None;
+    }
+    let ang: Vec<f64> = pts
+        .iter()
+        .map(|p| {
+            let d = *p - origin;
+            d.dot(y_dir).atan2(d.dot(ref_dir)).rem_euclid(2.0 * PI)
+        })
+        .collect();
+    let step = |i: usize| {
+        let d = ang[(i + 1) % n] - ang[i];
+        if d > PI {
+            d - 2.0 * PI
+        } else if d < -PI {
+            d + 2.0 * PI
+        } else {
+            d
+        }
+    };
+    let total: f64 = (0..n).map(step).sum();
+    if (total.abs() - 2.0 * PI).abs() > 1e-3 {
+        return None;
+    }
+    let dir = total.signum();
+    if (0..n).any(|i| step(i) * dir < -1e-9 || step(i).abs() > 0.6) {
+        return None;
+    }
+    // Walk in increasing-angle order from the smallest angle.
+    let start = (0..n).min_by(|&a, &b| ang[a].total_cmp(&ang[b]))?;
+    let mut out = Vec::with_capacity(n);
+    let mut i = start;
+    let mut a = ang[start];
+    for _ in 0..n {
+        out.push((a, pts[i]));
+        let next = if dir > 0.0 {
+            (i + 1) % n
+        } else {
+            (i + n - 1) % n
+        };
+        // The signed step, not `rem_euclid`: at a vertical jog the angle
+        // can dip by a rounding hair, which `rem_euclid` turns into a turn.
+        let d = ang[next] - ang[i];
+        let d = if d > PI {
+            d - 2.0 * PI
+        } else if d < -PI {
+            d + 2.0 * PI
+        } else {
+            d
+        };
+        // The walk always runs toward increasing angle.
+        a += d.max(0.0);
+        i = next;
+    }
+    Some(out)
+}
+
+/// Mesh the band of a ruled surface (cylinder, cone) between two full rings
+/// by zipping them together, using each ring's points verbatim. Straight
+/// lines between the rings lie on the surface, so this is exact, and since
+/// it adds no vertices the band shares its boundary with the neighbouring
+/// faces exactly — a resampled grid would open a sliver on every span
+/// where the two end rings were sampled differently. Winding follows
+/// `normal_at` (the face's outward normal).
+fn zip_ruled_rings(
+    a: &[(f64, Point3)],
+    b: &[(f64, Point3)],
+    normal_at: &dyn Fn(Point3) -> Vec3,
+) -> TriangleMesh {
+    let mut mesh = TriangleMesh::new();
+    let push = |m: &mut TriangleMesh, p: Point3| -> u32 {
+        let idx = m.num_vertices() as u32;
+        m.vertices
+            .extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
+        let n = normal_at(p);
+        m.normals
+            .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+        idx
+    };
+    let ia: Vec<u32> = a.iter().map(|&(_, p)| push(&mut mesh, p)).collect();
+    let ib: Vec<u32> = b.iter().map(|&(_, p)| push(&mut mesh, p)).collect();
+    // Both rings close a turn later on their own first point.
+    let ang_a = |i: usize| {
+        if i < a.len() {
+            a[i].0
+        } else {
+            a[0].0 + 2.0 * PI
+        }
+    };
+    let ang_b = |j: usize| {
+        if j < b.len() {
+            b[j].0
+        } else {
+            b[0].0 + 2.0 * PI
+        }
+    };
+    let (mut i, mut j) = (0usize, 0usize);
+    while i < a.len() || j < b.len() {
+        let advance_a = j >= b.len() || (i < a.len() && ang_a(i + 1) <= ang_b(j + 1));
+        if advance_a {
+            mesh.indices.extend_from_slice(&[
+                ia[i % a.len()],
+                ia[(i + 1) % a.len()],
+                ib[j % b.len()],
+            ]);
+            i += 1;
+        } else {
+            mesh.indices.extend_from_slice(&[
+                ia[i % a.len()],
+                ib[(j + 1) % b.len()],
+                ib[j % b.len()],
+            ]);
+            j += 1;
+        }
+    }
+    align_winding_to_normals(&mut mesh);
+    mesh
+}
+
+/// Fan a full ring to a single point (a cone's apex), ring points verbatim.
+fn fan_ring_to_point(
+    ring: &[(f64, Point3)],
+    tip: Point3,
+    tip_normal: Vec3,
+    normal_at: &dyn Fn(Point3) -> Vec3,
+) -> TriangleMesh {
+    let mut mesh = TriangleMesh::new();
+    mesh.vertices
+        .extend_from_slice(&[tip.x as f32, tip.y as f32, tip.z as f32]);
+    mesh.normals.extend_from_slice(&[
+        tip_normal.x as f32,
+        tip_normal.y as f32,
+        tip_normal.z as f32,
+    ]);
+    for &(_, p) in ring {
+        mesh.vertices
+            .extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
+        let n = normal_at(p);
+        mesh.normals
+            .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+    }
+    let n = ring.len() as u32;
+    for k in 0..n {
+        mesh.indices.extend_from_slice(&[0, 1 + k, 1 + (k + 1) % n]);
+    }
+    align_winding_to_normals(&mut mesh);
+    mesh
+}
+
 /// Tessellate a cylindrical face (lateral surface of a cylinder).
 fn tessellate_cylindrical_face(
     topo: &Topology,
@@ -4191,6 +4369,32 @@ fn tessellate_cylindrical_face(
         .as_any()
         .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
     {
+        // Seamless full wall from a foreign STEP file: two full rings, one
+        // per end (either may jog along the axis around a notch or pocket
+        // cut into the wall's edge). Zip them verbatim (see
+        // `zip_ruled_rings`): the wall keeps its loops' own points, so it
+        // welds to its neighbours and its cut-outs stay open.
+        if face.inner_loops.len() == 1 {
+            let axis = *cyl.axis.as_ref();
+            let ref_dir = *cyl.ref_dir.as_ref();
+            let rings = (
+                full_ring_about_axis(&verts, cyl.center, axis, ref_dir),
+                full_ring_about_axis(
+                    &loop_points(topo, face.inner_loops[0]),
+                    cyl.center,
+                    axis,
+                    ref_dir,
+                ),
+            );
+            if let (Some(a), Some(b)) = rings {
+                let sign = if reversed { -1.0 } else { 1.0 };
+                let normal_at = |p: Point3| {
+                    let d = p - cyl.center;
+                    (d - d.dot(axis) * axis).normalize() * sign
+                };
+                return zip_ruled_rings(&a, &b, &normal_at);
+            }
+        }
         let target_segments = params.circle_segments_for_radius(cyl.radius.abs().max(1e-6));
         if let Some(mesh) = tessellate_ruled_two_chain(cyl, &verts, reversed, target_segments) {
             return mesh;
@@ -5795,6 +5999,41 @@ fn tessellate_conical_face(
             .unwrap_or(0.0);
         return tessellate_cone_direct(&verts, z_min, z_max, r_min, n_circ, n_height, reversed);
     };
+
+    // Foreign-STEP full walls: a frustum bounded by two full rings, or a
+    // drill-point tip bounded by one ring (its apex VERTEX_LOOP carries no
+    // edges). Mesh them from the rings verbatim so they share boundary
+    // vertices with their neighbours exactly.
+    {
+        let sign = if reversed { -1.0 } else { 1.0 };
+        let normal_at = |p: Point3| {
+            let d = p - apex;
+            let v = d.dot(axis) / half_angle.cos();
+            let mut radial = d - d.dot(axis) * axis;
+            if radial.norm() < 1e-12 {
+                return -axis * sign;
+            }
+            radial = radial.normalize();
+            if v < 0.0 {
+                radial = -radial;
+            }
+            (half_angle.cos() * radial - half_angle.sin() * axis) * sign
+        };
+        let outer = full_ring_about_axis(&verts, apex, axis, ref_dir);
+        match (outer, face.inner_loops.as_slice()) {
+            (Some(a), [inner]) => {
+                if let Some(b) =
+                    full_ring_about_axis(&loop_points(topo, *inner), apex, axis, ref_dir)
+                {
+                    return zip_ruled_rings(&a, &b, &normal_at);
+                }
+            }
+            (Some(a), []) => {
+                return fan_ring_to_point(&a, apex, -axis * sign, &normal_at);
+            }
+            _ => {}
+        }
+    }
 
     // Sector faces (from boolean ruling splits) carry dense two-rim loops
     // spanning less than a full turn; render them verbatim from the loop so
@@ -7950,6 +8189,72 @@ mod tests {
             "closed cube should have zero non-manifold edges, got {}",
             nm.len()
         );
+    }
+
+    /// Two end rings sampled differently (64 vs 48 points), the top one
+    /// jogging down around a notch cut into the wall's edge. The zipper must
+    /// walk each ring once (a vertical jog must not read as a full turn),
+    /// leave the notch open, and reuse only the rings' own points.
+    #[test]
+    fn zip_ruled_rings_handles_unequal_rings_and_a_notch() {
+        let (r, h, notch) = (10.0, 5.0, (0.5f64, 1.0f64, 1.0f64)); // from, to, depth
+        let circle = |t: f64, z: f64| Point3::new(r * t.cos(), r * t.sin(), z);
+        let bottom: Vec<Point3> = (0..64)
+            .map(|i| circle(2.0 * PI * i as f64 / 64.0, 0.0))
+            .collect();
+        let mut top: Vec<Point3> = Vec::new();
+        for i in 0..48 {
+            let t = 2.0 * PI * i as f64 / 48.0;
+            let next = 2.0 * PI * (i + 1) as f64 / 48.0;
+            if t <= notch.0 || t >= notch.1 {
+                top.push(circle(t, h));
+            }
+            if t < notch.0 && next > notch.0 {
+                // down the notch's near side, across its floor, back up
+                top.push(circle(notch.0, h));
+                // A rounding hair behind, as real files have it: a jog whose
+                // angle dips must not unwrap into a whole extra turn.
+                top.push(circle(notch.0 - 1e-12, h - notch.2));
+                for k in 1..8 {
+                    let u = notch.0 + (notch.1 - notch.0) * k as f64 / 8.0;
+                    top.push(circle(u, h - notch.2));
+                }
+                top.push(circle(notch.1, h - notch.2));
+                top.push(circle(notch.1, h));
+            }
+        }
+        // Wind the top ring the other way, as a face's second loop would.
+        top.reverse();
+
+        let axis = Vec3::new(0.0, 0.0, 1.0);
+        let ref_dir = Vec3::new(1.0, 0.0, 0.0);
+        let a = full_ring_about_axis(&bottom, Point3::origin(), axis, ref_dir).unwrap();
+        let b = full_ring_about_axis(&top, Point3::origin(), axis, ref_dir).unwrap();
+        assert!(
+            b.last().unwrap().0 - b[0].0 < 2.0 * PI,
+            "jog unwrapped into a second turn"
+        );
+
+        let normal_at = |p: Point3| Vec3::new(p.x, p.y, 0.0).normalize();
+        let mesh = zip_ruled_rings(&a, &b, &normal_at);
+        let mut area = 0.0;
+        for t in mesh.indices.chunks(3) {
+            let p = |i: u32| {
+                let j = i as usize * 3;
+                Vec3::new(
+                    mesh.vertices[j] as f64,
+                    mesh.vertices[j + 1] as f64,
+                    mesh.vertices[j + 2] as f64,
+                )
+            };
+            area += 0.5 * (p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0])).norm();
+        }
+        let expect = 2.0 * PI * r * h - r * (notch.1 - notch.0) * notch.2;
+        assert!(
+            (area - expect).abs() / expect < 0.01,
+            "zipped area {area:.2} vs {expect:.2}"
+        );
+        assert_eq!(mesh.num_vertices(), bottom.len() + top.len());
     }
 
     /// A thin quad ~25 mm from the origin with a repeated corner: f32 rounding
