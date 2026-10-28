@@ -40,7 +40,7 @@ open apple/VcadApp/dist/vcad.app
 ### CLI
 
 ```bash
-cargo install vcad-cli
+cargo install vcad
 vcad export input.vcad output.stl
 vcad import-step input.step output.vcad
 ```

@@ -1,12 +1,13 @@
 [package]
-name = "vcad-cli"
+name = "vcad"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Full-featured parametric CAD in the terminal"
-# a binary shipped as `vcad`, not a library
-publish = false
+description = "Parametric CAD: the vcad BRep kernel as a library, and the `vcad` command-line app"
+
+[lib]
+path = "src/lib.rs"
 
 [[bin]]
 name = "vcad"
@@ -14,21 +15,21 @@ path = "src/main.rs"
 
 [dependencies]
 # Core crates
-vcad-ir = { path = "../vcad-ir", version = "0.10.0" }
+vcad-ir = { path = "../vcad-ir", version = "0.11.0" }
 vcad-loon = { workspace = true }
-vcad-diff = { path = "../vcad-diff" }
-vcad-crdt = { path = "../vcad-crdt", version = "0.10.0" }
-vcad-kernel = { path = "../vcad-kernel", version = "0.10.0" }
-vcad-app = { path = "../vcad-app", version = "0.10.0" }
-vcad-i18n = { path = "../vcad-i18n" }
-vcad-chat = { path = "../vcad-chat", version = "0.10.0" }
-vcad-eval = { path = "../vcad-eval", version = "0.10.0" }
-vcad-kernel-urdf = { path = "../vcad-kernel-urdf", version = "0.10.0" }
-vcad-kernel-sketch = { path = "../vcad-kernel-sketch", version = "0.10.0" }
-vcad-kernel-constraints = { path = "../vcad-kernel-constraints", version = "0.10.0" }
-vcad-kernel-physics = { path = "../vcad-kernel-physics", version = "0.10.0" }
-vcad-kernel-cam = { path = "../vcad-kernel-cam", version = "0.10.0" }
-vcad-kernel-raytrace = { path = "../vcad-kernel-raytrace", version = "0.10.0" }
+vcad-diff = { workspace = true }
+vcad-crdt = { path = "../vcad-crdt", version = "0.11.0" }
+vcad-kernel = { path = "../vcad-kernel", version = "0.11.0" }
+vcad-app = { path = "../vcad-app", version = "0.11.0" }
+vcad-i18n = { workspace = true }
+vcad-chat = { path = "../vcad-chat", version = "0.11.0" }
+vcad-eval = { path = "../vcad-eval", version = "0.11.0" }
+vcad-kernel-urdf = { path = "../vcad-kernel-urdf", version = "0.11.0" }
+vcad-kernel-sketch = { path = "../vcad-kernel-sketch", version = "0.11.0" }
+vcad-kernel-constraints = { path = "../vcad-kernel-constraints", version = "0.11.0" }
+vcad-kernel-physics = { path = "../vcad-kernel-physics", version = "0.11.0" }
+vcad-kernel-cam = { path = "../vcad-kernel-cam", version = "0.11.0" }
+vcad-kernel-raytrace = { path = "../vcad-kernel-raytrace", version = "0.11.0" }
 vcad-kernel-features = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
 vcad-kernel-assembly = { workspace = true }
@@ -39,18 +40,18 @@ vcad-ecad-pcb = { workspace = true }
 # fab-prep runs for minutes on a dense board and narrates its rounds through
 # `log`; without a subscriber the terminal shows nothing until it finishes.
 env_logger = "0.11"
-vcad-render = { path = "../vcad-render", default-features = false, features = ["photoreal-gpu"] }
-vcad-slicer = { path = "../vcad-slicer", version = "0.10.0" }
-vcad-slicer-gcode = { path = "../vcad-slicer-gcode", version = "0.10.0" }
-vcad-slicer-bambu = { path = "../vcad-slicer-bambu", default-features = false }
-vcad-printcheck = { path = "../vcad-printcheck", version = "0.10.0" }
+vcad-render = { workspace = true, features = ["photoreal-gpu"] }
+vcad-slicer = { path = "../vcad-slicer", version = "0.11.0" }
+vcad-slicer-gcode = { path = "../vcad-slicer-gcode", version = "0.11.0" }
+vcad-slicer-bambu = { path = "../vcad-slicer-bambu", version = "0.11.0", default-features = false }
+vcad-printcheck = { path = "../vcad-printcheck", version = "0.11.0" }
 # Match the ring backend used by the printer's rustls 0.22 MQTT stack.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 
 # Print server (optional feature)
 axum = { version = "0.8", optional = true }
 tower-http = { version = "0.6", features = ["cors"], optional = true }
-termview = { path = "../termview" }
+termview = { workspace = true }
 
 # Async runtime for the chat stream background thread. `tokio` is required
 # unconditionally now; the print-server feature extends it with full runtime

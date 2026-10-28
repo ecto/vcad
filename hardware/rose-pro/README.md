@@ -8,7 +8,7 @@ X-series envelopes.
 ## Build
 
 ```
-cargo build --release -p vcad-cli -p vcad-render   # needs sibling tang/ and phyz/
+cargo build --release -p vcad -p vcad-render   # needs sibling tang/ and phyz/
 target/release/vcad info   hardware/rose-pro/rose-pro.loon
 target/release/vcad export hardware/rose-pro/rose-pro.loon /tmp/rose-pro.stl
 target/release/vcad-render hardware/rose-pro/rose-pro.loon --view iso --size 1400 \

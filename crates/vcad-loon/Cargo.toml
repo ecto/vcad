@@ -5,17 +5,13 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "loon-lang front end for vcad: parametric CAD scripts to vcad IR"
-# depends on unpublished loon-lang (git rev); publishable once loon ships
-publish = false
 
 [dependencies]
-# Pinned to a loon revision (like phyz in the root manifest) rather than the
-# sibling path, so vcad resolves when pulled by git; the root's
-# [patch."https://github.com/ecto/loon"] builds local checkouts and CI against
-# ../loon, the same clone they always used.
-loon-lang = { git = "https://github.com/ecto/loon", rev = "c12ef566613995f913012c79773bab825950566f" }
-vcad-ir = { path = "../vcad-ir", version = "0.10.0" }
+# From crates.io so vcad-loon is publishable. To build against a sibling
+# ../loon checkout instead, see .cargo/config.toml.example.
+loon-lang = { version = "0.7" }
+vcad-ir = { path = "../vcad-ir", version = "0.11.0" }
 vcad-ecad-symbols = { workspace = true }
-vcad-parts = { path = "../vcad-parts", version = "0.10.0" }
+vcad-parts = { path = "../vcad-parts", version = "0.11.0" }
 serde.workspace = true
 serde_json.workspace = true
