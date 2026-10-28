@@ -174,7 +174,7 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
             {
                 let axis = cyl.axis.into_inner();
                 let (v_min, v_max) =
-                    face_axial_range(brep, face_id, |p| (p - cyl.center).dot(&axis));
+                    face_axial_range(brep, face_id, |p| (p - cyl.center).dot(axis));
                 aabb = revolution_band_aabb(
                     cyl.center + v_min * axis,
                     cyl.radius,
@@ -215,7 +215,7 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
                 let axis = cone.axis.into_inner();
                 let (ca, sa) = (cone.half_angle.cos(), cone.half_angle.sin());
                 let (mut v_min, mut v_max) =
-                    face_axial_range(brep, face_id, |p| (p - cone.apex).dot(&axis) / ca);
+                    face_axial_range(brep, face_id, |p| (p - cone.apex).dot(axis) / ca);
                 if v_max - v_min <= 1e-9 * v_min.abs().max(v_max.abs()).max(1.0) {
                     v_min = v_min.min(0.0);
                     v_max = v_max.max(0.0);
