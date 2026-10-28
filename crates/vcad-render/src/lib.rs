@@ -1005,15 +1005,6 @@ fn place_part(
     }
 }
 
-/// Whether `--timings` (or `VCAD_TIMINGS`) asked for a stage breakdown.
-/// Always false on wasm32, which has no clock to read.
-pub(crate) fn timings_on() -> bool {
-    #[cfg(not(target_arch = "wasm32"))]
-    return vcad_eval::timings::enabled();
-    #[cfg(target_arch = "wasm32")]
-    false
-}
-
 /// Run `f` as a named `--timings` stage (just `f` when timings are off).
 pub(crate) fn timed_stage<T>(name: &str, f: impl FnOnce() -> T) -> T {
     #[cfg(not(target_arch = "wasm32"))]
@@ -1050,13 +1041,7 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
 }
 
 fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
-    let ev = evaluate_vcad_document_inner(raw_vcad, timings_on())?;
-    #[cfg(not(target_arch = "wasm32"))]
-    vcad_eval::timings::record_roots(
-        ev.log
-            .iter()
-            .filter_map(|p| Some((p.name.clone(), p.eval_ms?))),
-    );
+    let ev = evaluate_vcad_document_inner(raw_vcad, false)?;
     report::warn_dropped(&ev.log);
     Ok(ev)
 }
@@ -1089,7 +1074,7 @@ fn evaluate_vcad_document_inner(raw_vcad: &str, timed: bool) -> Result<Evaluated
     #[cfg(not(target_arch = "wasm32"))]
     let clock = vcad_eval::timings::clock();
     #[cfg(target_arch = "wasm32")]
-    let clock = None;
+    let clock: Option<Box<dyn vcad_eval::Clock>> = None;
     let scene = timed_stage("evaluate roots", || {
         catch_unwind(AssertUnwindSafe(|| {
             evaluate_document_with_sheet_metal(
@@ -1108,7 +1093,7 @@ fn evaluate_vcad_document_inner(raw_vcad: &str, timed: bool) -> Result<Evaluated
     .map_err(|_| "eval panicked".to_string())?
     .map_err(|e| format!("eval: {}", e))?;
     #[cfg(not(target_arch = "wasm32"))]
-    vcad_eval::timings::record_eval(scene.timing.as_ref());
+    vcad_eval::timings::record_eval(scene.timing.as_ref(), &parsed.document);
 
     let materials = &parsed.document.materials;
     // `scene.parts` is 1:1 with the document's *visible* roots, in order —

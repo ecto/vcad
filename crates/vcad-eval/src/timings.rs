@@ -83,18 +83,23 @@ pub fn record(name: &str, ms: f64) {
     }
 }
 
-/// Record per-root evaluation times, `(name, ms)`.
-pub fn record_roots(roots: impl IntoIterator<Item = (String, f64)>) {
-    if enabled() {
-        log().roots.extend(roots);
-    }
-}
-
-/// Record the evaluator's own breakdown (tessellation time).
-pub fn record_eval(timing: Option<&EvalTiming>) {
-    if let (true, Some(t)) = (enabled(), timing) {
-        log().tessellate_ms += t.tessellate_ms;
-    }
+/// Record the evaluator's own breakdown: tessellation time, and each
+/// evaluated root's (and part definition's) evaluate + tessellate time,
+/// named from `doc`. Cache hits cost nothing and are not listed.
+pub fn record_eval(timing: Option<&EvalTiming>, doc: &vcad_ir::Document) {
+    let (true, Some(t)) = (enabled(), timing) else {
+        return;
+    };
+    let mut log = log();
+    log.tessellate_ms += t.tessellate_ms;
+    log.roots.extend(t.roots.iter().map(|&(id, ms)| {
+        let name = doc
+            .nodes
+            .get(&id)
+            .and_then(|n| n.name.clone())
+            .unwrap_or_else(|| format!("node {id}"));
+        (name, ms)
+    }));
 }
 
 /// Record root-mesh cache counts, `(hits, misses)`.

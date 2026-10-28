@@ -1342,7 +1342,7 @@ pub fn evaluate_scene(doc: &Document) -> Result<vcad_eval::EvaluatedScene> {
         vcad_eval::evaluate_document_with_sheet_metal(doc, &opts)
     })
     .map_err(|e| anyhow::anyhow!("{}", e))?;
-    vcad_eval::timings::record_eval(scene.timing.as_ref());
+    vcad_eval::timings::record_eval(scene.timing.as_ref(), doc);
     warn_root_failures(&scene);
     report_cache(cache.as_deref());
     Ok(scene)
