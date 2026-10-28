@@ -76,7 +76,7 @@ impl FaceTrim {
         // the loop's extent — otherwise the wall traces as an infinite
         // cylinder. u legitimately wraps the full turn.
         let v_range = if untrimmed {
-            unbounded_v_range(surface.as_ref(), &outer)
+            wall_v_range(brep, face_id, &outer)
         } else {
             None
         };
@@ -269,6 +269,37 @@ pub(crate) fn unbounded_v_range(surface: &dyn Surface, outer_uvs: &[Point2]) -> 
         }
         _ => None,
     }
+}
+
+/// [`unbounded_v_range`] for an untrimmed cylinder/cone wall, taken over
+/// *every* loop of the face rather than the outer one alone.
+///
+/// A seamless wall (as Onshape and other STEP writers emit it) has no seam
+/// edge: it is bounded by two circular loops, outer plus one inner, each at a
+/// single `v`. The outer loop alone spans zero `v`, which would reject every
+/// hit — so the far ring's `v` comes from the inner loop. A drill-tip cone
+/// has only its base ring (the apex `VERTEX_LOOP` carries no edges and is
+/// dropped on import), so a cone whose rings span zero `v` extends to the
+/// apex at `v = 0`.
+pub(crate) fn wall_v_range(
+    brep: &BRepSolid,
+    face_id: FaceId,
+    outer_uvs: &[Point2],
+) -> Option<(f64, f64)> {
+    use vcad_kernel_geom::SurfaceKind;
+    let face = &brep.topology.faces[face_id];
+    let surface = brep.geometry.surfaces[face.surface_index].as_ref();
+    let mut uvs = outer_uvs.to_vec();
+    for &inner in &face.inner_loops {
+        uvs.extend(loop_uv_coords(brep, inner, surface));
+    }
+    let (v_min, v_max) = unbounded_v_range(surface, &uvs)?;
+    if surface.surface_type() == SurfaceKind::Cone
+        && v_max - v_min <= 1e-9 * v_min.abs().max(v_max.abs()).max(1.0)
+    {
+        return Some((v_min.min(0.0), v_max.max(0.0)));
+    }
+    Some((v_min, v_max))
 }
 
 /// Number of segments used when a degenerate cap loop is rebuilt as a
@@ -771,5 +802,74 @@ mod tests {
         let uv2 = project_to_cylinder(&cyl, &vcad_kernel_math::Point3::new(0.0, 5.0, 7.0));
         assert!((uv2.x - PI / 2.0).abs() < 1e-10);
         assert!((uv2.y - 7.0).abs() < 1e-10);
+    }
+
+    /// A seamless cylinder wall as STEP writers emit it: no seam edge, one
+    /// circle per loop (outer at z=0, inner at z=h). Before the fix the
+    /// v-range came from the outer loop alone — zero width — and every hit on
+    /// the wall was rejected, so `--exact` renders lost all curved walls.
+    #[test]
+    fn test_two_ring_cylinder_wall_accepts_hits() {
+        use vcad_kernel_geom::{CylinderSurface, GeometryStore};
+        use vcad_kernel_math::Point3;
+        use vcad_kernel_topo::{ShellType, Topology};
+
+        let (r, h) = (5.0, 8.0);
+        let mut topo = Topology::new();
+        let mut geom = GeometryStore::new();
+        let cyl = geom.add_surface(Box::new(CylinderSurface::new(r)));
+        let v_bot = topo.add_vertex(Point3::new(r, 0.0, 0.0));
+        let v_top = topo.add_vertex(Point3::new(r, 0.0, h));
+        let he_bot = topo.add_half_edge(v_bot);
+        let he_top = topo.add_half_edge(v_top);
+        let outer = topo.add_loop(&[he_bot]);
+        let inner = topo.add_loop(&[he_top]);
+        let face = topo.add_face(outer, cyl, Orientation::Forward);
+        topo.add_inner_loop(face, inner);
+        let shell = topo.add_shell(vec![face], ShellType::Outer);
+        let solid_id = topo.add_solid(shell);
+        let brep = BRepSolid {
+            topology: topo,
+            geometry: geom,
+            solid_id,
+        };
+
+        let trim = FaceTrim::build(&brep, face);
+        assert!(trim.contains(Point2::new(1.0, h / 2.0)));
+        assert!(trim.contains(Point2::new(5.0, 0.5)));
+        assert!(!trim.contains(Point2::new(1.0, -0.5)));
+        assert!(!trim.contains(Point2::new(1.0, h + 0.5)));
+    }
+
+    /// A drill-tip cone: base ring only, the apex VERTEX_LOOP dropped on
+    /// import. The wall must still span from the apex (v = 0) to the ring.
+    #[test]
+    fn test_single_ring_cone_spans_to_apex() {
+        use vcad_kernel_geom::{ConeSurface, GeometryStore};
+        use vcad_kernel_math::Point3;
+        use vcad_kernel_topo::{ShellType, Topology};
+
+        let half_angle = std::f64::consts::FRAC_PI_4;
+        let mut topo = Topology::new();
+        let mut geom = GeometryStore::new();
+        let cone = ConeSurface::new(half_angle);
+        let ring = Point3::new(3.0, 0.0, 3.0);
+        let ring_v = project_to_cone(&cone, &ring).y;
+        let cone_idx = geom.add_surface(Box::new(cone));
+        let v = topo.add_vertex(ring);
+        let he = topo.add_half_edge(v);
+        let outer = topo.add_loop(&[he]);
+        let face = topo.add_face(outer, cone_idx, Orientation::Forward);
+        let shell = topo.add_shell(vec![face], ShellType::Outer);
+        let solid_id = topo.add_solid(shell);
+        let brep = BRepSolid {
+            topology: topo,
+            geometry: geom,
+            solid_id,
+        };
+
+        let trim = FaceTrim::build(&brep, face);
+        assert!(trim.contains(Point2::new(1.0, ring_v / 2.0)));
+        assert!(!trim.contains(Point2::new(1.0, ring_v * 1.5)));
     }
 }
