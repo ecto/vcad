@@ -1,0 +1,94 @@
+name: Publish vcad to crates.io
+
+# Publishes the vcad crate (kernel library + `vcad` CLI) and every workspace crate it depends on, so
+# `cargo install vcad` installs the `vcad` command. Triggered by a
+# `crates-v<version>` tag whose version must equal workspace.package.version
+# (bump with a changelog entry + `npm run version:sync`, merge, then tag).
+#
+# The crate set is vcad's normal/build closure (scripts/crates-closure.py),
+# not the whole workspace: some members depend on git-only crates and can't go
+# to crates.io. `cargo publish` orders the set, verifies each crate against the
+# registry, and waits for the index between uploads. External deps must already
+# be on crates.io — loon-lang and phyz are published from their own repos.
+#
+# Requires the CARGO_REGISTRY_TOKEN secret (a crates.io token for ecto with
+# publish-update + publish-new scopes).
+on:
+  push:
+    tags: ["crates-v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Package and verify only; upload nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crates-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # Verifying ~70 crates builds most of the workspace; make room first
+      # (same as ci.yml).
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y pkg-config
+      - name: Check tag matches workspace version
+        id: version
+        run: |
+          VERSION=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name == "vcad") | .version')
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF}" == refs/tags/crates-v* && "${GITHUB_REF_NAME#crates-v}" != "${VERSION}" ]]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match workspace version ${VERSION}"
+            exit 1
+          fi
+      - name: Resolve crate set
+        run: |
+          cargo metadata --format-version 1 | python3 scripts/crates-closure.py > crates.txt
+          wc -l < crates.txt
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: |
+          args=()
+          while read -r crate; do args+=(-p "$crate"); done < crates.txt
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            cargo publish --dry-run "${args[@]}"
+          else
+            cargo publish "${args[@]}"
+          fi
+
+  # Install the published crate the way a user would: a clean container, no
+  # checkout, nothing but crates.io.
+  smoke:
+    needs: publish
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    container: rust:latest
+    steps:
+      - name: System deps
+        run: apt-get update && apt-get install -y pkg-config
+      - name: cargo install vcad
+        run: cargo install vcad --version "${{ needs.publish.outputs.version }}"
+      - name: vcad --version
+        run: vcad --version | grep -F "${{ needs.publish.outputs.version }}"
+      - name: vcad info on a .loon
+        run: |
+          echo '[cube 10 20 30]' > part.loon
+          vcad info part.loon

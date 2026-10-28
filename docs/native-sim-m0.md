@@ -337,9 +337,9 @@ The app's shipped sample is `examples/floating-arm.vcad` instead — imported
 from the genuinely primitives-only `robot-arm-2dof.urdf`, so it renders. Regenerate with:
 
 ```bash
-cargo run -p vcad-cli -- import-urdf examples/unitree-g1.urdf \
+cargo run -p vcad -- import-urdf examples/unitree-g1.urdf \
   crates/vcad-ffi/tests/fixtures/g1_floating.vcad --floating-base --spawn-height-mm 780
-cargo run -p vcad-cli -- import-urdf examples/robot-arm-2dof.urdf \
+cargo run -p vcad -- import-urdf examples/robot-arm-2dof.urdf \
   examples/floating-arm.vcad --floating-base --spawn-height-mm 600
 UPDATE_GOLDEN=1 cargo test -p vcad-ffi --test gym_parity
 ```

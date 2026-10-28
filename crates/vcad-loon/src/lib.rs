@@ -24,8 +24,9 @@ pub mod variants;
 pub use convert::{value_to_document, value_to_document_in};
 pub use modules::{lib_dirs, LibPathProvider, LIB_PATH_VAR};
 
-/// The bundled vcad loon library source.
-pub const VCAD_LIB_SOURCE: &str = include_str!("../../../lib/src/lib.loon");
+/// The bundled vcad loon library source. `bundled/` symlinks into the repo's
+/// `lib/`, so `cargo package` ships the file inside the crate.
+pub const VCAD_LIB_SOURCE: &str = include_str!("../bundled/lib.loon");
 
 /// Evaluate a `.vcad` loon source string and produce a Document.
 ///

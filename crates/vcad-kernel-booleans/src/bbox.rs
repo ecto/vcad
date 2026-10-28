@@ -3,7 +3,7 @@
 //! Used as a broadphase filter: only face pairs with overlapping AABBs
 //! need surface-surface intersection tests.
 
-use vcad_kernel_math::Point3;
+use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::FaceId;
 
@@ -59,6 +59,95 @@ impl Aabb3 {
         self.max.y += tol;
         self.max.z += tol;
     }
+}
+
+/// [`face_aabb`], tightened for rendering.
+///
+/// Cylinder and cone faces are boxed by the full turn between their loops'
+/// extreme heights, about the surface's real axis. `face_aabb` keeps
+/// shapes the boolean pipeline's candidate selection is tuned against (a
+/// `0.3·r` pad on partial cylinder faces, a Z-axis assumption on full ones,
+/// a cone's apex always included); for a renderer those balloon or
+/// misplace the box — a far-off chamfer apex inflates the BVH root and the
+/// camera zooms out — or under-cover an arc much past 120°.
+pub fn face_render_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
+    let surface = &brep.geometry.surfaces[brep.topology.faces[face_id].surface_index];
+    if let Some(cyl) = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+    {
+        let axis = cyl.axis.into_inner();
+        let (v_min, v_max) = face_axial_range(brep, face_id, |p| (p - cyl.center).dot(axis));
+        return revolution_band_aabb(
+            cyl.center + v_min * axis,
+            cyl.radius,
+            cyl.center + v_max * axis,
+            cyl.radius,
+            &axis,
+        );
+    }
+    if let Some(cone) = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::ConeSurface>()
+    {
+        // The apex belongs to the face only when the loops reach a single
+        // ring (a drill tip: its apex VERTEX_LOOP is dropped on import).
+        let axis = cone.axis.into_inner();
+        let (ca, sa) = (cone.half_angle.cos(), cone.half_angle.sin());
+        let (mut v_min, mut v_max) =
+            face_axial_range(brep, face_id, |p| (p - cone.apex).dot(axis) / ca);
+        if v_max - v_min <= 1e-9 * v_min.abs().max(v_max.abs()).max(1.0) {
+            v_min = v_min.min(0.0);
+            v_max = v_max.max(0.0);
+        }
+        return revolution_band_aabb(
+            cone.apex + (v_min * ca) * axis,
+            v_min.abs() * sa,
+            cone.apex + (v_max * ca) * axis,
+            v_max.abs() * sa,
+            &axis,
+        );
+    }
+    face_aabb(brep, face_id)
+}
+
+/// Range of `measure` over every vertex of every loop of a face.
+fn face_axial_range(
+    brep: &BRepSolid,
+    face_id: FaceId,
+    measure: impl Fn(Point3) -> f64,
+) -> (f64, f64) {
+    let topo = &brep.topology;
+    let face = &topo.faces[face_id];
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for &loop_id in std::iter::once(&face.outer_loop).chain(&face.inner_loops) {
+        for he_id in topo.loop_half_edges(loop_id) {
+            let m = measure(topo.vertices[topo.half_edges[he_id].origin].point);
+            lo = lo.min(m);
+            hi = hi.max(m);
+        }
+    }
+    (lo, hi)
+}
+
+/// Axis-aligned box of two coaxial circles (and so of the full-turn band of
+/// any cylinder or cone between them). A circle of radius `r` about unit
+/// axis `a` extends `r·sqrt(1 − a_i²)` along world axis `i`.
+fn revolution_band_aabb(c0: Point3, r0: f64, c1: Point3, r1: f64, axis: &Vec3) -> Aabb3 {
+    let ext = |r: f64| {
+        Vec3::new(
+            r * (1.0 - axis.x * axis.x).max(0.0).sqrt(),
+            r * (1.0 - axis.y * axis.y).max(0.0).sqrt(),
+            r * (1.0 - axis.z * axis.z).max(0.0).sqrt(),
+        )
+    };
+    let mut aabb = Aabb3::empty();
+    for (c, r) in [(c0, r0), (c1, r1)] {
+        let e = ext(r);
+        aabb.include_point(&(c - e));
+        aabb.include_point(&(c + e));
+    }
+    aabb
 }
 
 /// Compute the AABB for a face from its boundary vertex positions.
@@ -154,13 +243,13 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
 
                 if is_full_cylinder {
                     // Full wrap face - expand to full cylinder extent
-                    let mut v_min = f64::INFINITY;
-                    let mut v_max = f64::NEG_INFINITY;
-                    for p in &unique_positions {
-                        let v = (*p - cyl.center).dot(cyl.axis.as_ref());
-                        v_min = v_min.min(v);
-                        v_max = v_max.max(v);
-                    }
+                    // Heights from *every* loop: a seamless wall (STEP
+                    // writers emit these) is two one-vertex circles in two
+                    // loops, and the outer one alone would flatten the box
+                    // to the bottom ring.
+                    let (v_min, v_max) = face_axial_range(brep, face_id, |p| {
+                        (p - cyl.center).dot(cyl.axis.as_ref())
+                    });
 
                     let axis = cyl.axis.as_ref();
                     let center = cyl.center;
@@ -567,5 +656,39 @@ mod tests {
             swept, reference,
             "sweep must equal quadratic reference exactly (no dups, no misses)"
         );
+    }
+
+    /// A seamless cylinder wall (no seam edge; one circle per loop) must be
+    /// boxed over both rings. Sizing it from the outer loop alone flattened
+    /// the box to the bottom ring, and the ray tracer's BVH then culled every
+    /// ray aimed at the rest of the wall.
+    #[test]
+    fn test_seamless_cylinder_wall_spans_both_rings() {
+        use vcad_kernel_geom::{CylinderSurface, GeometryStore};
+        use vcad_kernel_topo::{Orientation, ShellType, Topology};
+
+        let (r, h) = (5.0, 8.0);
+        let mut topo = Topology::new();
+        let mut geom = GeometryStore::new();
+        let cyl = geom.add_surface(Box::new(CylinderSurface::new(r)));
+        let v_bot = topo.add_vertex(Point3::new(r, 0.0, 0.0));
+        let v_top = topo.add_vertex(Point3::new(r, 0.0, h));
+        let he_bot = topo.add_half_edge(v_bot);
+        let he_top = topo.add_half_edge(v_top);
+        let outer = topo.add_loop(&[he_bot]);
+        let inner = topo.add_loop(&[he_top]);
+        let face = topo.add_face(outer, cyl, Orientation::Forward);
+        topo.add_inner_loop(face, inner);
+        let shell = topo.add_shell(vec![face], ShellType::Outer);
+        let solid_id = topo.add_solid(shell);
+        let brep = BRepSolid {
+            topology: topo,
+            geometry: geom,
+            solid_id,
+        };
+
+        let b = face_aabb(&brep, face);
+        assert!((b.min.z - 0.0).abs() < 1e-9 && (b.max.z - h).abs() < 1e-9);
+        assert!((b.min.x + r).abs() < 1e-9 && (b.max.y - r).abs() < 1e-9);
     }
 }

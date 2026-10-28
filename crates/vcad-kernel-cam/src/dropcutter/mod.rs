@@ -32,7 +32,39 @@ pub struct HeightField {
     /// Bounding box [min_x, min_y, max_x, max_y].
     pub bounds: [f64; 4],
     /// Height values (Z), row-major order (Y outer, X inner).
+    ///
+    /// A sample where the tool touches no surface is `f64::NEG_INFINITY`:
+    /// nothing below it constrains the cut, so roughing goes to its target
+    /// level there. JSON has no infinity, so these serialize as `null` and
+    /// deserialize from `null` back to `NEG_INFINITY` (see [`heights_json`]),
+    /// which lets a height field from `camDropCutter` feed straight into
+    /// `camGenerateRoughing3d`.
+    #[serde(with = "heights_json")]
     pub heights: Vec<f64>,
+}
+
+/// Serde adapter for [`HeightField::heights`]: non-finite samples as `null`.
+///
+/// Before this, `serde_json` wrote `NEG_INFINITY` as `null` on the way out
+/// but refused `null` on the way in, so a height field could not round-trip
+/// through JSON (vcad.io CNC card, 2026-10-27).
+mod heights_json {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S: Serializer>(heights: &[f64], s: S) -> Result<S::Ok, S::Error> {
+        heights
+            .iter()
+            .map(|h| h.is_finite().then_some(*h))
+            .collect::<Vec<Option<f64>>>()
+            .serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<f64>, D::Error> {
+        Ok(Vec::<Option<f64>>::deserialize(d)?
+            .into_iter()
+            .map(|h| h.unwrap_or(f64::NEG_INFINITY))
+            .collect())
+    }
 }
 
 impl HeightField {
@@ -178,6 +210,75 @@ pub fn drop_cutter(accel: &MeshAccel, tool: &Tool, x: f64, y: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An 80 × 50 × 8 slab as a triangle mesh (12 triangles).
+    fn slab() -> (Vec<[f64; 3]>, Vec<u32>) {
+        let (x, y, z) = (80.0, 50.0, 8.0);
+        let v = vec![
+            [0.0, 0.0, 0.0],
+            [x, 0.0, 0.0],
+            [x, y, 0.0],
+            [0.0, y, 0.0],
+            [0.0, 0.0, z],
+            [x, 0.0, z],
+            [x, y, z],
+            [0.0, y, z],
+        ];
+        let i = vec![
+            0, 2, 1, 0, 3, 2, // bottom
+            4, 5, 6, 4, 6, 7, // top
+            0, 1, 5, 0, 5, 4, // -y
+            1, 2, 6, 1, 6, 5, // +x
+            2, 3, 7, 2, 7, 6, // +y
+            3, 0, 4, 3, 4, 7, // -x
+        ];
+        (v, i)
+    }
+
+    #[test]
+    fn height_field_round_trips_through_json_with_empty_samples() {
+        // Bounds wider than the slab: the margin samples hit nothing.
+        let (v, i) = slab();
+        let accel = MeshAccel::new(&v, &i, 5.0);
+        let tool = Tool::BallEndMill {
+            diameter: 6.0,
+            flute_length: 20.0,
+            flutes: 2,
+        };
+        let hf = generate_height_field(&accel, &tool, [-10.0, -10.0, 90.0, 60.0], 2.0);
+        let empty = hf
+            .heights
+            .iter()
+            .filter(|h| **h == f64::NEG_INFINITY)
+            .count();
+        assert!(
+            empty > 0,
+            "the margin should produce samples that hit nothing"
+        );
+
+        let json = serde_json::to_string(&hf).unwrap();
+        assert_eq!(
+            json.matches("null").count(),
+            empty,
+            "empty samples serialize as null"
+        );
+
+        let back: HeightField =
+            serde_json::from_str(&json).expect("a height field must read its own JSON");
+        assert_eq!((back.nx, back.ny, back.bounds), (hf.nx, hf.ny, hf.bounds));
+        for (a, b) in hf.heights.iter().zip(&back.heights) {
+            assert!(a == b, "{a} != {b}");
+        }
+    }
+
+    #[test]
+    fn finite_heights_serialize_as_plain_numbers() {
+        let hf = HeightField::new(2, 1, [0.0, 0.0, 1.0, 0.0], 3.5);
+        assert_eq!(
+            serde_json::to_value(&hf).unwrap()["heights"],
+            serde_json::json!([3.5, 3.5])
+        );
+    }
 
     #[test]
     fn test_height_field_new() {

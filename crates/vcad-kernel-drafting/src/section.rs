@@ -165,108 +165,132 @@ fn point_key(p: &Point3, tolerance: f64) -> (i64, i64, i64) {
     )
 }
 
+/// Weld segment endpoints that lie within `tolerance` of each other.
+///
+/// Returns one node id per segment endpoint (`2 * i` and `2 * i + 1` for
+/// segment `i`) and the representative position of each node. Points are
+/// bucketed on a `tolerance` grid and each lookup also searches the 26
+/// neighbouring cells, so two equal points that straddle a rounding boundary
+/// still weld (a plain rounded key would split them and break the chain).
+fn weld_endpoints(segments: &[(Point3, Point3)], tolerance: f64) -> (Vec<usize>, Vec<Point3>) {
+    let mut grid: HashMap<(i64, i64, i64), Vec<usize>> = HashMap::new();
+    let mut nodes: Vec<Point3> = Vec::new();
+    let mut ids = Vec::with_capacity(segments.len() * 2);
+    for (p0, p1) in segments {
+        for p in [p0, p1] {
+            let (kx, ky, kz) = point_key(p, tolerance);
+            let mut found = None;
+            'search: for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        if let Some(cands) = grid.get(&(kx + dx, ky + dy, kz + dz)) {
+                            for &n in cands {
+                                if (nodes[n] - *p).norm() <= tolerance {
+                                    found = Some(n);
+                                    break 'search;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let id = found.unwrap_or_else(|| {
+                nodes.push(*p);
+                let n = nodes.len() - 1;
+                grid.entry((kx, ky, kz)).or_default().push(n);
+                n
+            });
+            ids.push(id);
+        }
+    }
+    (ids, nodes)
+}
+
 /// Chain individual segments into continuous polylines.
 ///
-/// Uses tolerance-based endpoint matching to connect segments that share endpoints.
+/// Endpoints are first welded within `tolerance`. Two kinds of segment are
+/// then discarded, because a cut through a tessellated boolean result
+/// produces both and either one forks the chain walk and strands a loop
+/// open:
+/// - slivers whose two ends weld to the same point (a near-degenerate
+///   triangle cut across its short side), and
+/// - repeats of a segment already seen between the same two welded points
+///   (a mesh edge lying exactly in the plane is emitted once by each of the
+///   two triangles that share it).
+///
 /// Returns a list of polylines, each marked as closed or open.
 pub fn chain_segments(segments: Vec<(Point3, Point3)>, tolerance: f64) -> Vec<(Vec<Point3>, bool)> {
     if segments.is_empty() {
         return Vec::new();
     }
 
-    // Build adjacency map: point_key -> list of (segment_index, is_end_point)
-    let mut adjacency: HashMap<(i64, i64, i64), Vec<(usize, bool)>> = HashMap::new();
-    for (i, (p0, p1)) in segments.iter().enumerate() {
-        let k0 = point_key(p0, tolerance);
-        let k1 = point_key(p1, tolerance);
-        adjacency.entry(k0).or_default().push((i, false)); // false = start point
-        adjacency.entry(k1).or_default().push((i, true)); // true = end point
-    }
+    let (ids, nodes) = weld_endpoints(&segments, tolerance);
 
-    let mut used = vec![false; segments.len()];
-    let mut polylines = Vec::new();
-
-    for start_idx in 0..segments.len() {
-        if used[start_idx] {
+    // Unique edges between distinct welded nodes.
+    let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    let mut edges: Vec<(usize, usize)> = Vec::new();
+    for i in 0..segments.len() {
+        let (a, b) = (ids[2 * i], ids[2 * i + 1]);
+        if a == b {
             continue;
         }
+        if seen.insert((a.min(b), a.max(b))) {
+            edges.push((a, b));
+        }
+    }
 
-        // Start a new chain
-        let mut chain = Vec::new();
-        let (p0, p1) = segments[start_idx];
-        chain.push(p0);
-        chain.push(p1);
-        used[start_idx] = true;
+    // node -> incident edge indices
+    let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    for (e, &(a, b)) in edges.iter().enumerate() {
+        adjacency[a].push(e);
+        adjacency[b].push(e);
+    }
 
-        // Extend forward from p1
-        let mut current = p1;
+    let mut used = vec![false; edges.len()];
+    let mut polylines = Vec::new();
+
+    // Walk from `from` along unused edges, appending node ids to `chain`.
+    let walk = |from: usize, chain: &mut Vec<usize>, used: &mut Vec<bool>| {
+        let mut current = from;
         loop {
-            let key = point_key(&current, tolerance);
-            let mut found = false;
-
-            if let Some(neighbors) = adjacency.get(&key) {
-                for &(seg_idx, is_end) in neighbors {
-                    if used[seg_idx] {
-                        continue;
-                    }
-
-                    let (s0, s1) = segments[seg_idx];
-                    let (next_pt, _match_pt) = if is_end {
-                        (s0, s1) // matched at end, so next is start
-                    } else {
-                        (s1, s0) // matched at start, so next is end
-                    };
-
-                    chain.push(next_pt);
-                    current = next_pt;
-                    used[seg_idx] = true;
-                    found = true;
-                    break;
-                }
-            }
-
-            if !found {
-                break;
-            }
+            let next = adjacency[current].iter().copied().find(|&e| !used[e]);
+            let Some(e) = next else { break };
+            used[e] = true;
+            let (a, b) = edges[e];
+            current = if a == current { b } else { a };
+            chain.push(current);
         }
+    };
 
-        // Extend backward from p0
-        let mut current = p0;
-        loop {
-            let key = point_key(&current, tolerance);
-            let mut found = false;
-
-            if let Some(neighbors) = adjacency.get(&key) {
-                for &(seg_idx, is_end) in neighbors {
-                    if used[seg_idx] {
-                        continue;
-                    }
-
-                    let (s0, s1) = segments[seg_idx];
-                    let (next_pt, _match_pt) = if is_end { (s0, s1) } else { (s1, s0) };
-
-                    chain.insert(0, next_pt);
-                    current = next_pt;
-                    used[seg_idx] = true;
-                    found = true;
-                    break;
-                }
-            }
-
-            if !found {
-                break;
-            }
+    for start in 0..edges.len() {
+        if used[start] {
+            continue;
         }
+        used[start] = true;
+        let (a, b) = edges[start];
 
-        // Check if closed (first point equals last point within tolerance)
-        let is_closed = chain.len() >= 3 && (chain[0] - *chain.last().unwrap()).norm() < tolerance;
+        let mut forward = vec![a, b];
+        walk(b, &mut forward, &mut used);
 
-        // Remove duplicate endpoint if closed
-        if is_closed && chain.len() > 1 {
-            chain.pop();
+        let closed = forward.len() >= 4 && forward[0] == *forward.last().unwrap();
+        let chain: Vec<usize> = if closed {
+            forward.pop();
+            forward
+        } else {
+            // extend backward from the start node
+            let mut backward = Vec::new();
+            walk(a, &mut backward, &mut used);
+            backward.reverse();
+            backward.extend(forward);
+            backward
+        };
+
+        let is_closed = closed || (chain.len() >= 4 && chain[0] == *chain.last().unwrap());
+        let mut pts: Vec<Point3> = chain.iter().map(|&n| nodes[n]).collect();
+        if is_closed && !closed {
+            pts.pop();
         }
-
-        polylines.push((chain, is_closed));
+        polylines.push((pts, is_closed));
     }
 
     polylines
@@ -1041,6 +1065,66 @@ impl SectionCutLine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Unit square from (0,0,0) to (1,1,0) as four segments.
+    fn square() -> Vec<(Point3, Point3)> {
+        let p = |x: f64, y: f64| Point3::new(x, y, 0.0);
+        vec![
+            (p(0.0, 0.0), p(1.0, 0.0)),
+            (p(1.0, 0.0), p(1.0, 1.0)),
+            (p(1.0, 1.0), p(0.0, 1.0)),
+            (p(0.0, 1.0), p(0.0, 0.0)),
+        ]
+    }
+
+    #[test]
+    fn chain_closes_despite_duplicated_in_plane_edge() {
+        // An edge lying in the plane is emitted by both triangles sharing it.
+        let mut segs = square();
+        segs.insert(2, (Point3::new(1.0, 1.0, 0.0), Point3::new(1.0, 0.0, 0.0)));
+        let chains = chain_segments(segs, 1e-4);
+        assert_eq!(chains.len(), 1, "{chains:?}");
+        assert!(chains[0].1, "square should close");
+        assert_eq!(chains[0].0.len(), 4);
+    }
+
+    #[test]
+    fn chain_closes_despite_sliver_segment() {
+        // A near-degenerate triangle cut across its short side: both ends
+        // weld to one corner.
+        let mut segs = square();
+        segs.insert(
+            1,
+            (
+                Point3::new(1.0, 0.0, 0.0),
+                Point3::new(1.0 + 7.5e-5, 0.0, 0.0),
+            ),
+        );
+        let chains = chain_segments(segs, 1e-4);
+        assert_eq!(chains.len(), 1, "{chains:?}");
+        assert!(chains[0].1, "square should close");
+    }
+
+    #[test]
+    fn chain_welds_across_a_rounding_boundary() {
+        // 2e-12 apart, but on either side of the 1.5 rounding edge of the
+        // 1e-4 grid, so a plain rounded key puts them in different buckets.
+        let a = Point3::new(0.000_150_000_001, 0.0, 0.0);
+        let b = Point3::new(0.000_149_999_999, 0.0, 0.0);
+        assert_ne!(
+            point_key(&a, 1e-4),
+            point_key(&b, 1e-4),
+            "test points must straddle a key boundary"
+        );
+        let segs = vec![
+            (Point3::new(1.0, 0.0, 0.0), a),
+            (b, Point3::new(0.0, 1.0, 0.0)),
+            (Point3::new(0.0, 1.0, 0.0), Point3::new(1.0, 0.0, 0.0)),
+        ];
+        let chains = chain_segments(segs, 1e-4);
+        assert_eq!(chains.len(), 1, "{chains:?}");
+        assert!(chains[0].1, "triangle should close");
+    }
 
     /// Create a simple cube mesh for testing.
     fn make_cube(size: f64) -> TriangleMesh {
