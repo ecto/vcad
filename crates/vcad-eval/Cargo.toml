@@ -29,6 +29,7 @@ thiserror.workspace = true
 sha2 = "0.10"
 # Pure Rust; also used on wasm by mesh_inline (host-supplied STL bytes).
 stl_io = "0.8"
+rayon = "1.10"
 
 [dev-dependencies]
 # Path-only, no version: vcad-loon is publish = false (unpublished loon-lang),
