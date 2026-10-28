@@ -3139,6 +3139,33 @@ pub fn split_spherical_face_by_circle(
     circle: &vcad_kernel_geom::Circle3d,
     segments: u32,
 ) -> SplitResult {
+    split_spherical_face_by_circle_checked(brep, face_id, circle, segments).0
+}
+
+/// [`split_spherical_face_by_circle`], also reporting whether the split
+/// was SOUND. `false` means an already-trimmed patch could not be clipped
+/// and took the whole-sphere fallback, which replaces the patch with two
+/// caps of this circle alone — its earlier trim is lost and the shell
+/// double-covers the sphere. The pipeline treats that as an
+/// unrepresentable arrangement.
+pub fn split_spherical_face_by_circle_checked(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+    segments: u32,
+) -> (SplitResult, bool) {
+    let mut sound = true;
+    let result = split_spherical_face_by_circle_inner(brep, face_id, circle, segments, &mut sound);
+    (result, sound)
+}
+
+fn split_spherical_face_by_circle_inner(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+    segments: u32,
+    sound: &mut bool,
+) -> SplitResult {
     let face = &brep.topology.faces[face_id];
     let surface_index = face.surface_index;
     let orientation = face.orientation;
@@ -3183,12 +3210,14 @@ pub fn split_spherical_face_by_circle(
         .topology
         .loop_len(brep.topology.faces[face_id].outer_loop)
         != 4
+        || !brep.topology.faces[face_id].inner_loops.is_empty()
     {
         if let Some(result) =
             clip_spherical_face_by_circle(brep, face_id, circle, segments, tolerance)
         {
             return result;
         }
+        *sound = false;
         // The clip declined (circle misses the patch, crosses its
         // boundary somewhere other than exactly twice, or can't seat its
         // connector). Fall through to the whole-sphere split — that is
@@ -3290,9 +3319,7 @@ fn clip_spherical_face_by_circle(
         .as_any()
         .downcast_ref::<vcad_kernel_geom::SphereSurface>()?
         .clone();
-    if !face.inner_loops.is_empty() {
-        return None;
-    }
+    let has_holes = !face.inner_loops.is_empty();
     let center = sph.center;
     let radius = sph.radius.abs();
     if radius < 1e-9 {
@@ -3305,11 +3332,18 @@ fn clip_spherical_face_by_circle(
     let plane_d = (circle.center - center).dot(normal);
     let side = |p: &Point3| (*p - center).dot(normal) - plane_d;
 
-    let verts: Vec<Point3> = brep
-        .topology
-        .loop_vertices(brep.topology.faces[face_id].outer_loop)
+    let loop_points = |brep: &BRepSolid, l| -> Vec<Point3> {
+        brep.topology
+            .loop_vertices(l)
+            .iter()
+            .map(|v| brep.topology.vertices[*v].point)
+            .collect()
+    };
+    let verts = loop_points(brep, brep.topology.faces[face_id].outer_loop);
+    let holes: Vec<Vec<Point3>> = brep.topology.faces[face_id]
+        .inner_loops
         .iter()
-        .map(|v| brep.topology.vertices[*v].point)
+        .map(|&l| loop_points(brep, l))
         .collect();
     let m = verts.len();
     if m < 3 {
@@ -3317,29 +3351,65 @@ fn clip_spherical_face_by_circle(
     }
     let eps = (radius * 1e-9).max(1e-9);
     let sides: Vec<f64> = verts.iter().map(side).collect();
-    if sides.iter().all(|s| *s > -eps) || sides.iter().all(|s| *s < eps) {
-        // The circle doesn't cross this patch's boundary. Either it lies
-        // somewhere else on the sphere entirely — in which case there is
-        // nothing to split and falling through to the whole-sphere path
-        // would REPLACE this patch with two copies bounded by a circle
-        // it never touches — or it sits wholly inside the patch, which
-        // needs an inner-loop split this routine doesn't build yet.
-        // Probe the circle: if no point of it is in the face, report a
-        // clean no-op instead of declining.
-        let mut any_inside = false;
-        for k in 0..16 {
-            let ang = 2.0 * std::f64::consts::PI * k as f64 / 16.0;
-            let p = circle.center + circle.radius * (ang.cos() * x_dir + ang.sin() * y_dir);
-            if crate::trim::point_in_face(brep, face_id, &p) {
-                any_inside = true;
-                break;
+    if sides.iter().all(|s| s.abs() <= eps) {
+        // The circle IS this patch's boundary: already split along it.
+        return Some(SplitResult {
+            sub_faces: vec![face_id],
+        });
+    }
+    let outer_above = sides.iter().all(|s| *s > -eps);
+    if outer_above || sides.iter().all(|s| *s < eps) {
+        // The circle doesn't cross this patch's outer boundary. Either it
+        // lies somewhere else on the sphere entirely — nothing to split,
+        // and falling through to the whole-sphere path would REPLACE this
+        // patch with two copies bounded by a circle it never touches — or
+        // it sits wholly inside the patch and becomes a hole in it plus a
+        // disk cap of its own (a cube trimming a sphere on all six sides
+        // cuts six such disjoint circles).
+        let p0 = circle.center + circle.radius * x_dir;
+        let inside = match sphere_patch_contains(center, &verts, &holes, &p0) {
+            Some(inside) => inside,
+            None => {
+                let mut any_inside = false;
+                for k in 0..16 {
+                    let ang = 2.0 * std::f64::consts::PI * k as f64 / 16.0;
+                    let p = circle.center + circle.radius * (ang.cos() * x_dir + ang.sin() * y_dir);
+                    if crate::trim::point_in_face(brep, face_id, &p) {
+                        any_inside = true;
+                        break;
+                    }
+                }
+                any_inside
             }
-        }
-        if !any_inside {
+        };
+        if !inside {
             return Some(SplitResult {
                 sub_faces: vec![face_id],
             });
         }
+        // The disk is the side of the circle away from the outer
+        // boundary. Every existing hole must stay on the patch's side —
+        // one inside the new disk (or crossing the circle) would have to
+        // move into it, which this doesn't do.
+        let outer_sign = if outer_above { 1.0 } else { -1.0 };
+        let holes_clear = holes
+            .iter()
+            .all(|h| h.iter().all(|p| side(p) * outer_sign > eps));
+        if !holes_clear {
+            return None;
+        }
+        return Some(punch_spherical_hole(
+            brep,
+            face_id,
+            circle,
+            segments,
+            tolerance,
+            outer_sign > 0.0,
+        ));
+    }
+    if has_holes {
+        // Clipping across the outer boundary rebuilds the patch's loops
+        // without its holes; not supported yet.
         return None;
     }
 
@@ -3377,6 +3447,21 @@ fn clip_spherical_face_by_circle(
             crossings.push((i, arc_crossing(&verts[i], &verts[j])));
         }
     }
+    // A boundary vertex lying exactly ON the circle's plane is a crossing
+    // too, when its neighbours sit on opposite sides. Circle-frame samples
+    // put a vertex there whenever two great circles meet on the grid —
+    // three cube planes through a sphere's centre always do — and missing
+    // it left zero crossings, so the patch fell through to the
+    // whole-sphere split and was REPLACED by two hemispheres, throwing its
+    // trim away. Recorded on the edge that ends at the vertex, so the
+    // chains below start (or end) on it and dedup the repeat.
+    for i in 0..m {
+        let (sp, si, sn) = (sides[(i + m - 1) % m], sides[i], sides[(i + 1) % m]);
+        if si.abs() <= eps && ((sp > eps && sn < -eps) || (sp < -eps && sn > eps)) {
+            crossings.push(((i + m - 1) % m, verts[i]));
+        }
+    }
+    crossings.sort_by_key(|(e, _)| *e);
     if crossings.len() > 2 {
         // A circle can cross a spherical polygon's boundary 4+ times (a
         // cutter-plane circle traversing a fillet corner patch already
@@ -3444,11 +3529,22 @@ fn clip_spherical_face_by_circle(
         // few vertices). Declining here sends the face to the
         // whole-sphere fallback, which throws its trim away — far worse
         // than a heuristic. Pick the arc whose midpoint lies nearer the
-        // patch's own interior, proxied by the loop centroid projected
-        // onto the sphere.
+        // patch's own interior, proxied by the loop's solid-angle
+        // integrand Σ (pᵢ−c)×(pᵢ₊₁−c), which points into the bounded
+        // patch. The vertex centroid used to stand in here, but a
+        // hemisphere's boundary centroid IS the sphere centre, so every
+        // hemisphere declined and was replaced by two fresh hemispheres
+        // of the cutting circle — the third cube plane through a sphere
+        // then came back as duplicated lunes instead of octants.
         let mut c = Vec3::zeros();
-        for v in &verts {
-            c += *v - center;
+        for i in 0..m {
+            c += (verts[i] - center).cross(verts[(i + 1) % m] - center);
+        }
+        if c.norm() < 1e-9 * radius * radius {
+            c = Vec3::zeros();
+            for v in &verts {
+                c += *v - center;
+            }
         }
         let c_norm = c.norm();
         if c_norm < 1e-9 {
@@ -3561,6 +3657,123 @@ fn clip_spherical_face_by_circle(
     Some(SplitResult {
         sub_faces: vec![face_id, face_b],
     })
+}
+
+/// Is `p` (on the sphere about `center`) inside the spherical patch bounded
+/// by `outer` with `holes`?
+///
+/// Stereographic projection from the pole opposite the outer loop's
+/// solid-angle direction — a point outside the patch — maps the patch to a
+/// bounded planar region with its holes, where an ordinary even-odd test
+/// applies. `None` when the outer loop has no usable direction (a full
+/// sphere's 4-vertex seam cycle).
+pub(crate) fn sphere_patch_contains(
+    center: Point3,
+    outer: &[Point3],
+    holes: &[Vec<Point3>],
+    p: &Point3,
+) -> Option<bool> {
+    use vcad_kernel_math::Vec3;
+    let mut sa = Vec3::zeros();
+    for i in 0..outer.len() {
+        sa += (outer[i] - center).cross(outer[(i + 1) % outer.len()] - center);
+    }
+    let r2 = outer
+        .first()
+        .map(|v| (*v - center).norm_squared())
+        .unwrap_or(0.0);
+    if outer.len() < 3 || sa.norm() < 1e-9 * r2.max(1e-12) {
+        return None;
+    }
+    let q = -sa.normalize();
+    let e1 = if q.x.abs() < 0.9 {
+        Vec3::x().cross(q).normalize()
+    } else {
+        Vec3::y().cross(q).normalize()
+    };
+    let e2 = q.cross(e1);
+    let project = |v: &Point3| -> (f64, f64) {
+        let u = (*v - center).normalize();
+        let d = (1.0 - u.dot(q)).max(1e-12);
+        (u.dot(e1) / d, u.dot(e2) / d)
+    };
+    let inside = |poly: &[Point3], pt: (f64, f64)| -> bool {
+        let pts: Vec<(f64, f64)> = poly.iter().map(project).collect();
+        let mut c = false;
+        let n = pts.len();
+        for i in 0..n {
+            let (a, b) = (pts[i], pts[(i + n - 1) % n]);
+            if (a.1 > pt.1) != (b.1 > pt.1) && pt.0 < (b.0 - a.0) * (pt.1 - a.1) / (b.1 - a.1) + a.0
+            {
+                c = !c;
+            }
+        }
+        c
+    };
+    let pt = project(p);
+    Some(inside(outer, pt) && !holes.iter().any(|h| inside(h, pt)))
+}
+
+/// Split a spherical patch by a circle lying wholly inside it: the circle
+/// becomes a hole in the patch and the outer boundary of a new disk cap on
+/// the `disk_on_negative` side of the circle's plane. Both loops are
+/// sampled on the circle-frame grid the whole-sphere split uses, so the
+/// planar faces cut by the same circle weld to them.
+fn punch_spherical_hole(
+    brep: &mut BRepSolid,
+    face_id: FaceId,
+    circle: &vcad_kernel_geom::Circle3d,
+    segments: u32,
+    tolerance: f64,
+    disk_on_negative: bool,
+) -> SplitResult {
+    let n = segments as usize;
+    let ids: Vec<_> = (0..segments)
+        .map(|i| {
+            let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
+            let (sin_t, cos_t) = theta.sin_cos();
+            let p = circle.center
+                + circle.radius
+                    * (cos_t * circle.x_dir.into_inner() + sin_t * circle.y_dir.into_inner());
+            find_or_create_vertex(brep, &p, tolerance)
+        })
+        .collect();
+    // A forward walk bounds the cap on the +normal side; the reverse walk
+    // (v0, vN-1, …, v1) bounds the other one.
+    let he_fwd: Vec<_> = (0..n)
+        .map(|i| brep.topology.add_half_edge(ids[i]))
+        .collect();
+    let he_rev: Vec<_> = (0..n)
+        .map(|j| brep.topology.add_half_edge(ids[(n - j) % n]))
+        .collect();
+    let loop_fwd = brep.topology.add_loop(&he_fwd);
+    let loop_rev = brep.topology.add_loop(&he_rev);
+    for i in 0..n {
+        brep.topology.add_edge(he_fwd[i], he_rev[n - 1 - i]);
+    }
+    let (disk_loop, hole_loop) = if disk_on_negative {
+        (loop_rev, loop_fwd)
+    } else {
+        (loop_fwd, loop_rev)
+    };
+
+    let (surface_index, orientation, shell) = {
+        let f = &brep.topology.faces[face_id];
+        (f.surface_index, f.orientation, f.shell)
+    };
+    brep.topology.faces[face_id].inner_loops.push(hole_loop);
+    brep.topology.loops[hole_loop].face = Some(face_id);
+    let disk = brep
+        .topology
+        .add_face(disk_loop, surface_index, orientation);
+    if let Some(shell_id) = shell {
+        brep.topology.shells[shell_id].faces.push(disk);
+        brep.topology.faces[disk].shell = Some(shell_id);
+    }
+    brep.geometry.add_curve_3d(Box::new(circle.clone()));
+    SplitResult {
+        sub_faces: vec![face_id, disk],
+    }
 }
 
 /// Clip a spherical face whose boundary a circle crosses more than twice.

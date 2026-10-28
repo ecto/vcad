@@ -324,6 +324,7 @@ fn apply_splits_to_solid(
     segments: u32,
     #[allow(unused_variables)] solid_name: &str,
     other: &BRepSolid,
+    sphere_unsound: &mut bool,
 ) {
     // Deterministic order: the splits are applied in sequence and each
     // one reshapes the face the next one sees, so iterating the HashMap
@@ -414,9 +415,10 @@ fn apply_splits_to_solid(
                                 fid,
                                 _circle.center.x, _circle.center.y, _circle.center.z, _circle.radius
                             );
-                            let result = split::split_spherical_face_by_circle(
+                            let (result, sound) = split::split_spherical_face_by_circle_checked(
                                 solid, fid, _circle, segments,
                             );
+                            *sphere_unsound |= !sound;
                             debug_bool!(
                                 "    -> Sphere split result: {} sub-faces {:?}",
                                 result.sub_faces.len(),
@@ -1358,16 +1360,20 @@ pub(crate) fn brep_boolean(
         }
     }
 
-    // A spherical face split by two or more circles that INTERSECT each
-    // other is not representable by the cap splitter (each circle mints a
-    // full hole + disk; overlapping caps double-cover the surface and the
-    // result is a cracked shell). Until sphere arc-arrangement splitting
-    // exists, return the documented conservative result instead of garbage:
-    // empty for intersection, A for difference, both shells for union —
-    // exactly what the misclassification on main used to degrade to, but
-    // explicit. TODO(sphere-arrangements): remove once spheres get a real
-    // region splitter.
-    let sphere_arrangement_unsound =
+    // Every circle split of a spherical face after the first must CLIP an
+    // already-trimmed patch (or punch a hole in it). Where the clip can't,
+    // the whole-sphere split replaces the patch with two caps of the new
+    // circle alone: the earlier trim is lost, the caps double-cover the
+    // surface, and the result is a cracked shell or a silently missing
+    // sphere. That is judged after the splits, from what the splitter
+    // actually did, and the documented conservative result is returned
+    // instead of garbage. The old gate predicted it from the circles
+    // alone (any two that intersect) and condemned every sphere poking
+    // through a box corner — three great circles the clip partitions into
+    // octants exactly — to the mesh fallback and its jagged seams, while
+    // waving through six DISJOINT circles that then lost the sphere.
+
+    let sphere_circles_intersect =
         |solid: &BRepSolid, splits: &HashMap<FaceId, FaceSplits>| -> bool {
             for (face_id, list) in splits {
                 if !solid.topology.faces.contains_key(*face_id)
@@ -1421,19 +1427,21 @@ pub(crate) fn brep_boolean(
             }
             false
         };
-    if sphere_arrangement_unsound(&a, &splits_a) || sphere_arrangement_unsound(&b, &splits_b) {
-        // Report it instead of silently returning the uncut operand: the
-        // caller re-runs the boolean through the mesh fallback, which has
-        // no such representational limit. Returning `A` unchanged for a
-        // difference is exactly the silent no-op the hemispherical-socket
-        // handoff hit (a Ø50 ball pocket that simply never appeared).
-        debug_bool!("Sphere circle arrangement unrepresentable: reporting to caller");
-        *sphere_unrepresentable = true;
-        return Ok(non_overlapping_boolean(solid_a, solid_b, op, segments));
-    }
+    // Intersecting circles are where the clip has to get every crossing
+    // right; the sewn result is checked rather than trusted there.
+    let sphere_circles_risky =
+        sphere_circles_intersect(&a, &splits_a) || sphere_circles_intersect(&b, &splits_b);
 
     // Apply splits to both solids
-    apply_splits_to_solid(&mut a, splits_a, segments, "A", &b);
+    let mut sphere_split_unsound = false;
+    apply_splits_to_solid(
+        &mut a,
+        splits_a,
+        segments,
+        "A",
+        &b,
+        &mut sphere_split_unsound,
+    );
     // Heal the T-junctions splitting leaves behind (stacked band pieces
     // partition shared vertical boundaries at different heights, a pinch
     // tangency stops one side's rim where the other continues). The
@@ -1443,8 +1451,26 @@ pub(crate) fn brep_boolean(
     debug_bool!("\n--- Stage 2.5: After splits applied to A ---");
     debug_bool!("A now has {} faces", a.topology.faces.len());
 
-    apply_splits_to_solid(&mut b, splits_b, segments, "B", &a);
+    apply_splits_to_solid(
+        &mut b,
+        splits_b,
+        segments,
+        "B",
+        &a,
+        &mut sphere_split_unsound,
+    );
     crate::repair::repair_topology_fine(&mut b.topology, 1e-6);
+
+    if sphere_split_unsound {
+        // Report it instead of silently returning the uncut operand: the
+        // caller re-runs the boolean through the mesh fallback, which has
+        // no such representational limit. Returning `A` unchanged for a
+        // difference is exactly the silent no-op the hemispherical-socket
+        // handoff hit (a Ø50 ball pocket that simply never appeared).
+        debug_bool!("Sphere circle arrangement unrepresentable: reporting to caller");
+        *sphere_unrepresentable = true;
+        return Ok(non_overlapping_boolean(solid_a, solid_b, op, segments));
+    }
 
     // 3. Classify all faces (including split sub-faces)
     debug_bool!("\n--- Stage 3: Classification ---");
@@ -1655,9 +1681,46 @@ pub(crate) fn brep_boolean(
 
     let result = sew::sew_faces(&a, &keep_a, &b, &keep_b, reverse_b, 1e-6);
 
+    // A crossing the clip mis-traced shows as a crack in the sewn shell.
+    // Fail closed exactly like an unsound split: the caller re-runs it
+    // through the mesh fallback.
+    // A closed shell can still be the wrong solid (a grazing corner's two
+    // tiny circles flipping the big patch): bound its volume by the
+    // operands' too.
+    if sphere_circles_risky && sphere_result_implausible(&result, solid_a, solid_b, op, segments) {
+        debug_bool!("Sphere arrangement left a cracked or wrong shell: reporting to caller");
+        *sphere_unrepresentable = true;
+        return Ok(non_overlapping_boolean(solid_a, solid_b, op, segments));
+    }
+
     debug_bool!("\n--- Stage 5: Result ---");
     debug_bool!("Result solid has {} faces", result.topology.faces.len());
     debug_bool!("========== BREP BOOLEAN END ==========\n");
 
     Ok(BooleanResult::BRep(Box::new(result)))
+}
+
+/// Whether a sewn result is cracked or its volume escapes the bounds the
+/// operands impose on `op`.
+fn sphere_result_implausible(
+    result: &BRepSolid,
+    solid_a: &BRepSolid,
+    solid_b: &BRepSolid,
+    op: BooleanOp,
+    segments: u32,
+) -> bool {
+    let report = crate::validate::mesh_report(&tessellate_brep(result, segments));
+    if report.open_edges > 0 {
+        return true;
+    }
+    let va = crate::validate::mesh_report(&tessellate_brep(solid_a, segments)).signed_volume;
+    let vb = crate::validate::mesh_report(&tessellate_brep(solid_b, segments)).signed_volume;
+    let v = report.signed_volume;
+    let slack = 1e-2 * va.abs().max(vb.abs());
+    let hi = match op {
+        BooleanOp::Union => va + vb,
+        BooleanOp::Difference => va,
+        BooleanOp::Intersection => va.min(vb),
+    };
+    v < -slack || v > hi + slack
 }

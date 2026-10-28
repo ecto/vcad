@@ -5110,6 +5110,27 @@ fn tessellate_spherical_face(
         .map(|he| topo.vertices[topo.half_edges[he].origin].point)
         .collect();
 
+    // A patch with holes (a sphere a box trims on several sides: each
+    // disjoint cut circle punches one) has no single pole to ring from.
+    if !face.inner_loops.is_empty() {
+        if let Some(sph) = surface
+            .as_any()
+            .downcast_ref::<vcad_kernel_geom::SphereSurface>()
+        {
+            let mut loops = vec![loop_verts.clone()];
+            for &l in &face.inner_loops {
+                loops.push(
+                    topo.loop_half_edges(l)
+                        .map(|he| topo.vertices[topo.half_edges[he].origin].point)
+                        .collect(),
+                );
+            }
+            if let Some(mesh) = tessellate_spherical_region(sph, &loops, params, reversed) {
+                return mesh;
+            }
+        }
+    }
+
     // A normal closed-sphere B-rep has exactly 4 edges (seam cycle).
     // Faces with 3 or >4 loop vertices are partial spherical caps —
     // either boolean-split caps or fillet vertex-blend patches — and
@@ -5234,6 +5255,299 @@ fn tessellate_spherical_face(
     }
 
     mesh
+}
+
+/// Lawson flips toward the planar Delaunay triangulation of `tris` (CCW
+/// in `uv`), never flipping a `boundary` edge or creating an inverted
+/// triangle.
+fn delaunay_flip(
+    tris: &mut [[u32; 3]],
+    uv: &[(f64, f64)],
+    boundary: &std::collections::HashSet<(u32, u32)>,
+) {
+    use std::collections::HashMap;
+    let key = |a: u32, b: u32| if a < b { (a, b) } else { (b, a) };
+    let orient = |t: &[u32; 3]| -> f64 {
+        let (a, b, c) = (uv[t[0] as usize], uv[t[1] as usize], uv[t[2] as usize]);
+        (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+    };
+    let in_circle = |a: (f64, f64), b: (f64, f64), c: (f64, f64), d: (f64, f64)| -> f64 {
+        let (adx, ady) = (a.0 - d.0, a.1 - d.1);
+        let (bdx, bdy) = (b.0 - d.0, b.1 - d.1);
+        let (cdx, cdy) = (c.0 - d.0, c.1 - d.1);
+        (adx * adx + ady * ady) * (bdx * cdy - cdx * bdy)
+            - (bdx * bdx + bdy * bdy) * (adx * cdy - cdx * ady)
+            + (cdx * cdx + cdy * cdy) * (adx * bdy - bdx * ady)
+    };
+    for _ in 0..100 {
+        let mut edges: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+        for (t, tri) in tris.iter().enumerate() {
+            for k in 0..3 {
+                edges
+                    .entry(key(tri[k], tri[(k + 1) % 3]))
+                    .or_default()
+                    .push(t);
+            }
+        }
+        let mut touched = vec![false; tris.len()];
+        let mut flipped = false;
+        for (e, ts) in &edges {
+            if ts.len() != 2 || boundary.contains(e) || touched[ts[0]] || touched[ts[1]] {
+                continue;
+            }
+            let (t0, t1) = (tris[ts[0]], tris[ts[1]]);
+            // t0 = (a, b, c) CCW with the shared edge a→b; d opposite in t1.
+            let r = (0..3)
+                .find(|&k| key(t0[k], t0[(k + 1) % 3]) == *e)
+                .unwrap_or(0);
+            let (a, b, c) = (t0[r], t0[(r + 1) % 3], t0[(r + 2) % 3]);
+            let Some(&d) = t1.iter().find(|&&v| v != a && v != b) else {
+                continue;
+            };
+            let p = |v: u32| uv[v as usize];
+            let scale = {
+                let s = (p(a).0 - p(c).0).abs() + (p(a).1 - p(c).1).abs();
+                s.powi(4).max(1e-300)
+            };
+            if in_circle(p(a), p(b), p(c), p(d)) <= 1e-12 * scale {
+                continue;
+            }
+            let n0 = [c, a, d];
+            let n1 = [d, b, c];
+            if orient(&n0) <= 0.0 || orient(&n1) <= 0.0 {
+                continue;
+            }
+            tris[ts[0]] = n0;
+            tris[ts[1]] = n1;
+            touched[ts[0]] = true;
+            touched[ts[1]] = true;
+            flipped = true;
+        }
+        if !flipped {
+            break;
+        }
+    }
+}
+
+/// Tessellate a spherical patch bounded by `loops` (outer first, then
+/// holes), keeping every boundary vertex exactly as given so the patch
+/// welds to its neighbours.
+///
+/// Stereographic projection from the pole opposite the outer loop's
+/// solid-angle direction (a point outside the patch) turns the patch into a
+/// planar polygon with holes. Earcut triangulates that without adding
+/// vertices, but its ears and fans are useless on a curved surface — a
+/// boundary ear lies in the cut circle's plane, tilted far off the
+/// sphere's normal. So the planar mesh is refined where it stays a valid
+/// embedding: interior edges whose LIFTED length exceeds the boundary
+/// spacing are bisected in the plane (both neighbours at once, keeping the
+/// mesh conforming), then edges are flipped to Delaunay. Stereographic
+/// projection maps circles to circles, so planar Delaunay is spherical
+/// Delaunay. Boundary edges are never touched. `None` when the projection
+/// or triangulation degenerates, leaving the caller its old path.
+fn tessellate_spherical_region(
+    sphere: &vcad_kernel_geom::SphereSurface,
+    loops: &[Vec<Point3>],
+    params: &TessellationParams,
+    reversed: bool,
+) -> Option<TriangleMesh> {
+    use std::collections::{HashMap, HashSet};
+    let center = sphere.center;
+    let radius = sphere.radius.abs();
+    let outer = loops.first()?;
+    if radius < 1e-9 || outer.len() < 3 {
+        return None;
+    }
+    let mut sa = Vec3::zeros();
+    for i in 0..outer.len() {
+        sa += (outer[i] - center).cross(outer[(i + 1) % outer.len()] - center);
+    }
+    if sa.norm() < 1e-9 * radius * radius {
+        return None;
+    }
+    let q = -sa.normalize();
+    let e1 = if q.x.abs() < 0.9 {
+        Vec3::new(1.0, 0.0, 0.0).cross(q).normalize()
+    } else {
+        Vec3::new(0.0, 1.0, 0.0).cross(q).normalize()
+    };
+    let e2 = q.cross(e1);
+    let project = |p: &Point3| -> (f64, f64) {
+        let u = (*p - center).normalize();
+        let d = (1.0 - u.dot(q)).max(1e-12);
+        (u.dot(e1) / d, u.dot(e2) / d)
+    };
+    let lift = |(x, y): (f64, f64)| -> Point3 {
+        let s = x * x + y * y;
+        center + radius * ((2.0 * x * e1 + 2.0 * y * e2 + (s - 1.0) * q) / (s + 1.0))
+    };
+
+    let mut pts: Vec<Point3> = loops.iter().flatten().copied().collect();
+    let mut uv: Vec<(f64, f64)> = pts.iter().map(project).collect();
+    let outer_2d: Vec<(f64, f64)> = uv[..outer.len()].to_vec();
+    let mut holes_2d: Vec<Vec<(f64, f64)>> = Vec::new();
+    let mut base = outer.len();
+    for l in &loops[1..] {
+        holes_2d.push(uv[base..base + l.len()].to_vec());
+        base += l.len();
+    }
+    let mut tris: Vec<[u32; 3]> = triangulate_polygon_2d(&outer_2d, &holes_2d)?;
+    if tris.is_empty() {
+        return None;
+    }
+    let orient = |uv: &[(f64, f64)], t: &[u32; 3]| -> f64 {
+        let (a, b, c) = (uv[t[0] as usize], uv[t[1] as usize], uv[t[2] as usize]);
+        (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+    };
+    for t in &mut tris {
+        if orient(&uv, t) < 0.0 {
+            t.swap(1, 2);
+        }
+    }
+
+    let key = |a: u32, b: u32| if a < b { (a, b) } else { (b, a) };
+    let mut boundary: HashSet<(u32, u32)> = HashSet::new();
+    let mut base = 0u32;
+    for l in loops {
+        let n = l.len() as u32;
+        for i in 0..n {
+            boundary.insert(key(base + i, base + (i + 1) % n));
+        }
+        base += n;
+    }
+    let edge_map = |tris: &[[u32; 3]]| -> HashMap<(u32, u32), Vec<usize>> {
+        let mut m: HashMap<(u32, u32), Vec<usize>> = HashMap::new();
+        for (t, tri) in tris.iter().enumerate() {
+            for k in 0..3 {
+                m.entry(key(tri[k], tri[(k + 1) % 3])).or_default().push(t);
+            }
+        }
+        m
+    };
+
+    // Target edge length: a little under the circumferential spacing this
+    // sphere gets. At the full spacing a 32-segment box∩sphere ran 0.5%
+    // short of the closed-form volume from interior chord sag alone; the
+    // ring-based cap path is denser than this still.
+    let n_lon = params.circle_segments_for_radius(radius).max(8) as f64;
+    let target = 0.6 * 2.0 * PI * radius / n_lon;
+
+    // Seed the interior with an even spread of sphere points (a Fibonacci
+    // lattice at the target spacing), each inserted into the planar
+    // triangle containing it. Bisection alone gets there too, but cascades
+    // into fans around every boundary vertex at several times the count.
+    let n_boundary = pts.len();
+    let spacing_area = 0.5 * 3f64.sqrt() * target * target;
+    let n_fib = ((4.0 * PI * radius * radius) / spacing_area).ceil() as usize;
+    if n_fib <= 200_000 {
+        let golden = PI * (3.0 - 5f64.sqrt());
+        for k in 0..n_fib {
+            let z = 1.0 - 2.0 * (k as f64 + 0.5) / n_fib as f64;
+            let rho = (1.0 - z * z).max(0.0).sqrt();
+            let (st, ct) = (golden * k as f64).sin_cos();
+            let p = center + radius * Vec3::new(rho * ct, rho * st, z);
+            if pts[..n_boundary]
+                .iter()
+                .any(|b| (*b - p).norm() < 0.6 * target)
+            {
+                continue;
+            }
+            let w = project(&p);
+            let Some(t) = tris.iter().position(|t| {
+                let (a, b, c) = (uv[t[0] as usize], uv[t[1] as usize], uv[t[2] as usize]);
+                let o = |p: (f64, f64), q: (f64, f64)| {
+                    (q.0 - p.0) * (w.1 - p.1) - (q.1 - p.1) * (w.0 - p.0)
+                };
+                o(a, b) > 0.0 && o(b, c) > 0.0 && o(c, a) > 0.0
+            }) else {
+                continue;
+            };
+            let [a, b, c] = tris[t];
+            let m = pts.len() as u32;
+            pts.push(p);
+            uv.push(w);
+            tris[t] = [a, b, m];
+            tris.push([b, c, m]);
+            tris.push([c, a, m]);
+        }
+        delaunay_flip(&mut tris, &uv, &boundary);
+    }
+
+    // Conforming longest-edge bisection of interior edges, in the plane.
+    let max_tris = 200_000;
+    loop {
+        let edges = edge_map(&tris);
+        let mut long: Vec<((u32, u32), f64)> = edges
+            .iter()
+            .filter(|(e, ts)| ts.len() == 2 && !boundary.contains(e))
+            .map(|(e, _)| (*e, (pts[e.0 as usize] - pts[e.1 as usize]).norm()))
+            .filter(|(_, len)| *len > 1.5 * target)
+            .collect();
+        if long.is_empty() || tris.len() > max_tris {
+            break;
+        }
+        long.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let mut touched = vec![false; tris.len()];
+        for ((a, b), _) in long {
+            let ts = &edges[&(a, b)];
+            if ts.iter().any(|&t| touched[t]) {
+                continue;
+            }
+            let (ua, ub) = (uv[a as usize], uv[b as usize]);
+            let mid = (0.5 * (ua.0 + ub.0), 0.5 * (ua.1 + ub.1));
+            let m = pts.len() as u32;
+            uv.push(mid);
+            pts.push(lift(mid));
+            for &t in ts {
+                touched[t] = true;
+                let tri = tris[t];
+                let r = (0..3)
+                    .find(|&k| key(tri[k], tri[(k + 1) % 3]) == (a, b))
+                    .unwrap_or(0);
+                let (x, y, z) = (tri[r], tri[(r + 1) % 3], tri[(r + 2) % 3]);
+                tris[t] = [x, m, z];
+                tris.push([m, y, z]);
+                touched.push(true);
+            }
+        }
+    }
+
+    delaunay_flip(&mut tris, &uv, &boundary);
+
+    // All triangles are CCW in the plane; one lifted triangle decides
+    // whether that is outward on the sphere.
+    let (big, _) = tris
+        .iter()
+        .map(|t| (t, orient(&uv, t)))
+        .fold(
+            (&tris[0], f64::MIN),
+            |acc, x| if x.1 > acc.1 { x } else { acc },
+        );
+    let (a, b, c) = (
+        pts[big[0] as usize],
+        pts[big[1] as usize],
+        pts[big[2] as usize],
+    );
+    let ccw_is_outward = (b - a).cross(c - a).dot(a - center) > 0.0;
+    let flip = ccw_is_outward == reversed;
+
+    let mut mesh = TriangleMesh::new();
+    for p in &pts {
+        mesh.vertices
+            .extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
+        let n = (*p - center).normalize();
+        let n = if reversed { -n } else { n };
+        mesh.normals
+            .extend_from_slice(&[n.x as f32, n.y as f32, n.z as f32]);
+    }
+    for t in &tris {
+        if flip {
+            mesh.indices.extend_from_slice(&[t[0], t[2], t[1]]);
+        } else {
+            mesh.indices.extend_from_slice(t);
+        }
+    }
+    Some(mesh)
 }
 
 /// Tessellate a spherical cap defined by a boundary loop.

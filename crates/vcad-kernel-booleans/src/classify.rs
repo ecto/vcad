@@ -429,7 +429,8 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
         // Fallback for non-planar faces or if 2D approach fails:
         // Strategy: pick a point on the outer boundary's edge midpoint
         // and move slightly inward. This avoids the hole in the center.
-        if vertices.len() >= 2 {
+        // (Spheres sample hole-aware on the surface below.)
+        if vertices.len() >= 2 && surface.surface_type() != SurfaceKind::Sphere {
             // Take the midpoint of the first edge
             let edge_mid = Point3::new(
                 (vertices[0].x + vertices[1].x) / 2.0,
@@ -705,6 +706,52 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                     }
                     // Fallback: equator at u=0
                     return sph.center + sph.radius * ref_dir;
+                }
+
+                // A patch with holes (a sphere trimmed by several disjoint
+                // circles): the outer loop's own pole can sit in a hole —
+                // for a sphere a box trims on all six sides it is the
+                // centre of the opposite cut. Take the candidate direction
+                // deepest inside the patch instead.
+                if !face.inner_loops.is_empty() {
+                    let holes: Vec<Vec<Point3>> = face
+                        .inner_loops
+                        .iter()
+                        .map(|&l| {
+                            topo.loop_half_edges(l)
+                                .map(|he| topo.vertices[topo.half_edges[he].origin].point)
+                                .collect()
+                        })
+                        .collect();
+                    let boundary: Vec<Point3> = vertices
+                        .iter()
+                        .chain(holes.iter().flatten())
+                        .copied()
+                        .collect();
+                    let n = 256;
+                    let golden = PI * (3.0 - 5f64.sqrt());
+                    let mut best: Option<(f64, Point3)> = None;
+                    for k in 0..n {
+                        let z = 1.0 - 2.0 * (k as f64 + 0.5) / n as f64;
+                        let rho = (1.0 - z * z).sqrt();
+                        let (st, ct) = (golden * k as f64).sin_cos();
+                        let p = sph.center + sph.radius.abs() * Vec3::new(rho * ct, rho * st, z);
+                        if crate::split::sphere_patch_contains(sph.center, &vertices, &holes, &p)
+                            != Some(true)
+                        {
+                            continue;
+                        }
+                        let clearance = boundary
+                            .iter()
+                            .map(|b| (*b - p).norm())
+                            .fold(f64::INFINITY, f64::min);
+                        if best.is_none_or(|(c, _)| clearance > c) {
+                            best = Some((clearance, p));
+                        }
+                    }
+                    if let Some((_, p)) = best {
+                        return p;
+                    }
                 }
 
                 // For cap faces produced by booleans, both caps share the
