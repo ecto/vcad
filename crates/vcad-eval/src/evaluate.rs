@@ -164,14 +164,31 @@ fn evaluate_inner(
     let mut pre: HashMap<NodeId, MeshedRoot> = HashMap::new();
     if inc.is_none() {
         let mut todo: Vec<NodeId> = Vec::new();
+        let mut queued: std::collections::HashSet<RootKey> = Default::default();
         let mut want = |id: NodeId, lookups: &mut HashMap<_, _>| {
-            if let std::collections::hash_map::Entry::Vacant(v) = lookups.entry(id) {
-                let found = lookup(id);
-                if found.1.is_none() {
-                    todo.push(id);
-                }
-                v.insert(found);
+            if lookups.contains_key(&id) {
+                return;
             }
+            let key = root_cache.and_then(|_| root_fingerprint(id, &doc.nodes, &fp_settings));
+            if let Some(k) = &key {
+                // Another node of the same shape is already queued: leave
+                // this one to the serial walk, which hits the mesh the first
+                // stores — exactly as it would without the pre-pass.
+                if queued.contains(k) {
+                    return;
+                }
+            }
+            let hit = match (root_cache, &key) {
+                (Some(c), Some(k)) => c.get(k),
+                _ => None,
+            };
+            if hit.is_none() {
+                todo.push(id);
+                if let Some(k) = &key {
+                    queued.insert(k.clone());
+                }
+            }
+            lookups.insert(id, (key, hit));
         };
         for entry in doc.roots.iter().filter(|e| e.visible != Some(false)) {
             if find_imported_mesh(entry.root, &doc.nodes).is_some() {
@@ -390,6 +407,7 @@ fn evaluate_inner(
                     eval_part_defs.push(EvaluatedPartDef {
                         id: id.clone(),
                         mesh,
+                        solid: None,
                     });
                     continue;
                 }
@@ -400,6 +418,7 @@ fn evaluate_inner(
                     eval_part_defs.push(EvaluatedPartDef {
                         id: id.clone(),
                         mesh,
+                        solid: None,
                     });
                     continue;
                 }
@@ -413,6 +432,7 @@ fn evaluate_inner(
                             eval_part_defs.push(EvaluatedPartDef {
                                 id: id.clone(),
                                 mesh,
+                                solid: None,
                             });
                             continue;
                         }
@@ -430,8 +450,12 @@ fn evaluate_inner(
                         &mut node_timings,
                     ),
                 };
-                let mesh = match outcome {
-                    Ok(MeshedOk { mesh: m, mesh_ms, .. }) => {
+                let (mesh, solid) = match outcome {
+                    Ok(MeshedOk {
+                        mesh: m,
+                        solid,
+                        mesh_ms,
+                    }) => {
                         tessellate_ms += mesh_ms;
                         if let Some(nt) = node_timings.get(&part_def.root.to_string()) {
                             root_ms.push((format!("partDef {id}"), nt.eval_ms + mesh_ms));
@@ -442,7 +466,7 @@ fn evaluate_inner(
                                 i.put_mesh(part_def.root, h, &m);
                             }
                         }
-                        m
+                        (m, solid)
                     }
                     Err(error) => {
                         failures.push(RootFailure {
@@ -450,13 +474,14 @@ fn evaluate_inner(
                             node_id: part_def.root,
                             error,
                         });
-                        EvaluatedMesh::empty()
+                        (EvaluatedMesh::empty(), None)
                     }
                 };
                 part_def_meshes.insert(id.clone(), mesh.clone());
                 eval_part_defs.push(EvaluatedPartDef {
                     id: id.clone(),
                     mesh,
+                    solid,
                 });
             }
 
