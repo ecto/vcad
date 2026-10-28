@@ -93,6 +93,7 @@ vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 | `--aa <N>` | auto | Supersampling factor, 1–4, for the tessellated raster path (see below). |
 | `--eval-json` | off | Evaluate only — no render. Prints a per-part JSON report to stdout (`name`, `id`, `kind`, `ok`, `reason`, posed `bbox`, `volume`, `triangles`, `eval_ms`) and exits non-zero if any part failed. `vcad eval-json` does the same for `.loon` source. |
 | `-v`, `--verbose` | off | Print each boolean fallback (a Difference re-cut with the mesh boolean) as it happens; by default they collapse into one summary line at exit. Same as `VCAD_BOOLEAN_VERBOSE=1`. |
+| `--timings` | off | Print a wall-time breakdown at exit: each stage (read, parse, root evaluation, instances, tessellate + BVH, path trace, encode, write), the boolean / mesh-fallback / tessellation share of evaluation, root-cache hits, and the slowest roots. Same as `VCAD_TIMINGS=1`. |
 
 ### Anti-aliasing (`--aa`)
 
