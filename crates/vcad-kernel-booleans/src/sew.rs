@@ -415,12 +415,51 @@ fn merge_nearby_vertices(topo: &mut Topology, tolerance: f64) {
     // Build merge map: vertex_to_remove → vertex_to_keep
     let mut merge_map: HashMap<vcad_kernel_topo::VertexId, vcad_kernel_topo::VertexId> =
         HashMap::new();
+    if tolerance.is_nan() || tolerance <= 0.0 {
+        // Nothing is closer than a non-positive tolerance.
+        return;
+    }
 
+    // Every vertex `j > i` closer than `tolerance` to vertex `i` merges into
+    // `i`, unless one of them was already merged — the all-pairs scan this
+    // replaced, decision for decision. Bucketing on a grid only narrows
+    // which `j` are looked at: with cells twice the tolerance, anything
+    // within `tolerance` of `i` lies in one of the 27 cells around it, with
+    // margin to spare for rounding in the division. The scan was quadratic
+    // in the vertex count, and a long union chain sews its whole accumulated
+    // solid once per union (a 415-dot grille spent minutes here).
+    let cell_size = 2.0 * tolerance;
+    let cell = |p: &Point3| [p.x, p.y, p.z].map(|c| (c / cell_size).floor() as i64);
+    let mut grid: HashMap<[i64; 3], Vec<usize>> = HashMap::new();
+    for (k, (_, p)) in verts.iter().enumerate() {
+        grid.entry(cell(p)).or_default().push(k);
+    }
+    let mut near: Vec<usize> = Vec::new();
     for i in 0..verts.len() {
         if merge_map.contains_key(&verts[i].0) {
             continue;
         }
-        for j in (i + 1)..verts.len() {
+        let [cx, cy, cz] = cell(&verts[i].1);
+        near.clear();
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let key = [
+                        cx.saturating_add(dx),
+                        cy.saturating_add(dy),
+                        cz.saturating_add(dz),
+                    ];
+                    if let Some(ks) = grid.get(&key) {
+                        near.extend(ks.iter().copied().filter(|&j| j > i));
+                    }
+                }
+            }
+        }
+        // Saturated (huge or non-finite) coordinates can land two cells on
+        // one key; visit each candidate once.
+        near.sort_unstable();
+        near.dedup();
+        for &j in &near {
             if merge_map.contains_key(&verts[j].0) {
                 continue;
             }
@@ -465,6 +504,52 @@ fn merge_nearby_vertices(topo: &mut Topology, tolerance: f64) {
 mod tests {
     use super::*;
     use vcad_kernel_primitives::make_cube;
+
+    /// The grid-bucketed merge must make exactly the decisions of the
+    /// all-pairs scan it replaced, including chains (a–b and b–c within
+    /// tolerance, a–c not) where first-come order decides the survivor.
+    #[test]
+    fn grid_merge_matches_all_pairs_scan() {
+        let tol = 1e-3;
+        let mut topo = Topology::new();
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut rand = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for _ in 0..400 {
+            // Clustered on a coarse lattice so plenty of pairs, chains and
+            // cell-boundary straddles fall within tolerance.
+            let p = |r: f64| (r * 6.0).floor() * 1e-2 + (r * 1e4).fract() * 1.6e-3;
+            topo.add_vertex(Point3::new(p(rand()), p(rand()), p(rand())));
+        }
+        let verts: Vec<_> = topo.vertices.iter().map(|(id, v)| (id, v.point)).collect();
+        let mut expected = HashMap::new();
+        for i in 0..verts.len() {
+            if expected.contains_key(&verts[i].0) {
+                continue;
+            }
+            for j in (i + 1)..verts.len() {
+                if !expected.contains_key(&verts[j].0)
+                    && (verts[i].1 - verts[j].1).norm_squared() < tol * tol
+                {
+                    expected.insert(verts[j].0, verts[i].0);
+                }
+            }
+        }
+        assert!(expected.len() > 20, "test geometry too sparse: {}", expected.len());
+        merge_nearby_vertices(&mut topo, tol);
+        let survivors: std::collections::HashSet<_> = topo.vertices.keys().collect();
+        for (id, _) in &verts {
+            assert_eq!(
+                survivors.contains(id),
+                !expected.contains_key(id),
+                "vertex {id:?} merged differently"
+            );
+        }
+    }
 
     #[test]
     fn test_sew_non_overlapping() {

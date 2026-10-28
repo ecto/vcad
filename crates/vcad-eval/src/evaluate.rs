@@ -164,31 +164,14 @@ fn evaluate_inner(
     let mut pre: HashMap<NodeId, MeshedRoot> = HashMap::new();
     if inc.is_none() {
         let mut todo: Vec<NodeId> = Vec::new();
-        let mut queued: std::collections::HashSet<RootKey> = Default::default();
         let mut want = |id: NodeId, lookups: &mut HashMap<_, _>| {
-            if lookups.contains_key(&id) {
-                return;
-            }
-            let key = root_cache.and_then(|_| root_fingerprint(id, &doc.nodes, &fp_settings));
-            if let Some(k) = &key {
-                // Another node of the same shape is already queued: leave
-                // this one to the serial walk, which hits the mesh the first
-                // stores — exactly as it would without the pre-pass.
-                if queued.contains(k) {
-                    return;
+            if let std::collections::hash_map::Entry::Vacant(v) = lookups.entry(id) {
+                let found = lookup(id);
+                if found.1.is_none() {
+                    todo.push(id);
                 }
+                v.insert(found);
             }
-            let hit = match (root_cache, &key) {
-                (Some(c), Some(k)) => c.get(k),
-                _ => None,
-            };
-            if hit.is_none() {
-                todo.push(id);
-                if let Some(k) = &key {
-                    queued.insert(k.clone());
-                }
-            }
-            lookups.insert(id, (key, hit));
         };
         for entry in doc.roots.iter().filter(|e| e.visible != Some(false)) {
             if find_imported_mesh(entry.root, &doc.nodes).is_some() {
