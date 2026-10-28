@@ -196,10 +196,10 @@ fn evaluate_inner(
             pre = evaluate_roots_parallel(&todo, &doc.nodes, segments, clock, &mut node_timings);
         }
     }
-    let lookup = |root: NodeId| match lookups.get(&root) {
-        Some(found) => found.clone(),
-        None => lookup(root),
-    };
+    // Each pre-pass lookup is consumed once. A second root with the same
+    // shape looks up again and — exactly as without the pre-pass — hits the
+    // mesh the first one just stored.
+    let mut lookup = |root: NodeId| lookups.remove(&root).unwrap_or_else(|| lookup(root));
 
     // Evaluate visible roots
     let mut parts: Vec<EvaluatedPart> = Vec::new();
@@ -390,6 +390,7 @@ fn evaluate_inner(
                     eval_part_defs.push(EvaluatedPartDef {
                         id: id.clone(),
                         mesh,
+                        solid: None,
                     });
                     continue;
                 }
@@ -400,6 +401,7 @@ fn evaluate_inner(
                     eval_part_defs.push(EvaluatedPartDef {
                         id: id.clone(),
                         mesh,
+                        solid: None,
                     });
                     continue;
                 }
@@ -413,6 +415,7 @@ fn evaluate_inner(
                             eval_part_defs.push(EvaluatedPartDef {
                                 id: id.clone(),
                                 mesh,
+                                solid: None,
                             });
                             continue;
                         }
@@ -430,8 +433,12 @@ fn evaluate_inner(
                         &mut node_timings,
                     ),
                 };
-                let mesh = match outcome {
-                    Ok(MeshedOk { mesh: m, mesh_ms, .. }) => {
+                let (mesh, solid) = match outcome {
+                    Ok(MeshedOk {
+                        mesh: m,
+                        solid,
+                        mesh_ms,
+                    }) => {
                         tessellate_ms += mesh_ms;
                         if let Some(nt) = node_timings.get(&part_def.root.to_string()) {
                             root_ms.push((format!("partDef {id}"), nt.eval_ms + mesh_ms));
@@ -442,7 +449,7 @@ fn evaluate_inner(
                                 i.put_mesh(part_def.root, h, &m);
                             }
                         }
-                        m
+                        (m, solid)
                     }
                     Err(error) => {
                         failures.push(RootFailure {
@@ -450,13 +457,14 @@ fn evaluate_inner(
                             node_id: part_def.root,
                             error,
                         });
-                        EvaluatedMesh::empty()
+                        (EvaluatedMesh::empty(), None)
                     }
                 };
                 part_def_meshes.insert(id.clone(), mesh.clone());
                 eval_part_defs.push(EvaluatedPartDef {
                     id: id.clone(),
                     mesh,
+                    solid,
                 });
             }
 

@@ -158,13 +158,30 @@ pub fn root_fingerprint(
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(&bytes);
     }
-    let digest = hasher.finalize();
+    Some(RootKey(hex_digest(hasher)))
+}
+
+fn hex_digest(hasher: Sha256) -> String {
     let mut hex = String::with_capacity(64);
-    for b in digest {
+    for b in hasher.finalize() {
         use std::fmt::Write;
         let _ = write!(hex, "{b:02x}");
     }
-    Some(RootKey(hex))
+    hex
+}
+
+impl RootKey {
+    /// A key for a mesh derived from this root's — the same shape under a
+    /// placement, say — told apart from the root's own entry (and from
+    /// other derivations) by `salt`.
+    pub fn derive(&self, salt: &[u8]) -> RootKey {
+        let mut hasher = Sha256::new();
+        hasher.update(b"vcad-derived-mesh/1\0");
+        hasher.update(self.0.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(salt);
+        RootKey(hex_digest(hasher))
+    }
 }
 
 /// `VCAD_NO_*` environment variables, sorted — the kernel's own algorithm

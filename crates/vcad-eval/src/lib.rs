@@ -316,6 +316,11 @@ pub struct EvaluatedPartDef {
     pub id: String,
     /// Triangle mesh.
     pub mesh: EvaluatedMesh,
+    /// The BRep solid, when this evaluation produced one (`None` for a
+    /// cache hit or an imported mesh). Native consumers that need analytic
+    /// geometry read it instead of evaluating the definition again.
+    #[serde(skip)]
+    pub solid: Option<Solid>,
 }
 
 /// An instance of a part definition with transform and material.

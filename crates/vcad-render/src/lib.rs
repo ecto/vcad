@@ -937,6 +937,13 @@ struct ArticulatedPart {
     instance_id: String,
     /// Local, unplaced geometry. Shared between instances of one part def.
     solid: Solid,
+    /// The part definition's root node.
+    def_root: vcad_ir::NodeId,
+    /// `solid` is the definition's cached *mesh*, standing in for a BRep
+    /// that was never evaluated (a root-cache hit). Only
+    /// [`place_part_cached`] accepts one: it serves the placed instance from
+    /// the cache, or evaluates the BRep after all.
+    stand_in: bool,
     tint: Option<[f64; 3]>,
     #[cfg_attr(not(feature = "raytrace"), allow(dead_code))]
     material: Option<vcad_ir::MaterialDef>,
@@ -1016,8 +1023,108 @@ pub(crate) fn timed_stage<T>(name: &str, f: impl FnOnce() -> T) -> T {
     }
 }
 
+/// [`place_part`] through the root-mesh cache: an instance is cached as its
+/// definition's BRep tessellated *after* placement, keyed on the
+/// definition's shape plus the placement.
+///
+/// Tessellating in the placed frame is what an uncached render does, and it
+/// is not the same mesh as tessellating in the definition's frame and moving
+/// the triangles: the creased-normal welder buckets positions on a fixed
+/// grid, and which near-coincident corners share a bucket depends on where
+/// the part sits. Caching the placed mesh keeps cold and warm renders
+/// byte-identical, and a warm render then needs no part-definition BRep at
+/// all — which is the whole cost of a cached assembly otherwise.
+///
+/// A stand-in part (see [`ArticulatedPart::stand_in`]) whose placed mesh is
+/// not cached has its BRep evaluated here, as an uncached render would.
+fn place_part_cached(
+    part: ArticulatedPart,
+    world: &HashMap<String, vcad_ir::Transform3D>,
+    fallback: Option<vcad_ir::Transform3D>,
+    doc: &vcad_ir::Document,
+    node_cache: &mut HashMap<vcad_ir::NodeId, Option<Solid>>,
+    cache: &dyn vcad_eval::cache::RootMeshCache,
+    segments: u32,
+) -> SceneSolid {
+    let transform = world.get(&part.instance_id).cloned().or(fallback);
+    let key = vcad_eval::cache::root_fingerprint(
+        part.def_root,
+        &doc.nodes,
+        &vcad_eval::cache::FingerprintSettings {
+            segments,
+            fold_sheet_metal: true,
+        },
+    )
+    .map(|k| {
+        let salt = serde_json::to_vec(&transform).unwrap_or_default();
+        k.derive(&salt)
+    });
+    let to_scene = |part: ArticulatedPart, solid: Solid| SceneSolid {
+        solid,
+        tint: part.tint,
+        material: part.material,
+        name: part.name,
+        labels: part.labels,
+        id: part.instance_id,
+    };
+    if let Some(mesh) = key.as_ref().and_then(|k| cache.get(k)) {
+        return to_scene(part, Solid::from_mesh(evaluated_to_triangle_mesh(mesh)));
+    }
+    let local = if part.stand_in {
+        let brep = catch_unwind(AssertUnwindSafe(|| {
+            vcad_eval::evaluate_node(part.def_root, &doc.nodes, node_cache)
+        }));
+        match brep {
+            Ok(Ok(Some(s))) => s,
+            // No BRep after all (an imported mesh): the mesh is the geometry.
+            _ => part.solid.clone(),
+        }
+    } else {
+        part.solid.clone()
+    };
+    let placed = match &transform {
+        Some(t) => local.apply_transform(&transform3d_to_kernel(t)),
+        None => local,
+    };
+    let Some(key) = key.filter(|_| placed.as_brep().is_some()) else {
+        return to_scene(part, placed);
+    };
+    let mesh = placed.to_mesh(segments);
+    if !mesh.indices.is_empty() {
+        cache.put(&key, &triangle_to_evaluated_mesh(&mesh));
+    }
+    to_scene(part, Solid::from_mesh(mesh))
+}
+
+fn evaluated_to_triangle_mesh(
+    m: vcad_eval::EvaluatedMesh,
+) -> vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
+    vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
+        vertices: m.positions,
+        indices: m.indices,
+        normals: m.normals.unwrap_or_default(),
+        face_kinds: m.face_kinds.unwrap_or_default(),
+        face_ids: m.face_ids.unwrap_or_default(),
+    }
+}
+
+fn triangle_to_evaluated_mesh(
+    m: &vcad_kernel::vcad_kernel_tessellate::TriangleMesh,
+) -> vcad_eval::EvaluatedMesh {
+    vcad_eval::EvaluatedMesh {
+        positions: m.vertices.clone(),
+        indices: m.indices.clone(),
+        normals: (!m.normals.is_empty()).then(|| m.normals.clone()),
+        face_kinds: (!m.face_kinds.is_empty()).then(|| m.face_kinds.clone()),
+        face_ids: (!m.face_ids.is_empty()).then(|| m.face_ids.clone()),
+    }
+}
+
 fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
-    let ev = evaluate_vcad_document(raw_vcad)?;
+    let ev = evaluate_vcad_document_inner(raw_vcad, false, true)?;
+    report::warn_dropped(&ev.log);
+    let scope = ROOT_CACHE.with(|c| c.borrow().clone());
+    let mut node_cache = HashMap::new();
     let mut solids = ev.statics;
     if !ev.parts.is_empty() {
         let world = assembly_world_transforms(&ev.doc)?;
@@ -1034,14 +1141,28 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
                 .get(part.instance_id.as_str())
                 .copied()
                 .unwrap_or(None);
-            solids.push(place_part(part, &world, fallback));
+            let placed = match &scope {
+                Some((cache, segments)) => timed_stage("place instances", || {
+                    place_part_cached(
+                        part,
+                        &world,
+                        fallback,
+                        &ev.doc,
+                        &mut node_cache,
+                        cache.as_ref(),
+                        *segments,
+                    )
+                }),
+                None => place_part(part, &world, fallback),
+            };
+            solids.push(placed);
         }
     }
     Ok(solids)
 }
 
 fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
-    let ev = evaluate_vcad_document_inner(raw_vcad, false)?;
+    let ev = evaluate_vcad_document_inner(raw_vcad, false, false)?;
     report::warn_dropped(&ev.log);
     Ok(ev)
 }
@@ -1049,18 +1170,23 @@ fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
 /// [`evaluate_vcad_document`] without the stderr summary, optionally timing
 /// each part (`timed` stamps every root as it lands; it is off on the render
 /// path so wasm32, where `Instant::now` panics, never reaches it).
-fn evaluate_vcad_document_inner(raw_vcad: &str, timed: bool) -> Result<EvaluatedDocument, String> {
+///
+/// `stand_ins` lets assembly instances whose part definition was a cache hit
+/// carry its mesh instead of a re-evaluated BRep (see
+/// [`ArticulatedPart::stand_in`]); only a caller that places them with
+/// [`place_part_cached`] may ask for that.
+fn evaluate_vcad_document_inner(
+    raw_vcad: &str,
+    timed: bool,
+    stand_ins: bool,
+) -> Result<EvaluatedDocument, String> {
     DOCUMENT_EVALS.with(|c| c.set(c.get() + 1));
     let parsed = timed_stage("parse document", || parse_vcad_file(raw_vcad))
         .map_err(|e| format!("parse: {}", e))?;
     let (root_cache, mesh_segments) = ROOT_CACHE
         .with(|c| c.borrow().clone())
         .map_or((None, 0), |(c, n)| (Some(c), n));
-    // Inside a root-cache scope the scene's part-definition meshes were
-    // tessellated at exactly the segment count this render draws at (that is
-    // what the scope's `segments` promises), so they are all the geometry
-    // the instances need — same as a root cache hit.
-    let defs_from_scene = root_cache.is_some();
+    let stand_ins = stand_ins && root_cache.is_some();
     // NOTE: catch_unwind only works on native targets. On
     // wasm32-unknown-unknown a panic compiles to an `unreachable` trap —
     // it never unwinds, this guard never fires, and the WASM instance is
@@ -1085,7 +1211,6 @@ fn evaluate_vcad_document_inner(raw_vcad: &str, timed: bool) -> Result<Evaluated
                     mesh_segments,
                     on_root: stamps.on_root(),
                     clock,
-                    ..Default::default()
                 },
             )
         }))
@@ -1182,7 +1307,7 @@ fn evaluate_vcad_document_inner(raw_vcad: &str, timed: bool) -> Result<Evaluated
         &root_ms,
     );
     let parts = timed_stage("evaluate instances", || {
-        evaluate_assembly_instances(&parsed.document, &scene, timed, defs_from_scene, &mut log)
+        evaluate_assembly_instances(&parsed.document, &scene, timed, stand_ins, &mut log)
     })?;
     Ok(EvaluatedDocument {
         doc: parsed.document,
@@ -1200,7 +1325,7 @@ fn evaluate_assembly_instances(
     doc: &vcad_ir::Document,
     scene: &vcad_eval::EvaluatedScene,
     timed: bool,
-    defs_from_scene: bool,
+    stand_ins: bool,
     log: &mut Vec<report::PartLog>,
 ) -> Result<Vec<ArticulatedPart>, String> {
     let (Some(part_defs), Some(instances)) = (&doc.part_defs, &doc.instances) else {
@@ -1211,8 +1336,11 @@ fn evaluate_assembly_instances(
     }
 
     let mut cache: HashMap<vcad_ir::NodeId, Option<Solid>> = HashMap::new();
-    // Per part definition: the solid (or why there is none) and what it cost.
-    let mut def_solids: HashMap<&str, (Result<Solid, String>, Option<f64>)> = HashMap::new();
+    // Per part definition: the solid (or why there is none), whether it is a
+    // stand-in mesh, and what it cost.
+    #[allow(clippy::type_complexity)]
+    let mut def_solids: HashMap<&str, (Result<Solid, String>, bool, Option<f64>)> =
+        HashMap::new();
     let mut out = Vec::new();
 
     for inst in instances {
@@ -1229,7 +1357,7 @@ fn evaluate_assembly_instances(
             ));
             continue;
         };
-        let (solid, eval_ms) = def_solids
+        let (solid, stand_in, eval_ms) = def_solids
             .entry(inst.part_def_id.as_str())
             .or_insert_with(|| {
                 let t0 = report::now(timed);
@@ -1250,11 +1378,21 @@ fn evaluate_assembly_instances(
                             })
                         })
                 };
-                // Re-evaluating the BRep would redo every boolean the scene
-                // evaluation just did (or that the cache just skipped).
-                if defs_from_scene {
+                // The scene evaluation already built this definition's BRep;
+                // evaluating it again would redo every boolean in it.
+                let scene_solid = scene
+                    .part_defs
+                    .as_ref()
+                    .and_then(|defs| defs.iter().find(|pd| pd.id == inst.part_def_id))
+                    .and_then(|pd| pd.solid.clone());
+                if let Some(s) = scene_solid {
+                    return (Ok(s), false, report::elapsed_ms(t0));
+                }
+                // A cache hit has no BRep. Defer evaluating one until
+                // placement shows the placed instance isn't cached either.
+                if stand_ins {
                     if let Some(s) = scene_mesh() {
-                        return (Ok(s), report::elapsed_ms(t0));
+                        return (Ok(s), true, report::elapsed_ms(t0));
                     }
                 }
                 let brep = catch_unwind(AssertUnwindSafe(|| {
@@ -1283,7 +1421,7 @@ fn evaluate_assembly_instances(
                         .or(brep_err)
                         .unwrap_or_else(|| "produced no geometry".to_string())
                 });
-                (solid, report::elapsed_ms(t0))
+                (solid, false, report::elapsed_ms(t0))
             })
             .clone();
         let solid = match solid {
@@ -1324,6 +1462,8 @@ fn evaluate_assembly_instances(
         out.push(ArticulatedPart {
             instance_id: inst.id.clone(),
             solid,
+            def_root: def.root,
+            stand_in,
             tint: color,
             material: material_def,
             name,

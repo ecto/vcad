@@ -241,7 +241,7 @@ pub struct EvalReport {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn eval_report(raw_vcad: &str) -> Result<EvalReport, String> {
     let t0 = std::time::Instant::now();
-    let ev = crate::evaluate_vcad_document_inner(raw_vcad, true)?;
+    let ev = crate::evaluate_vcad_document_inner(raw_vcad, true, false)?;
     let eval_ms = t0.elapsed().as_secs_f64() * 1e3;
 
     let world = if ev.parts.is_empty() {
