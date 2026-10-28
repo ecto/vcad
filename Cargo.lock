@@ -4522,6 +4522,7 @@ dependencies = [
 name = "vcad-eval"
 version = "0.11.0"
 dependencies = [
+ "rayon",
  "serde",
  "serde_json",
  "sha2",
@@ -4789,6 +4790,7 @@ name = "vcad-kernel-drafting"
 version = "0.11.0"
 dependencies = [
  "serde",
+ "vcad-kernel",
  "vcad-kernel-math",
  "vcad-kernel-tessellate",
 ]
