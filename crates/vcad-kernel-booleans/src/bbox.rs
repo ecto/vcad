@@ -195,25 +195,26 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
             // the unique vertex positions. A full cylinder has only 2 unique positions
             // (bottom seam and top seam), while a partial face has 4 distinct positions.
             //
-            // Positions come from *every* loop: a seamless wall (STEP writers
-            // emit these) is two one-vertex circles in two loops, and the
-            // outer loop alone would flatten its box to the bottom ring.
+            // The full/partial verdict reads the outer loop alone (a full
+            // wall's holes add vertices but don't make it partial); the
+            // height range below spans *every* loop, since a seamless wall
+            // (STEP writers emit these) is two one-vertex circles in two
+            // loops and the outer one alone would flatten the box to the
+            // bottom ring.
             if let Some(cyl) = surface
                 .as_any()
                 .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
             {
                 let mut unique_positions: Vec<Point3> = Vec::new();
-                for &loop_id in std::iter::once(&face.outer_loop).chain(&face.inner_loops) {
-                    for he_id in topo.loop_half_edges(loop_id) {
-                        let point = topo.vertices[topo.half_edges[he_id].origin].point;
-                        let is_duplicate = unique_positions.iter().any(|p| {
-                            (p.x - point.x).abs() < 1e-6
-                                && (p.y - point.y).abs() < 1e-6
-                                && (p.z - point.z).abs() < 1e-6
-                        });
-                        if !is_duplicate {
-                            unique_positions.push(point);
-                        }
+                for he_id in topo.loop_half_edges(face.outer_loop) {
+                    let point = topo.vertices[topo.half_edges[he_id].origin].point;
+                    let is_duplicate = unique_positions.iter().any(|p| {
+                        (p.x - point.x).abs() < 1e-6
+                            && (p.y - point.y).abs() < 1e-6
+                            && (p.z - point.z).abs() < 1e-6
+                    });
+                    if !is_duplicate {
+                        unique_positions.push(point);
                     }
                 }
 
