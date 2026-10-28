@@ -173,7 +173,8 @@ pub fn face_aabb(brep: &BRepSolid, face_id: FaceId) -> Aabb3 {
                 .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
             {
                 let axis = cyl.axis.into_inner();
-                let (v_min, v_max) = face_axial_range(brep, face_id, |p| (p - cyl.center).dot(&axis));
+                let (v_min, v_max) =
+                    face_axial_range(brep, face_id, |p| (p - cyl.center).dot(&axis));
                 aabb = revolution_band_aabb(
                     cyl.center + v_min * axis,
                     cyl.radius,

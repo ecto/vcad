@@ -233,11 +233,7 @@ impl PeriodicTrim {
                 // A seam-only loop bounds nothing.
                 continue;
             }
-            let is_region = if closed {
-                area * sense > 0.0
-            } else {
-                is_outer
-            };
+            let is_region = if closed { area * sense > 0.0 } else { is_outer };
             if is_region {
                 regions.push(pts);
             } else {
@@ -291,7 +287,11 @@ impl PeriodicTrim {
 
     fn on_any_branch(&self, uv: Point2, poly: &[Point2]) -> bool {
         let tau = std::f64::consts::TAU;
-        let v_shifts = if self.v_periodic { BRANCH_SHIFTS } else { 0..=0 };
+        let v_shifts = if self.v_periodic {
+            BRANCH_SHIFTS
+        } else {
+            0..=0
+        };
         BRANCH_SHIFTS.into_iter().any(|ku| {
             v_shifts.clone().any(|kv| {
                 let q = Point2::new(uv.x + ku as f64 * tau, uv.y + kv as f64 * tau);
@@ -313,7 +313,11 @@ fn unwrap_loop(raw: &[Point2], v_periodic: bool) -> (Vec<Point2>, i32) {
     out.push(last);
     for p in &raw[1..] {
         let u = nearest(p.x, last.x);
-        let v = if v_periodic { nearest(p.y, last.y) } else { p.y };
+        let v = if v_periodic {
+            nearest(p.y, last.y)
+        } else {
+            p.y
+        };
         last = Point2::new(u, v);
         out.push(last);
     }
