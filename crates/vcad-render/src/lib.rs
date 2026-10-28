@@ -1350,6 +1350,11 @@ struct CanonMesh {
     verts: Vec<[f64; 3]>,
     /// Triangles as triples of canonical-vertex indices.
     tris: Vec<[usize; 3]>,
+    /// Per triangle: the B-rep face it came from, or `u32::MAX` when the
+    /// mesh carries no provenance (a mesh solid, a legacy path).
+    face: Vec<u32>,
+    /// Per triangle: whether that face is planar (`FaceKindTag::Plane`).
+    planar: Vec<bool>,
 }
 
 fn canonicalize(mesh: &vcad_kernel::vcad_kernel_tessellate::TriangleMesh) -> CanonMesh {
@@ -1357,7 +1362,12 @@ fn canonicalize(mesh: &vcad_kernel::vcad_kernel_tessellate::TriangleMesh) -> Can
     let mut verts: Vec<[f64; 3]> = Vec::new();
     let mut canon: HashMap<(i64, i64, i64), usize> = HashMap::new();
     let mut tris: Vec<[usize; 3]> = Vec::new();
-    for chunk in mesh.indices.as_chunks::<3>().0 {
+    let mut face: Vec<u32> = Vec::new();
+    let mut planar: Vec<bool> = Vec::new();
+    let n_tris = mesh.indices.len() / 3;
+    let has_ids = mesh.face_ids.len() == n_tris;
+    let has_kinds = mesh.face_kinds.len() == n_tris;
+    for (src, chunk) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
         let mut tri = [0usize; 3];
         let mut ok = true;
         for i in 0..3 {
@@ -1390,8 +1400,145 @@ fn canonicalize(mesh: &vcad_kernel::vcad_kernel_tessellate::TriangleMesh) -> Can
             continue;
         }
         tris.push(tri);
+        face.push(if has_ids {
+            mesh.face_ids[src]
+        } else {
+            u32::MAX
+        });
+        planar.push(
+            has_kinds
+                && mesh.face_kinds[src]
+                    == vcad_kernel::vcad_kernel_tessellate::FaceKindTag::Plane as u8,
+        );
     }
-    CanonMesh { verts, tris }
+    CanonMesh {
+        verts,
+        tris,
+        face,
+        planar,
+    }
+}
+
+/// Closest distance from point `p` to triangle `(a, b, c)` (Ericson,
+/// *Real-Time Collision Detection* §5.1.5).
+fn point_triangle_distance(p: [f64; 3], a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> f64 {
+    let sub = |x: [f64; 3], y: [f64; 3]| [x[0] - y[0], x[1] - y[1], x[2] - y[2]];
+    let add_scaled =
+        |x: [f64; 3], y: [f64; 3], t: f64| [x[0] + y[0] * t, x[1] + y[1] * t, x[2] + y[2] * t];
+    let (ab, ac, ap) = (sub(b, a), sub(c, a), sub(p, a));
+    let (d1, d2) = (dot(ab, ap), dot(ac, ap));
+    let q = if d1 <= 0.0 && d2 <= 0.0 {
+        a
+    } else {
+        let bp = sub(p, b);
+        let (d3, d4) = (dot(ab, bp), dot(ac, bp));
+        let cp = sub(p, c);
+        let (d5, d6) = (dot(ab, cp), dot(ac, cp));
+        let vc = d1 * d4 - d3 * d2;
+        let vb = d5 * d2 - d1 * d6;
+        let va = d3 * d6 - d5 * d4;
+        if d3 >= 0.0 && d4 <= d3 {
+            b
+        } else if d6 >= 0.0 && d5 <= d6 {
+            c
+        } else if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+            add_scaled(a, ab, d1 / (d1 - d3))
+        } else if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+            add_scaled(a, ac, d2 / (d2 - d6))
+        } else if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+            add_scaled(b, sub(c, b), (d4 - d3) / ((d4 - d3) + (d5 - d6)))
+        } else {
+            let denom = 1.0 / (va + vb + vc);
+            add_scaled(add_scaled(a, ab, vb * denom), ac, vc * denom)
+        }
+    };
+    let d = sub(p, q);
+    dot(d, d).sqrt()
+}
+
+/// For each edge used by a single triangle, the triangle across the crack.
+///
+/// Neighbouring faces of an imported solid can sample their shared boundary
+/// differently, leaving a hairline crack: each side's edge is "boundary" to
+/// the mesh, so it would be stroked as a heavy outline (and its occluded
+/// part dashed), scribbling over flush or tangent seams. The face on the
+/// other side lies within a sliver of it, though. Pair each single-use edge
+/// with the nearest other triangle that passes within `tol` of both its
+/// ends and its midpoint, so it can be classified like an interior edge.
+fn crack_partners(
+    cm: &CanonMesh,
+    edge_to_tris: &HashMap<(usize, usize), Vec<usize>>,
+    tol: f64,
+) -> HashMap<(usize, usize), usize> {
+    let mut out = HashMap::new();
+    let open: Vec<(&(usize, usize), usize)> = edge_to_tris
+        .iter()
+        .filter(|(_, ts)| ts.len() == 1)
+        .map(|(e, ts)| (e, ts[0]))
+        .collect();
+    if open.is_empty() {
+        return out;
+    }
+    let cell = (tol * 8.0).max(1e-6);
+    let key = |p: [f64; 3]| {
+        (
+            (p[0] / cell).floor() as i64,
+            (p[1] / cell).floor() as i64,
+            (p[2] / cell).floor() as i64,
+        )
+    };
+    let mut grid: HashMap<(i64, i64, i64), Vec<usize>> = HashMap::new();
+    for (ti, t) in cm.tris.iter().enumerate() {
+        let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+        for &v in t {
+            for k in 0..3 {
+                lo[k] = lo[k].min(cm.verts[v][k] - tol);
+                hi[k] = hi[k].max(cm.verts[v][k] + tol);
+            }
+        }
+        let (a, b) = (key(lo), key(hi));
+        // A sliver spanning a huge bbox (a long thin cap fan) would flood
+        // the grid; such triangles still get found from their other cells.
+        if (b.0 - a.0 + 1) * (b.1 - a.1 + 1) * (b.2 - a.2 + 1) > 4096 {
+            continue;
+        }
+        for x in a.0..=b.0 {
+            for y in a.1..=b.1 {
+                for z in a.2..=b.2 {
+                    grid.entry((x, y, z)).or_default().push(ti);
+                }
+            }
+        }
+    }
+    for (&(va, vb), own) in open {
+        let (pa, pb) = (cm.verts[va], cm.verts[vb]);
+        let mid = [
+            (pa[0] + pb[0]) / 2.0,
+            (pa[1] + pb[1]) / 2.0,
+            (pa[2] + pb[2]) / 2.0,
+        ];
+        let Some(cands) = grid.get(&key(mid)) else {
+            continue;
+        };
+        let mut best: Option<(f64, usize)> = None;
+        for &ti in cands {
+            if ti == own {
+                continue;
+            }
+            let t = cm.tris[ti];
+            let (a, b, c) = (cm.verts[t[0]], cm.verts[t[1]], cm.verts[t[2]]);
+            let d = point_triangle_distance(mid, a, b, c)
+                .max(point_triangle_distance(pa, a, b, c))
+                .max(point_triangle_distance(pb, a, b, c));
+            if d <= tol && best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, ti));
+            }
+        }
+        if let Some((_, ti)) = best {
+            out.insert((va, vb), ti);
+        }
+    }
+    out
 }
 
 /// Orient per-triangle normals consistently outward, per connected shell.
@@ -1713,9 +1860,33 @@ fn build_artifacts(
             }
         }
 
+        // Pair crack edges with the face across the crack (see
+        // `crack_partners`). The tolerance covers chord-vs-arc sag between
+        // two samplings of the same curve while staying well under a
+        // genuine feature's size.
+        let diag = {
+            let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+            for v in &cm.verts {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(v[k]);
+                    hi[k] = hi[k].max(v[k]);
+                }
+            }
+            ((hi[0] - lo[0]).powi(2) + (hi[1] - lo[1]).powi(2) + (hi[2] - lo[2]).powi(2)).sqrt()
+        };
+        let partners = crack_partners(&cm, &edge_to_tris, (1e-3 * diag).clamp(0.01, 0.1));
+
         // Keep boundary + crease edges. Skip internal ones.
         let mut edges: Vec<(usize, usize, EdgeKind)> = Vec::new();
         for (edge, adj_tris) in &edge_to_tris {
+            let paired;
+            let adj_tris = match partners.get(edge) {
+                Some(&p) => {
+                    paired = [adj_tris[0], p];
+                    &paired[..]
+                }
+                None => &adj_tris[..],
+            };
             // Unless the caller wants occluded edges (for dashed hidden
             // lines), drop edges with no front-facing adjacent triangle —
             // without a depth buffer they'd be drawn over the silhouette.
@@ -1749,6 +1920,17 @@ fn build_artifacts(
                             EdgeKind::Outline
                         })
                     } else if !coplanar {
+                        Some(EdgeKind::Crease)
+                    } else if cm.face[t0] != cm.face[t1]
+                        && cm.face[t0] != u32::MAX
+                        && cm.face[t1] != u32::MAX
+                        && !(cm.planar[t0] && cm.planar[t1])
+                    {
+                        // A model edge between two flush or tangent faces —
+                        // a cylinder split into bands, a fillet's boundary.
+                        // The facets agree, but it is a real B-rep edge and
+                        // a CAD drawing shows it. (Two flush planar faces
+                        // are fragments of one flat face: no line.)
                         Some(EdgeKind::Crease)
                     } else {
                         None // coplanar internal edge — hidden
