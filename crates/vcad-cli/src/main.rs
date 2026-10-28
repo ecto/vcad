@@ -46,6 +46,12 @@ struct Cli {
     #[arg(long, global = true)]
     no_cache: bool,
 
+    /// Print a wall-time breakdown to stderr at exit (loon evaluation,
+    /// geometry evaluation with its boolean / mesh-fallback / tessellation
+    /// split, writing, slowest roots). `VCAD_TIMINGS=1` does the same.
+    #[arg(long, global = true)]
+    timings: bool,
+
     /// Print every boolean fallback as it happens instead of one summary
     /// line at the end (same as `VCAD_BOOLEAN_VERBOSE=1`).
     #[arg(long, short = 'v', global = true)]
@@ -780,9 +786,15 @@ fn main() -> Result<()> {
     }
 
     vcad_kernel::vcad_kernel_booleans::recut_log::set_verbose(cli.verbose);
+    if cli.timings {
+        vcad_eval::timings::set_enabled(true);
+    }
     let result = run_command(cli);
     if let Some(line) = vcad_kernel::vcad_kernel_booleans::recut_log::take_summary() {
         eprintln!("{line}");
+    }
+    if let Some(report) = vcad_eval::timings::report(15) {
+        eprintln!("{report}");
     }
     result
 }
@@ -1409,7 +1421,8 @@ fn export_file(
     // The evaluated document itself: what `vcad-render` (which does not read
     // `.loon`) and the app consume. Assemblies, joints and a `--pose` survive.
     if ext.eq_ignore_ascii_case("vcad") {
-        fs::write(output, doc.to_json()?)?;
+        let json = vcad_eval::timings::stage("serialize document", || doc.to_json())?;
+        vcad_eval::timings::stage("write output", || fs::write(output, json))?;
         println!("Exported document to {}", output.display());
         return Ok(());
     }
@@ -2971,7 +2984,7 @@ fn load_vcad_document_raw(file: &PathBuf) -> Result<vcad_ir::Document> {
     use std::fs;
 
     if is_loon(file) {
-        return eval_loon(file);
+        return vcad_eval::timings::stage("loon parse + eval", || eval_loon(file));
     }
     use vcad_app::materializer::materialize;
     use vcad_app::migrate::{detect_format, FileFormat};

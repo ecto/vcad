@@ -30,6 +30,8 @@ pub mod sensitivity;
 pub mod sheet_build;
 pub mod step_doc;
 pub mod step_sources;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod timings;
 
 pub mod validate;
 
@@ -88,6 +90,12 @@ pub struct EvalTiming {
     pub assembly_ms: f64,
     /// Per-node timing keyed by NodeId (as string for JS object compatibility).
     pub nodes: HashMap<String, NodeTiming>,
+    /// Evaluate + tessellate time of each root and part definition that was
+    /// actually evaluated (cache hits are absent), labelled by root name
+    /// or part-definition id. Native `--timings` reads this; it is not sent
+    /// to JS.
+    #[serde(skip)]
+    pub roots: Vec<(String, f64)>,
 }
 
 /// Callback fired as each visible root lands: `(index, total, mesh)`.
@@ -308,6 +316,11 @@ pub struct EvaluatedPartDef {
     pub id: String,
     /// Triangle mesh.
     pub mesh: EvaluatedMesh,
+    /// The BRep solid, when this evaluation produced one (`None` for a
+    /// cache hit or an imported mesh). Native consumers that need analytic
+    /// geometry read it instead of evaluating the definition again.
+    #[serde(skip)]
+    pub solid: Option<Solid>,
 }
 
 /// An instance of a part definition with transform and material.

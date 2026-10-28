@@ -28,6 +28,7 @@ mod repair;
 pub mod sew;
 pub mod split;
 pub mod ssi;
+pub mod timing;
 pub mod trim;
 mod unrepresentable;
 mod validate;

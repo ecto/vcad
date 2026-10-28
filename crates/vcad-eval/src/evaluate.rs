@@ -106,6 +106,7 @@ fn evaluate_inner(
 
     let mut node_timings: HashMap<String, NodeTiming> = HashMap::new();
     let mut tessellate_ms: f64 = 0.0;
+    let mut root_ms: Vec<(String, f64)> = Vec::new();
     let mut failures: Vec<RootFailure> = Vec::new();
 
     // Content-addressed root cache (see `crate::cache`). The fingerprint
@@ -152,6 +153,70 @@ fn evaluate_inner(
             }
         }
     };
+
+    // Look every root and part definition up in the cache once, then
+    // evaluate all the misses in parallel before the (order-preserving)
+    // serial walk below consumes them. Roots are independent, and on a
+    // many-root assembly evaluation was otherwise single-threaded. The
+    // incremental path keeps its serial walk: its whole point is reusing
+    // solids across edits, which the shared `cache` provides.
+    let mut lookups: HashMap<NodeId, (Option<RootKey>, Option<EvaluatedMesh>)> = HashMap::new();
+    let mut pre: HashMap<NodeId, MeshedRoot> = HashMap::new();
+    if inc.is_none() {
+        let mut todo: Vec<NodeId> = Vec::new();
+        let mut queued: std::collections::HashSet<RootKey> = Default::default();
+        let mut want = |id: NodeId, lookups: &mut HashMap<_, _>| {
+            if lookups.contains_key(&id) {
+                return;
+            }
+            let key = root_cache.and_then(|_| root_fingerprint(id, &doc.nodes, &fp_settings));
+            if let Some(k) = &key {
+                // Another node of the same shape is already queued: leave
+                // this one to the serial walk, which hits the mesh the first
+                // stores — exactly as it would without the pre-pass.
+                if queued.contains(k) {
+                    return;
+                }
+            }
+            let hit = match (root_cache, &key) {
+                (Some(c), Some(k)) => c.get(k),
+                _ => None,
+            };
+            if hit.is_none() {
+                todo.push(id);
+                if let Some(k) = &key {
+                    queued.insert(k.clone());
+                }
+            }
+            lookups.insert(id, (key, hit));
+        };
+        for entry in doc.roots.iter().filter(|e| e.visible != Some(false)) {
+            if find_imported_mesh(entry.root, &doc.nodes).is_some() {
+                continue;
+            }
+            let eval_root = match root_cache {
+                Some(_) => peel_rigid_placement(entry.root, &doc.nodes).0,
+                None => entry.root,
+            };
+            want(eval_root, &mut lookups);
+        }
+        if let (Some(pd_map), Some(inst_list)) = (&doc.part_defs, &doc.instances) {
+            if !inst_list.is_empty() {
+                for part_def in pd_map.values() {
+                    if find_imported_mesh(part_def.root, &doc.nodes).is_none() {
+                        want(part_def.root, &mut lookups);
+                    }
+                }
+            }
+        }
+        if todo.len() > 1 {
+            pre = evaluate_roots_parallel(&todo, &doc.nodes, segments, clock, &mut node_timings);
+        }
+    }
+    // Each pre-pass lookup is consumed once. A second root with the same
+    // shape looks up again and — exactly as without the pre-pass — hits the
+    // mesh the first one just stored.
+    let mut lookup = |root: NodeId| lookups.remove(&root).unwrap_or_else(|| lookup(root));
 
     // Evaluate visible roots
     let mut parts: Vec<EvaluatedPart> = Vec::new();
@@ -251,34 +316,33 @@ fn evaluate_inner(
         // instead of aborting the whole scene. AssertUnwindSafe is safe
         // here: cache/timings populated for earlier nodes stay valid
         // even if this root's evaluation panics mid-way.
-        let eval_outcome = catch_unwind(AssertUnwindSafe(
-            || -> Result<(EvaluatedMesh, Option<Solid>), EvalError> {
-                match evaluate_node_timed(
-                    eval_root,
-                    &doc.nodes,
-                    &mut cache,
-                    clock,
-                    &mut node_timings,
-                )? {
-                    Some(s) => {
-                        let t_mesh = clock.map(|c| c.now_ms());
-                        let tri = s.to_mesh(segments);
-                        if let Some(t0) = t_mesh {
-                            let ms = clock.unwrap().now_ms() - t0;
-                            tessellate_ms += ms;
-                            if let Some(nt) = node_timings.get_mut(&entry.root.to_string()) {
-                                nt.mesh_ms = ms;
-                            }
-                        }
-                        Ok((tri_to_evaluated_render(tri), Some(s)))
-                    }
-                    None => Ok((EvaluatedMesh::empty(), None)),
-                }
-            },
-        ));
+        let eval_outcome = match pre.get(&eval_root) {
+            Some(done) => done.clone(),
+            None => evaluate_and_mesh(
+                eval_root,
+                &doc.nodes,
+                &mut cache,
+                segments,
+                clock,
+                &mut node_timings,
+            ),
+        };
+        if let Ok(m) = &eval_outcome {
+            tessellate_ms += m.mesh_ms;
+            if let Some(nt) = node_timings.get_mut(&entry.root.to_string()) {
+                nt.mesh_ms = m.mesh_ms;
+            }
+            if let Some(nt) = node_timings.get(&eval_root.to_string()) {
+                let name = doc.nodes.get(&entry.root).and_then(|n| n.name.clone());
+                root_ms.push((
+                    name.unwrap_or_else(|| format!("root[{idx}]")),
+                    nt.eval_ms + m.mesh_ms,
+                ));
+            }
+        }
 
         match eval_outcome {
-            Ok(Ok((mesh, solid))) => {
+            Ok(MeshedOk { mesh, solid, .. }) => {
                 store(&cache_key, &mesh);
                 if let (Some(_), Some(i), Some(h)) = (&solid, inc.as_deref_mut(), root_hash) {
                     i.put_mesh(eval_root, h, &mesh);
@@ -301,25 +365,11 @@ fn evaluate_inner(
                 solids.push(solid);
                 landed(&parts, &mut root_keys, key);
             }
-            Ok(Err(err)) => {
+            Err(error) => {
                 failures.push(RootFailure {
                     scope: format!("root[{idx}]"),
                     node_id: entry.root,
-                    error: err.to_string(),
-                });
-                parts.push(EvaluatedPart {
-                    mesh: EvaluatedMesh::empty(),
-                    material: entry.material.clone(),
-                    solid: None,
-                });
-                solids.push(None);
-                landed(&parts, &mut root_keys, None);
-            }
-            Err(panic_payload) => {
-                failures.push(RootFailure {
-                    scope: format!("root[{idx}]"),
-                    node_id: entry.root,
-                    error: format!("kernel panic: {}", panic_message(&panic_payload)),
+                    error,
                 });
                 parts.push(EvaluatedPart {
                     mesh: EvaluatedMesh::empty(),
@@ -357,6 +407,7 @@ fn evaluate_inner(
                     eval_part_defs.push(EvaluatedPartDef {
                         id: id.clone(),
                         mesh,
+                        solid: None,
                     });
                     continue;
                 }
@@ -367,6 +418,7 @@ fn evaluate_inner(
                     eval_part_defs.push(EvaluatedPartDef {
                         id: id.clone(),
                         mesh,
+                        solid: None,
                     });
                     continue;
                 }
@@ -380,63 +432,56 @@ fn evaluate_inner(
                             eval_part_defs.push(EvaluatedPartDef {
                                 id: id.clone(),
                                 mesh,
+                                solid: None,
                             });
                             continue;
                         }
                     }
                 }
 
-                let outcome =
-                    catch_unwind(AssertUnwindSafe(|| -> Result<EvaluatedMesh, EvalError> {
-                        match evaluate_node_timed(
-                            part_def.root,
-                            &doc.nodes,
-                            &mut cache,
-                            clock,
-                            &mut node_timings,
-                        )? {
-                            Some(s) => {
-                                let t_mesh = clock.map(|c| c.now_ms());
-                                let tri = s.to_mesh(segments);
-                                if let Some(t0) = t_mesh {
-                                    tessellate_ms += clock.unwrap().now_ms() - t0;
-                                }
-                                Ok(tri_to_evaluated_render(tri))
-                            }
-                            None => Ok(EvaluatedMesh::empty()),
+                let outcome = match pre.get(&part_def.root) {
+                    Some(done) => done.clone(),
+                    None => evaluate_and_mesh(
+                        part_def.root,
+                        &doc.nodes,
+                        &mut cache,
+                        segments,
+                        clock,
+                        &mut node_timings,
+                    ),
+                };
+                let (mesh, solid) = match outcome {
+                    Ok(MeshedOk {
+                        mesh: m,
+                        solid,
+                        mesh_ms,
+                    }) => {
+                        tessellate_ms += mesh_ms;
+                        if let Some(nt) = node_timings.get(&part_def.root.to_string()) {
+                            root_ms.push((format!("partDef {id}"), nt.eval_ms + mesh_ms));
                         }
-                    }));
-                let mesh = match outcome {
-                    Ok(Ok(m)) => {
                         store(&cache_key, &m);
                         if let (Some(i), Some(h)) = (inc.as_deref_mut(), def_hash) {
                             if matches!(cache.get(&part_def.root), Some(Some(_))) {
                                 i.put_mesh(part_def.root, h, &m);
                             }
                         }
-                        m
+                        (m, solid)
                     }
-                    Ok(Err(err)) => {
+                    Err(error) => {
                         failures.push(RootFailure {
                             scope: format!("partDef[{id:?}]"),
                             node_id: part_def.root,
-                            error: err.to_string(),
+                            error,
                         });
-                        EvaluatedMesh::empty()
-                    }
-                    Err(panic_payload) => {
-                        failures.push(RootFailure {
-                            scope: format!("partDef[{id:?}]"),
-                            node_id: part_def.root,
-                            error: format!("kernel panic: {}", panic_message(&panic_payload)),
-                        });
-                        EvaluatedMesh::empty()
+                        (EvaluatedMesh::empty(), None)
                     }
                 };
                 part_def_meshes.insert(id.clone(), mesh.clone());
                 eval_part_defs.push(EvaluatedPartDef {
                     id: id.clone(),
                     mesh,
+                    solid,
                 });
             }
 
@@ -561,6 +606,7 @@ fn evaluate_inner(
         clash_ms,
         assembly_ms,
         nodes: node_timings,
+        roots: root_ms,
     });
 
     Ok(EvaluatedScene {
@@ -641,6 +687,94 @@ pub fn evaluate_node(
     attribute_losses(node_id, &mut result);
     cache.insert(node_id, result.clone());
     Ok(result)
+}
+
+/// A root (or part definition) evaluated and tessellated.
+#[derive(Clone)]
+struct MeshedOk {
+    mesh: EvaluatedMesh,
+    solid: Option<Solid>,
+    /// Tessellation wall time, when a clock is set.
+    mesh_ms: f64,
+}
+
+/// [`MeshedOk`], or the failure text a [`RootFailure`] carries (an
+/// evaluation error, or a kernel panic caught at the root).
+type MeshedRoot = Result<MeshedOk, String>;
+
+/// Evaluate `root` and tessellate its solid at `segments`, turning an error
+/// or a kernel panic into the root's failure text. A panic leaves `cache`
+/// and `timings` holding whatever earlier nodes populated, which stays valid
+/// (hence `AssertUnwindSafe`).
+fn evaluate_and_mesh(
+    root: NodeId,
+    nodes: &HashMap<NodeId, vcad_ir::Node>,
+    cache: &mut HashMap<NodeId, Option<Solid>>,
+    segments: u32,
+    clock: Option<&dyn Clock>,
+    timings: &mut HashMap<String, NodeTiming>,
+) -> MeshedRoot {
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<MeshedOk, EvalError> {
+        match evaluate_node_timed(root, nodes, cache, clock, timings)? {
+            Some(s) => {
+                let t_mesh = clock.map(|c| c.now_ms());
+                let tri = s.to_mesh(segments);
+                let mesh_ms = match (t_mesh, clock) {
+                    (Some(t0), Some(c)) => c.now_ms() - t0,
+                    _ => 0.0,
+                };
+                Ok(MeshedOk {
+                    mesh: tri_to_evaluated_render(tri),
+                    solid: Some(s),
+                    mesh_ms,
+                })
+            }
+            None => Ok(MeshedOk {
+                mesh: EvaluatedMesh::empty(),
+                solid: None,
+                mesh_ms: 0.0,
+            }),
+        }
+    }));
+    match outcome {
+        Ok(Ok(m)) => Ok(m),
+        Ok(Err(err)) => Err(err.to_string()),
+        Err(panic_payload) => Err(format!("kernel panic: {}", panic_message(&panic_payload))),
+    }
+}
+
+/// [`evaluate_and_mesh`] for every root in `roots` at once, over rayon.
+///
+/// Each task gets its own node cache, so a subtree shared between two roots
+/// is evaluated by both — cheap next to serialising every root, and it keeps
+/// the tasks independent. The sheet-metal fold flag is thread-local, so it is
+/// carried into each task explicitly.
+fn evaluate_roots_parallel(
+    roots: &[NodeId],
+    nodes: &HashMap<NodeId, vcad_ir::Node>,
+    segments: u32,
+    clock: Option<&dyn Clock>,
+    timings: &mut HashMap<String, NodeTiming>,
+) -> HashMap<NodeId, MeshedRoot> {
+    use rayon::prelude::*;
+    let fold = FOLD_SHEET_METAL.with(|f| f.get());
+    let done: Vec<(NodeId, MeshedRoot, HashMap<String, NodeTiming>)> = roots
+        .par_iter()
+        .map(|&root| {
+            let prev = FOLD_SHEET_METAL.with(|f| f.replace(fold));
+            let mut cache = HashMap::new();
+            let mut local = HashMap::new();
+            let out = evaluate_and_mesh(root, nodes, &mut cache, segments, clock, &mut local);
+            FOLD_SHEET_METAL.with(|f| f.set(prev));
+            (root, out, local)
+        })
+        .collect();
+    done.into_iter()
+        .map(|(root, out, local)| {
+            timings.extend(local);
+            (root, out)
+        })
+        .collect()
 }
 
 /// Recursively evaluate a node with timing instrumentation.

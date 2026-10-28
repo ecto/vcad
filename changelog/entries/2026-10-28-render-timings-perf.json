@@ -1,0 +1,10 @@
+{
+  "id": "2026-10-28-render-timings-perf",
+  "version": "0.11.0",
+  "date": "2026-10-28",
+  "category": "perf",
+  "title": "Faster assembly renders, plus a --timings breakdown",
+  "summary": "Assembly renders evaluate parts in parallel, never evaluate a part twice, and serve warm re-renders straight from the cache (rose full body 613 s -> 55 s cold, 330 s -> 6 s warm); --timings shows where time goes.",
+  "features": ["render", "performance", "cli"],
+  "mcpTools": []
+}

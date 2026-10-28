@@ -551,6 +551,14 @@ struct Cli {
     #[arg(long, short = 'v')]
     verbose: bool,
 
+    /// Print a wall-time breakdown to stderr at exit: each stage (read,
+    /// parse, root evaluation, instances, tessellate + BVH, path trace,
+    /// encode, write), the boolean / mesh-fallback / tessellation share of
+    /// evaluation, root-cache hits, and the slowest roots.
+    /// `VCAD_TIMINGS=1` does the same.
+    #[arg(long)]
+    timings: bool,
+
     /// Render only the first N frames of the animation (`--animate`).
     #[arg(long, requires = "animate")]
     frames: Option<usize>,
@@ -1168,6 +1176,7 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
                 render_one_uncached(input, dest, format, cli)
             });
             let s = cache.stats();
+            vcad_eval::timings::record_cache(s.hits, s.misses);
             if s.hits + s.misses > 0 {
                 eprintln!(
                     "cache: {} hit, {} miss, {} stored ({})",
@@ -1201,7 +1210,7 @@ fn render_one_uncached(
                 .to_string(),
         );
     }
-    let raw = read_document(input, cli)?;
+    let raw = vcad_eval::timings::stage("read document", || read_document(input, cli))?;
     if cli.sheet {
         return render_sheet_one(input, dest, format, cli, &raw);
     }
@@ -1253,7 +1262,8 @@ fn render_one_uncached(
         Format::Jpeg | Format::Png => render_raster(&raw, cli, format)?,
     };
     let dest = dest.expect("raster output always has a destination path");
-    std::fs::write(dest, bytes).map_err(|e| format!("write {}: {}", dest.display(), e))
+    vcad_eval::timings::stage("write output", || std::fs::write(dest, bytes))
+        .map_err(|e| format!("write {}: {}", dest.display(), e))
 }
 
 /// Batch destination for `input`: `<stem>.<ext>` in `out_dir` or next to
@@ -1453,9 +1463,15 @@ fn run_eval_json(input: &Path, cli: &Cli) -> Result<(), String> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     vcad_kernel::vcad_kernel_booleans::recut_log::set_verbose(cli.verbose);
+    if cli.timings {
+        vcad_eval::timings::set_enabled(true);
+    }
     let result = run(&cli);
     if let Some(line) = vcad_kernel::vcad_kernel_booleans::recut_log::take_summary() {
         eprintln!("{line}");
+    }
+    if let Some(report) = vcad_eval::timings::report(15) {
+        eprintln!("{report}");
     }
     match result {
         Ok(()) => ExitCode::SUCCESS,
