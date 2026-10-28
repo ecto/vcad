@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-27-onshape-step-import",
+  "version": "0.10.0",
+  "date": "2026-10-27",
+  "category": "fix",
+  "title": "STEP import: Onshape files import and render solid",
+  "summary": "Reads BREP_WITH_VOIDS, honours metre units, walks same_sense=.F. edges the right way, and meshes seamless cylinder/cone walls, drill tips and reversed planes facing outward.",
+  "features": ["step-import", "tessellation", "render"]
+}
