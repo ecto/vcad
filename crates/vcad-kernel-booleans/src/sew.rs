@@ -415,7 +415,7 @@ fn merge_nearby_vertices(topo: &mut Topology, tolerance: f64) {
     // Build merge map: vertex_to_remove → vertex_to_keep
     let mut merge_map: HashMap<vcad_kernel_topo::VertexId, vcad_kernel_topo::VertexId> =
         HashMap::new();
-    if !(tolerance > 0.0) {
+    if tolerance.is_nan() || tolerance <= 0.0 {
         // Nothing is closer than a non-positive tolerance.
         return;
     }
