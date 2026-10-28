@@ -106,7 +106,7 @@ fn evaluate_inner(
 
     let mut node_timings: HashMap<String, NodeTiming> = HashMap::new();
     let mut tessellate_ms: f64 = 0.0;
-    let mut root_ms: Vec<(NodeId, f64)> = Vec::new();
+    let mut root_ms: Vec<(String, f64)> = Vec::new();
     let mut failures: Vec<RootFailure> = Vec::new();
 
     // Content-addressed root cache (see `crate::cache`). The fingerprint
@@ -316,7 +316,11 @@ fn evaluate_inner(
                 nt.mesh_ms = m.mesh_ms;
             }
             if let Some(nt) = node_timings.get(&eval_root.to_string()) {
-                root_ms.push((entry.root, nt.eval_ms + m.mesh_ms));
+                let name = doc.nodes.get(&entry.root).and_then(|n| n.name.clone());
+                root_ms.push((
+                    name.unwrap_or_else(|| format!("root[{idx}]")),
+                    nt.eval_ms + m.mesh_ms,
+                ));
             }
         }
 
@@ -430,7 +434,7 @@ fn evaluate_inner(
                     Ok(MeshedOk { mesh: m, mesh_ms, .. }) => {
                         tessellate_ms += mesh_ms;
                         if let Some(nt) = node_timings.get(&part_def.root.to_string()) {
-                            root_ms.push((part_def.root, nt.eval_ms + mesh_ms));
+                            root_ms.push((format!("partDef {id}"), nt.eval_ms + mesh_ms));
                         }
                         store(&cache_key, &m);
                         if let (Some(i), Some(h)) = (inc.as_deref_mut(), def_hash) {

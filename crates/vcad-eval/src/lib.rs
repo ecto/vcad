@@ -91,10 +91,11 @@ pub struct EvalTiming {
     /// Per-node timing keyed by NodeId (as string for JS object compatibility).
     pub nodes: HashMap<String, NodeTiming>,
     /// Evaluate + tessellate time of each root and part definition that was
-    /// actually evaluated (cache hits are absent), keyed by its node. Native
-    /// `--timings` reads this; it is not sent to JS.
+    /// actually evaluated (cache hits are absent), labelled by root name
+    /// or part-definition id. Native `--timings` reads this; it is not sent
+    /// to JS.
     #[serde(skip)]
-    pub roots: Vec<(vcad_ir::NodeId, f64)>,
+    pub roots: Vec<(String, f64)>,
 }
 
 /// Callback fired as each visible root lands: `(index, total, mesh)`.

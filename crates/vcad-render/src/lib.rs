@@ -1093,7 +1093,7 @@ fn evaluate_vcad_document_inner(raw_vcad: &str, timed: bool) -> Result<Evaluated
     .map_err(|_| "eval panicked".to_string())?
     .map_err(|e| format!("eval: {}", e))?;
     #[cfg(not(target_arch = "wasm32"))]
-    vcad_eval::timings::record_eval(scene.timing.as_ref(), &parsed.document);
+    vcad_eval::timings::record_eval(scene.timing.as_ref());
 
     let materials = &parsed.document.materials;
     // `scene.parts` is 1:1 with the document's *visible* roots, in order —

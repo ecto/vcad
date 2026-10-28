@@ -84,22 +84,15 @@ pub fn record(name: &str, ms: f64) {
 }
 
 /// Record the evaluator's own breakdown: tessellation time, and each
-/// evaluated root's (and part definition's) evaluate + tessellate time,
-/// named from `doc`. Cache hits cost nothing and are not listed.
-pub fn record_eval(timing: Option<&EvalTiming>, doc: &vcad_ir::Document) {
+/// evaluated root's (and part definition's) evaluate + tessellate time.
+/// Cache hits cost nothing and are not listed.
+pub fn record_eval(timing: Option<&EvalTiming>) {
     let (true, Some(t)) = (enabled(), timing) else {
         return;
     };
     let mut log = log();
     log.tessellate_ms += t.tessellate_ms;
-    log.roots.extend(t.roots.iter().map(|&(id, ms)| {
-        let name = doc
-            .nodes
-            .get(&id)
-            .and_then(|n| n.name.clone())
-            .unwrap_or_else(|| format!("node {id}"));
-        (name, ms)
-    }));
+    log.roots.extend(t.roots.iter().cloned());
 }
 
 /// Record root-mesh cache counts, `(hits, misses)`.
@@ -136,12 +129,13 @@ pub fn report(top_n: usize) -> Option<String> {
     let mut out = String::new();
     let _ = writeln!(out, "timings: total {:.2}s", total / 1e3);
     for (name, ms) in &log.stages {
-        let _ = writeln!(out, "  {name:<24} {:>9.2}s  {:>5.1}%", ms / 1e3, pct(*ms));
+        let _ = writeln!(out, "  {name:<24} {:>9.3}s  {:>5.1}%", ms / 1e3, pct(*ms));
     }
     let b = vcad_kernel::vcad_kernel_booleans::timing::take();
     let _ = writeln!(
         out,
-        "  within evaluation: booleans {:.2}s ({}), mesh fallback {:.2}s ({}), tessellation {:.2}s",
+        "  within evaluation (summed across threads): booleans {:.2}s ({}), \
+         mesh fallback {:.2}s ({}), tessellation {:.2}s",
         b.boolean_ms / 1e3,
         b.booleans,
         b.fallback_ms / 1e3,
@@ -157,7 +151,7 @@ pub fn report(top_n: usize) -> Option<String> {
         let root_total: f64 = roots.iter().map(|r| r.1).sum();
         let _ = writeln!(
             out,
-            "  slowest roots ({} of {}, {:.2}s across all):",
+            "  slowest roots / part defs ({} of {} evaluated, {:.2}s summed):",
             top_n.min(roots.len()),
             roots.len(),
             root_total / 1e3
