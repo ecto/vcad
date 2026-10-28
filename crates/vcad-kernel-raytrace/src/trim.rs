@@ -301,6 +301,38 @@ impl PeriodicTrim {
     }
 }
 
+/// A periodic face's trim in the GPU tracer's shape: at most one region
+/// polygon plus holes, all on the unwrapped branch.
+///
+/// The shader tests whole-turn shifts of the query against these (see
+/// `point_in_face` in `brep.wgsl`), mirroring [`FaceTrim::contains`].
+#[derive(Debug, Clone)]
+pub struct PeriodicGpuTrim {
+    /// The region, or `None` when the face is the whole surface outside its
+    /// holes.
+    pub outer: Option<Vec<Point2>>,
+    /// Hole polygons.
+    pub holes: Vec<Vec<Point2>>,
+    /// Whether `v` wraps too (a torus).
+    pub v_periodic: bool,
+}
+
+/// The [`PeriodicGpuTrim`] for a face, or `None` when the face takes the
+/// ordinary (non-periodic) trim path or needs more than one region polygon.
+pub fn periodic_gpu_trim(brep: &BRepSolid, face_id: FaceId) -> Option<PeriodicGpuTrim> {
+    let mut t = PeriodicTrim::build(brep, face_id)?;
+    let outer = match (t.whole, t.regions.len()) {
+        (true, 0) => None,
+        (false, 1) => t.regions.pop(),
+        _ => return None,
+    };
+    Some(PeriodicGpuTrim {
+        outer,
+        holes: t.holes,
+        v_periodic: t.v_periodic,
+    })
+}
+
 /// Unwrap a loop's `u` (and, on a torus, `v`) onto one continuous branch,
 /// each step taking the shortest turn. Returns the unwrapped points and how
 /// many whole turns the closed loop winds in `u` — `0` for an ordinary

@@ -12,7 +12,8 @@ pub mod shaders;
 
 pub use buffers::{
     GpuBvhNode, GpuFace, GpuScene, GpuSceneError, GpuSurface, GpuVec2, MAX_BVH_NODES, MAX_FACES,
-    MAX_INNER_LOOPS, MAX_SURFACES, MAX_TRIM_VERTS, SURFACE_TYPE_TRIANGLE,
+    MAX_INNER_LOOPS, MAX_SURFACES, MAX_TRIM_VERTS, SURFACE_TYPE_TRIANGLE, TRIM_PERIODIC_U,
+    TRIM_PERIODIC_V, TRIM_WHOLE,
 };
 pub use geometry::BrepGeometry;
 
