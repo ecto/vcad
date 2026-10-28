@@ -1,0 +1,9 @@
+{
+  "id": "2026-10-27-exact-render-step-curved-faces",
+  "version": "0.11.0",
+  "date": "2026-10-27",
+  "category": "fix",
+  "title": "Exact render shows curved faces of imported STEP parts",
+  "summary": "vcad-render --photoreal --exact no longer drops the cylinder, cone, sphere and torus faces of Onshape STEP imports, and frames them like the mesh render.",
+  "features": ["render", "raytrace", "step-import"]
+}

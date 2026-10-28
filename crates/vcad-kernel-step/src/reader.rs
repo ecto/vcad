@@ -689,7 +689,7 @@ impl<'a> StepReader<'a> {
             StepCurve::Circle(circle) => {
                 self.sample_circle_arc(topo, circle, curve, edge, oe, start_v, end_v)
             }
-            StepCurve::BSpline(_) => self.sample_bspline(topo, curve, edge, oe),
+            StepCurve::BSpline(_) => self.sample_bspline(topo, curve, edge, oe, start_v, end_v),
             // Line or other simple curves don't need intermediate points
             _ => vec![],
         }
@@ -753,23 +753,45 @@ impl<'a> StepReader<'a> {
         mid_vids
     }
 
-    /// Sample a B-spline (or trimmed B-spline) curve at `CURVE_SAMPLE_COUNT` points.
+    /// Sample a B-spline (or trimmed B-spline) curve at `CURVE_SAMPLE_COUNT` points,
+    /// ordered in the direction the loop traverses the edge (`start_v` →
+    /// `end_v`).
+    ///
+    /// The samples come out in curve-parameter order, which is the traversal
+    /// order only when the oriented edge walks the curve forwards. Emitting
+    /// them unreversed on a backwards edge made the loop jump to the far end,
+    /// run back, and jump again — a self-crossing UV polygon that rejected
+    /// every ray hit on the face (Onshape's torus fillets).
+    #[allow(clippy::too_many_arguments)]
     fn sample_bspline(
         &mut self,
         topo: &mut Topology,
         curve: &StepCurve,
-        _edge: &crate::entities::topology::StepEdge,
-        _oe: &crate::entities::topology::StepOrientedEdge,
+        edge: &crate::entities::topology::StepEdge,
+        oe: &crate::entities::topology::StepOrientedEdge,
+        start_v: u64,
+        end_v: u64,
     ) -> Vec<VertexId> {
         let (t_min, t_max) = curve.domain();
         let n = CURVE_SAMPLE_COUNT;
-        let mut mid_vids = Vec::with_capacity(n);
-        for i in 1..=n {
-            let frac = i as f64 / (n + 1) as f64;
-            let t = t_min + (t_max - t_min) * frac;
-            let pt = curve.evaluate(t);
-            let vid = topo.add_vertex(pt);
-            mid_vids.push(vid);
+        let pts: Vec<_> = (1..=n)
+            .map(|i| curve.evaluate(t_min + (t_max - t_min) * (i as f64 / (n + 1) as f64)))
+            .collect();
+
+        let start_pt = topo.vertices[self.vertex_map[&start_v]].point;
+        let end_pt = topo.vertices[self.vertex_map[&end_v]].point;
+        let backwards = if (start_pt - end_pt).norm() > 1e-9 {
+            // Whichever endpoint the first sample sits nearer is where the
+            // curve starts.
+            (pts[0] - end_pt).norm() < (pts[0] - start_pt).norm()
+        } else {
+            // A closed curve has no nearer end; fall back to the senses.
+            oe.orientation != edge.same_sense
+        };
+
+        let mut mid_vids: Vec<VertexId> = pts.into_iter().map(|pt| topo.add_vertex(pt)).collect();
+        if backwards {
+            mid_vids.reverse();
         }
         mid_vids
     }

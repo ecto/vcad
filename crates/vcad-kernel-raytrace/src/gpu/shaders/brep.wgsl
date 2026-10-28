@@ -22,7 +22,7 @@ struct GpuFace {
     material_idx: u32,
     // Use explicit u32 padding instead of vec3<u32> to match Rust layout
     // vec3<u32> in WGSL has 16-byte alignment which would misalign struct
-    _pad2_0: u32,
+    trim_flags: u32,
     _pad2_1: u32,
     _pad2_2: u32,
 }
@@ -682,6 +682,49 @@ fn uv_in_trim_bounds(uv: vec2<f32>, start: u32, count: u32) -> bool {
            uv.y >= min_uv.y - eps && uv.y <= max_uv.y + eps;
 }
 
+// Mirrors TRIM_* in buffers.rs.
+const TRIM_PERIODIC_U: u32 = 1u;
+const TRIM_PERIODIC_V: u32 = 2u;
+const TRIM_WHOLE: u32 = 4u;
+const TRIM_TAU: f32 = 6.283185307179586;
+
+// Is `uv` inside the polygon on any whole-turn branch? The polygons of a
+// periodic face are unwrapped (they may run past 2π or below 0), while hits
+// report u in [0, 2π). Mirrors `PeriodicTrim::on_any_branch` (trim.rs).
+fn in_polygon_any_branch(uv: vec2<f32>, start: u32, count: u32, flags: u32) -> bool {
+    var kv_max = 0;
+    if (flags & TRIM_PERIODIC_V) != 0u {
+        kv_max = 2;
+    }
+    for (var ku = -2; ku <= 2; ku++) {
+        for (var kv = -kv_max; kv <= kv_max; kv++) {
+            let q = uv + vec2<f32>(f32(ku) * TRIM_TAU, f32(kv) * TRIM_TAU);
+            if winding_number_polygon(q, start, count) != 0 {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Trim test for a face uploaded in periodic form (`trim::periodic_gpu_trim`).
+fn point_in_periodic_face(uv: vec2<f32>, face: GpuFace) -> bool {
+    if (face.trim_flags & TRIM_WHOLE) == 0u {
+        if !in_polygon_any_branch(uv, face.trim_start, face.trim_count, face.trim_flags) {
+            return false;
+        }
+    }
+    var inner_offset = face.inner_start;
+    for (var loop_idx = 0u; loop_idx < face.inner_loop_count; loop_idx++) {
+        let loop_size = inner_loop_descs[face.inner_desc_start + loop_idx];
+        if loop_size >= 3u && in_polygon_any_branch(uv, inner_offset, loop_size, face.trim_flags) {
+            return false;
+        }
+        inner_offset += loop_size;
+    }
+    return true;
+}
+
 // Point-in-polygon test with inner loops (holes)
 fn point_in_face(uv: vec2<f32>, face_idx: u32) -> bool {
     let face = faces[face_idx];
@@ -692,6 +735,10 @@ fn point_in_face(uv: vec2<f32>, face_idx: u32) -> bool {
     // winding test below would reject every mesh hit (trim_count is 0).
     if surfaces[face.surface_idx].surface_type == SURFACE_TRIANGLE {
         return true;
+    }
+
+    if (face.trim_flags & TRIM_PERIODIC_U) != 0u {
+        return point_in_periodic_face(uv, face);
     }
 
     // Check outer loop - point must be inside

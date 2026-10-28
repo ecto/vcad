@@ -11,7 +11,7 @@
 //! solid or a mesh, and it still flattens to `FaceId`s for the GPU upload.
 
 use std::sync::Arc;
-use vcad_kernel_booleans::bbox::{face_aabb, Aabb3};
+use vcad_kernel_booleans::bbox::{face_render_aabb, Aabb3};
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::TriangleMesh;
@@ -149,7 +149,7 @@ impl Geometry for BrepGeom {
 
     fn bounds(&self, i: usize) -> Aabb {
         match self {
-            BrepGeom::BRep { brep, faces } => to_render_aabb(&face_aabb(brep, faces[i])),
+            BrepGeom::BRep { brep, faces } => to_render_aabb(&face_render_aabb(brep, faces[i])),
             BrepGeom::Mesh { mesh, .. } => mesh.bounds(i),
         }
     }
