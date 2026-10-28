@@ -2610,12 +2610,16 @@ fn tessellate_planar_face_core(outer_verts: &[Point3], reversed: bool) -> Triang
                 signed += e1.cross(e2);
             }
             let polygon_area = 0.5 * signed.norm();
-            // Measure the fan in f64 from the source loop: the mesh stores
-            // f32, whose rounding alone exceeds the 1e-6 tolerance below on
-            // thin faces far from the origin and would reject a valid fan.
             let mut fan_area = 0.0;
             for t in mesh.indices.chunks(3) {
-                let p = |i: u32| outer_verts[(fan_center + i as usize) % n];
+                let p = |i: u32| {
+                    let b = i as usize * 3;
+                    Point3::new(
+                        mesh.vertices[b] as f64,
+                        mesh.vertices[b + 1] as f64,
+                        mesh.vertices[b + 2] as f64,
+                    )
+                };
                 fan_area += 0.5 * (p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0])).norm();
             }
             if (fan_area - polygon_area).abs() > polygon_area.max(1e-12) * 1e-6 {
@@ -8257,10 +8261,10 @@ mod tests {
         assert_eq!(mesh.num_vertices(), bottom.len() + top.len());
     }
 
-    /// A thin quad ~25 mm from the origin with a repeated corner: f32 rounding
-    /// alone exceeds the fan check's tolerance here, and the repeated corner
-    /// defeats the ear clipper's plane fit. Both paths must still emit its
-    /// one real triangle.
+    /// A thin quad ~25 mm from the origin with a repeated corner. The fan
+    /// check rejects it (f32 rounding exceeds its tolerance here), and the
+    /// repeated corner used to defeat the ear clipper's plane fit, so the
+    /// face came out empty. Both paths must emit its one real triangle.
     fn far_sliver_quad() -> [Point3; 4] {
         [
             Point3::new(25.77266172598, 12.16706750808, -4.999670655715),
@@ -8271,7 +8275,7 @@ mod tests {
     }
 
     #[test]
-    fn planar_fan_survives_f32_rounding_and_duplicate_corner() {
+    fn planar_face_with_duplicate_corner_far_from_origin_is_not_empty() {
         let mesh = tessellate_planar_face_core(&far_sliver_quad(), false);
         assert!(!mesh.indices.is_empty());
     }
