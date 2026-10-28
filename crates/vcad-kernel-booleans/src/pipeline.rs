@@ -1373,6 +1373,65 @@ pub(crate) fn brep_boolean(
     // octants exactly — to the mesh fallback and its jagged seams, while
     // waving through six DISJOINT circles that then lost the sphere.
 
+    let sphere_circles_intersect =
+        |solid: &BRepSolid, splits: &HashMap<FaceId, FaceSplits>| -> bool {
+            for (face_id, list) in splits {
+                if !solid.topology.faces.contains_key(*face_id)
+                    || !split::is_spherical_face(solid, *face_id)
+                {
+                    continue;
+                }
+                let face = &solid.topology.faces[*face_id];
+                let Some(sphere) = solid.geometry.surfaces[face.surface_index]
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::SphereSurface>()
+                else {
+                    continue;
+                };
+                // Each circle on the sphere is a cap: axis = unit(center_circle
+                // − center_sphere)… for a great circle the offset is ~0, so use
+                // the circle's plane normal instead; angular radius from the
+                // chord.
+                let caps: Vec<(vcad_kernel_math::Vec3, f64)> = list
+                    .iter()
+                    .filter_map(|(curve, _, _)| {
+                        let ssi::IntersectionCurve::Circle(c) = curve else {
+                            return None;
+                        };
+                        let off = c.center - sphere.center;
+                        let axis = if off.norm() > 1e-9 {
+                            off.normalize()
+                        } else {
+                            c.x_dir.into_inner().cross(c.y_dir.into_inner()).normalize()
+                        };
+                        let ang = (c.radius / sphere.radius).clamp(-1.0, 1.0).asin();
+                        let ang = if off.norm() > 1e-9 && off.norm() > sphere.radius * ang.cos() {
+                            std::f64::consts::PI - ang
+                        } else {
+                            ang
+                        };
+                        Some((axis, ang))
+                    })
+                    .collect();
+                for i in 0..caps.len() {
+                    for j in i + 1..caps.len() {
+                        let (a1, t1) = caps[i];
+                        let (a2, t2) = caps[j];
+                        let gap = a1.dot(a2).clamp(-1.0, 1.0).acos();
+                        let margin = 1e-6;
+                        if gap > (t1 - t2).abs() + margin && gap + margin < t1 + t2 {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        };
+    // Intersecting circles are where the clip has to get every crossing
+    // right; the sewn result is checked rather than trusted there.
+    let sphere_circles_risky =
+        sphere_circles_intersect(&a, &splits_a) || sphere_circles_intersect(&b, &splits_b);
+
     // Apply splits to both solids
     let mut sphere_split_unsound = false;
     apply_splits_to_solid(
@@ -1622,9 +1681,46 @@ pub(crate) fn brep_boolean(
 
     let result = sew::sew_faces(&a, &keep_a, &b, &keep_b, reverse_b, 1e-6);
 
+    // A crossing the clip mis-traced shows as a crack in the sewn shell.
+    // Fail closed exactly like an unsound split: the caller re-runs it
+    // through the mesh fallback.
+    // A closed shell can still be the wrong solid (a grazing corner's two
+    // tiny circles flipping the big patch): bound its volume by the
+    // operands' too.
+    if sphere_circles_risky && sphere_result_implausible(&result, solid_a, solid_b, op, segments) {
+        debug_bool!("Sphere arrangement left a cracked or wrong shell: reporting to caller");
+        *sphere_unrepresentable = true;
+        return Ok(non_overlapping_boolean(solid_a, solid_b, op, segments));
+    }
+
     debug_bool!("\n--- Stage 5: Result ---");
     debug_bool!("Result solid has {} faces", result.topology.faces.len());
     debug_bool!("========== BREP BOOLEAN END ==========\n");
 
     Ok(BooleanResult::BRep(Box::new(result)))
+}
+
+/// Whether a sewn result is cracked or its volume escapes the bounds the
+/// operands impose on `op`.
+fn sphere_result_implausible(
+    result: &BRepSolid,
+    solid_a: &BRepSolid,
+    solid_b: &BRepSolid,
+    op: BooleanOp,
+    segments: u32,
+) -> bool {
+    let report = crate::validate::mesh_report(&tessellate_brep(result, segments));
+    if report.open_edges > 0 {
+        return true;
+    }
+    let va = crate::validate::mesh_report(&tessellate_brep(solid_a, segments)).signed_volume;
+    let vb = crate::validate::mesh_report(&tessellate_brep(solid_b, segments)).signed_volume;
+    let v = report.signed_volume;
+    let slack = 1e-2 * va.abs().max(vb.abs());
+    let hi = match op {
+        BooleanOp::Union => va + vb,
+        BooleanOp::Difference => va,
+        BooleanOp::Intersection => va.min(vb),
+    };
+    v < -slack || v > hi + slack
 }
