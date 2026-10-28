@@ -39,15 +39,21 @@ const MAX_EDGES_PER_LOOP: usize = 100_000;
 /// Compute the absolute enclosed area of a topology loop using Newell's method.
 /// Works in 3D — the magnitude of the cross-product sum gives twice the area.
 fn loop_area_3d(topo: &Topology, loop_id: LoopId) -> f64 {
+    loop_newell_normal(topo, loop_id).norm() * 0.5
+}
+
+/// Newell's normal of a loop: its direction follows the loop's winding
+/// (counter-clockwise about it), its length is twice the enclosed area.
+fn loop_newell_normal(topo: &Topology, loop_id: LoopId) -> vcad_kernel_math::Vec3 {
     let verts: Vec<vcad_kernel_math::Point3> = topo
         .loop_half_edges(loop_id)
         .map(|he| topo.vertices[topo.half_edges[he].origin].point)
         .collect();
     let n = verts.len();
-    if n < 3 {
-        return 0.0;
-    }
     let mut cross = vcad_kernel_math::Vec3::zeros();
+    if n < 3 {
+        return cross;
+    }
     for i in 0..n {
         let c = verts[i];
         let nx = verts[(i + 1) % n];
@@ -55,7 +61,7 @@ fn loop_area_3d(topo: &Topology, loop_id: LoopId) -> f64 {
         cross.y += (c.z - nx.z) * (c.x + nx.x);
         cross.z += (c.x - nx.x) * (c.y + nx.y);
     }
-    cross.norm() * 0.5
+    cross
 }
 
 /// Compute the angle parameter of a point on a circle.
@@ -676,30 +682,38 @@ impl<'a> StepReader<'a> {
                 Orientation::Reversed
             };
 
-            // STEP winds a face's loops about the FACE normal; the planar
-            // tessellator triangulates the loop as wound and then flips the
-            // winding again for a Reversed face — so a reversed STEP plane
-            // would mesh facing into the solid. Give it its own copy of the
-            // plane with the normal flipped, so surface normal, face normal
-            // and loop winding all agree.
+            // The planar tessellator triangulates the outer loop as wound and
+            // flips the result for a Reversed face, so it needs the loop to
+            // wind about the plane's own normal. Conforming STEP winds loops
+            // about the FACE normal instead — on a reversed face that is the
+            // other way, and the plane would mesh facing into the solid.
+            // (vcad's own writer winds about the surface normal.) Measure the
+            // winding rather than assume a convention: when the loop runs
+            // against the plane's normal, give the face a normal-flipped copy
+            // of the plane and toggle its orientation — the same face normal,
+            // now agreeing with its loop.
             let mut surface_idx = surface_idx;
-            if orientation == Orientation::Reversed {
-                let flipped = geom.surfaces[surface_idx]
-                    .as_any()
-                    .downcast_ref::<vcad_kernel_geom::Plane>()
-                    .map(|plane| {
-                        vcad_kernel_geom::Plane::new(
-                            plane.origin,
-                            *plane.y_dir.as_ref(),
-                            *plane.x_dir.as_ref(),
-                        )
-                    });
-                if let Some(flipped) = flipped {
-                    surface_idx = *flipped_planes
-                        .entry(surface_idx)
-                        .or_insert_with(|| geom.add_surface(Box::new(flipped)));
-                    orientation = Orientation::Forward;
-                }
+            let flipped = geom.surfaces[surface_idx]
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::Plane>()
+                .filter(|plane| {
+                    loop_newell_normal(&topo, outer).dot(*plane.normal_dir.as_ref()) < 0.0
+                })
+                .map(|plane| {
+                    vcad_kernel_geom::Plane::new(
+                        plane.origin,
+                        *plane.y_dir.as_ref(),
+                        *plane.x_dir.as_ref(),
+                    )
+                });
+            if let Some(flipped) = flipped {
+                surface_idx = *flipped_planes
+                    .entry(surface_idx)
+                    .or_insert_with(|| geom.add_surface(Box::new(flipped)));
+                orientation = match orientation {
+                    Orientation::Forward => Orientation::Reversed,
+                    Orientation::Reversed => Orientation::Forward,
+                };
             }
 
             let face_id = topo.add_face(outer, surface_idx, orientation);
