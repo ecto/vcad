@@ -212,9 +212,8 @@ vcad/
 │   ├── vcad-kernel-wasm/          # WASM bindings for browser
 │   ├── vcad-ir/                   # Intermediate representation
 │   ├── vcad-receipt/              # Unified fail-closed verification receipt schema
-│   ├── vcad-cli/                  # CLI tool
-│   ├── vcad-render/               # Standalone .vcad → isometric SVG renderer
-│   └── vcad/                      # Legacy CSG library (manifold-based)
+│   ├── vcad-cli/                  # `vcad` crate: kernel re-export + the CLI
+│   └── vcad-render/               # Standalone .vcad → isometric SVG renderer
 │
 │   # Analysis/solver crates beyond the app's modeling surface (consumer wiring
 │   # noted per entry; most are self-contained pending vcad-receipt/MCP

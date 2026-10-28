@@ -13,7 +13,7 @@ build = "build.rs"
 
 [dependencies]
 vcad-ir.workspace = true
-vcad-kernel = { path = "../vcad-kernel", version = "0.10.0", default-features = false }
+vcad-kernel = { path = "../vcad-kernel", version = "0.11.0", default-features = false }
 vcad-ecad-pcb.workspace = true
 vcad-kernel-math.workspace = true
 vcad-kernel-sketch.workspace = true
@@ -39,7 +39,7 @@ vcad-loon = { path = "../vcad-loon" }
 # versioned dev-dep would make `cargo publish -p vcad-eval` look for a
 # version of it that does not exist yet. Cargo strips path-only dev-deps
 # from the uploaded manifest.
-vcad-kernel-step = { path = "../vcad-kernel-step", version = "0.10.0" }
+vcad-kernel-step = { path = "../vcad-kernel-step" }
 vcad-kernel-geom.workspace = true
 vcad-kernel-fillet.workspace = true
 vcad-kernel-booleans.workspace = true
