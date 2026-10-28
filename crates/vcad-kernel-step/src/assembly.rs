@@ -266,7 +266,7 @@ impl<'a> AssemblyReader<'a> {
                         .filter(|&item_id| {
                             self.file
                                 .get(item_id)
-                                .map(|e2| e2.type_name == "MANIFOLD_SOLID_BREP")
+                                .map(|e2| crate::reader::is_solid_brep_type(&e2.type_name))
                                 .unwrap_or(false)
                         })
                         .collect();
@@ -372,8 +372,11 @@ impl<'a> AssemblyReader<'a> {
                 pd_to_part_idx.insert(pd_id, idx);
             }
         } else {
-            // No PD hierarchy: one part per MANIFOLD_SOLID_BREP
-            for e in self.file.entities_of_type("MANIFOLD_SOLID_BREP") {
+            // No PD hierarchy: one part per MANIFOLD_SOLID_BREP / BREP_WITH_VOIDS
+            for e in crate::reader::SOLID_BREP_TYPES
+                .iter()
+                .flat_map(|t| self.file.entities_of_type(t))
+            {
                 let name = e
                     .args
                     .first()

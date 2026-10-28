@@ -78,7 +78,7 @@ pub fn extract_pcb(raw: &str) -> Option<vcad_ir::ecad::Pcb> {
 }
 pub mod sheet;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use vcad_eval::{evaluate_document_with_sheet_metal, EvalOptions};
@@ -1439,9 +1439,38 @@ fn orient_normals(cm: &CanonMesh, normals: &mut [[f64; 3]]) {
         let (v0, v1, v2) = (cm.verts[t[0]], cm.verts[t[1]], cm.verts[t[2]]);
         *vol6.entry(root).or_default() += dot(v0, cross(v1, v2));
     }
+    // Signed volume only means "inside-out" for a closed shell. A mesh with
+    // seam cracks (an imported STEP body whose curved faces don't share
+    // their neighbours' boundary samples) falls apart into open fragments
+    // whose volume sign depends on where the origin sits — flipping those
+    // culls correctly wound faces and lets you see through the part. Leave
+    // open fragments with the winding the tessellator gave them, unless the
+    // mesh as a whole is inside out (then they all flip together).
+    let mut edge_uses: HashMap<(usize, usize), u32> = HashMap::new();
+    for t in &cm.tris {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *edge_uses.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    let mut open_shells: HashSet<usize> = HashSet::new();
+    for (&(a, _), &uses) in &edge_uses {
+        if uses != 2 {
+            open_shells.insert(find(&mut parent, a));
+        }
+    }
+    let open_vol6: f64 = vol6
+        .iter()
+        .filter(|(root, _)| open_shells.contains(root))
+        .map(|(_, v)| v)
+        .sum();
     for (ti, t) in cm.tris.iter().enumerate() {
         let root = find(&mut parent, t[0]);
-        if vol6.get(&root).copied().unwrap_or(0.0) < 0.0 {
+        let shell_vol6 = if open_shells.contains(&root) {
+            open_vol6
+        } else {
+            vol6.get(&root).copied().unwrap_or(0.0)
+        };
+        if shell_vol6 < 0.0 {
             normals[ti] = [-normals[ti][0], -normals[ti][1], -normals[ti][2]];
         }
     }

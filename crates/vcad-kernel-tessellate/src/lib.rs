@@ -2522,6 +2522,47 @@ fn tessellate_planar_face_with_geom(
     mesh
 }
 
+/// Flip any triangle whose winding disagrees with its own vertex normals.
+///
+/// The normals come straight from the surface and the face orientation; the
+/// winding comes from loop order and per-path conventions (fan centre, ear
+/// clipping, the apex-first cone fan), which a foreign STEP loop can defeat.
+/// Downstream consumers (back-face culling, signed volume) read the winding,
+/// so make it agree with the normals the tessellator already trusts.
+fn align_winding_to_normals(mesh: &mut TriangleMesh) {
+    if mesh.normals.len() != mesh.vertices.len() {
+        return;
+    }
+    let p = |m: &TriangleMesh, i: u32| {
+        let j = i as usize * 3;
+        Vec3::new(
+            m.vertices[j] as f64,
+            m.vertices[j + 1] as f64,
+            m.vertices[j + 2] as f64,
+        )
+    };
+    let n = |m: &TriangleMesh, i: u32| {
+        let j = i as usize * 3;
+        Vec3::new(
+            m.normals[j] as f64,
+            m.normals[j + 1] as f64,
+            m.normals[j + 2] as f64,
+        )
+    };
+    for t in 0..mesh.indices.len() / 3 {
+        let (a, b, c) = (
+            mesh.indices[3 * t],
+            mesh.indices[3 * t + 1],
+            mesh.indices[3 * t + 2],
+        );
+        let winding = (p(mesh, b) - p(mesh, a)).cross(p(mesh, c) - p(mesh, a));
+        let normal = n(mesh, a) + n(mesh, b) + n(mesh, c);
+        if winding.dot(normal) < 0.0 {
+            mesh.indices.swap(3 * t + 1, 3 * t + 2);
+        }
+    }
+}
+
 /// Core tessellation logic for a planar polygon without holes.
 fn tessellate_planar_face_core(outer_verts: &[Point3], reversed: bool) -> TriangleMesh {
     // Find the best fan center vertex index.
@@ -2597,7 +2638,17 @@ fn tessellate_planar_face_core(outer_verts: &[Point3], reversed: bool) -> Triang
 /// Tessellate a concave polygon using ear clipping algorithm.
 /// This is the fallback when fan triangulation cannot produce valid triangles.
 fn tessellate_concave_polygon(verts: &[Point3], reversed: bool) -> TriangleMesh {
+    // Coincident consecutive vertices (a repeated corner, e.g. a micro edge
+    // collapsed by vertex merging) give a zero-length first edge, which the
+    // plane fit below reads as a fully degenerate polygon.
     let n = verts.len();
+    if (0..n).any(|i| verts[i] == verts[(i + 1) % n]) {
+        let deduped: Vec<Point3> = (0..n)
+            .filter(|&i| verts[i] != verts[(i + 1) % n])
+            .map(|i| verts[i])
+            .collect();
+        return tessellate_concave_polygon(&deduped, reversed);
+    }
     if n < 3 {
         return TriangleMesh::new();
     }
@@ -2816,6 +2867,20 @@ fn tessellate_bilinear_face(
     }
 }
 
+/// Newell's area-weighted normal of a closed polygon: its direction follows
+/// the loop's winding (counter-clockwise about the result) regardless of
+/// convexity or which vertex the loop starts at. Not normalized.
+fn newell_normal(verts: &[Point3]) -> Vec3 {
+    let mut n = Vec3::zeros();
+    for (i, a) in verts.iter().enumerate() {
+        let b = verts[(i + 1) % verts.len()];
+        n.x += (a.y - b.y) * (a.z + b.z);
+        n.y += (a.z - b.z) * (a.x + b.x);
+        n.z += (a.x - b.x) * (a.y + b.y);
+    }
+    n
+}
+
 /// Tessellate a planar face with inner loops (holes).
 /// Uses a ring-based approach for better triangle quality: adds intermediate
 /// Steiner points around each hole to prevent long thin triangles.
@@ -2853,14 +2918,23 @@ fn tessellate_planar_face_with_holes(
         return tessellate_simple_polygon(&outer_verts, reversed);
     }
 
-    // Build a 2D projection for triangulation
-    // Compute the face plane from first 3 vertices
-    let e1 = outer_verts[1] - outer_verts[0];
-    let e2 = outer_verts[2] - outer_verts[0];
-    let face_normal = e1.cross(e2);
+    // Build a 2D projection for triangulation. The frame's normal must
+    // follow the loop's winding: a cross product of the first two edges
+    // flips sign whenever vertex 0 is a reflex corner (a notch in a foreign
+    // STEP outline), and the CCW normalization below would then wind every
+    // triangle into the solid. Newell's area-weighted normal has no such
+    // dependence on where the loop starts.
+    let face_normal = newell_normal(&outer_verts);
     if face_normal.norm() < 1e-12 {
         return TriangleMesh::new();
     }
+    let Some(e1) = outer_verts
+        .windows(2)
+        .map(|w| w[1] - w[0])
+        .find(|e| e.norm() > 1e-12)
+    else {
+        return TriangleMesh::new();
+    };
 
     let u_axis = e1.normalize();
     let v_axis = face_normal.cross(e1).normalize();
@@ -4136,6 +4210,16 @@ fn tessellate_cylindrical_face(
     }
 
     verts.extend(borrowed_ring);
+    // A seamless full-circle wall from a foreign STEP file (Onshape writes
+    // these) is bounded by two circular loops — one ring per end, no seam
+    // edge. The outer loop alone sits at a single height, which would give
+    // a zero-height band; the other end ring lives in the hole loop.
+    for &inner in &face.inner_loops {
+        verts.extend(
+            topo.loop_half_edges(inner)
+                .map(|he| topo.vertices[topo.half_edges[he].origin].point),
+        );
+    }
     let verts = verts;
 
     let mut radius = None;
@@ -5729,14 +5813,33 @@ fn tessellate_conical_face(
         }
     }
 
-    // Project vertices onto axis to get v parameter range (distance from apex)
+    // Project vertices onto axis to get v parameter range (distance from apex).
+    // A seamless frustum from a foreign STEP file is bounded by two circular
+    // loops — one ring per end, no seam — so the other end lives in the hole
+    // loop; the outer loop alone would give a zero-height band.
+    let inner_verts: Vec<_> = face
+        .inner_loops
+        .iter()
+        .flat_map(|&l| topo.loop_half_edges(l))
+        .map(|he| topo.vertices[topo.half_edges[he].origin].point)
+        .collect();
     let mut v_min = f64::MAX;
     let mut v_max = f64::MIN;
-    for pt in &verts {
+    for pt in verts.iter().chain(&inner_verts) {
         let d = pt - apex;
         let v = d.dot(axis) / half_angle.cos();
         v_min = v_min.min(v);
         v_max = v_max.max(v);
+    }
+    // A single closed ring with no holes can only bound the tip side of the
+    // cone (the other side is unbounded): a drill-point face whose apex
+    // VERTEX_LOOP carries no edges. Run the band to the apex.
+    if face.inner_loops.is_empty()
+        && verts.len() > 2
+        && (v_max - v_min).abs() <= 1e-9 * v_max.abs().max(v_min.abs()).max(1.0)
+    {
+        v_min = v_min.min(0.0);
+        v_max = v_max.max(0.0);
     }
 
     // Pick the widest ring's radius for adaptive sampling so the base of
@@ -5853,6 +5956,7 @@ fn tessellate_conical_face(
         }
     }
 
+    align_winding_to_normals(&mut mesh);
     mesh
 }
 
@@ -7850,6 +7954,31 @@ mod tests {
             "closed cube should have zero non-manifold edges, got {}",
             nm.len()
         );
+    }
+
+    /// A thin quad ~25 mm from the origin with a repeated corner. The fan
+    /// check rejects it (f32 rounding exceeds its tolerance here), and the
+    /// repeated corner used to defeat the ear clipper's plane fit, so the
+    /// face came out empty. Both paths must emit its one real triangle.
+    fn far_sliver_quad() -> [Point3; 4] {
+        [
+            Point3::new(25.77266172598, 12.16706750808, -4.999670655715),
+            Point3::new(25.77266172598, 12.16706750808, -4.999670655715),
+            Point3::new(25.5249090077692, 12.254206929160299, -4.80000000000165),
+            Point3::new(25.524909007769402, 12.2542069291597, -2.0),
+        ]
+    }
+
+    #[test]
+    fn planar_face_with_duplicate_corner_far_from_origin_is_not_empty() {
+        let mesh = tessellate_planar_face_core(&far_sliver_quad(), false);
+        assert!(!mesh.indices.is_empty());
+    }
+
+    #[test]
+    fn ear_clip_drops_coincident_consecutive_vertices() {
+        let mesh = tessellate_concave_polygon(&far_sliver_quad(), false);
+        assert_eq!(mesh.indices.len(), 3);
     }
 
     #[test]

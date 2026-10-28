@@ -94,7 +94,7 @@ pub struct StepShell {
     pub is_closed: bool,
 }
 
-/// Parsed MANIFOLD_SOLID_BREP entity.
+/// Parsed MANIFOLD_SOLID_BREP (or BREP_WITH_VOIDS) entity.
 #[derive(Debug, Clone)]
 pub struct StepSolid {
     /// The entity ID (reserved for debugging/error reporting).
@@ -102,6 +102,8 @@ pub struct StepSolid {
     pub id: u64,
     /// The outer shell entity ID.
     pub outer_shell_id: u64,
+    /// Inner void shells (`BREP_WITH_VOIDS` only; empty for a manifold solid).
+    pub void_shell_ids: Vec<u64>,
 }
 
 /// Parse a VERTEX_POINT entity.
@@ -259,7 +261,22 @@ pub fn parse_manifold_solid_brep(file: &StepFile, id: u64) -> Result<StepSolid, 
     match entity.type_name.as_str() {
         "MANIFOLD_SOLID_BREP" => {
             let outer_shell_id = entity.entity_ref(1)?;
-            Ok(StepSolid { id, outer_shell_id })
+            Ok(StepSolid {
+                id,
+                outer_shell_id,
+                void_shell_ids: Vec::new(),
+            })
+        }
+        // BREP_WITH_VOIDS is a MANIFOLD_SOLID_BREP subtype that appends a
+        // list of inner (oriented) closed shells bounding internal cavities.
+        "BREP_WITH_VOIDS" => {
+            let outer_shell_id = entity.entity_ref(1)?;
+            let void_shell_ids = entity.entity_ref_list(2)?;
+            Ok(StepSolid {
+                id,
+                outer_shell_id,
+                void_shell_ids,
+            })
         }
         other => Err(StepError::type_mismatch("MANIFOLD_SOLID_BREP", other)),
     }

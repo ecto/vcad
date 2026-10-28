@@ -9,7 +9,7 @@ use crate::entities::{
     parse_oriented_edge, parse_shell, parse_surface_oriented, parse_vertex_point, EntityArgs,
 };
 use crate::error::StepError;
-use stepperoni::{Parser, StepFile};
+use stepperoni::{Parser, StepFile, StepValue};
 
 use vcad_kernel_geom::{Curve3d, GeometryStore};
 use vcad_kernel_primitives::BRepSolid;
@@ -39,15 +39,21 @@ const MAX_EDGES_PER_LOOP: usize = 100_000;
 /// Compute the absolute enclosed area of a topology loop using Newell's method.
 /// Works in 3D — the magnitude of the cross-product sum gives twice the area.
 fn loop_area_3d(topo: &Topology, loop_id: LoopId) -> f64 {
+    loop_newell_normal(topo, loop_id).norm() * 0.5
+}
+
+/// Newell's normal of a loop: its direction follows the loop's winding
+/// (counter-clockwise about it), its length is twice the enclosed area.
+fn loop_newell_normal(topo: &Topology, loop_id: LoopId) -> vcad_kernel_math::Vec3 {
     let verts: Vec<vcad_kernel_math::Point3> = topo
         .loop_half_edges(loop_id)
         .map(|he| topo.vertices[topo.half_edges[he].origin].point)
         .collect();
     let n = verts.len();
-    if n < 3 {
-        return 0.0;
-    }
     let mut cross = vcad_kernel_math::Vec3::zeros();
+    if n < 3 {
+        return cross;
+    }
     for i in 0..n {
         let c = verts[i];
         let nx = verts[(i + 1) % n];
@@ -55,7 +61,7 @@ fn loop_area_3d(topo: &Topology, loop_id: LoopId) -> f64 {
         cross.y += (c.z - nx.z) * (c.x + nx.x);
         cross.z += (c.x - nx.x) * (c.y + nx.y);
     }
-    cross.norm() * 0.5
+    cross
 }
 
 /// Compute the angle parameter of a point on a circle.
@@ -209,6 +215,73 @@ pub(crate) fn read_solid_from_file(file: &StepFile, solid_id: u64) -> Result<BRe
     reader.read_solid(solid_id).map(|(solid, _)| solid)
 }
 
+/// STEP entity types that define a solid: `MANIFOLD_SOLID_BREP` and its
+/// `BREP_WITH_VOIDS` subtype (Onshape writes the latter for hollow bodies).
+pub(crate) const SOLID_BREP_TYPES: [&str; 2] = ["MANIFOLD_SOLID_BREP", "BREP_WITH_VOIDS"];
+
+pub(crate) fn is_solid_brep_type(type_name: &str) -> bool {
+    SOLID_BREP_TYPES.contains(&type_name)
+}
+
+/// Millimetres per length unit declared in the file's `LENGTH_UNIT` complex
+/// entity: an `SI_UNIT` with an optional prefix, or a `CONVERSION_BASED_UNIT`
+/// named inch/foot. Returns 1.0 (millimetres) when no length unit is declared.
+fn length_unit_mm(file: &StepFile) -> f64 {
+    let mut ids: Vec<u64> = file
+        .entities
+        .values()
+        .filter(|e| {
+            e.type_name == "LENGTH_UNIT"
+                || e.args.iter().any(
+                    |a| matches!(a, StepValue::Typed { type_name, .. } if type_name == "LENGTH_UNIT"),
+                )
+        })
+        .map(|e| e.id)
+        .collect();
+    ids.sort_unstable();
+    for id in ids {
+        let Some(e) = file.get(id) else { continue };
+        let parts: Vec<(&str, &[StepValue])> =
+            std::iter::once((e.type_name.as_str(), e.args.as_slice()))
+                .chain(e.args.iter().filter_map(|a| match a {
+                    StepValue::Typed { type_name, args } => {
+                        Some((type_name.as_str(), args.as_slice()))
+                    }
+                    _ => None,
+                }))
+                .collect();
+        for (type_name, args) in &parts {
+            match *type_name {
+                "SI_UNIT" => {
+                    let prefix = args
+                        .first()
+                        .and_then(|v| v.as_enum())
+                        .map(|p| p.trim_matches('.'));
+                    return match prefix {
+                        None => 1000.0,
+                        Some("MILLI") => 1.0,
+                        Some("CENTI") => 10.0,
+                        Some("DECI") => 100.0,
+                        Some("MICRO") => 1e-3,
+                        Some("KILO") => 1e6,
+                        Some(_) => 1.0,
+                    };
+                }
+                "CONVERSION_BASED_UNIT" => {
+                    let name = args.first().and_then(|v| v.as_string()).unwrap_or("");
+                    match name.to_ascii_uppercase().as_str() {
+                        "INCH" | "IN" => return 25.4,
+                        "FOOT" | "FT" => return 304.8,
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    1.0
+}
+
 /// Context for reading STEP files and building B-rep solids.
 pub(crate) struct StepReader<'a> {
     pub(crate) file: &'a StepFile,
@@ -225,6 +298,9 @@ pub(crate) struct StepReader<'a> {
     /// For subdivided curved edges: maps (STEP edge ID, orientation) to
     /// an ordered chain of half-edge IDs that replace the single original.
     subdivided_edges: HashMap<(u64, bool), Vec<HalfEdgeId>>,
+    /// Millimetres per file length unit (1.0 when the file declares mm or
+    /// declares nothing).
+    length_scale: f64,
 }
 
 impl<'a> StepReader<'a> {
@@ -236,6 +312,7 @@ impl<'a> StepReader<'a> {
             half_edge_map: HashMap::new(),
             surface_map: HashMap::new(),
             subdivided_edges: HashMap::new(),
+            length_scale: length_unit_mm(file),
         }
     }
 
@@ -298,7 +375,7 @@ impl<'a> StepReader<'a> {
                     let is_solid = self
                         .file
                         .get(item_id)
-                        .map(|e| e.type_name == "MANIFOLD_SOLID_BREP")
+                        .map(|e| is_solid_brep_type(&e.type_name))
                         .unwrap_or(false);
                     if is_solid && !ids.contains(&item_id) {
                         ids.push(item_id);
@@ -326,11 +403,16 @@ impl<'a> StepReader<'a> {
             // Anchor-less file (legacy vcad exports, minimal foreign files):
             // fall back to scanning for solids directly.
             None => {
-                let solid_entities = self.file.entities_of_type("MANIFOLD_SOLID_BREP");
-                if solid_entities.is_empty() {
+                let mut ids: Vec<u64> = SOLID_BREP_TYPES
+                    .iter()
+                    .flat_map(|t| self.file.entities_of_type(t))
+                    .map(|e| e.id)
+                    .collect();
+                if ids.is_empty() {
                     return Err(StepError::NoSolids);
                 }
-                solid_entities.iter().map(|e| e.id).collect()
+                ids.sort_unstable();
+                ids
             }
         };
 
@@ -380,6 +462,14 @@ impl<'a> StepReader<'a> {
             total_faces: step_shell.face_ids.len(),
             ..Default::default()
         };
+        if !step_solid.void_shell_ids.is_empty() {
+            // Only the outer shell is imported: internal cavities are not
+            // visible, but the imported solid is filled where they were.
+            solid_report.notes.push(format!(
+                "BREP_WITH_VOIDS: {} internal void shell(s) not imported; volume excludes the cavities",
+                step_solid.void_shell_ids.len()
+            ));
+        }
 
         // First pass: collect all vertices and surfaces
         for &face_id in &step_shell.face_ids {
@@ -458,8 +548,14 @@ impl<'a> StepReader<'a> {
                         continue;
                     }
 
-                    // Determine half-edge direction based on orientation
-                    let (start_v, end_v) = if oe.orientation == edge.same_sense {
+                    // The loop walks the edge start→end when the ORIENTED_EDGE
+                    // says .T., end→start otherwise. `same_sense` relates the
+                    // underlying curve's parameter to the edge and has no say
+                    // in vertex order (it only steers which way an arc sweeps,
+                    // in `sample_circle_arc`); folding it in here walked every
+                    // same_sense=.F. edge backwards — collapsed slivers on
+                    // lines, the complementary arc on circles.
+                    let (start_v, end_v) = if oe.orientation {
                         (edge.start_vertex_id, edge.end_vertex_id)
                     } else {
                         (edge.end_vertex_id, edge.start_vertex_id)
@@ -510,6 +606,8 @@ impl<'a> StepReader<'a> {
 
         // Third pass: create loops, faces, and shell
         let mut vcad_face_ids = Vec::new();
+        // Plane surface index -> index of its normal-flipped copy.
+        let mut flipped_planes: HashMap<usize, usize> = HashMap::new();
 
         for &face_id in &step_shell.face_ids {
             if skipped_faces.contains(&face_id) {
@@ -578,11 +676,45 @@ impl<'a> StepReader<'a> {
             // `same_sense` is expressed against the STEP surface normal;
             // XOR with the parse-time flag when our surface's natural
             // normal points the other way.
-            let orientation = if step_face.same_sense != sense_flipped {
+            let mut orientation = if step_face.same_sense != sense_flipped {
                 Orientation::Forward
             } else {
                 Orientation::Reversed
             };
+
+            // The planar tessellator triangulates the outer loop as wound and
+            // flips the result for a Reversed face, so it needs the loop to
+            // wind about the plane's own normal. Conforming STEP winds loops
+            // about the FACE normal instead — on a reversed face that is the
+            // other way, and the plane would mesh facing into the solid.
+            // (vcad's own writer winds about the surface normal.) Measure the
+            // winding rather than assume a convention: when the loop runs
+            // against the plane's normal, give the face a normal-flipped copy
+            // of the plane and toggle its orientation — the same face normal,
+            // now agreeing with its loop.
+            let mut surface_idx = surface_idx;
+            let flipped = geom.surfaces[surface_idx]
+                .as_any()
+                .downcast_ref::<vcad_kernel_geom::Plane>()
+                .filter(|plane| {
+                    loop_newell_normal(&topo, outer).dot(*plane.normal_dir.as_ref()) < 0.0
+                })
+                .map(|plane| {
+                    vcad_kernel_geom::Plane::new(
+                        plane.origin,
+                        *plane.y_dir.as_ref(),
+                        *plane.x_dir.as_ref(),
+                    )
+                });
+            if let Some(flipped) = flipped {
+                surface_idx = *flipped_planes
+                    .entry(surface_idx)
+                    .or_insert_with(|| geom.add_surface(Box::new(flipped)));
+                orientation = match orientation {
+                    Orientation::Forward => Orientation::Reversed,
+                    Orientation::Reversed => Orientation::Forward,
+                };
+            }
 
             let face_id = topo.add_face(outer, surface_idx, orientation);
             for inner in inner_loops {
@@ -604,6 +736,26 @@ impl<'a> StepReader<'a> {
             solid_report.notes.push(format!(
                 "{subdivided} curved edge{} approximated by chordal subdivision",
                 if subdivided == 1 { "" } else { "s" }
+            ));
+        }
+
+        // STEP coordinates are in the file's declared length unit; vcad is
+        // millimetres. Onshape (and many others) write metres.
+        if self.length_scale != 1.0 {
+            let t = vcad_kernel_math::Transform::scale(
+                self.length_scale,
+                self.length_scale,
+                self.length_scale,
+            );
+            for (_id, v) in &mut topo.vertices {
+                v.point = t.apply_point(&v.point);
+            }
+            for surface in &mut geom.surfaces {
+                *surface = surface.transform(&t);
+            }
+            solid_report.notes.push(format!(
+                "scaled from file length unit by {} to millimetres",
+                self.length_scale
             ));
         }
 
@@ -841,10 +993,8 @@ mod tests {
         assert_eq!(solids.len(), 1);
     }
 
-    #[test]
-    fn test_read_simple_box() {
-        // A minimal STEP file representing a simple box
-        let step_content = r#"ISO-10303-21;
+    /// A minimal STEP file representing a 10 mm box.
+    const BOX_STEP: &str = r#"ISO-10303-21;
 HEADER;
 FILE_DESCRIPTION((''), '2;1');
 FILE_NAME('box.step', '2024-01-01', (''), (''), '', '', '');
@@ -1014,6 +1164,11 @@ ENDSEC;
 END-ISO-10303-21;
 "#;
 
+    #[test]
+    fn test_read_simple_box() {
+        // A minimal STEP file representing a simple box
+        let step_content = BOX_STEP;
+
         let solids = read_step_from_buffer(step_content.as_bytes()).unwrap();
         assert_eq!(solids.len(), 1);
 
@@ -1021,6 +1176,63 @@ END-ISO-10303-21;
         assert_eq!(solid.topology.vertices.len(), 8);
         assert_eq!(solid.topology.faces.len(), 6);
         assert_eq!(solid.geometry.surfaces.len(), 6);
+    }
+
+    #[test]
+    fn same_sense_false_edge_keeps_vertex_order() {
+        // same_sense only says the LINE's direction runs against the edge;
+        // the loop still walks #11 -> #12. Reading it as a vertex-order flip
+        // repeated a corner in both faces that use the edge.
+        let step_content = BOX_STEP.replace(
+            "#100 = EDGE_CURVE('', #11, #12, #70, .T.);",
+            "#100 = EDGE_CURVE('', #11, #12, #70, .F.);",
+        );
+        let solids = read_step_from_buffer(step_content.as_bytes()).unwrap();
+        let topo = &solids[0].topology;
+        for (_, face) in &topo.faces {
+            let verts = topo.loop_vertices(face.outer_loop);
+            let mut distinct = verts.clone();
+            distinct.sort();
+            distinct.dedup();
+            assert_eq!(distinct.len(), 4, "face loop {verts:?}");
+        }
+    }
+
+    #[test]
+    fn test_read_brep_with_voids() {
+        // Onshape writes hollow bodies as BREP_WITH_VOIDS; the outer shell is
+        // imported and the dropped voids are reported, not silently lost.
+        let step_content = BOX_STEP
+            .replace(
+                "#190 = MANIFOLD_SOLID_BREP('Box', #180);",
+                "#185 = ORIENTED_CLOSED_SHELL('', *, #180, .F.);\n#190 = BREP_WITH_VOIDS('Box', #180, (#185));",
+            );
+        let result = read_step_from_buffer_with_report(step_content.as_bytes()).unwrap();
+        assert_eq!(result.solids.len(), 1);
+        assert_eq!(result.solids[0].topology.faces.len(), 6);
+        let notes = &result.report.solids[0].notes;
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("BREP_WITH_VOIDS: 1 internal void")),
+            "{notes:?}"
+        );
+    }
+
+    #[test]
+    fn test_metre_length_unit_scales_to_mm() {
+        let step_content = BOX_STEP.replace(
+            "/* Solid */",
+            "#200 = ( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT($,.METRE.) );\n/* Solid */",
+        );
+        let solids = read_step_from_buffer(step_content.as_bytes()).unwrap();
+        let max_x = solids[0]
+            .topology
+            .vertices
+            .values()
+            .map(|v| v.point.x)
+            .fold(f64::MIN, f64::max);
+        assert!((max_x - 10_000.0).abs() < 1e-9, "max_x = {max_x}");
     }
 
     #[test]
