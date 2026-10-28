@@ -1056,44 +1056,41 @@ fn place_parts_cached(
     };
     let mut node_cache = HashMap::new();
     // Serial: keys, cache lookups, and the BRep each miss must tessellate.
-    let resolved: Vec<(ArticulatedPart, Placed)> =
-        parts
-            .into_iter()
-            .map(|(part, fallback)| {
-                let transform = world.get(&part.instance_id).cloned().or(fallback);
-                let key = vcad_eval::cache::root_fingerprint(part.def_root, &doc.nodes, &settings)
-                    .map(|k| k.derive(&serde_json::to_vec(&transform).unwrap_or_default()));
-                if let Some(mesh) = key.as_ref().and_then(|k| cache.get(k)) {
-                    let solid = Solid::from_mesh(evaluated_to_triangle_mesh(mesh));
-                    return (part, Ok(solid));
-                }
-                let local = match part.stand_in {
-                    true => catch_unwind(AssertUnwindSafe(|| {
-                        vcad_eval::evaluate_node(part.def_root, &doc.nodes, &mut node_cache)
-                    }))
-                    .ok()
-                    .and_then(Result::ok)
-                    .flatten()
-                    // No BRep after all (an imported mesh): the mesh is the
-                    // geometry.
-                    .unwrap_or_else(|| part.solid.clone()),
-                    false => part.solid.clone(),
-                };
-                let placed = match &transform {
-                    Some(t) => local.apply_transform(&transform3d_to_kernel(t)),
-                    None => local,
-                };
-                let outcome = match key.filter(|_| placed.as_brep().is_some()) {
-                    Some(key) => Err((placed, key)),
-                    None => Ok(placed),
-                };
-                (part, outcome)
-            })
-            .collect();
+    let resolved: Vec<(ArticulatedPart, Placed)> = parts
+        .into_iter()
+        .map(|(part, fallback)| {
+            let transform = world.get(&part.instance_id).cloned().or(fallback);
+            let key = vcad_eval::cache::root_fingerprint(part.def_root, &doc.nodes, &settings)
+                .map(|k| k.derive(&serde_json::to_vec(&transform).unwrap_or_default()));
+            if let Some(mesh) = key.as_ref().and_then(|k| cache.get(k)) {
+                let solid = Solid::from_mesh(evaluated_to_triangle_mesh(mesh));
+                return (part, Ok(solid));
+            }
+            let local = match part.stand_in {
+                true => catch_unwind(AssertUnwindSafe(|| {
+                    vcad_eval::evaluate_node(part.def_root, &doc.nodes, &mut node_cache)
+                }))
+                .ok()
+                .and_then(Result::ok)
+                .flatten()
+                // No BRep after all (an imported mesh): the mesh is the
+                // geometry.
+                .unwrap_or_else(|| part.solid.clone()),
+                false => part.solid.clone(),
+            };
+            let placed = match &transform {
+                Some(t) => local.apply_transform(&transform3d_to_kernel(t)),
+                None => local,
+            };
+            let outcome = match key.filter(|_| placed.as_brep().is_some()) {
+                Some(key) => Err((placed, key)),
+                None => Ok(placed),
+            };
+            (part, outcome)
+        })
+        .collect();
     // Parallel: tessellate the misses.
-    let tessellate = |r: &Placed| {
-        r.as_ref().err().map(|(placed, _)| placed.to_mesh(segments))
-    };
+    let tessellate = |r: &Placed| r.as_ref().err().map(|(placed, _)| placed.to_mesh(segments));
     #[cfg(feature = "raytrace")]
     let meshes: Vec<_> = {
         use rayon::prelude::*;
@@ -1369,8 +1366,7 @@ fn evaluate_assembly_instances(
     // Per part definition: the solid (or why there is none), whether it is a
     // stand-in mesh, and what it cost.
     #[allow(clippy::type_complexity)]
-    let mut def_solids: HashMap<&str, (Result<Solid, String>, bool, Option<f64>)> =
-        HashMap::new();
+    let mut def_solids: HashMap<&str, (Result<Solid, String>, bool, Option<f64>)> = HashMap::new();
     let mut out = Vec::new();
 
     for inst in instances {

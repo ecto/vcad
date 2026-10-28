@@ -77,8 +77,14 @@ fn cached_assembly_renders_match_the_uncached_render() {
 
     let cold = render(Some(cache.clone()));
     let after_cold = cache.stats();
-    assert!(after_cold.stored > 0, "cold render cached nothing: {after_cold:?}");
-    assert!(cold == uncached, "cold cached render differs from the uncached one");
+    assert!(
+        after_cold.stored > 0,
+        "cold render cached nothing: {after_cold:?}"
+    );
+    assert!(
+        cold == uncached,
+        "cold cached render differs from the uncached one"
+    );
 
     let warm = render(Some(cache.clone()));
     let after_warm = cache.stats();
@@ -87,5 +93,8 @@ fn cached_assembly_renders_match_the_uncached_render() {
         "warm render missed the cache: {after_warm:?}"
     );
     assert_eq!(after_warm.stored, after_cold.stored);
-    assert!(warm == uncached, "warm cached render differs from the uncached one");
+    assert!(
+        warm == uncached,
+        "warm cached render differs from the uncached one"
+    );
 }

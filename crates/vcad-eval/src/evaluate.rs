@@ -739,10 +739,7 @@ fn evaluate_and_mesh(
     match outcome {
         Ok(Ok(m)) => Ok(m),
         Ok(Err(err)) => Err(err.to_string()),
-        Err(panic_payload) => Err(format!(
-            "kernel panic: {}",
-            panic_message(&panic_payload)
-        )),
+        Err(panic_payload) => Err(format!("kernel panic: {}", panic_message(&panic_payload))),
     }
 }
 

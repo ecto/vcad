@@ -539,7 +539,11 @@ mod tests {
                 }
             }
         }
-        assert!(expected.len() > 20, "test geometry too sparse: {}", expected.len());
+        assert!(
+            expected.len() > 20,
+            "test geometry too sparse: {}",
+            expected.len()
+        );
         merge_nearby_vertices(&mut topo, tol);
         let survivors: std::collections::HashSet<_> = topo.vertices.keys().collect();
         for (id, _) in &verts {
