@@ -18,7 +18,7 @@
     "@phosphor-icons/react": "^2.1.7",
     "@radix-ui/react-dialog": "^1.1.4",
     "@supabase/supabase-js": "^2.45.0",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.16"
   },
   "peerDependencies": {
     "react": "^19.0.0"
