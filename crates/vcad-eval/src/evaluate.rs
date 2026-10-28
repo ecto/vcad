@@ -106,6 +106,7 @@ fn evaluate_inner(
 
     let mut node_timings: HashMap<String, NodeTiming> = HashMap::new();
     let mut tessellate_ms: f64 = 0.0;
+    let mut root_ms: Vec<(String, f64)> = Vec::new();
     let mut failures: Vec<RootFailure> = Vec::new();
 
     // Content-addressed root cache (see `crate::cache`). The fingerprint
@@ -269,6 +270,13 @@ fn evaluate_inner(
                             if let Some(nt) = node_timings.get_mut(&entry.root.to_string()) {
                                 nt.mesh_ms = ms;
                             }
+                            if let Some(nt) = node_timings.get(&eval_root.to_string()) {
+                                let name = doc.nodes.get(&entry.root).and_then(|n| n.name.clone());
+                                root_ms.push((
+                                    name.unwrap_or_else(|| format!("root[{idx}]")),
+                                    nt.eval_ms + ms,
+                                ));
+                            }
                         }
                         Ok((tri_to_evaluated_render(tri), Some(s)))
                     }
@@ -399,7 +407,11 @@ fn evaluate_inner(
                                 let t_mesh = clock.map(|c| c.now_ms());
                                 let tri = s.to_mesh(segments);
                                 if let Some(t0) = t_mesh {
-                                    tessellate_ms += clock.unwrap().now_ms() - t0;
+                                    let ms = clock.unwrap().now_ms() - t0;
+                                    tessellate_ms += ms;
+                                    if let Some(nt) = node_timings.get(&part_def.root.to_string()) {
+                                        root_ms.push((format!("partDef {id}"), nt.eval_ms + ms));
+                                    }
                                 }
                                 Ok(tri_to_evaluated_render(tri))
                             }
@@ -561,6 +573,7 @@ fn evaluate_inner(
         clash_ms,
         assembly_ms,
         nodes: node_timings,
+        roots: root_ms,
     });
 
     Ok(EvaluatedScene {

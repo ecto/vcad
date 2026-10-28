@@ -361,6 +361,17 @@ pub fn boolean_op_reported(
     op: BooleanOp,
     segments: u32,
 ) -> Result<(BooleanResult, BooleanReport), BooleanError> {
+    crate::timing::timed(crate::timing::Kind::Boolean, || {
+        boolean_op_reported_untimed(solid_a, solid_b, op, segments)
+    })
+}
+
+fn boolean_op_reported_untimed(
+    solid_a: &BRepSolid,
+    solid_b: &BRepSolid,
+    op: BooleanOp,
+    segments: u32,
+) -> Result<(BooleanResult, BooleanReport), BooleanError> {
     // Analytic surfaces of both operands, kept so the mesh fallback's
     // result can be re-projected onto them (defect D: BSP splitting and
     // seam healing leave quadric-face vertices up to ~0.6 mm off-surface,
@@ -964,6 +975,18 @@ fn difference_left_tool_material(
 /// produce a sound result, fail closed with [`BooleanError::InvalidResult`]
 /// rather than returning a wrong solid.
 fn mesh_fallback(
+    mesh_a: &TriangleMesh,
+    mesh_b: &TriangleMesh,
+    op: BooleanOp,
+    quadrics: &QuadricCtx,
+    refine: bool,
+) -> Result<BooleanResult, BooleanError> {
+    crate::timing::timed(crate::timing::Kind::Fallback, || {
+        mesh_fallback_untimed(mesh_a, mesh_b, op, quadrics, refine)
+    })
+}
+
+fn mesh_fallback_untimed(
     mesh_a: &TriangleMesh,
     mesh_b: &TriangleMesh,
     op: BooleanOp,
