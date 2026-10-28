@@ -222,7 +222,8 @@ pub fn render_photoreal_jpeg_str(
     opts: &RasterOptions,
     pr: &PhotorealOptions,
 ) -> Result<Vec<u8>, String> {
-    encode_jpeg(rasterize(raw_vcad, opts, pr, false)?, opts)
+    let frame = rasterize(raw_vcad, opts, pr, false)?;
+    crate::timed_stage("encode jpeg", || encode_jpeg(frame, opts))
 }
 
 /// Render raw `.vcad` document JSON to a photorealistic RGBA PNG.
@@ -235,7 +236,8 @@ pub fn render_photoreal_png_str(
     opts: &RasterOptions,
     pr: &PhotorealOptions,
 ) -> Result<Vec<u8>, String> {
-    encode_png(rasterize(raw_vcad, opts, pr, true)?, opts)
+    let frame = rasterize(raw_vcad, opts, pr, true)?;
+    crate::timed_stage("encode png", || encode_png(frame, opts))
 }
 
 /// Build one BVH per solid, world-placed at the identity.
@@ -806,11 +808,18 @@ fn rasterize(
     if solids.is_empty() {
         return Err("no solids produced".to_string());
     }
-    let mut objects = build_objects(&solids, pr.mesh_segments())?;
+    let mut objects = crate::timed_stage("tessellate + BVH", || {
+        build_objects(&solids, pr.mesh_segments())
+    })?;
     apply_look(&mut objects, &solids, pr);
-    let framing = frame_scene(&solids, &objects, opts, pr)?;
-    let scene = dress_scene(objects, &framing, pr)?;
-    Ok(trace_frame(&scene, &framing, pr, png))
+    let (framing, scene) = crate::timed_stage("frame + dress scene", || {
+        let framing = frame_scene(&solids, &objects, opts, pr)?;
+        let scene = dress_scene(objects, &framing, pr)?;
+        Ok::<_, String>((framing, scene))
+    })?;
+    Ok(crate::timed_stage("path trace", || {
+        trace_frame(&scene, &framing, pr, png)
+    }))
 }
 
 pub(crate) fn check_raster_opts(opts: &RasterOptions) -> Result<(), String> {

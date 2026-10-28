@@ -1005,6 +1005,26 @@ fn place_part(
     }
 }
 
+/// Whether `--timings` (or `VCAD_TIMINGS`) asked for a stage breakdown.
+/// Always false on wasm32, which has no clock to read.
+pub(crate) fn timings_on() -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    return vcad_eval::timings::enabled();
+    #[cfg(target_arch = "wasm32")]
+    false
+}
+
+/// Run `f` as a named `--timings` stage (just `f` when timings are off).
+pub(crate) fn timed_stage<T>(name: &str, f: impl FnOnce() -> T) -> T {
+    #[cfg(not(target_arch = "wasm32"))]
+    return vcad_eval::timings::stage(name, f);
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = name;
+        f()
+    }
+}
+
 fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
     let ev = evaluate_vcad_document(raw_vcad)?;
     let mut solids = ev.statics;
@@ -1030,7 +1050,13 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
 }
 
 fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
-    let ev = evaluate_vcad_document_inner(raw_vcad, false)?;
+    let ev = evaluate_vcad_document_inner(raw_vcad, timings_on())?;
+    #[cfg(not(target_arch = "wasm32"))]
+    vcad_eval::timings::record_roots(
+        ev.log
+            .iter()
+            .filter_map(|p| Some((p.name.clone(), p.eval_ms?))),
+    );
     report::warn_dropped(&ev.log);
     Ok(ev)
 }
@@ -1040,10 +1066,16 @@ fn evaluate_vcad_document(raw_vcad: &str) -> Result<EvaluatedDocument, String> {
 /// path so wasm32, where `Instant::now` panics, never reaches it).
 fn evaluate_vcad_document_inner(raw_vcad: &str, timed: bool) -> Result<EvaluatedDocument, String> {
     DOCUMENT_EVALS.with(|c| c.set(c.get() + 1));
-    let parsed = parse_vcad_file(raw_vcad).map_err(|e| format!("parse: {}", e))?;
+    let parsed = timed_stage("parse document", || parse_vcad_file(raw_vcad))
+        .map_err(|e| format!("parse: {}", e))?;
     let (root_cache, mesh_segments) = ROOT_CACHE
         .with(|c| c.borrow().clone())
         .map_or((None, 0), |(c, n)| (Some(c), n));
+    // Inside a root-cache scope the scene's part-definition meshes were
+    // tessellated at exactly the segment count this render draws at (that is
+    // what the scope's `segments` promises), so they are all the geometry
+    // the instances need — same as a root cache hit.
+    let defs_from_scene = root_cache.is_some();
     // NOTE: catch_unwind only works on native targets. On
     // wasm32-unknown-unknown a panic compiles to an `unreachable` trap —
     // it never unwinds, this guard never fires, and the WASM instance is
@@ -1054,20 +1086,29 @@ fn evaluate_vcad_document_inner(raw_vcad: &str, timed: bool) -> Result<Evaluated
     // is O(n²) pairwise booleans across scene roots — fatal for many-root
     // documents (an imported chip die has ~90k roots).
     let stamps = report::Stamps::new(timed);
-    let scene = catch_unwind(AssertUnwindSafe(|| {
-        evaluate_document_with_sheet_metal(
-            &parsed.document,
-            &EvalOptions {
-                skip_clash_detection: true,
-                root_cache,
-                mesh_segments,
-                on_root: stamps.on_root(),
-                ..Default::default()
-            },
-        )
-    }))
+    #[cfg(not(target_arch = "wasm32"))]
+    let clock = vcad_eval::timings::clock();
+    #[cfg(target_arch = "wasm32")]
+    let clock = None;
+    let scene = timed_stage("evaluate roots", || {
+        catch_unwind(AssertUnwindSafe(|| {
+            evaluate_document_with_sheet_metal(
+                &parsed.document,
+                &EvalOptions {
+                    skip_clash_detection: true,
+                    root_cache,
+                    mesh_segments,
+                    on_root: stamps.on_root(),
+                    clock,
+                    ..Default::default()
+                },
+            )
+        }))
+    })
     .map_err(|_| "eval panicked".to_string())?
     .map_err(|e| format!("eval: {}", e))?;
+    #[cfg(not(target_arch = "wasm32"))]
+    vcad_eval::timings::record_eval(scene.timing.as_ref());
 
     let materials = &parsed.document.materials;
     // `scene.parts` is 1:1 with the document's *visible* roots, in order —
@@ -1155,7 +1196,9 @@ fn evaluate_vcad_document_inner(raw_vcad: &str, timed: bool) -> Result<Evaluated
         &scene,
         &root_ms,
     );
-    let parts = evaluate_assembly_instances(&parsed.document, &scene, timed, &mut log)?;
+    let parts = timed_stage("evaluate instances", || {
+        evaluate_assembly_instances(&parsed.document, &scene, timed, defs_from_scene, &mut log)
+    })?;
     Ok(EvaluatedDocument {
         doc: parsed.document,
         statics: solids,
@@ -1172,6 +1215,7 @@ fn evaluate_assembly_instances(
     doc: &vcad_ir::Document,
     scene: &vcad_eval::EvaluatedScene,
     timed: bool,
+    defs_from_scene: bool,
     log: &mut Vec<report::PartLog>,
 ) -> Result<Vec<ArticulatedPart>, String> {
     let (Some(part_defs), Some(instances)) = (&doc.part_defs, &doc.instances) else {
@@ -1204,6 +1248,30 @@ fn evaluate_assembly_instances(
             .entry(inst.part_def_id.as_str())
             .or_insert_with(|| {
                 let t0 = report::now(timed);
+                let scene_mesh = || {
+                    scene
+                        .part_defs
+                        .as_ref()?
+                        .iter()
+                        .find(|pd| pd.id == inst.part_def_id)
+                        .filter(|pd| !pd.mesh.indices.is_empty())
+                        .map(|pd| {
+                            Solid::from_mesh(vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
+                                vertices: pd.mesh.positions.clone(),
+                                indices: pd.mesh.indices.clone(),
+                                normals: pd.mesh.normals.clone().unwrap_or_default(),
+                                face_kinds: pd.mesh.face_kinds.clone().unwrap_or_default(),
+                                face_ids: pd.mesh.face_ids.clone().unwrap_or_default(),
+                            })
+                        })
+                };
+                // Re-evaluating the BRep would redo every boolean the scene
+                // evaluation just did (or that the cache just skipped).
+                if defs_from_scene {
+                    if let Some(s) = scene_mesh() {
+                        return (Ok(s), report::elapsed_ms(t0));
+                    }
+                }
                 let brep = catch_unwind(AssertUnwindSafe(|| {
                     vcad_eval::evaluate_node(def.root, &doc.nodes, &mut cache)
                         .map_err(|e| e.to_string())
@@ -1219,25 +1287,7 @@ fn evaluate_assembly_instances(
                     .flatten()
                     // No BRep (mesh-imported part, e.g. a URDF link's STL):
                     // wrap the evaluated triangle mesh, same as the roots path.
-                    .or_else(|| {
-                        scene
-                            .part_defs
-                            .as_ref()?
-                            .iter()
-                            .find(|pd| pd.id == inst.part_def_id)
-                            .filter(|pd| !pd.mesh.indices.is_empty())
-                            .map(|pd| {
-                                Solid::from_mesh(
-                                    vcad_kernel::vcad_kernel_tessellate::TriangleMesh {
-                                        vertices: pd.mesh.positions.clone(),
-                                        indices: pd.mesh.indices.clone(),
-                                        normals: pd.mesh.normals.clone().unwrap_or_default(),
-                                        face_kinds: pd.mesh.face_kinds.clone().unwrap_or_default(),
-                                        face_ids: pd.mesh.face_ids.clone().unwrap_or_default(),
-                                    },
-                                )
-                            })
-                    });
+                    .or_else(scene_mesh);
                 let solid = solid.ok_or_else(|| {
                     let mesh_why = scene
                         .failures

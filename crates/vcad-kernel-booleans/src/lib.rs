@@ -24,6 +24,7 @@ pub mod mesh;
 mod no_crossing;
 mod pipeline;
 pub mod recut_log;
+pub mod timing;
 mod repair;
 pub mod sew;
 pub mod split;

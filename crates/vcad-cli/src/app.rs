@@ -1335,10 +1335,14 @@ pub fn evaluate_scene(doc: &Document) -> Result<vcad_eval::EvaluatedScene> {
             .clone()
             .map(|c| c as std::rc::Rc<dyn vcad_eval::cache::RootMeshCache>),
         mesh_segments: 0,
+        clock: vcad_eval::timings::clock(),
         ..Default::default()
     };
-    let scene = vcad_eval::evaluate_document_with_sheet_metal(doc, &opts)
-        .map_err(|e| anyhow::anyhow!("{}", e))?;
+    let scene = vcad_eval::timings::stage("evaluate geometry", || {
+        vcad_eval::evaluate_document_with_sheet_metal(doc, &opts)
+    })
+    .map_err(|e| anyhow::anyhow!("{}", e))?;
+    vcad_eval::timings::record_eval(scene.timing.as_ref());
     warn_root_failures(&scene);
     report_cache(cache.as_deref());
     Ok(scene)
@@ -1354,6 +1358,7 @@ fn root_cache() -> Option<std::rc::Rc<vcad_eval::cache::DiskMeshCache>> {
 fn report_cache(cache: Option<&vcad_eval::cache::DiskMeshCache>) {
     let Some(cache) = cache else { return };
     let s = cache.stats();
+    vcad_eval::timings::record_cache(s.hits, s.misses);
     if s.hits + s.misses > 0 {
         eprintln!(
             "cache: {} hit, {} miss, {} stored ({})",
